@@ -12,6 +12,8 @@ and HTTP(S)-only external-link opening. Authentication is attached in the main p
 exposed to renderer JavaScript. The window blocks arbitrary navigation and new windows, and the
 static document has a restrictive content security policy.
 
-The first renderer intentionally stays small: projects and tasks on the left, route and lifecycle
-status at the top, canonical messages in the center, and a composer at the bottom. It submits native
-runs and resumes sequenced events while a run is active.
+The renderer uses a task-focused desktop layout with a project/thread hierarchy, centered
+conversation, floating composer, and toggleable environment/artifact panel. Project and task
+creation use accessible dialogs; connection retry, file attachment, keyboard submission,
+native-run cancellation, loading/error states, and responsive sidebar controls are wired as
+first-class interactions.
