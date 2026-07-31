@@ -45,6 +45,10 @@
 - Windows NSIS desktop packaging, packaged-main smoke mode, GitHub release update checks/downloads,
   portable host zip with bundled Node runtime, optional user-logon scheduled task scripts, and a
   Windows CI packaging/smoke workflow.
+- Generic external OpenAI-compatible and managed llama.cpp engine adapters sharing an authenticated
+  streaming transport, with environment-resolved credentials, process lifecycle control, and HTTP/SSE fixtures.
+- Main-branch CI plus unit, security-boundary, failure, spawned-process integration, compiled HTTP
+  end-to-end, packaged executable, and restart-recovery test coverage.
 - Host APIs:
   - `GET /health`
   - `GET /v1/models`

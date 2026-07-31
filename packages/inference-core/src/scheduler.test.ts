@@ -66,6 +66,47 @@ describe("InferenceScheduler", () => {
     expect(adapter.stops).toHaveLength(1);
     expect(events.after(0).some((event) => event.type === "queue.updated")).toBe(true);
   });
+
+  it("cancels active and queued work without wedging the scheduler", async () => {
+    const adapter = new FakeEngineAdapter({ tokenDelayMs: 30 });
+    const events = new LifecycleEventBus();
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]), events });
+    const scheduler = new InferenceScheduler(
+      new RouteResolver([route("default", "default")], [recipe("default", 60)]),
+      lifecycle,
+      events,
+    );
+
+    const active = scheduler.enqueue("default", { messages: [{ role: "user", content: "active" }] });
+    const queued = scheduler.enqueue("default", { messages: [{ role: "user", content: "queued" }] });
+    queued.cancel();
+    await expect(collect(queued)).rejects.toMatchObject({ name: "AbortError" });
+    await waitFor(() => lifecycle.snapshot().state === "BUSY");
+    active.cancel();
+    await expect(collect(active)).rejects.toMatchObject({ name: "AbortError" });
+
+    expect(events.after(0).filter((event) => event.type === "queue.updated" && event.data.status === "cancelled")).toHaveLength(2);
+    expect(scheduler.queueDepth).toBe(0);
+    expect(lifecycle.snapshot()).toMatchObject({ state: "READY", activeLeases: 0 });
+  });
+
+  it("recovers from a generation failure by replacing the failed instance", async () => {
+    const adapter = new FakeEngineAdapter({ failWhenPromptIncludes: "explode" });
+    const events = new LifecycleEventBus();
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]), events });
+    const scheduler = new InferenceScheduler(
+      new RouteResolver([route("default", "default")], [recipe("default", 60)]),
+      lifecycle,
+      events,
+    );
+
+    await expect(collect(scheduler.enqueue("default", { messages: [{ role: "user", content: "explode" }] }))).rejects.toThrow("request failure");
+    expect(lifecycle.snapshot().state).toBe("FAILED");
+    await expect(collect(scheduler.enqueue("default", { messages: [{ role: "user", content: "recover" }] }))).resolves.toContain("recover");
+    expect(adapter.starts).toHaveLength(2);
+    expect(adapter.stops).toEqual([expect.objectContaining({ mode: "force" })]);
+    expect(lifecycle.snapshot().state).toBe("READY");
+  });
 });
 
 async function collect(stream: AsyncIterable<InferenceDelta>): Promise<string> {
@@ -102,4 +143,12 @@ function recipe(id: string, ttlSeconds: number): Recipe {
     },
     configuration: {},
   };
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+  throw new Error("Timed out waiting for test condition");
 }
