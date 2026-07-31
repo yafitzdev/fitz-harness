@@ -23,11 +23,13 @@ import {
   type OpenAIErrorResponse,
   type Recipe,
   type Route,
+  type AgentRunRequest,
 } from "@fitz/protocol";
 import { MetricsRegistry, redactSecrets } from "@fitz/observability";
 import { SecurityPolicyError, SecurityService, type AuthenticatedPrincipal } from "@fitz/security";
 import { SqliteStore } from "@fitz/storage";
 import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
+import { AgentRunCoordinator } from "./agent-runs.js";
 
 export interface CreateHostOptions {
   store?: SqliteStore;
@@ -51,6 +53,7 @@ export interface HostRuntime {
   events: LifecycleEventBus;
   lifecycle: LifecycleManager;
   scheduler: InferenceScheduler;
+  agentRuns: AgentRunCoordinator;
   metrics: MetricsRegistry;
   security?: SecurityService;
   fakeAdapter?: FakeEngineAdapter;
@@ -78,6 +81,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const authMode = options.authMode ?? "disabled";
   const security = options.security ?? (authMode === "required" ? new SecurityService(store, options.authPepper ?? "") : undefined);
   const recoveredInterruptedRequests = store.recoverInterruptedRequests();
+  const recoveredAgentRuns = store.recoverInterruptedAgentRuns();
   seedDefaults(
     store,
     options.initialRecipes ?? DEFAULT_RECIPES,
@@ -94,6 +98,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   );
   const lifecycle = new LifecycleManager({ adapters, events, resources });
   const scheduler = new InferenceScheduler(routes, lifecycle, events);
+  const agentRuns = new AgentRunCoordinator(store, scheduler);
   const metrics = new MetricsRegistry();
   const unsubscribePersistence = events.subscribe((event) => {
     store.appendLifecycleEvent(event);
@@ -126,7 +131,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       engine: lifecycle.snapshot(),
       queueDepth: scheduler.queueDepth,
       resources: { ...resourceSnapshot, policy: resources.policy },
-      recovery: { interruptedRequests: recoveredInterruptedRequests },
+      recovery: { interruptedRequests: recoveredInterruptedRequests, interruptedAgentRuns: recoveredAgentRuns },
     };
   });
 
@@ -165,7 +170,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         throw new TypeError(`Route ${body.model} does not support streaming`);
       }
     } catch (error) {
-      const statusCode = error instanceof RouteNotFoundError ? 404 : 400;
+      const statusCode = error instanceof RouteNotFoundError ? 404 : error instanceof SecurityPolicyError ? 429 : 400;
       return reply.code(statusCode).send(openAIError(error, "invalid_request_error"));
     }
 
@@ -237,6 +242,28 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     };
   });
 
+  app.post("/api/v1/agent/runs", async (request, reply) => {
+    try {
+      const body = parseAgentRunRequest(request.body); const principal = principals.get(request);
+      if (principal && !security?.authorizeRoute(principal, body.model)) return reply.code(403).send({ error: "Route access denied" });
+      if (principal) { const promptChars = body.messages.reduce((total, message) => total + message.content.length, 0); security?.enforceQuota(principal, promptChars, body.maxTokens ?? principal.quota.maxOutputTokens, scheduler.queueDepth); }
+      const run = agentRuns.start(body, principal?.user.id); security?.audit("agent-run.created", principal?.user.id, "agent-run", run.id, { routeId: run.routeId });
+      return reply.code(202).send({ protocolVersion: PROTOCOL_VERSION, data: run });
+    } catch (error) { return reply.code(error instanceof SecurityPolicyError ? 429 : 400).send({ error: errorMessage(error) }); }
+  });
+  app.get("/api/v1/agent/runs", async (request) => { const principal = principals.get(request); const query = request.query as { limit?: string }; return { protocolVersion: PROTOCOL_VERSION, data: agentRuns.list(principal?.user.role === "administrator" ? undefined : principal?.user.id, Math.min(toNonNegativeInteger(query.limit, 100), 1000)) }; });
+  app.get("/api/v1/agent/runs/:runId", async (request, reply) => { const run = agentRuns.get((request.params as { runId: string }).runId); if (!run) return reply.code(404).send({ error: "Run not found" }); if (!canAccessRun(principals.get(request), run.ownerUserId)) return reply.code(403).send({ error: "Run access denied" }); return { protocolVersion: PROTOCOL_VERSION, data: run }; });
+  app.delete("/api/v1/agent/runs/:runId", async (request, reply) => { const runId = (request.params as { runId: string }).runId; const run = agentRuns.get(runId); if (!run) return reply.code(404).send({ error: "Run not found" }); if (!canAccessRun(principals.get(request), run.ownerUserId)) return reply.code(403).send({ error: "Run access denied" }); if (!agentRuns.cancel(runId)) return reply.code(409).send({ error: "Run is no longer active" }); return reply.code(202).send({ data: { id: runId, cancellationRequested: true } }); });
+  app.get("/api/v1/agent/runs/:runId/events", async (request, reply) => {
+    const runId = (request.params as { runId: string }).runId; const run = agentRuns.get(runId); if (!run) return reply.code(404).send({ error: "Run not found" }); if (!canAccessRun(principals.get(request), run.ownerUserId)) return reply.code(403).send({ error: "Run access denied" });
+    const query = request.query as { after?: string; stream?: string }; const headerAfter = typeof request.headers["last-event-id"] === "string" ? request.headers["last-event-id"] : undefined; const after = toNonNegativeInteger(query.after ?? headerAfter, 0);
+    if (query.stream !== "true" && !String(request.headers.accept ?? "").includes("text/event-stream")) return { protocolVersion: PROTOCOL_VERSION, run: agentRuns.get(runId), events: agentRuns.eventsAfter(runId, after) };
+    reply.hijack(); reply.raw.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache, no-transform", connection: "keep-alive" }); let last = after;
+    const send = (event: { sequence: number; type: string }) => { if (event.sequence <= last) return; last = event.sequence; reply.raw.write(`id: ${event.sequence}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`); };
+    const unsubscribe = agentRuns.subscribe(runId, (event) => { send(event); if (isTerminalAgentEvent(event.type)) { unsubscribe(); reply.raw.end(); } }); for (const event of agentRuns.eventsAfter(runId, after)) send(event);
+    if (isTerminalRun(agentRuns.get(runId)?.status)) { unsubscribe(); reply.raw.end(); } else request.raw.once("aborted", unsubscribe);
+  });
+
   app.get(
     "/api/v1/management/status",
     { preHandler: adminGuard(options.adminToken, authMode, principals) },
@@ -249,6 +276,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         routes: routes.listRoutes(),
         recipes: routes.listRecipes(),
         recoveredInterruptedRequests,
+        recoveredAgentRuns,
       };
     },
   );
@@ -386,6 +414,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     events,
     lifecycle,
     scheduler,
+    agentRuns,
     metrics,
     ...(security ? { security } : {}),
     ...(fakeAdapter ? { fakeAdapter } : {}),
@@ -501,6 +530,11 @@ function parseRoute(value: unknown, routeId: string): Route {
     ...(typeof value.isDefault === "boolean" ? { isDefault: value.isDefault } : {}),
   };
 }
+
+function parseAgentRunRequest(value: unknown): AgentRunRequest { const parsed = parseChatCompletionRequest(value); return { model: parsed.model, messages: parsed.messages, ...(parsed.max_tokens !== undefined ? { maxTokens: parsed.max_tokens } : {}), ...(parsed.temperature !== undefined ? { temperature: parsed.temperature } : {}) }; }
+function canAccessRun(principal: AuthenticatedPrincipal | undefined, ownerUserId: string | undefined): boolean { return !principal || principal.user.role === "administrator" || principal.user.id === ownerUserId; }
+function isTerminalRun(status: string | undefined): boolean { return status === "completed" || status === "failed" || status === "cancelled" || status === "interrupted"; }
+function isTerminalAgentEvent(type: string): boolean { return type === "run.completed" || type === "run.failed" || type === "run.cancelled" || type === "run.interrupted"; }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

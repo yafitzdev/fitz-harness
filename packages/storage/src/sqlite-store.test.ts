@@ -95,4 +95,10 @@ describe("SqliteStore", () => {
     expect(store.listDevices("user-1")[0]).not.toHaveProperty("tokenHash");
     expect(store.listUserRouteGrants("user-1")).toEqual(["fast"]); expect(store.getUserQuota("user-1")).toEqual(quota); expect(store.listAuditEvents()).toHaveLength(1); store.close();
   });
+
+  it("persists resumable agent runs and marks active runs interrupted on recovery", () => {
+    const store = SqliteStore.memory(); const now = new Date(0).toISOString(); store.createAgentRun({ id: "run-1", routeId: "fast", status: "running", createdAt: now, updatedAt: now, lastSequence: 0 });
+    store.appendAgentEvent({ protocolVersion: "1", runId: "run-1", sequence: 1, timestamp: now, type: "run.created", data: {} }); expect(store.agentEventsAfter("run-1", 0)).toHaveLength(1); expect(store.getAgentRun("run-1")?.lastSequence).toBe(1);
+    expect(store.recoverInterruptedAgentRuns()).toBe(1); expect(store.getAgentRun("run-1")?.status).toBe("interrupted"); store.close();
+  });
 });

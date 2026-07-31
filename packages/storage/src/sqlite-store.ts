@@ -1,6 +1,8 @@
 import { DatabaseSync } from "node:sqlite";
 import type {
   AuditEventRecord,
+  AgentEventEnvelope,
+  AgentRunRecord,
   DeviceAuthenticationRecord,
   DeviceRecord,
   InferenceLifecycleEvent,
@@ -43,6 +45,7 @@ interface InferenceRequestRow {
 interface UserRow { id: string; display_name: string; role: UserRecord["role"]; status: UserRecord["status"]; created_at: string; updated_at: string }
 interface DeviceRow { id: string; user_id: string; name: string; token_hash: string; created_at: string; last_used_at: string | null; revoked_at: string | null }
 interface AuditRow { id: string; timestamp: string; actor_user_id: string | null; action: string; target_type: string | null; target_id: string | null; detail_json: string }
+interface AgentRunRow { id: string; route_id: string; owner_user_id: string | null; status: AgentRunRecord["status"]; created_at: string; updated_at: string; last_sequence: number; error: string | null }
 
 export class SqliteStore {
   readonly #database: DatabaseSync;
@@ -318,6 +321,20 @@ export class SqliteStore {
     return rows.map((row) => ({ id: row.id, timestamp: row.timestamp, action: row.action, detail: JSON.parse(row.detail_json) as Record<string, unknown>, ...(row.actor_user_id ? { actorUserId: row.actor_user_id } : {}), ...(row.target_type ? { targetType: row.target_type } : {}), ...(row.target_id ? { targetId: row.target_id } : {}) }));
   }
 
+  createAgentRun(run: AgentRunRecord): void {
+    this.#database.prepare(`INSERT INTO agent_runs (id, route_id, owner_user_id, status, created_at, updated_at, last_sequence, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(run.id, run.routeId, run.ownerUserId ?? null, run.status, run.createdAt, run.updatedAt, run.lastSequence, run.error ?? null);
+  }
+  getAgentRun(id: string): AgentRunRecord | undefined { const row = this.#database.prepare(`SELECT id, route_id, owner_user_id, status, created_at, updated_at, last_sequence, error FROM agent_runs WHERE id = ?`).get(id) as AgentRunRow | undefined; return row ? mapAgentRun(row) : undefined; }
+  listAgentRuns(ownerUserId?: string, limit = 100): AgentRunRecord[] {
+    const rows = (ownerUserId ? this.#database.prepare(`SELECT id, route_id, owner_user_id, status, created_at, updated_at, last_sequence, error FROM agent_runs WHERE owner_user_id = ? ORDER BY created_at DESC LIMIT ?`).all(ownerUserId, limit) : this.#database.prepare(`SELECT id, route_id, owner_user_id, status, created_at, updated_at, last_sequence, error FROM agent_runs ORDER BY created_at DESC LIMIT ?`).all(limit)) as unknown as AgentRunRow[]; return rows.map(mapAgentRun);
+  }
+  updateAgentRun(id: string, status: AgentRunRecord["status"], error?: string): void { this.#database.prepare(`UPDATE agent_runs SET status = ?, updated_at = ?, error = ? WHERE id = ?`).run(status, new Date().toISOString(), error ?? null, id); }
+  appendAgentEvent(event: AgentEventEnvelope): void {
+    this.#database.exec("BEGIN IMMEDIATE"); try { this.#database.prepare(`INSERT INTO agent_events (run_id, sequence, timestamp, type, event_json) VALUES (?, ?, ?, ?, ?)`).run(event.runId, event.sequence, event.timestamp, event.type, JSON.stringify(event)); this.#database.prepare(`UPDATE agent_runs SET last_sequence = ?, updated_at = ? WHERE id = ?`).run(event.sequence, event.timestamp, event.runId); this.#database.exec("COMMIT"); } catch (error) { this.#database.exec("ROLLBACK"); throw error; }
+  }
+  agentEventsAfter(runId: string, sequence: number, limit = 1000): AgentEventEnvelope[] { return (this.#database.prepare(`SELECT event_json FROM agent_events WHERE run_id = ? AND sequence > ? ORDER BY sequence LIMIT ?`).all(runId, sequence, limit) as unknown as { event_json: string }[]).map((row) => JSON.parse(row.event_json) as AgentEventEnvelope); }
+  recoverInterruptedAgentRuns(): number { return Number(this.#database.prepare(`UPDATE agent_runs SET status = 'interrupted', updated_at = ?, error = 'host_restarted' WHERE status IN ('queued', 'running')`).run(new Date().toISOString()).changes); }
+
   setSetting(key: string, value: unknown): void {
     this.#database
       .prepare(
@@ -343,3 +360,4 @@ export class SqliteStore {
 
 function mapUser(row: UserRow): UserRecord { return { id: row.id, displayName: row.display_name, role: row.role, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at }; }
 function mapDevice(row: DeviceRow): DeviceRecord { return { id: row.id, userId: row.user_id, name: row.name, createdAt: row.created_at, ...(row.last_used_at ? { lastUsedAt: row.last_used_at } : {}), ...(row.revoked_at ? { revokedAt: row.revoked_at } : {}) }; }
+function mapAgentRun(row: AgentRunRow): AgentRunRecord { return { id: row.id, routeId: row.route_id, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at, lastSequence: row.last_sequence, ...(row.owner_user_id ? { ownerUserId: row.owner_user_id } : {}), ...(row.error ? { error: row.error } : {}) }; }

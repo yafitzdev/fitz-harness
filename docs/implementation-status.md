@@ -22,11 +22,15 @@
 - Required-auth mode with HMAC-SHA-256 device bearer credentials, durable users and devices,
   administrator/agent/consumer roles, per-user route grants and quotas, device revocation, audit
   history, and bootstrap-administrator provisioning.
+- Versioned native agent runs with durable run state and sequenced events, background execution
+  across client disconnects, cancellation, owner isolation, JSON event replay, resumable SSE via
+  `after` or `Last-Event-ID`, and interrupted-run recovery after host restart.
 - Host APIs:
   - `GET /health`
   - `GET /v1/models`
   - `POST /v1/chat/completions` (streaming SSE and non-streaming)
   - `GET /api/v1/events`
+  - native agent run submission, history, cancellation, event replay, and SSE endpoints
   - basic management status, route update, and instance stop endpoints
   - administrator user, device, grant, quota, revocation, and audit endpoints
 - Optional development administrator-token guard and production required-auth mode.
@@ -35,7 +39,7 @@
 
 - Full JSON Schema/OpenAPI generation and exhaustive request compatibility.
 - Interactive device-pairing exchange, encrypted secret storage, and persistent/distributed rate windows.
-- Native agent event protocol, Pi integration, transcripts, tools, and compaction.
+- Pi integration, projects, transcripts, tools, approvals, and compaction.
 - Tailscale connectivity.
 - Electron and consumer UI.
 - OS-backed secret storage.
