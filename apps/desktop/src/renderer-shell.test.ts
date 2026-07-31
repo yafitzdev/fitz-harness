@@ -9,6 +9,7 @@ describe("desktop renderer shell", () => {
     const actions = [
       "sidebar-menu",
       "sidebar-restore",
+      "sidebar-resizer",
       "new-session",
       "new-project",
       "connection-status",
@@ -43,6 +44,11 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('connectionStatus.addEventListener("click"');
     expect(renderer).toContain("artifactFile.click()");
     expect(renderer).toContain("window.fitz.chooseFolder()");
+    expect(renderer).toContain("window.fitz.openPath(path)");
+    expect(renderer).toContain("window.fitz.copyText(value)");
+    expect(renderer).toContain("beginSidebarResize");
+    expect(renderer).toContain('openSidebarMenu("project"');
+    expect(renderer).toContain('openSidebarMenu("task"');
     expect(renderer).toContain('api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" })');
     expect(renderer).toContain("maxTokens: Number(effort.value)");
     expect(renderer).toContain('api(`/api/v1/agent/runs/${currentRun}`, "DELETE")');

@@ -14,13 +14,11 @@
           <button id="sidebar-menu" class="icon-button no-drag" type="button" title="Collapse sidebar" aria-label="Collapse sidebar">
             <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4" width="14" height="12" rx="2"></rect><path d="M7 4v12"></path></svg>
           </button>
-          <strong>Fitz</strong>
-          <span class="brand-chevron">⌄</span>
         </div>
 
         <button id="new-session" class="nav-action" type="button">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 15.5 5 12l8.8-8.8a1.4 1.4 0 0 1 2 2L7 14l-3 .5Z"></path><path d="m12.7 4.3 3 3"></path></svg>
-          <span>New task</span>
+          <span>New chat</span>
           <kbd>Ctrl N</kbd>
         </button>
 
@@ -40,6 +38,7 @@
           <span><strong>Local host</strong><small id="connection-detail">Connecting…</small></span>
         </button>
       </aside>
+      <div id="sidebar-resizer" class="sidebar-resizer" role="separator" aria-label="Resize sidebar" aria-orientation="vertical" tabindex="0"></div>
 
       <main class="workspace">
         <header class="workspace-header drag-region">
@@ -53,9 +52,9 @@
             <button id="task-menu-toggle" class="icon-button task-menu-toggle no-drag" type="button" title="Task actions" aria-label="Task actions" aria-expanded="false" hidden>
               <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="5" cy="10" r="1"></circle><circle cx="10" cy="10" r="1"></circle><circle cx="15" cy="10" r="1"></circle></svg>
             </button>
-            <div id="task-menu" class="popover task-menu no-drag" hidden>
-              <button id="rename-task" type="button"><span>Rename task</span><kbd>Ctrl+Alt+R</kbd></button>
-              <button id="archive-task" type="button"><span>Archive task</span><kbd>Ctrl+Shift+A</kbd></button>
+            <div id="task-menu" class="popover task-menu no-drag menu-surface" hidden>
+              <button id="rename-task" type="button"><span>Rename chat</span><kbd>Ctrl+Alt+R</kbd></button>
+              <button id="archive-task" type="button"><span>Archive chat</span><kbd>Ctrl+Shift+A</kbd></button>
             </div>
           </div>
           <div class="header-actions no-drag">
@@ -75,20 +74,21 @@
             <div class="composer-toolbar">
               <div class="composer-tools">
                 <button id="attach" class="icon-button" type="button" title="Attach a file" aria-label="Attach a file" disabled>
-                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7.2 10.8 4.9-4.9a2.1 2.1 0 0 1 3 3l-6.2 6.2a3.5 3.5 0 0 1-5-5l6-6"></path></svg>
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"></path></svg>
                 </button>
-                <span class="mode-pill"><span class="mode-dot"></span> Local workspace</span>
+                <span class="access-label"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.8 16 5v4.4c0 3.8-2.4 6.3-6 7.8-3.6-1.5-6-4-6-7.8V5z"></path><path d="M10 7v3.2M10 13h.01"></path></svg>Full access</span>
               </div>
               <div class="composer-controls">
+                <span id="context-meter" class="context-meter" title="Context window usage" aria-label="Context window usage"></span>
                 <div class="model-picker">
-                  <button id="model-toggle" class="model-toggle" type="button" aria-label="Model settings" aria-expanded="false" disabled><span id="model-summary">Model</span><span>⌄</span></button>
+                  <button id="model-toggle" class="model-toggle" type="button" aria-label="Model settings" aria-expanded="false" disabled><span id="model-summary">Model</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"></path></svg></button>
                   <div id="model-menu" class="popover model-menu" hidden>
                     <label><span>Model</span><select id="model" aria-label="Model route" disabled></select></label>
                     <label><span>Effort</span><select id="effort" aria-label="Effort"><option value="1024">Low</option><option value="4096" selected>Medium</option><option value="8192">High</option></select></label>
                     <label><span>Speed</span><select id="speed" aria-label="Speed"><option value="standard">Standard</option><option value="fast">Fast</option></select></label>
                   </div>
                 </div>
-                <span id="status" class="run-status" data-state="loading">Connecting</span>
+                <span id="status" class="run-status visually-hidden" data-state="loading">Connecting</span>
                 <button id="send" class="send-button" type="submit" title="Send message" aria-label="Send message" disabled>
                   <svg class="send-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15V5M6 9l4-4 4 4"></path></svg>
                   <svg class="stop-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="6" y="6" width="8" height="8" rx="1"></rect></svg>
@@ -96,7 +96,6 @@
               </div>
             </div>
           </form>
-          <p class="composer-hint">Enter to send · Shift+Enter for a new line</p>
         </div>
       </main>
 
@@ -127,6 +126,8 @@
 
     <input id="artifact-file" type="file" hidden>
 
+    <div id="sidebar-context-menu" class="popover menu-surface sidebar-context-menu" hidden></div>
+
     <dialog id="project-dialog" class="modal">
       <form id="project-form">
         <div class="modal-heading"><div><h2>Create project</h2></div><button class="icon-button" type="button" data-close-dialog="project-dialog" aria-label="Close"><svg viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15"></path></svg></button></div>
@@ -149,9 +150,9 @@
 
     <dialog id="rename-dialog" class="modal compact-modal">
       <form id="rename-form">
-        <div class="modal-heading"><div><h2>Rename task</h2></div><button class="icon-button" type="button" data-close-dialog="rename-dialog" aria-label="Close"><svg viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15"></path></svg></button></div>
-        <label>Task title<input id="rename-task-name" autocomplete="off" required maxlength="120"></label>
-        <div class="modal-actions"><button class="quiet-button" type="button" data-close-dialog="rename-dialog">Cancel</button><button class="primary-button" type="submit">Rename</button></div>
+        <div class="modal-heading"><div><h2 id="rename-heading">Rename task</h2></div><button class="icon-button" type="button" data-close-dialog="rename-dialog" aria-label="Close"><svg viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15"></path></svg></button></div>
+        <label><span id="rename-label">Task title</span><input id="rename-task-name" autocomplete="off" required maxlength="120"></label>
+        <div class="modal-actions"><button class="quiet-button" type="button" data-close-dialog="rename-dialog">Cancel</button><button id="rename-submit" class="primary-button" type="submit">Rename</button></div>
       </form>
     </dialog>
 

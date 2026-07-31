@@ -10,6 +10,10 @@ let currentRun: string | undefined;
 let lastSequence = 0;
 let pendingTaskAfterProject = false;
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
+let renameTarget: { kind: "project" | "task"; id: string } | undefined;
+const pinnedProjects = storedSet("fitz-pinned-projects");
+const pinnedSessions = storedSet("fitz-pinned-sessions");
+const unreadSessions = storedSet("fitz-unread-sessions");
 
 const shell = query(".app-shell");
 const projects = element("projects");
@@ -20,6 +24,7 @@ const speed = element("speed") as HTMLSelectElement;
 const modelToggle = element("model-toggle") as HTMLButtonElement;
 const modelMenu = element("model-menu");
 const modelSummary = element("model-summary");
+const contextMeter = element("context-meter");
 const form = element("composer") as HTMLFormElement;
 const prompt = element("prompt") as HTMLTextAreaElement;
 const status = element("status");
@@ -51,11 +56,16 @@ const taskProject = element("task-project") as HTMLSelectElement;
 const taskName = element("task-name") as HTMLInputElement;
 const taskMenuToggle = element("task-menu-toggle") as HTMLButtonElement;
 const taskMenu = element("task-menu");
+const sidebarContextMenu = element("sidebar-context-menu");
+const sidebarResizer = element("sidebar-resizer");
 const renameDialog = element("rename-dialog") as HTMLDialogElement;
 const renameForm = element("rename-form") as HTMLFormElement;
 const renameTaskName = element("rename-task-name") as HTMLInputElement;
+const renameHeading = element("rename-heading");
+const renameLabel = element("rename-label");
 const toast = element("toast");
 
+restoreSidebarWidth();
 void initialize();
 
 form.addEventListener("submit", (event) => {
@@ -63,7 +73,7 @@ form.addEventListener("submit", (event) => {
   if (currentRun) void cancelRun();
   else void sendPrompt();
 });
-prompt.addEventListener("input", () => { resizePrompt(); refreshComposerState(); });
+prompt.addEventListener("input", () => { resizePrompt(); updateContextMeter(); refreshComposerState(); });
 prompt.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
@@ -82,6 +92,8 @@ element("new-project").addEventListener("click", () => openProjectDialog());
 element("new-session").addEventListener("click", () => openTaskDialog());
 element("sidebar-menu").addEventListener("click", toggleSidebar);
 element("sidebar-restore").addEventListener("click", toggleSidebar);
+sidebarResizer.addEventListener("pointerdown", beginSidebarResize);
+sidebarResizer.addEventListener("keydown", resizeSidebarWithKeyboard);
 connectionStatus.addEventListener("click", () => void initialize());
 contextToggle.addEventListener("click", () => setContextPanel(contextPanel.hasAttribute("hidden")));
 element("context-close").addEventListener("click", () => setContextPanel(false));
@@ -96,6 +108,7 @@ modelToggle.addEventListener("click", (event) => { event.stopPropagation(); togg
 taskMenuToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(taskMenu, taskMenuToggle); });
 modelMenu.addEventListener("click", (event) => event.stopPropagation());
 taskMenu.addEventListener("click", (event) => event.stopPropagation());
+sidebarContextMenu.addEventListener("click", (event) => event.stopPropagation());
 element("rename-task").addEventListener("click", openRenameDialog);
 element("archive-task").addEventListener("click", () => void archiveCurrentTask());
 renameForm.addEventListener("submit", (event) => { event.preventDefault(); void renameCurrentTask(); });
@@ -166,21 +179,25 @@ function renderProjectTree(): void {
     return;
   }
 
-  for (const project of projectRecords) {
+  const orderedProjects = [...projectRecords].sort((left, right) => Number(pinnedProjects.has(right.id)) - Number(pinnedProjects.has(left.id)));
+  for (const project of orderedProjects) {
     const group = document.createElement("div");
     group.className = "project-group";
-    const projectButton = treeButton(project.name, "project-row", folderIcon(), () => void selectProject(project.id));
+    const projectItem = treeItem(project.name, "project-row", folderIcon(), () => void selectProject(project.id), (toggle, event) => openSidebarMenu("project", project.id, toggle, event));
+    const projectButton = projectItem.querySelector(".project-row") as HTMLButtonElement;
     projectButton.classList.toggle("active", project.id === currentProject && !currentSession);
-    group.append(projectButton);
+    group.append(projectItem);
     if (project.id === currentProject) {
-      const projectSessions = sessionsByProject.get(project.id) ?? [];
+      const projectSessions = [...(sessionsByProject.get(project.id) ?? [])].sort((left, right) => Number(pinnedSessions.has(right.id)) - Number(pinnedSessions.has(left.id)));
       if (projectSessions.length === 0) {
         const emptyState = document.createElement("div"); emptyState.className = "tree-empty"; emptyState.textContent = "No tasks"; group.append(emptyState);
       }
       for (const session of projectSessions) {
-        const sessionButton = treeButton(session.title, "task-row", chatIcon(), () => void selectSession(session.id));
+        const sessionItem = treeItem(session.title, "task-row", chatIcon(), () => void selectSession(session.id), (toggle, event) => openSidebarMenu("task", session.id, toggle, event));
+        const sessionButton = sessionItem.querySelector(".task-row") as HTMLButtonElement;
         sessionButton.classList.toggle("active", session.id === currentSession);
-        group.append(sessionButton);
+        if (unreadSessions.has(session.id)) { const dot = document.createElement("span"); dot.className = "activity-dot"; dot.setAttribute("aria-label", "Unread"); sessionButton.append(dot); }
+        group.append(sessionItem);
       }
     }
     projects.append(group);
@@ -200,6 +217,7 @@ async function selectProject(id: string): Promise<void> {
 
 async function selectSession(id: string, rerender = true): Promise<void> {
   currentSession = id;
+  if (unreadSessions.delete(id)) saveSet("fitz-unread-sessions", unreadSessions);
   lastSequence = 0;
   if (rerender) renderProjectTree();
   updateTitles();
@@ -286,19 +304,37 @@ function openRenameDialog(): void {
   closePopovers();
   const session = currentSessionRecord();
   if (!session) return;
+  renameTarget = { kind: "task", id: session.id };
+  renameHeading.textContent = "Rename chat";
+  renameLabel.textContent = "Chat title";
   renameTaskName.value = session.title;
+  renameDialog.showModal();
+  renameTaskName.select();
+}
+
+function openProjectRenameDialog(id: string): void {
+  closePopovers();
+  const project = projectRecords.find((item) => item.id === id);
+  if (!project) return;
+  renameTarget = { kind: "project", id };
+  renameHeading.textContent = "Rename project";
+  renameLabel.textContent = "Project name";
+  renameTaskName.value = project.name;
   renameDialog.showModal();
   renameTaskName.select();
 }
 
 async function renameCurrentTask(): Promise<void> {
   const title = renameTaskName.value.trim();
-  if (!currentSession || !currentProject || !title) return;
+  if (!renameTarget || !title) return;
   setFormBusy(renameForm, true);
   try {
-    await api(`/api/v1/sessions/${currentSession}`, "PATCH", { title });
+    const path = renameTarget.kind === "project" ? `/api/v1/projects/${renameTarget.id}` : `/api/v1/sessions/${renameTarget.id}`;
+    const preferredProject = renameTarget.kind === "project" ? renameTarget.id : currentProject;
+    const preferredSession = renameTarget.kind === "task" ? renameTarget.id : currentSession;
+    await api(path, "PATCH", { [renameTarget.kind === "project" ? "name" : "title"]: title });
     renameDialog.close();
-    await loadProjects(currentProject, currentSession);
+    await loadProjects(preferredProject, preferredSession);
     showToast(`Renamed to ${title}`);
   } catch (error) { showToast(errorMessage(error)); }
   finally { setFormBusy(renameForm, false); }
@@ -320,6 +356,89 @@ function currentSessionRecord(): Json | undefined {
   return currentProject ? (sessionsByProject.get(currentProject) ?? []).find((session) => session.id === currentSession) : undefined;
 }
 
+function openSidebarMenu(kind: "project" | "task", id: string, toggle: HTMLButtonElement, event: MouseEvent): void {
+  event.preventDefault();
+  event.stopPropagation();
+  closePopovers();
+  sidebarContextMenu.replaceChildren();
+  if (kind === "project") buildProjectMenu(id);
+  else buildTaskMenu(id);
+  const rect = toggle.getBoundingClientRect();
+  sidebarContextMenu.hidden = false;
+  const menuRect = sidebarContextMenu.getBoundingClientRect();
+  sidebarContextMenu.style.left = `${Math.min(rect.right + 4, window.innerWidth - menuRect.width - 8)}px`;
+  sidebarContextMenu.style.top = `${Math.min(rect.top, window.innerHeight - menuRect.height - 8)}px`;
+  toggle.setAttribute("aria-expanded", "true");
+}
+
+function buildProjectMenu(id: string): void {
+  const project = projectRecords.find((item) => item.id === id);
+  if (!project) return;
+  addMenuItem(pinnedProjects.has(id) ? "Unpin project" : "Pin project", () => toggleStored(pinnedProjects, id, "fitz-pinned-projects"));
+  addMenuItem("Rename project", () => openProjectRenameDialog(id));
+  addMenuItem("Edit source folder", () => void editProjectFolder(id));
+  if (project.rootPath) {
+    addMenuItem("Open in Explorer", () => void openProjectPath(project.rootPath));
+    addMenuItem("Copy working directory", () => void copyValue(project.rootPath, "Working directory copied"));
+  }
+  addMenuSeparator();
+  addMenuItem("Archive chats", () => void archiveProjectChats(id), true);
+}
+
+function buildTaskMenu(id: string): void {
+  const session = (currentProject ? sessionsByProject.get(currentProject) : undefined)?.find((item) => item.id === id);
+  const project = projectRecords.find((item) => item.id === currentProject);
+  if (!session) return;
+  addMenuItem(pinnedSessions.has(id) ? "Unpin chat" : "Pin chat", () => toggleStored(pinnedSessions, id, "fitz-pinned-sessions"));
+  addMenuItem("Rename chat", () => { currentSession = id; openRenameDialog(); });
+  addMenuItem("Archive chat", () => { currentSession = id; void archiveCurrentTask(); }, true);
+  addMenuItem(unreadSessions.has(id) ? "Mark as read" : "Mark as unread", () => toggleStored(unreadSessions, id, "fitz-unread-sessions"));
+  if (project?.rootPath) {
+    addMenuSeparator();
+    addMenuItem("Open in Explorer", () => void openProjectPath(project.rootPath));
+    addMenuItem("Copy working directory", () => void copyValue(project.rootPath, "Working directory copied"));
+  }
+  addMenuItem("Copy session ID", () => void copyValue(id, "Session ID copied"));
+  addMenuItem("Copy deeplink", () => void copyValue(`fitz://sessions/${id}`, "Deeplink copied"));
+  addMenuSeparator();
+  addMenuItem("Continue in new chat", () => void continueInNewChat(session));
+}
+
+function addMenuItem(label: string, action: () => void, danger = false): void {
+  const button = document.createElement("button"); button.type = "button"; button.classList.toggle("danger", danger);
+  const text = document.createElement("span"); text.className = "menu-label"; text.textContent = label; button.append(text);
+  button.addEventListener("click", () => { closePopovers(); action(); }); sidebarContextMenu.append(button);
+}
+
+function addMenuSeparator(): void { sidebarContextMenu.append(document.createElement("hr")); }
+
+function toggleStored(values: Set<string>, id: string, key: string): void {
+  if (values.has(id)) values.delete(id); else values.add(id);
+  saveSet(key, values); closePopovers(); renderProjectTree();
+}
+
+async function editProjectFolder(id: string): Promise<void> {
+  const folder = await window.fitz.chooseFolder();
+  if (!folder) return;
+  try { await api(`/api/v1/projects/${id}`, "PATCH", { rootPath: folder }); await loadProjects(id, currentSession); showToast("Source folder updated"); }
+  catch (error) { showToast(errorMessage(error)); }
+}
+
+async function openProjectPath(path: string): Promise<void> { try { await window.fitz.openPath(path); } catch (error) { showToast(errorMessage(error)); } }
+async function copyValue(value: string, message: string): Promise<void> { await window.fitz.copyText(value); showToast(message); }
+
+async function archiveProjectChats(id: string): Promise<void> {
+  const active = sessionsByProject.get(id) ?? [];
+  try { await Promise.all(active.map((session) => api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" }))); currentSession = undefined; await loadProjects(id); showToast(`Archived ${active.length} chat${active.length === 1 ? "" : "s"}`); }
+  catch (error) { showToast(errorMessage(error)); }
+}
+
+async function continueInNewChat(session: Json): Promise<void> {
+  if (!currentProject) return;
+  try { const response = await api(`/api/v1/projects/${currentProject}/sessions`, "POST", { title: `Continue: ${session.title}` }); await loadProjects(currentProject, response.data.id); showToast("Created continuation chat"); }
+  catch (error) { showToast(errorMessage(error)); }
+}
+
 function updateModelControls(): void {
   routeState.textContent = model.selectedOptions[0]?.textContent ?? "—";
   const effortLabel = effort.selectedOptions[0]?.textContent ?? "Medium";
@@ -337,8 +456,10 @@ function togglePopover(popover: HTMLElement, toggle: HTMLButtonElement): void {
 function closePopovers(): void {
   modelMenu.hidden = true;
   taskMenu.hidden = true;
+  sidebarContextMenu.hidden = true;
   modelToggle.setAttribute("aria-expanded", "false");
   taskMenuToggle.setAttribute("aria-expanded", "false");
+  for (const toggle of projects.querySelectorAll(".tree-menu-toggle")) toggle.setAttribute("aria-expanded", "false");
 }
 
 async function sendPrompt(): Promise<void> {
@@ -541,15 +662,36 @@ function setContextPanel(open: boolean): void {
   contextToggle.setAttribute("aria-expanded", String(open));
 }
 
-function toggleSidebar(): void { shell.classList.toggle("sidebar-collapsed"); }
+function toggleSidebar(): void { shell.classList.toggle("sidebar-collapsed"); closePopovers(); }
 function resizePrompt(): void { prompt.style.height = "auto"; prompt.style.height = `${Math.min(prompt.scrollHeight, 180)}px`; }
+function updateContextMeter(): void { const used = Math.min(95, 7 + prompt.value.length / 120); contextMeter.style.setProperty("--context-used", `${used}%`); contextMeter.setAttribute("aria-label", `Context window approximately ${Math.round(used)}% used`); }
+
+function beginSidebarResize(event: PointerEvent): void {
+  event.preventDefault(); sidebarResizer.classList.add("dragging"); sidebarResizer.setPointerCapture(event.pointerId);
+  const move = (moveEvent: PointerEvent) => setSidebarWidth(moveEvent.clientX);
+  const finish = () => { sidebarResizer.classList.remove("dragging"); sidebarResizer.removeEventListener("pointermove", move); localStorage.setItem("fitz-sidebar-width", String(sidebarWidth())); };
+  sidebarResizer.addEventListener("pointermove", move); sidebarResizer.addEventListener("pointerup", finish, { once: true }); sidebarResizer.addEventListener("pointercancel", finish, { once: true });
+}
+
+function resizeSidebarWithKeyboard(event: KeyboardEvent): void { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); setSidebarWidth(sidebarWidth() + (event.key === "ArrowRight" ? 12 : -12)); localStorage.setItem("fitz-sidebar-width", String(sidebarWidth())); }
+function setSidebarWidth(value: number): void { shell.style.setProperty("--sidebar-width", `${Math.max(190, Math.min(420, value))}px`); sidebarResizer.setAttribute("aria-valuenow", String(Math.round(sidebarWidth()))); }
+function sidebarWidth(): number { return Number.parseFloat(getComputedStyle(shell).getPropertyValue("--sidebar-width")) || 254; }
+function restoreSidebarWidth(): void { const saved = Number(localStorage.getItem("fitz-sidebar-width")); if (Number.isFinite(saved) && saved > 0) setSidebarWidth(saved); }
 function setStatus(text: string, state: string): void { status.textContent = text; status.dataset.state = state; }
 function setConnection(text: string, state: string): void { connectionDetail.textContent = text; connectionStatus.dataset.state = state; }
 function setFormBusy(formElement: HTMLFormElement, busy: boolean): void { for (const control of formElement.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>("input,button,select")) control.disabled = busy; }
 function showToast(text: string): void { if (toastTimer) clearTimeout(toastTimer); toast.textContent = text; toast.hidden = false; toastTimer = setTimeout(() => { toast.hidden = true; }, 3_200); }
 function panelEmpty(text: string): HTMLElement { const value = document.createElement("div"); value.className = "panel-empty"; value.textContent = text; return value; }
 function loadingMessage(text: string): HTMLElement { const value = document.createElement("div"); value.className = "panel-empty"; value.textContent = text; return value; }
-function treeButton(label: string, className: string, icon: SVGElement, action: () => void): HTMLButtonElement { const value = document.createElement("button"); value.type = "button"; value.className = className; const text = document.createElement("span"); text.textContent = label; value.append(icon, text); value.addEventListener("click", action); return value; }
+function treeItem(label: string, className: string, icon: SVGElement, action: () => void, menu: (toggle: HTMLButtonElement, event: MouseEvent) => void): HTMLElement {
+  const item = document.createElement("div"); item.className = "tree-item";
+  const value = document.createElement("button"); value.type = "button"; value.className = className; const text = document.createElement("span"); text.textContent = label; value.append(icon, text); value.addEventListener("click", action);
+  const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "tree-menu-toggle"; toggle.title = `${label} actions`; toggle.setAttribute("aria-label", `${label} actions`); toggle.setAttribute("aria-expanded", "false"); toggle.append(svg('<circle cx="5" cy="10" r="1"></circle><circle cx="10" cy="10" r="1"></circle><circle cx="15" cy="10" r="1"></circle>'));
+  toggle.addEventListener("click", (event) => menu(toggle, event)); value.addEventListener("contextmenu", (event) => menu(toggle, event)); item.append(value, toggle); return item;
+}
+
+function storedSet(key: string): Set<string> { try { const value = JSON.parse(localStorage.getItem(key) ?? "[]"); return new Set(Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []); } catch { return new Set(); } }
+function saveSet(key: string, values: Set<string>): void { localStorage.setItem(key, JSON.stringify([...values])); }
 
 async function api(path: string, method = "GET", body?: unknown): Promise<Json> {
   const response = await window.fitz.request({ path, method, ...(body !== undefined ? { body } : {}) });
