@@ -12,16 +12,19 @@ import type { Clock, ScheduledTask } from "./clock.js";
 import { SystemClock } from "./clock.js";
 import { LifecycleEventBus } from "./event-bus.js";
 import { assertTransition } from "./state-machine.js";
+import { ResourceGovernor, SystemResourceMonitor } from "./resources.js";
 
 export interface LifecycleManagerOptions {
   adapters: EngineAdapterRegistry;
   events?: LifecycleEventBus;
   clock?: Clock;
   allocatePort?: () => number;
+  resources?: ResourceGovernor;
 }
 
 export class LifecycleManager {
   readonly events: LifecycleEventBus;
+  readonly resources: ResourceGovernor;
   readonly #adapters: EngineAdapterRegistry;
   readonly #clock: Clock;
   readonly #allocatePort: () => number;
@@ -41,6 +44,7 @@ export class LifecycleManager {
     this.events = options.events ?? new LifecycleEventBus();
     this.#clock = options.clock ?? new SystemClock();
     this.#allocatePort = options.allocatePort ?? (() => 19_000);
+    this.resources = options.resources ?? new ResourceGovernor(new SystemResourceMonitor());
   }
 
   snapshot(): InstanceSnapshot {
@@ -137,6 +141,8 @@ export class LifecycleManager {
       if (!validation.valid) {
         throw new Error(validation.issues.map((issue) => issue.message).join("; "));
       }
+      const estimate = await this.#adapter.estimateResources(recipe);
+      await this.resources.assertCanLoad(recipe, estimate);
       const allocation = { host: "127.0.0.1", port: this.#allocatePort() };
       const spec = await this.#adapter.buildLaunchSpec(recipe, allocation);
       this.#transition("LOADING", "launching-engine");

@@ -10,6 +10,10 @@ import {
   RecipeNotFoundError,
   RouteNotFoundError,
   RouteResolver,
+  ResourceGovernor,
+  SystemResourceMonitor,
+  type ResourceMonitor,
+  type ResourcePolicy,
 } from "@fitz/inference-core";
 import {
   parseChatCompletionRequest,
@@ -20,6 +24,7 @@ import {
   type Recipe,
   type Route,
 } from "@fitz/protocol";
+import { MetricsRegistry, redactSecrets } from "@fitz/observability";
 import { SqliteStore } from "@fitz/storage";
 import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
 
@@ -29,6 +34,8 @@ export interface CreateHostOptions {
   adapters?: EngineAdapter[];
   initialRecipes?: Recipe[];
   initialRoutes?: Route[];
+  resourceMonitor?: ResourceMonitor;
+  resourcePolicy?: Partial<ResourcePolicy>;
   logger?: boolean;
   adminToken?: string;
 }
@@ -40,12 +47,30 @@ export interface HostRuntime {
   events: LifecycleEventBus;
   lifecycle: LifecycleManager;
   scheduler: InferenceScheduler;
+  metrics: MetricsRegistry;
   fakeAdapter?: FakeEngineAdapter;
 }
 
 export function createHost(options: CreateHostOptions = {}): HostRuntime {
-  const app = Fastify({ logger: options.logger ?? false, bodyLimit: 2 * 1024 * 1024 });
+  const app = Fastify({
+    logger: options.logger
+      ? {
+          level: "info",
+          redact: {
+            paths: [
+              "req.headers.authorization",
+              "req.headers.cookie",
+              "req.headers.x-fitz-admin-token",
+              "request.headers.authorization",
+            ],
+            censor: "[REDACTED]",
+          },
+        }
+      : false,
+    bodyLimit: 2 * 1024 * 1024,
+  });
   const store = options.store ?? SqliteStore.memory();
+  const recoveredInterruptedRequests = store.recoverInterruptedRequests();
   seedDefaults(
     store,
     options.initialRecipes ?? DEFAULT_RECIPES,
@@ -56,16 +81,41 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const fakeAdapter = options.adapters ? options.fakeAdapter : (options.fakeAdapter ?? new FakeEngineAdapter());
   const adapterList = options.adapters ?? (fakeAdapter ? [fakeAdapter] : []);
   const adapters = new EngineAdapterRegistry(adapterList);
-  const lifecycle = new LifecycleManager({ adapters, events });
+  const resources = new ResourceGovernor(
+    options.resourceMonitor ?? new SystemResourceMonitor(),
+    options.resourcePolicy,
+  );
+  const lifecycle = new LifecycleManager({ adapters, events, resources });
   const scheduler = new InferenceScheduler(routes, lifecycle, events);
-  const unsubscribePersistence = events.subscribe((event) => store.appendLifecycleEvent(event));
+  const metrics = new MetricsRegistry();
+  const unsubscribePersistence = events.subscribe((event) => {
+    store.appendLifecycleEvent(event);
+    if (event.type === "queue.updated") store.recordQueueEvent(event);
+  });
+  const unsubscribeMetrics = events.subscribe((event) => metrics.observeLifecycleEvent(event));
+  const requestStarts = new WeakMap<object, number>();
 
-  app.get("/health", async () => ({
-    status: "ok",
-    protocolVersion: PROTOCOL_VERSION,
-    engine: lifecycle.snapshot(),
-    queueDepth: scheduler.queueDepth,
-  }));
+  app.addHook("onRequest", async (request) => {
+    requestStarts.set(request, performance.now());
+  });
+  app.addHook("onResponse", async (request, reply) => {
+    const startedAt = requestStarts.get(request);
+    if (startedAt !== undefined) metrics.observe("http_request_duration_ms", performance.now() - startedAt);
+    metrics.increment("http_requests_total");
+    metrics.increment(`http_responses_${reply.statusCode}_total`);
+  });
+
+  app.get("/health", async () => {
+    const resourceSnapshot = await resources.snapshot();
+    return {
+      status: "ok",
+      protocolVersion: PROTOCOL_VERSION,
+      engine: lifecycle.snapshot(),
+      queueDepth: scheduler.queueDepth,
+      resources: { ...resourceSnapshot, policy: resources.policy },
+      recovery: { interruptedRequests: recoveredInterruptedRequests },
+    };
+  });
 
   app.get("/v1/models", async (): Promise<ModelListResponse> => ({
     object: "list",
@@ -166,12 +216,62 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   app.get(
     "/api/v1/management/status",
     { preHandler: adminGuard(options.adminToken) },
-    async () => ({
-      engine: lifecycle.snapshot(),
-      queueDepth: scheduler.queueDepth,
-      routes: routes.listRoutes(),
-      recipes: routes.listRecipes(),
-    }),
+    async () => {
+      const resourceSnapshot = await resources.snapshot();
+      return {
+        engine: lifecycle.snapshot(),
+        queueDepth: scheduler.queueDepth,
+        resources: { ...resourceSnapshot, policy: resources.policy },
+        routes: routes.listRoutes(),
+        recipes: routes.listRecipes(),
+        recoveredInterruptedRequests,
+      };
+    },
+  );
+
+  app.get(
+    "/api/v1/management/requests",
+    { preHandler: adminGuard(options.adminToken) },
+    async (request) => {
+      const query = request.query as { limit?: string };
+      const limit = Math.min(toNonNegativeInteger(query.limit, 100), 1_000);
+      return { data: store.listInferenceRequests(limit) };
+    },
+  );
+
+  app.get(
+    "/api/v1/management/metrics",
+    { preHandler: adminGuard(options.adminToken) },
+    async () => metrics.snapshot(),
+  );
+
+  app.get(
+    "/api/v1/management/diagnostics",
+    { preHandler: adminGuard(options.adminToken) },
+    async () => {
+      const resourceSnapshot = await resources.snapshot();
+      return redactSecrets({
+        generatedAt: new Date().toISOString(),
+        versions: {
+          host: "0.0.0",
+          protocol: PROTOCOL_VERSION,
+          node: process.version,
+          platform: process.platform,
+          architecture: process.arch,
+        },
+        engine: lifecycle.snapshot(),
+        queueDepth: scheduler.queueDepth,
+        resources: { ...resourceSnapshot, policy: resources.policy },
+        routes: routes.listRoutes(),
+        recipes: routes.listRecipes(),
+        recentRequests: store.listInferenceRequests(100),
+        recentLifecycleEvents: store.lifecycleEventsAfter(
+          Math.max(0, store.latestLifecycleSequence() - 100),
+          100,
+        ),
+        metrics: metrics.snapshot(),
+      });
+    },
   );
 
   app.get(
@@ -212,8 +312,9 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   );
 
   app.addHook("onClose", async () => {
-    unsubscribePersistence();
     await scheduler.shutdown();
+    unsubscribeMetrics();
+    unsubscribePersistence();
     store.close();
   });
 
@@ -224,6 +325,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     events,
     lifecycle,
     scheduler,
+    metrics,
     ...(fakeAdapter ? { fakeAdapter } : {}),
   };
 }

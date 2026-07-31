@@ -12,12 +12,17 @@ const databasePath = process.env.FITZ_DATABASE_PATH ?? defaultDataPath;
 const host = process.env.FITZ_HOST ?? "127.0.0.1";
 const port = parsePort(process.env.FITZ_PORT ?? "8787");
 const engineMode = process.env.FITZ_ENGINE_MODE ?? "fake";
+const reserveVramMiB = parseNonNegativeInteger(
+  process.env.FITZ_RESERVE_VRAM_MIB ?? "2048",
+  "FITZ_RESERVE_VRAM_MIB",
+);
 
 mkdirSync(dirname(databasePath), { recursive: true });
 const engineOptions = engineMode === "ninfer" ? ninferOptions() : {};
 const runtime = createHost({
   store: new SqliteStore(databasePath),
   logger: true,
+  resourcePolicy: { reserveVramMiB },
   ...engineOptions,
   ...(process.env.FITZ_ADMIN_TOKEN ? { adminToken: process.env.FITZ_ADMIN_TOKEN } : {}),
 });
@@ -29,6 +34,12 @@ function parsePort(value: string): number {
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65_535) {
     throw new Error(`Invalid FITZ_PORT: ${value}`);
   }
+  return parsed;
+}
+
+function parseNonNegativeInteger(value: string, name: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`Invalid ${name}: ${value}`);
   return parsed;
 }
 

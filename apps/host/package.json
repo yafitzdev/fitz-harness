@@ -14,6 +14,7 @@
     "@fitz/engine-fake": "workspace:*",
     "@fitz/engine-ninfer": "workspace:*",
     "@fitz/inference-core": "workspace:*",
+    "@fitz/observability": "workspace:*",
     "@fitz/protocol": "workspace:*",
     "@fitz/storage": "workspace:*",
     "fastify": "^5.11.0"

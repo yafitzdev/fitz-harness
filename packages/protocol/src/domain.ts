@@ -84,3 +84,21 @@ export interface InstanceSnapshot {
   activeLeases: number;
   failureReason?: string;
 }
+
+export type InferenceRequestStatus =
+  | "queued"
+  | "started"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
+
+export interface InferenceRequestRecord {
+  id: string;
+  routeId: string;
+  status: InferenceRequestStatus;
+  enqueuedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  errorCode?: string;
+}

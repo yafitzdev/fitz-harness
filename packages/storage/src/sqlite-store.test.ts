@@ -51,6 +51,36 @@ describe("SqliteStore", () => {
     expect(store.listRoutes()).toEqual([route]);
     expect(store.getSetting("test")).toEqual({ enabled: true });
     expect(store.lifecycleEventsAfter(0)).toHaveLength(1);
+
+    store.recordQueueEvent({
+      sequence: 2,
+      protocolVersion: "1",
+      timestamp: new Date(1).toISOString(),
+      type: "queue.updated",
+      data: {
+        requestId: "request-1",
+        routeId: "default-agent",
+        position: 1,
+        depth: 1,
+        status: "queued",
+      },
+    });
+    store.recordQueueEvent({
+      sequence: 3,
+      protocolVersion: "1",
+      timestamp: new Date(2).toISOString(),
+      type: "queue.updated",
+      data: {
+        requestId: "request-1",
+        routeId: "default-agent",
+        position: 0,
+        depth: 1,
+        status: "completed",
+      },
+    });
+    expect(store.listInferenceRequests()).toEqual([
+      expect.objectContaining({ id: "request-1", status: "completed" }),
+    ]);
     store.close();
   });
 });

@@ -11,7 +11,14 @@
 - Deterministic fake engine adapter.
 - Opt-in direct NInfer adapter with validated launch specs, generated per-instance credentials,
   readiness polling, authenticated streaming translation, bounded logs, and graceful/forced stop.
+- Spawned-process NInfer adapter integration coverage using an authenticated HTTP/SSE simulator.
 - SQLite migrations and repositories for recipes, routes, lifecycle events, settings, and inference-request groundwork.
+- Durable inference request status, administrator request history, and startup recovery that marks
+  previously queued or running requests as interrupted.
+- Pre-launch RAM/VRAM resource policy with NVIDIA telemetry and a configurable 2,048 MiB default
+  VRAM reserve, exposed through health and management status.
+- Structured HTTP logging with sensitive-header redaction, lifecycle/HTTP metrics, authenticated
+  metrics and diagnostic endpoints, and recursive secret redaction for exported diagnostics.
 - Host APIs:
   - `GET /health`
   - `GET /v1/models`
@@ -23,7 +30,6 @@
 ## Intentionally deferred for refinement or later milestones
 
 - NInfer live parity testing and service switchover. The adapter exists but has not touched the live service.
-- Durable inference-request status updates and restart recovery.
 - Full JSON Schema/OpenAPI generation and exhaustive request compatibility.
 - Multi-user authentication, device pairing, permissions, quotas, and audit policy.
 - Native agent event protocol, Pi integration, transcripts, tools, and compaction.

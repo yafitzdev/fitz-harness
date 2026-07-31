@@ -4,5 +4,6 @@ export * from "./clock.js";
 export * from "./event-bus.js";
 export * from "./lifecycle-manager.js";
 export * from "./route-resolver.js";
+export * from "./resources.js";
 export * from "./scheduler.js";
 export * from "./state-machine.js";

@@ -1,5 +1,11 @@
 import { DatabaseSync } from "node:sqlite";
-import type { InferenceLifecycleEvent, Recipe, Route } from "@fitz/protocol";
+import type {
+  InferenceLifecycleEvent,
+  InferenceRequestRecord,
+  QueueUpdatedEvent,
+  Recipe,
+  Route,
+} from "@fitz/protocol";
 import { MIGRATIONS } from "./migrations.js";
 
 interface RecipeRow {
@@ -17,6 +23,16 @@ interface RouteRow {
 
 interface EventRow {
   event_json: string;
+}
+
+interface InferenceRequestRow {
+  id: string;
+  route_id: string;
+  status: InferenceRequestRecord["status"];
+  enqueued_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  error_code: string | null;
 }
 
 export class SqliteStore {
@@ -157,6 +173,73 @@ export class SqliteStore {
       .prepare("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM lifecycle_events")
       .get() as { sequence: number };
     return row.sequence;
+  }
+
+  recordQueueEvent(event: QueueUpdatedEvent): void {
+    this.#database
+      .prepare(
+        `INSERT INTO inference_requests (id, route_id, status, enqueued_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(id) DO NOTHING`,
+      )
+      .run(event.data.requestId, event.data.routeId, event.data.status, event.timestamp);
+
+    if (event.data.status === "queued") return;
+    if (event.data.status === "started") {
+      this.#database
+        .prepare(
+          `UPDATE inference_requests
+           SET status = 'started', started_at = COALESCE(started_at, ?)
+           WHERE id = ?`,
+        )
+        .run(event.timestamp, event.data.requestId);
+      return;
+    }
+
+    this.#database
+      .prepare(
+        `UPDATE inference_requests
+         SET status = ?, completed_at = ?, error_code = ?
+         WHERE id = ?`,
+      )
+      .run(
+        event.data.status,
+        event.timestamp,
+        event.data.status === "failed" ? "inference_failed" : null,
+        event.data.requestId,
+      );
+  }
+
+  recoverInterruptedRequests(): number {
+    const now = new Date().toISOString();
+    const result = this.#database
+      .prepare(
+        `UPDATE inference_requests
+         SET status = 'interrupted', completed_at = ?, error_code = 'host_restarted'
+         WHERE status IN ('queued', 'started')`,
+      )
+      .run(now);
+    return Number(result.changes);
+  }
+
+  listInferenceRequests(limit = 100): InferenceRequestRecord[] {
+    const rows = this.#database
+      .prepare(
+        `SELECT id, route_id, status, enqueued_at, started_at, completed_at, error_code
+         FROM inference_requests
+         ORDER BY enqueued_at DESC
+         LIMIT ?`,
+      )
+      .all(limit) as unknown as InferenceRequestRow[];
+    return rows.map((row) => ({
+      id: row.id,
+      routeId: row.route_id,
+      status: row.status,
+      enqueuedAt: row.enqueued_at,
+      ...(row.started_at ? { startedAt: row.started_at } : {}),
+      ...(row.completed_at ? { completedAt: row.completed_at } : {}),
+      ...(row.error_code ? { errorCode: row.error_code } : {}),
+    }));
   }
 
   setSetting(key: string, value: unknown): void {
