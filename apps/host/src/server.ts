@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NInferEngineAdapter, buildCurrentNInferRecipe } from "@fitz/engine-ninfer";
+import { FakeEngineAdapter } from "@fitz/engine-fake";
 import { OpenAICompatibleEngineAdapter } from "@fitz/engine-openai-compatible";
 import { LlamaCppEngineAdapter } from "@fitz/engine-llama-cpp";
 import type { Recipe, Route } from "@fitz/protocol";
@@ -95,7 +96,14 @@ function ninferOptions() {
 }
 
 function engineModeOptions(mode: string) {
-  if (mode === "fake") return {};
+  if (mode === "fake") {
+    return {
+      fakeAdapter: new FakeEngineAdapter({
+        loadDelayMs: parseNonNegativeInteger(process.env.FITZ_FAKE_LOAD_DELAY_MS ?? "0", "FITZ_FAKE_LOAD_DELAY_MS"),
+        tokenDelayMs: parseNonNegativeInteger(process.env.FITZ_FAKE_TOKEN_DELAY_MS ?? "0", "FITZ_FAKE_TOKEN_DELAY_MS"),
+      }),
+    };
+  }
   if (mode === "ninfer") return ninferOptions();
   if (mode === "openai-compatible") {
     const recipe = engineRecipe("openai-compatible", {

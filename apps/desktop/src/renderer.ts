@@ -71,6 +71,7 @@ element("context-close").addEventListener("click", () => setContextPanel(false))
 attachButton.addEventListener("click", chooseArtifact);
 addArtifactButton.addEventListener("click", chooseArtifact);
 artifactFile.addEventListener("change", () => void uploadArtifact());
+model.addEventListener("change", () => { routeState.textContent = model.selectedOptions[0]?.textContent ?? "—"; });
 updateButton.addEventListener("click", () => void window.fitz.installUpdate());
 window.fitz.onUpdateStatus((updateStatus) => {
   updateButton.hidden = updateStatus !== "downloaded";
@@ -93,7 +94,6 @@ async function initialize(): Promise<void> {
     for (const card of models.data ?? []) model.add(new Option(card.display_name ?? card.id, card.id));
     engineState.textContent = health.engine?.state ?? "UNLOADED";
     routeState.textContent = model.selectedOptions[0]?.textContent ?? "—";
-    model.addEventListener("change", () => { routeState.textContent = model.selectedOptions[0]?.textContent ?? "—"; });
     setConnection("127.0.0.1:8787", "active");
     setStatus(health.engine?.state ?? "Ready", "idle");
     await loadProjects();
@@ -260,6 +260,7 @@ async function sendPrompt(): Promise<void> {
     const runId = String(response.data.id);
     currentRun = runId;
     lastSequence = 0;
+    engineState.textContent = "QUEUED";
     refreshComposerState();
     await followRun(runId);
   } catch (error) {
@@ -300,7 +301,7 @@ async function followRun(runId: string): Promise<void> {
     }
     for (const event of replay.events ?? []) {
       lastSequence = event.sequence;
-      if (event.type === "run.started") setStatus("Working", "active");
+      if (event.type === "run.started") { setStatus("Working", "active"); engineState.textContent = "WORKING"; }
       if (event.type === "assistant.delta") {
         assistant ??= appendMessage("assistant", "");
         assistant.textContent += event.data.text ?? "";
@@ -310,6 +311,7 @@ async function followRun(runId: string): Promise<void> {
         done = true;
         const success = event.type === "run.completed";
         setStatus(success ? "Ready" : event.type.slice(4), success ? "idle" : "error");
+        engineState.textContent = success || event.type === "run.cancelled" ? "READY" : event.type.slice(4).toUpperCase();
         if (!success && event.data?.error) appendMessage("system", event.data.error);
       }
     }

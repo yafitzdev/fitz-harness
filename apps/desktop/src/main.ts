@@ -7,7 +7,10 @@ import electronUpdater from "electron-updater";
 
 const { autoUpdater } = electronUpdater;
 
-const directory = dirname(fileURLToPath(import.meta.url)); const hostUrl = validateHostUrl(process.env.FITZ_HOST_URL ?? "http://127.0.0.1:8787"); const deviceToken = process.env.FITZ_DEVICE_TOKEN;
+const directory = dirname(fileURLToPath(import.meta.url));
+const localHostPort = commandLineValue("host-port");
+const hostUrl = validateHostUrl(commandLineValue("host-url") ?? (localHostPort ? `http://127.0.0.1:${localHostPort}` : undefined) ?? process.env.FITZ_HOST_URL ?? "http://127.0.0.1:8787");
+const deviceToken = process.env.FITZ_DEVICE_TOKEN;
 
 ipcMain.handle("fitz:request", async (_event, input: unknown) => { if (!isRecord(input)) throw new TypeError("Request must be an object"); const path = validateRequestPath(String(input.path ?? "")); const method = typeof input.method === "string" ? input.method.toUpperCase() : "GET"; if (!["GET", "POST", "PUT", "PATCH", "DELETE"].includes(method)) throw new Error("HTTP method is not allowed"); const responseType = input.responseType === "base64" ? "base64" : "text"; const response = await fetch(new URL(path, hostUrl), { method, headers: { accept: responseType === "base64" ? "*/*" : "application/json", ...(input.body !== undefined ? { "content-type": "application/json" } : {}), ...(deviceToken ? { authorization: `Bearer ${deviceToken}` } : {}) }, ...(input.body !== undefined ? { body: JSON.stringify(input.body) } : {}) }); return { status: response.status, body: responseType === "base64" ? Buffer.from(await response.arrayBuffer()).toString("base64") : await response.text() }; });
 ipcMain.handle("fitz:open-external", async (_event, url: unknown) => { if (typeof url !== "string" || !isAllowedExternalUrl(url)) throw new Error("External URL is not allowed"); await shell.openExternal(url); });
@@ -28,3 +31,4 @@ if (process.env.FITZ_DESKTOP_SMOKE === "1") {
 }
 app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); }); app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
+function commandLineValue(name: string): string | undefined { const prefix = `--${name}=`; return process.argv.find((value) => value.startsWith(prefix))?.slice(prefix.length); }
