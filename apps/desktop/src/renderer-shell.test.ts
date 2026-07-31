@@ -17,6 +17,11 @@ describe("desktop renderer shell", () => {
       "attach",
       "send",
       "add-artifact",
+      "choose-project-folder",
+      "model-toggle",
+      "task-menu-toggle",
+      "rename-task",
+      "archive-task",
       "update",
     ];
     for (const id of actions) {
@@ -28,6 +33,7 @@ describe("desktop renderer shell", () => {
   it("uses accessible dialogs and avoids blocking browser prompts", () => {
     expect(html).toContain('<dialog id="project-dialog"');
     expect(html).toContain('<dialog id="task-dialog"');
+    expect(html).toContain('<dialog id="rename-dialog"');
     expect(renderer).not.toContain("window.prompt(");
     expect(renderer).not.toContain("window.alert(");
   });
@@ -36,6 +42,9 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('event.key === "Enter"');
     expect(renderer).toContain('connectionStatus.addEventListener("click"');
     expect(renderer).toContain("artifactFile.click()");
+    expect(renderer).toContain("window.fitz.chooseFolder()");
+    expect(renderer).toContain('api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" })');
+    expect(renderer).toContain("maxTokens: Number(effort.value)");
     expect(renderer).toContain('api(`/api/v1/agent/runs/${currentRun}`, "DELETE")');
   });
 });

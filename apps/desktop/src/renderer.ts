@@ -15,6 +15,11 @@ const shell = query(".app-shell");
 const projects = element("projects");
 const messages = element("messages");
 const model = element("model") as HTMLSelectElement;
+const effort = element("effort") as HTMLSelectElement;
+const speed = element("speed") as HTMLSelectElement;
+const modelToggle = element("model-toggle") as HTMLButtonElement;
+const modelMenu = element("model-menu");
+const modelSummary = element("model-summary");
 const form = element("composer") as HTMLFormElement;
 const prompt = element("prompt") as HTMLTextAreaElement;
 const status = element("status");
@@ -31,15 +36,24 @@ const contextToggle = element("context-toggle") as HTMLButtonElement;
 const artifacts = element("artifacts");
 const artifactPreview = element("artifact-preview");
 const artifactFile = element("artifact-file") as HTMLInputElement;
+const composerAttachments = element("composer-attachments");
 const addArtifactButton = element("add-artifact") as HTMLButtonElement;
 const updateButton = element("update") as HTMLButtonElement;
 const projectDialog = element("project-dialog") as HTMLDialogElement;
 const projectForm = element("project-form") as HTMLFormElement;
 const projectName = element("project-name") as HTMLInputElement;
+const projectRootPath = element("project-root-path") as HTMLInputElement;
+const projectFolderLabel = element("project-folder-label");
+const chooseProjectFolder = element("choose-project-folder") as HTMLButtonElement;
 const taskDialog = element("task-dialog") as HTMLDialogElement;
 const taskForm = element("task-form") as HTMLFormElement;
 const taskProject = element("task-project") as HTMLSelectElement;
 const taskName = element("task-name") as HTMLInputElement;
+const taskMenuToggle = element("task-menu-toggle") as HTMLButtonElement;
+const taskMenu = element("task-menu");
+const renameDialog = element("rename-dialog") as HTMLDialogElement;
+const renameForm = element("rename-form") as HTMLFormElement;
+const renameTaskName = element("rename-task-name") as HTMLInputElement;
 const toast = element("toast");
 
 void initialize();
@@ -59,6 +73,9 @@ prompt.addEventListener("keydown", (event) => {
 document.addEventListener("keydown", (event) => {
   if (event.ctrlKey && event.key.toLowerCase() === "n") { event.preventDefault(); openTaskDialog(); }
   if (event.ctrlKey && event.key.toLowerCase() === "b") { event.preventDefault(); toggleSidebar(); }
+  if (event.ctrlKey && event.altKey && event.key.toLowerCase() === "r") { event.preventDefault(); openRenameDialog(); }
+  if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "a") { event.preventDefault(); void archiveCurrentTask(); }
+  if (event.key === "Escape") closePopovers();
 });
 
 element("new-project").addEventListener("click", () => openProjectDialog());
@@ -71,7 +88,17 @@ element("context-close").addEventListener("click", () => setContextPanel(false))
 attachButton.addEventListener("click", chooseArtifact);
 addArtifactButton.addEventListener("click", chooseArtifact);
 artifactFile.addEventListener("change", () => void uploadArtifact());
-model.addEventListener("change", () => { routeState.textContent = model.selectedOptions[0]?.textContent ?? "—"; });
+chooseProjectFolder.addEventListener("click", () => void selectProjectFolder());
+model.addEventListener("change", updateModelControls);
+effort.addEventListener("change", updateModelControls);
+speed.addEventListener("change", () => { const route = speed.value === "fast" ? "fast" : "default-agent"; if ([...model.options].some((option) => option.value === route)) model.value = route; updateModelControls(); });
+modelToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(modelMenu, modelToggle); });
+taskMenuToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(taskMenu, taskMenuToggle); });
+modelMenu.addEventListener("click", (event) => event.stopPropagation());
+taskMenu.addEventListener("click", (event) => event.stopPropagation());
+element("rename-task").addEventListener("click", openRenameDialog);
+element("archive-task").addEventListener("click", () => void archiveCurrentTask());
+renameForm.addEventListener("submit", (event) => { event.preventDefault(); void renameCurrentTask(); });
 updateButton.addEventListener("click", () => void window.fitz.installUpdate());
 window.fitz.onUpdateStatus((updateStatus) => {
   updateButton.hidden = updateStatus !== "downloaded";
@@ -84,6 +111,7 @@ for (const closeButton of document.querySelectorAll<HTMLElement>("[data-close-di
     dialog?.close();
   });
 }
+document.addEventListener("click", closePopovers);
 
 async function initialize(): Promise<void> {
   try {
@@ -92,6 +120,7 @@ async function initialize(): Promise<void> {
     const [health, models] = await Promise.all([api("/health"), api("/v1/models")]);
     model.replaceChildren();
     for (const card of models.data ?? []) model.add(new Option(card.display_name ?? card.id, card.id));
+    updateModelControls();
     engineState.textContent = health.engine?.state ?? "UNLOADED";
     routeState.textContent = model.selectedOptions[0]?.textContent ?? "—";
     setConnection("127.0.0.1:8787", "active");
@@ -112,7 +141,7 @@ async function loadProjects(preferredProject?: string, preferredSession?: string
   sessionsByProject.clear();
   await Promise.all(projectRecords.map(async (project) => {
     const sessions = await api(`/api/v1/projects/${project.id}/sessions`);
-    sessionsByProject.set(project.id, sessions.data ?? []);
+    sessionsByProject.set(project.id, (sessions.data ?? []).filter((session: Json) => session.status !== "archived"));
   }));
 
   if (preferredProject && projectRecords.some((project) => project.id === preferredProject)) currentProject = preferredProject;
@@ -194,6 +223,9 @@ async function selectSession(id: string, rerender = true): Promise<void> {
 function openProjectDialog(afterCreateTask = false): void {
   pendingTaskAfterProject = afterCreateTask;
   projectForm.reset();
+  projectRootPath.value = "";
+  projectFolderLabel.textContent = "Add a folder Fitz can read and edit";
+  chooseProjectFolder.classList.remove("has-folder");
   projectDialog.showModal();
   projectName.focus();
 }
@@ -212,7 +244,7 @@ async function createProject(): Promise<void> {
   if (!name) return;
   setFormBusy(projectForm, true);
   try {
-    const response = await api("/api/v1/projects", "POST", { name });
+    const response = await api("/api/v1/projects", "POST", { name, ...(projectRootPath.value ? { rootPath: projectRootPath.value } : {}) });
     projectDialog.close();
     await loadProjects(response.data.id);
     showToast(`Created ${name}`);
@@ -241,6 +273,74 @@ async function createSession(): Promise<void> {
   }
 }
 
+async function selectProjectFolder(): Promise<void> {
+  const folder = await window.fitz.chooseFolder();
+  if (!folder) return;
+  projectRootPath.value = folder;
+  projectFolderLabel.textContent = folder;
+  chooseProjectFolder.classList.add("has-folder");
+  if (!projectName.value.trim()) projectName.value = folder.split(/[\\/]/).filter(Boolean).at(-1) ?? "Project";
+}
+
+function openRenameDialog(): void {
+  closePopovers();
+  const session = currentSessionRecord();
+  if (!session) return;
+  renameTaskName.value = session.title;
+  renameDialog.showModal();
+  renameTaskName.select();
+}
+
+async function renameCurrentTask(): Promise<void> {
+  const title = renameTaskName.value.trim();
+  if (!currentSession || !currentProject || !title) return;
+  setFormBusy(renameForm, true);
+  try {
+    await api(`/api/v1/sessions/${currentSession}`, "PATCH", { title });
+    renameDialog.close();
+    await loadProjects(currentProject, currentSession);
+    showToast(`Renamed to ${title}`);
+  } catch (error) { showToast(errorMessage(error)); }
+  finally { setFormBusy(renameForm, false); }
+}
+
+async function archiveCurrentTask(): Promise<void> {
+  closePopovers();
+  const session = currentSessionRecord();
+  if (!session || !currentProject) return;
+  try {
+    await api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" });
+    currentSession = undefined;
+    await loadProjects(currentProject);
+    showToast(`Archived ${session.title}`);
+  } catch (error) { showToast(errorMessage(error)); }
+}
+
+function currentSessionRecord(): Json | undefined {
+  return currentProject ? (sessionsByProject.get(currentProject) ?? []).find((session) => session.id === currentSession) : undefined;
+}
+
+function updateModelControls(): void {
+  routeState.textContent = model.selectedOptions[0]?.textContent ?? "—";
+  const effortLabel = effort.selectedOptions[0]?.textContent ?? "Medium";
+  modelSummary.textContent = `${model.selectedOptions[0]?.textContent ?? "Model"} · ${effortLabel}`;
+  speed.value = model.value === "fast" ? "fast" : "standard";
+}
+
+function togglePopover(popover: HTMLElement, toggle: HTMLButtonElement): void {
+  const opening = popover.hidden;
+  closePopovers();
+  popover.hidden = !opening;
+  toggle.setAttribute("aria-expanded", String(opening));
+}
+
+function closePopovers(): void {
+  modelMenu.hidden = true;
+  taskMenu.hidden = true;
+  modelToggle.setAttribute("aria-expanded", "false");
+  taskMenuToggle.setAttribute("aria-expanded", "false");
+}
+
 async function sendPrompt(): Promise<void> {
   const content = prompt.value.trim();
   if (!content) return;
@@ -254,6 +354,7 @@ async function sendPrompt(): Promise<void> {
   try {
     const response = await api("/api/v1/agent/runs", "POST", {
       model: model.value,
+      maxTokens: Number(effort.value),
       sessionId: currentSession,
       messages: [{ role: "user", content }],
     });
@@ -321,6 +422,8 @@ async function followRun(runId: string): Promise<void> {
 
 async function loadArtifacts(): Promise<void> {
   artifacts.replaceChildren();
+  composerAttachments.replaceChildren();
+  composerAttachments.hidden = true;
   artifactPreview.replaceChildren(panelEmpty("Select an artifact to preview it"));
   if (!currentSession) { artifacts.append(panelEmpty("Artifacts appear with a task")); return; }
   const response = await api(`/api/v1/sessions/${currentSession}/artifacts`);
@@ -330,7 +433,12 @@ async function loadArtifacts(): Promise<void> {
     const name = document.createElement("span"); name.textContent = artifact.name;
     const size = document.createElement("small"); size.textContent = formatBytes(artifact.byteSize);
     value.append(name, size); value.addEventListener("click", () => void previewArtifact(artifact, value)); artifacts.append(value);
+    const chip = document.createElement("button"); chip.type = "button"; chip.className = "attachment-chip";
+    const chipName = document.createElement("span"); chipName.textContent = artifact.name;
+    const chipSize = document.createElement("small"); chipSize.textContent = formatBytes(artifact.byteSize);
+    chip.append(chipName, chipSize); chip.addEventListener("click", () => { setContextPanel(true); void previewArtifact(artifact, value); }); composerAttachments.append(chip);
   }
+  composerAttachments.hidden = composerAttachments.childElementCount === 0;
 }
 
 function chooseArtifact(): void {
@@ -408,6 +516,9 @@ function refreshComposerState(): void {
   const ready = Boolean(currentSession && model.value);
   prompt.disabled = !ready || Boolean(currentRun);
   model.disabled = model.options.length === 0 || Boolean(currentRun);
+  effort.disabled = Boolean(currentRun);
+  speed.disabled = model.options.length === 0 || Boolean(currentRun);
+  modelToggle.disabled = model.options.length === 0 || Boolean(currentRun);
   attachButton.disabled = !currentSession || Boolean(currentRun);
   addArtifactButton.disabled = !currentSession;
   sendButton.classList.toggle("running", Boolean(currentRun));
@@ -421,6 +532,7 @@ function updateTitles(): void {
   const session = currentProject ? (sessionsByProject.get(currentProject) ?? []).find((item) => item.id === currentSession) : undefined;
   projectTitle.textContent = project?.name ?? "Fitz Codex";
   taskTitle.textContent = session?.title ?? "";
+  taskMenuToggle.hidden = !session;
 }
 
 function setContextPanel(open: boolean): void {

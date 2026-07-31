@@ -50,6 +50,13 @@
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path><path d="M3.5 6.5V4h5l1.5 2"></path></svg>
             <strong id="project-title">Fitz Codex</strong>
             <span id="task-title"></span>
+            <button id="task-menu-toggle" class="icon-button task-menu-toggle no-drag" type="button" title="Task actions" aria-label="Task actions" aria-expanded="false" hidden>
+              <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="5" cy="10" r="1"></circle><circle cx="10" cy="10" r="1"></circle><circle cx="15" cy="10" r="1"></circle></svg>
+            </button>
+            <div id="task-menu" class="popover task-menu no-drag" hidden>
+              <button id="rename-task" type="button"><span>Rename task</span><kbd>Ctrl+Alt+R</kbd></button>
+              <button id="archive-task" type="button"><span>Archive task</span><kbd>Ctrl+Shift+A</kbd></button>
+            </div>
           </div>
           <div class="header-actions no-drag">
             <button id="update" class="quiet-button" type="button" hidden>Restart to update</button>
@@ -63,6 +70,7 @@
 
         <div class="composer-dock">
           <form id="composer" class="composer-card">
+            <div id="composer-attachments" class="composer-attachments" hidden></div>
             <textarea id="prompt" rows="1" placeholder="Ask Fitz to build, debug, or explain…" aria-label="Message" disabled></textarea>
             <div class="composer-toolbar">
               <div class="composer-tools">
@@ -72,7 +80,14 @@
                 <span class="mode-pill"><span class="mode-dot"></span> Local workspace</span>
               </div>
               <div class="composer-controls">
-                <select id="model" aria-label="Model route" disabled></select>
+                <div class="model-picker">
+                  <button id="model-toggle" class="model-toggle" type="button" aria-label="Model settings" aria-expanded="false" disabled><span id="model-summary">Model</span><span>⌄</span></button>
+                  <div id="model-menu" class="popover model-menu" hidden>
+                    <label><span>Model</span><select id="model" aria-label="Model route" disabled></select></label>
+                    <label><span>Effort</span><select id="effort" aria-label="Effort"><option value="1024">Low</option><option value="4096" selected>Medium</option><option value="8192">High</option></select></label>
+                    <label><span>Speed</span><select id="speed" aria-label="Speed"><option value="standard">Standard</option><option value="fast">Fast</option></select></label>
+                  </div>
+                </div>
                 <span id="status" class="run-status" data-state="loading">Connecting</span>
                 <button id="send" class="send-button" type="submit" title="Send message" aria-label="Send message" disabled>
                   <svg class="send-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15V5M6 9l4-4 4 4"></path></svg>
@@ -114,9 +129,11 @@
 
     <dialog id="project-dialog" class="modal">
       <form id="project-form">
-        <div class="modal-heading"><div><small>New workspace</small><h2>Create a project</h2></div><button class="icon-button" type="button" data-close-dialog="project-dialog" aria-label="Close"><svg viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15"></path></svg></button></div>
-        <label>Project name<input id="project-name" name="name" autocomplete="off" placeholder="e.g. Fitz Codex" required maxlength="80"></label>
-        <p class="form-help">Projects group related tasks and their canonical transcripts.</p>
+        <div class="modal-heading"><div><h2>Create project</h2></div><button class="icon-button" type="button" data-close-dialog="project-dialog" aria-label="Close"><svg viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15"></path></svg></button></div>
+        <label class="project-name-field"><span class="input-icon"><svg viewBox="0 0 20 20"><path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path></svg></span><input id="project-name" name="name" autocomplete="off" placeholder="Project name" required maxlength="80"></label>
+        <label>Source folder</label>
+        <button id="choose-project-folder" class="folder-picker" type="button"><svg viewBox="0 0 20 20"><path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path><path d="M13 12h5M15.5 9.5v5"></path></svg><span id="project-folder-label">Add a folder Fitz can read and edit</span></button>
+        <input id="project-root-path" name="rootPath" type="hidden">
         <div class="modal-actions"><button class="quiet-button" type="button" data-close-dialog="project-dialog">Cancel</button><button class="primary-button" type="submit">Create project</button></div>
       </form>
     </dialog>
@@ -127,6 +144,14 @@
         <label>Project<select id="task-project" name="project" required></select></label>
         <label>Task title<input id="task-name" name="title" autocomplete="off" placeholder="What are you working on?" required maxlength="120"></label>
         <div class="modal-actions"><button class="quiet-button" type="button" data-close-dialog="task-dialog">Cancel</button><button class="primary-button" type="submit">Create task</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="rename-dialog" class="modal compact-modal">
+      <form id="rename-form">
+        <div class="modal-heading"><div><h2>Rename task</h2></div><button class="icon-button" type="button" data-close-dialog="rename-dialog" aria-label="Close"><svg viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15"></path></svg></button></div>
+        <label>Task title<input id="rename-task-name" autocomplete="off" required maxlength="120"></label>
+        <div class="modal-actions"><button class="quiet-button" type="button" data-close-dialog="rename-dialog">Cancel</button><button class="primary-button" type="submit">Rename</button></div>
       </form>
     </dialog>
 
