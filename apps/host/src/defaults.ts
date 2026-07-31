@@ -1,0 +1,63 @@
+import type { Recipe, Route } from "@fitz/protocol";
+
+const capabilities = {
+  chatCompletions: true,
+  streaming: true,
+  toolCalls: false,
+  responseFormat: false,
+  minP: false,
+  maxConcurrentGenerations: 1,
+} as const;
+
+export const DEFAULT_RECIPES: Recipe[] = [
+  {
+    id: "fake-best",
+    playbookId: "fake-development",
+    displayName: "Fake Best Model",
+    adapter: "fake",
+    modelId: "fake-best-v1",
+    contextTokens: 100_000,
+    capabilities,
+    lifecycle: {
+      loadPolicy: "onDemand",
+      evictionPolicy: "idle-ttl",
+      idleTtlSeconds: 60,
+      minimumResidencySeconds: 1,
+    },
+    configuration: {},
+  },
+  {
+    id: "fake-fast",
+    playbookId: "fake-development",
+    displayName: "Fake Fast Model",
+    adapter: "fake",
+    modelId: "fake-fast-v1",
+    contextTokens: 100_000,
+    capabilities,
+    lifecycle: {
+      loadPolicy: "onDemand",
+      evictionPolicy: "idle-ttl",
+      idleTtlSeconds: 30,
+      minimumResidencySeconds: 1,
+    },
+    configuration: {},
+  },
+];
+
+export const DEFAULT_ROUTES: Route[] = [
+  {
+    id: "default-agent",
+    displayName: "Default Agent",
+    description: "Balanced default route",
+    recipeId: "fake-best",
+    enabled: true,
+    isDefault: true,
+  },
+  {
+    id: "fast",
+    displayName: "Fast",
+    description: "Lower-latency development route",
+    recipeId: "fake-fast",
+    enabled: true,
+  },
+];

@@ -1,0 +1,10 @@
+{
+  "model": "default-agent",
+  "stream": true,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello from the Fitz contract fixture."
+    }
+  ]
+}

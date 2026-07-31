@@ -1,0 +1,26 @@
+import { fileURLToPath, URL } from "node:url";
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  resolve: {
+    alias: {
+      "@fitz/protocol": fileURLToPath(new URL("./packages/protocol/src/index.ts", import.meta.url)),
+      "@fitz/inference-core": fileURLToPath(
+        new URL("./packages/inference-core/src/index.ts", import.meta.url),
+      ),
+      "@fitz/engine-fake": fileURLToPath(
+        new URL("./packages/engine-fake/src/index.ts", import.meta.url),
+      ),
+      "@fitz/engine-ninfer": fileURLToPath(
+        new URL("./packages/engine-ninfer/src/index.ts", import.meta.url),
+      ),
+      "@fitz/storage": fileURLToPath(new URL("./packages/storage/src/index.ts", import.meta.url)),
+    },
+  },
+  test: {
+    environment: "node",
+    include: ["apps/**/*.test.ts", "packages/**/*.test.ts"],
+    testTimeout: 10_000,
+    restoreMocks: true,
+  },
+});

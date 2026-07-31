@@ -1,0 +1,21 @@
+{
+  "name": "@fitz/host",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/server.js",
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@fitz/engine-fake": "workspace:*",
+    "@fitz/engine-ninfer": "workspace:*",
+    "@fitz/inference-core": "workspace:*",
+    "@fitz/protocol": "workspace:*",
+    "@fitz/storage": "workspace:*",
+    "fastify": "^5.11.0"
+  }
+}
