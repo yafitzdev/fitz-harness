@@ -1,8 +1,11 @@
 import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isAllowedExternalUrl, validateHostUrl, validateRequestPath } from "./security.js";
-import { autoUpdater } from "electron-updater";
+import electronUpdater from "electron-updater";
+
+const { autoUpdater } = electronUpdater;
 
 const directory = dirname(fileURLToPath(import.meta.url)); const hostUrl = validateHostUrl(process.env.FITZ_HOST_URL ?? "http://127.0.0.1:8787"); const deviceToken = process.env.FITZ_DEVICE_TOKEN;
 
@@ -13,5 +16,15 @@ ipcMain.handle("fitz:update-check", async () => { if (app.isPackaged) await auto
 function createWindow(): void { const window = new BrowserWindow({ width: 1280, height: 800, minWidth: 860, minHeight: 560, show: false, backgroundColor: "#111317", webPreferences: { preload: join(directory, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } }); window.webContents.setWindowOpenHandler(({ url }) => { if (isAllowedExternalUrl(url)) void shell.openExternal(url); return { action: "deny" }; }); window.webContents.on("will-navigate", (event, url) => { if (url !== window.webContents.getURL()) event.preventDefault(); }); window.once("ready-to-show", () => window.show()); void window.loadFile(join(directory, "renderer", "index.html")); }
 function publishUpdateStatus(status: string): void { for (const window of BrowserWindow.getAllWindows()) window.webContents.send("fitz:update-status", status); }
 autoUpdater.autoDownload = true; autoUpdater.on("checking-for-update", () => publishUpdateStatus("checking")); autoUpdater.on("update-available", () => publishUpdateStatus("available")); autoUpdater.on("update-not-available", () => publishUpdateStatus("current")); autoUpdater.on("update-downloaded", () => publishUpdateStatus("downloaded")); autoUpdater.on("error", () => publishUpdateStatus("error"));
-await app.whenReady(); createWindow(); if (app.isPackaged) void autoUpdater.checkForUpdates().catch(() => undefined); app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); }); app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
+await app.whenReady();
+if (process.env.FITZ_DESKTOP_SMOKE === "1") {
+  if (process.env.FITZ_DESKTOP_SMOKE_OUTPUT) {
+    writeFileSync(process.env.FITZ_DESKTOP_SMOKE_OUTPUT, "FITZ_DESKTOP_SMOKE_OK\n", { encoding: "utf8", flag: "wx" });
+  }
+  app.quit();
+} else {
+  createWindow();
+  if (app.isPackaged) void autoUpdater.checkForUpdates().catch(() => undefined);
+}
+app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); }); app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
