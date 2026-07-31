@@ -16,6 +16,7 @@ const reserveVramMiB = parseNonNegativeInteger(
   process.env.FITZ_RESERVE_VRAM_MIB ?? "2048",
   "FITZ_RESERVE_VRAM_MIB",
 );
+const authMode = process.env.FITZ_AUTH_MODE === "required" ? "required" : "disabled";
 
 mkdirSync(dirname(databasePath), { recursive: true });
 const engineOptions = engineMode === "ninfer" ? ninferOptions() : {};
@@ -23,9 +24,18 @@ const runtime = createHost({
   store: new SqliteStore(databasePath),
   logger: true,
   resourcePolicy: { reserveVramMiB },
+  authMode,
+  ...(authMode === "required" ? { authPepper: requiredEnvironment("FITZ_AUTH_PEPPER") } : {}),
   ...engineOptions,
   ...(process.env.FITZ_ADMIN_TOKEN ? { adminToken: process.env.FITZ_ADMIN_TOKEN } : {}),
 });
+
+if (authMode === "required" && runtime.store.listUsers().length === 0) {
+  const bootstrapToken = requiredEnvironment("FITZ_BOOTSTRAP_ADMIN_TOKEN");
+  const administrator = runtime.security!.createUser("Bootstrap Administrator", "administrator");
+  runtime.security!.issueDevice(administrator.id, "Bootstrap Device", bootstrapToken);
+  runtime.security!.audit("security.bootstrapped", administrator.id, "user", administrator.id);
+}
 
 await runtime.app.listen({ host, port });
 
@@ -42,6 +52,8 @@ function parseNonNegativeInteger(value: string, name: string): number {
   if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`Invalid ${name}: ${value}`);
   return parsed;
 }
+
+function requiredEnvironment(name: string): string { const value = process.env[name]; if (!value) throw new Error(`${name} is required`); return value; }
 
 function ninferOptions() {
   const recipes = [

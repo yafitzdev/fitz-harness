@@ -15,6 +15,7 @@ export default defineConfig({
         new URL("./packages/engine-ninfer/src/index.ts", import.meta.url),
       ),
       "@fitz/storage": fileURLToPath(new URL("./packages/storage/src/index.ts", import.meta.url)),
+      "@fitz/security": fileURLToPath(new URL("./packages/security/src/index.ts", import.meta.url)),
       "@fitz/observability": fileURLToPath(
         new URL("./packages/observability/src/index.ts", import.meta.url),
       ),

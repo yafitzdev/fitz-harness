@@ -16,6 +16,7 @@
     "@fitz/inference-core": "workspace:*",
     "@fitz/observability": "workspace:*",
     "@fitz/protocol": "workspace:*",
+    "@fitz/security": "workspace:*",
     "@fitz/storage": "workspace:*",
     "fastify": "^5.11.0"
   }

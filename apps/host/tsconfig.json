@@ -15,5 +15,6 @@
     { "path": "../../packages/engine-ninfer" },
     { "path": "../../packages/observability" },
     { "path": "../../packages/storage" }
+    ,{ "path": "../../packages/security" }
   ]
 }

@@ -83,4 +83,16 @@ describe("SqliteStore", () => {
     ]);
     store.close();
   });
+
+  it("persists users, grants, quotas, devices, and audit records", () => {
+    const store = SqliteStore.memory(); const now = new Date(0).toISOString();
+    store.createUser({ id: "user-1", displayName: "Admin", role: "administrator", status: "active", createdAt: now, updatedAt: now });
+    store.createDevice({ id: "device-1", userId: "user-1", name: "Workstation", createdAt: now }, "hashed-token");
+    store.replaceUserRouteGrants("user-1", ["fast"]);
+    const quota = { maxRequestsPerMinute: 10, maxPromptChars: 100, maxOutputTokens: 20, maxQueueDepth: 2 }; store.setUserQuota("user-1", quota);
+    store.appendAuditEvent({ id: "audit-1", timestamp: now, actorUserId: "user-1", action: "test", detail: { safe: true } });
+    expect(store.findDeviceByTokenHash("hashed-token")?.user.role).toBe("administrator");
+    expect(store.listDevices("user-1")[0]).not.toHaveProperty("tokenHash");
+    expect(store.listUserRouteGrants("user-1")).toEqual(["fast"]); expect(store.getUserQuota("user-1")).toEqual(quota); expect(store.listAuditEvents()).toHaveLength(1); store.close();
+  });
 });

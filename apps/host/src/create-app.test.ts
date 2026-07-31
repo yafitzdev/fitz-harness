@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createHost } from "./create-app.js";
+import { SecurityService } from "@fitz/security";
+import { SqliteStore } from "@fitz/storage";
 
 describe("Fitz host", () => {
   it("boots idle and exposes consumer routes instead of recipes", async () => {
@@ -177,5 +179,23 @@ describe("Fitz host", () => {
     );
     expect(diagnostics.body).not.toContain("diagnostic-test-token");
     await runtime.app.close();
+  });
+
+  it("requires device authentication and filters routes by grants", async () => {
+    const store = SqliteStore.memory(); const security = new SecurityService(store, "pepper"); const user = security.createUser("Consumer"); security.setRouteGrants(user.id, ["fast"]); const { token } = security.issueDevice(user.id, "Browser");
+    const runtime = createHost({ store, security, authMode: "required" });
+    const denied = await runtime.app.inject({ method: "GET", url: "/v1/models" });
+    const models = await runtime.app.inject({ method: "GET", url: "/v1/models", headers: { authorization: `Bearer ${token}` } });
+    const forbidden = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", headers: { authorization: `Bearer ${token}` }, payload: { model: "default-agent", stream: false, messages: [{ role: "user", content: "hello" }] } });
+    expect(denied.statusCode).toBe(401); expect(models.json().data.map((model: { id: string }) => model.id)).toEqual(["fast"]); expect(forbidden.statusCode).toBe(403); await runtime.app.close();
+  });
+
+  it("allows administrators to provision and revoke devices with audit history", async () => {
+    const store = SqliteStore.memory(); const security = new SecurityService(store, "pepper"); const admin = security.createUser("Admin", "administrator"); const { token } = security.issueDevice(admin.id, "Console"); const runtime = createHost({ store, security, authMode: "required" }); const headers = { authorization: `Bearer ${token}` };
+    const created = await runtime.app.inject({ method: "POST", url: "/api/v1/management/users", headers, payload: { displayName: "Agent", role: "agent" } });
+    const issued = await runtime.app.inject({ method: "POST", url: `/api/v1/management/users/${created.json().data.id}/devices`, headers, payload: { name: "Laptop" } });
+    expect(created.statusCode).toBe(201); expect(issued.statusCode).toBe(201); expect(issued.json().data.token).toMatch(/^fitz_/);
+    const revoked = await runtime.app.inject({ method: "DELETE", url: `/api/v1/management/devices/${issued.json().data.device.id}`, headers }); const audit = await runtime.app.inject({ method: "GET", url: "/api/v1/management/audit-events", headers });
+    expect(revoked.statusCode).toBe(204); expect(audit.json().data.map((event: { action: string }) => event.action)).toEqual(expect.arrayContaining(["user.created", "device.issued", "device.revoked"])); await runtime.app.close();
   });
 });

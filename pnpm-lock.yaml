@@ -38,6 +38,9 @@ importers:
       '@fitz/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      '@fitz/security':
+        specifier: workspace:*
+        version: link:../../packages/security
       '@fitz/storage':
         specifier: workspace:*
         version: link:../../packages/storage
@@ -76,6 +79,15 @@ importers:
         version: link:../protocol
 
   packages/protocol: {}
+
+  packages/security:
+    dependencies:
+      '@fitz/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@fitz/storage':
+        specifier: workspace:*
+        version: link:../storage
 
   packages/storage:
     dependencies:

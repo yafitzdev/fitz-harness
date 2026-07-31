@@ -19,21 +19,24 @@
   VRAM reserve, exposed through health and management status.
 - Structured HTTP logging with sensitive-header redaction, lifecycle/HTTP metrics, authenticated
   metrics and diagnostic endpoints, and recursive secret redaction for exported diagnostics.
+- Required-auth mode with HMAC-SHA-256 device bearer credentials, durable users and devices,
+  administrator/agent/consumer roles, per-user route grants and quotas, device revocation, audit
+  history, and bootstrap-administrator provisioning.
 - Host APIs:
   - `GET /health`
   - `GET /v1/models`
   - `POST /v1/chat/completions` (streaming SSE and non-streaming)
   - `GET /api/v1/events`
   - basic management status, route update, and instance stop endpoints
-- Optional development administrator-token guard.
+  - administrator user, device, grant, quota, revocation, and audit endpoints
+- Optional development administrator-token guard and production required-auth mode.
 
 ## Intentionally deferred for refinement or later milestones
 
-- NInfer live parity testing and service switchover. The adapter exists but has not touched the live service.
 - Full JSON Schema/OpenAPI generation and exhaustive request compatibility.
-- Multi-user authentication, device pairing, permissions, quotas, and audit policy.
+- Interactive device-pairing exchange, encrypted secret storage, and persistent/distributed rate windows.
 - Native agent event protocol, Pi integration, transcripts, tools, and compaction.
 - Tailscale connectivity.
 - Electron and consumer UI.
-- Production logging, metrics, diagnostics bundles, and secret storage.
+- OS-backed secret storage.
 - Backpressure limits and retained stream replay for active completions.

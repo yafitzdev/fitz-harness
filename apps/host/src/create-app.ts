@@ -25,6 +25,7 @@ import {
   type Route,
 } from "@fitz/protocol";
 import { MetricsRegistry, redactSecrets } from "@fitz/observability";
+import { SecurityPolicyError, SecurityService, type AuthenticatedPrincipal } from "@fitz/security";
 import { SqliteStore } from "@fitz/storage";
 import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
 
@@ -38,6 +39,9 @@ export interface CreateHostOptions {
   resourcePolicy?: Partial<ResourcePolicy>;
   logger?: boolean;
   adminToken?: string;
+  authMode?: "disabled" | "required";
+  authPepper?: string;
+  security?: SecurityService;
 }
 
 export interface HostRuntime {
@@ -48,6 +52,7 @@ export interface HostRuntime {
   lifecycle: LifecycleManager;
   scheduler: InferenceScheduler;
   metrics: MetricsRegistry;
+  security?: SecurityService;
   fakeAdapter?: FakeEngineAdapter;
 }
 
@@ -70,6 +75,8 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     bodyLimit: 2 * 1024 * 1024,
   });
   const store = options.store ?? SqliteStore.memory();
+  const authMode = options.authMode ?? "disabled";
+  const security = options.security ?? (authMode === "required" ? new SecurityService(store, options.authPepper ?? "") : undefined);
   const recoveredInterruptedRequests = store.recoverInterruptedRequests();
   seedDefaults(
     store,
@@ -94,9 +101,15 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   });
   const unsubscribeMetrics = events.subscribe((event) => metrics.observeLifecycleEvent(event));
   const requestStarts = new WeakMap<object, number>();
+  const principals = new WeakMap<object, AuthenticatedPrincipal>();
 
-  app.addHook("onRequest", async (request) => {
+  app.addHook("onRequest", async (request, reply) => {
     requestStarts.set(request, performance.now());
+    if (authMode === "required" && request.url !== "/health") {
+      const principal = security?.authenticate(request.headers.authorization);
+      if (!principal) return reply.code(401).send({ error: "Valid device bearer token required" });
+      principals.set(request, principal);
+    }
   });
   app.addHook("onResponse", async (request, reply) => {
     const startedAt = requestStarts.get(request);
@@ -117,9 +130,12 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     };
   });
 
-  app.get("/v1/models", async (): Promise<ModelListResponse> => ({
+  app.get("/v1/models", async (request): Promise<ModelListResponse> => ({
     object: "list",
-    data: routes.listRoutes().map((route) => ({
+    data: routes.listRoutes().filter((route) => {
+      const principal = principals.get(request);
+      return !principal || security?.authorizeRoute(principal, route.id);
+    }).map((route) => ({
       id: route.id,
       object: "model",
       created: 0,
@@ -134,6 +150,14 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     try {
       body = parseChatCompletionRequest(request.body);
       const resolved = routes.resolve(body.model);
+      const principal = principals.get(request);
+      if (principal && !security?.authorizeRoute(principal, body.model)) {
+        return reply.code(403).send(openAIError(new SecurityPolicyError("Route access denied"), "permission_error"));
+      }
+      if (principal) {
+        const promptChars = body.messages.reduce((total, message) => total + JSON.stringify(message.content).length, 0);
+        security?.enforceQuota(principal, promptChars, body.max_tokens ?? principal.quota.maxOutputTokens, scheduler.queueDepth);
+      }
       if (!resolved.recipe.capabilities.chatCompletions) {
         throw new TypeError(`Route ${body.model} does not support chat completions`);
       }
@@ -151,7 +175,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),
       ...(body.top_p !== undefined ? { topP: body.top_p } : {}),
       ...(body.stop !== undefined ? { stop: body.stop } : {}),
-      ...(body.user !== undefined ? { userId: body.user } : {}),
+      ...(principals.get(request) ? { userId: principals.get(request)!.user.id } : body.user !== undefined ? { userId: body.user } : {}),
     });
 
     if (body.stream === false) {
@@ -215,7 +239,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
 
   app.get(
     "/api/v1/management/status",
-    { preHandler: adminGuard(options.adminToken) },
+    { preHandler: adminGuard(options.adminToken, authMode, principals) },
     async () => {
       const resourceSnapshot = await resources.snapshot();
       return {
@@ -231,7 +255,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
 
   app.get(
     "/api/v1/management/requests",
-    { preHandler: adminGuard(options.adminToken) },
+    { preHandler: adminGuard(options.adminToken, authMode, principals) },
     async (request) => {
       const query = request.query as { limit?: string };
       const limit = Math.min(toNonNegativeInteger(query.limit, 100), 1_000);
@@ -241,13 +265,13 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
 
   app.get(
     "/api/v1/management/metrics",
-    { preHandler: adminGuard(options.adminToken) },
+    { preHandler: adminGuard(options.adminToken, authMode, principals) },
     async () => metrics.snapshot(),
   );
 
   app.get(
     "/api/v1/management/diagnostics",
-    { preHandler: adminGuard(options.adminToken) },
+    { preHandler: adminGuard(options.adminToken, authMode, principals) },
     async () => {
       const resourceSnapshot = await resources.snapshot();
       return redactSecrets({
@@ -276,13 +300,13 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
 
   app.get(
     "/api/v1/management/routes",
-    { preHandler: adminGuard(options.adminToken) },
+    { preHandler: adminGuard(options.adminToken, authMode, principals) },
     async () => ({ data: routes.listRoutes() }),
   );
 
   app.put(
     "/api/v1/management/routes/:routeId",
-    { preHandler: adminGuard(options.adminToken) },
+    { preHandler: adminGuard(options.adminToken, authMode, principals) },
     async (request, reply) => {
       const routeId = (request.params as { routeId: string }).routeId;
       try {
@@ -300,7 +324,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
 
   app.post(
     "/api/v1/management/instances/stop",
-    { preHandler: adminGuard(options.adminToken) },
+    { preHandler: adminGuard(options.adminToken, authMode, principals) },
     async (_request, reply) => {
       try {
         await lifecycle.stop("management-request", "graceful");
@@ -310,6 +334,43 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       }
     },
   );
+
+  const administratorGuard = adminGuard(options.adminToken, authMode, principals);
+  app.get("/api/v1/management/users", { preHandler: administratorGuard }, async () => ({ data: store.listUsers() }));
+  app.post("/api/v1/management/users", { preHandler: administratorGuard }, async (request, reply) => {
+    try {
+      const body = requireRecord(request.body); const user = securityRequired(security).createUser(requireString(body.displayName, "displayName"), parseRole(body.role));
+      security?.audit("user.created", principals.get(request)?.user.id, "user", user.id, { role: user.role }); return reply.code(201).send({ data: user });
+    } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
+  });
+  app.patch("/api/v1/management/users/:userId", { preHandler: administratorGuard }, async (request, reply) => {
+    try {
+      const userId = (request.params as { userId: string }).userId; const body = requireRecord(request.body);
+      const user = securityRequired(security).updateUser(userId, { ...(typeof body.displayName === "string" ? { displayName: body.displayName } : {}), ...(body.role !== undefined ? { role: parseRole(body.role) } : {}), ...(body.status === "active" || body.status === "disabled" ? { status: body.status } : {}) });
+      security?.audit("user.updated", principals.get(request)?.user.id, "user", userId); return { data: user };
+    } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
+  });
+  app.post("/api/v1/management/users/:userId/devices", { preHandler: administratorGuard }, async (request, reply) => {
+    try {
+      const userId = (request.params as { userId: string }).userId; const body = requireRecord(request.body); const issued = securityRequired(security).issueDevice(userId, requireString(body.name, "name"));
+      security?.audit("device.issued", principals.get(request)?.user.id, "device", issued.device.id, { userId }); return reply.code(201).send({ data: issued });
+    } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
+  });
+  app.delete("/api/v1/management/devices/:deviceId", { preHandler: administratorGuard }, async (request, reply) => {
+    const deviceId = (request.params as { deviceId: string }).deviceId; if (!store.revokeDevice(deviceId, new Date().toISOString())) return reply.code(404).send({ error: "Device not found or already revoked" });
+    security?.audit("device.revoked", principals.get(request)?.user.id, "device", deviceId); return reply.code(204).send();
+  });
+  app.put("/api/v1/management/users/:userId/routes", { preHandler: administratorGuard }, async (request, reply) => {
+    try { const userId = (request.params as { userId: string }).userId; const body = requireRecord(request.body); if (!Array.isArray(body.routeIds) || !body.routeIds.every((id) => typeof id === "string")) throw new TypeError("routeIds must be a string array");
+      securityRequired(security).setRouteGrants(userId, body.routeIds); security?.audit("route-grants.updated", principals.get(request)?.user.id, "user", userId, { routeIds: body.routeIds }); return { data: { userId, routeIds: store.listUserRouteGrants(userId) } };
+    } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
+  });
+  app.put("/api/v1/management/users/:userId/quota", { preHandler: administratorGuard }, async (request, reply) => {
+    try { const userId = (request.params as { userId: string }).userId; const body = requireRecord(request.body); const quota = { maxRequestsPerMinute: requireInteger(body.maxRequestsPerMinute), maxPromptChars: requireInteger(body.maxPromptChars), maxOutputTokens: requireInteger(body.maxOutputTokens), maxQueueDepth: requireInteger(body.maxQueueDepth) };
+      securityRequired(security).setQuota(userId, quota); security?.audit("quota.updated", principals.get(request)?.user.id, "user", userId); return { data: quota };
+    } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
+  });
+  app.get("/api/v1/management/audit-events", { preHandler: administratorGuard }, async (request) => { const query = request.query as { limit?: string }; return { data: store.listAuditEvents(Math.min(toNonNegativeInteger(query.limit, 100), 1000)) }; });
 
   app.addHook("onClose", async () => {
     await scheduler.shutdown();
@@ -326,6 +387,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     lifecycle,
     scheduler,
     metrics,
+    ...(security ? { security } : {}),
     ...(fakeAdapter ? { fakeAdapter } : {}),
   };
 }
@@ -396,14 +458,24 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function adminGuard(expectedToken?: string) {
+function adminGuard(expectedToken: string | undefined, authMode: "disabled" | "required", principals: WeakMap<object, AuthenticatedPrincipal>) {
   return async (request: { headers: Record<string, string | string[] | undefined> }, reply: any) => {
+    if (authMode === "required") {
+      if (principals.get(request)?.user.role !== "administrator") return reply.code(403).send({ error: "Administrator authorization required" });
+      return;
+    }
     if (!expectedToken) return;
     if (request.headers["x-fitz-admin-token"] !== expectedToken) {
       return reply.code(403).send({ error: "Administrator authorization required" });
     }
   };
 }
+
+function securityRequired(value: SecurityService | undefined): SecurityService { if (!value) throw new SecurityPolicyError("Authentication is disabled"); return value; }
+function requireRecord(value: unknown): Record<string, unknown> { if (!isRecord(value)) throw new TypeError("Body must be an object"); return value; }
+function requireString(value: unknown, name: string): string { if (typeof value !== "string" || !value.trim()) throw new TypeError(`${name} must be a non-empty string`); return value.trim(); }
+function requireInteger(value: unknown): number { if (!Number.isInteger(value) || (value as number) < 1) throw new TypeError("Quota values must be positive integers"); return value as number; }
+function parseRole(value: unknown): "administrator" | "agent" | "consumer" { if (value === undefined) return "consumer"; if (value === "administrator" || value === "agent" || value === "consumer") return value; throw new TypeError("Invalid role"); }
 
 function toNonNegativeInteger(value: string | undefined, fallback: number): number {
   if (value === undefined) return fallback;
