@@ -20,6 +20,12 @@ export default defineConfig({
       "@fitz/engine-ninfer": fileURLToPath(
         new URL("./packages/engine-ninfer/src/index.ts", import.meta.url),
       ),
+      "@fitz/engine-openai-compatible": fileURLToPath(
+        new URL("./packages/engine-openai-compatible/src/index.ts", import.meta.url),
+      ),
+      "@fitz/engine-llama-cpp": fileURLToPath(
+        new URL("./packages/engine-llama-cpp/src/index.ts", import.meta.url),
+      ),
       "@fitz/storage": fileURLToPath(new URL("./packages/storage/src/index.ts", import.meta.url)),
       "@fitz/security": fileURLToPath(new URL("./packages/security/src/index.ts", import.meta.url)),
       "@fitz/observability": fileURLToPath(

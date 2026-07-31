@@ -58,9 +58,15 @@ importers:
       '@fitz/engine-fake':
         specifier: workspace:*
         version: link:../../packages/engine-fake
+      '@fitz/engine-llama-cpp':
+        specifier: workspace:*
+        version: link:../../packages/engine-llama-cpp
       '@fitz/engine-ninfer':
         specifier: workspace:*
         version: link:../../packages/engine-ninfer
+      '@fitz/engine-openai-compatible':
+        specifier: workspace:*
+        version: link:../../packages/engine-openai-compatible
       '@fitz/inference-core':
         specifier: workspace:*
         version: link:../../packages/inference-core
@@ -121,7 +127,28 @@ importers:
         specifier: workspace:*
         version: link:../protocol
 
+  packages/engine-llama-cpp:
+    dependencies:
+      '@fitz/engine-openai-compatible':
+        specifier: workspace:*
+        version: link:../engine-openai-compatible
+      '@fitz/inference-core':
+        specifier: workspace:*
+        version: link:../inference-core
+      '@fitz/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+
   packages/engine-ninfer:
+    dependencies:
+      '@fitz/inference-core':
+        specifier: workspace:*
+        version: link:../inference-core
+      '@fitz/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+
+  packages/engine-openai-compatible:
     dependencies:
       '@fitz/inference-core':
         specifier: workspace:*

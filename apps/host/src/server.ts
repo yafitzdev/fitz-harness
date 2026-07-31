@@ -2,7 +2,9 @@ import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NInferEngineAdapter, buildCurrentNInferRecipe } from "@fitz/engine-ninfer";
-import type { Route } from "@fitz/protocol";
+import { OpenAICompatibleEngineAdapter } from "@fitz/engine-openai-compatible";
+import { LlamaCppEngineAdapter } from "@fitz/engine-llama-cpp";
+import type { Recipe, Route } from "@fitz/protocol";
 import { SqliteStore } from "@fitz/storage";
 import { createHost } from "./create-app.js";
 import { PiAgentRuntime } from "@fitz/agent-pi";
@@ -20,7 +22,7 @@ const reserveVramMiB = parseNonNegativeInteger(
 const authMode = process.env.FITZ_AUTH_MODE === "required" ? "required" : "disabled";
 
 mkdirSync(dirname(databasePath), { recursive: true });
-const engineOptions = engineMode === "ninfer" ? ninferOptions() : {};
+const engineOptions = engineModeOptions(engineMode);
 const runtime = createHost({
   store: new SqliteStore(databasePath),
   logger: true,
@@ -90,4 +92,49 @@ function ninferOptions() {
     },
   ];
   return { adapters: [new NInferEngineAdapter()], initialRecipes: recipes, initialRoutes: routes };
+}
+
+function engineModeOptions(mode: string) {
+  if (mode === "fake") return {};
+  if (mode === "ninfer") return ninferOptions();
+  if (mode === "openai-compatible") {
+    const recipe = engineRecipe("openai-compatible", {
+      baseUrl: requiredEnvironment("FITZ_OPENAI_BASE_URL"),
+      ...(process.env.FITZ_OPENAI_API_KEY_ENV ? { apiKeyEnv: process.env.FITZ_OPENAI_API_KEY_ENV } : {}),
+      ...(process.env.FITZ_OPENAI_ALLOW_INSECURE_REMOTE === "true" ? { allowInsecureRemote: true } : {}),
+    });
+    return singleEngineOptions(new OpenAICompatibleEngineAdapter(), recipe);
+  }
+  if (mode === "llama-cpp") {
+    const recipe = engineRecipe("llama-cpp", {
+      executable: requiredEnvironment("FITZ_LLAMA_CPP_EXECUTABLE"),
+      modelPath: requiredEnvironment("FITZ_LLAMA_CPP_MODEL"),
+      contextTokens: parsePositiveInteger(process.env.FITZ_MODEL_CONTEXT_TOKENS ?? "32768", "FITZ_MODEL_CONTEXT_TOKENS"),
+      ...(process.env.FITZ_LLAMA_CPP_GPU_LAYERS ? { gpuLayers: parseNonNegativeInteger(process.env.FITZ_LLAMA_CPP_GPU_LAYERS, "FITZ_LLAMA_CPP_GPU_LAYERS") } : {}),
+    });
+    return singleEngineOptions(new LlamaCppEngineAdapter(), recipe);
+  }
+  throw new Error(`Unsupported FITZ_ENGINE_MODE: ${mode}`);
+}
+
+function engineRecipe(adapter: "openai-compatible" | "llama-cpp", configuration: Record<string, unknown>): Recipe {
+  const modelId = process.env.FITZ_MODEL_ID ?? "local-model";
+  const contextTokens = parsePositiveInteger(process.env.FITZ_MODEL_CONTEXT_TOKENS ?? "32768", "FITZ_MODEL_CONTEXT_TOKENS");
+  return {
+    id: `${adapter}-default`, playbookId: adapter, displayName: modelId, adapter, modelId, contextTokens,
+    capabilities: { chatCompletions: true, streaming: true, toolCalls: false, responseFormat: false, minP: false, maxConcurrentGenerations: 1 },
+    lifecycle: { loadPolicy: "onDemand", evictionPolicy: adapter === "openai-compatible" ? "never" : "idle-ttl", idleTtlSeconds: 60, minimumResidencySeconds: 0 },
+    configuration,
+  };
+}
+
+function singleEngineOptions(adapter: NInferEngineAdapter | OpenAICompatibleEngineAdapter | LlamaCppEngineAdapter, recipe: Recipe) {
+  const route: Route = { id: "default-agent", displayName: recipe.displayName, recipeId: recipe.id, enabled: true, isDefault: true };
+  return { adapters: [adapter], initialRecipes: [recipe], initialRoutes: [route] };
+}
+
+function parsePositiveInteger(value: string, name: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`Invalid ${name}: ${value}`);
+  return parsed;
 }

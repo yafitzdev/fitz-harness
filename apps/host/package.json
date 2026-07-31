@@ -18,6 +18,8 @@
     "@fitz/media": "workspace:*",
     "@fitz/engine-fake": "workspace:*",
     "@fitz/engine-ninfer": "workspace:*",
+    "@fitz/engine-openai-compatible": "workspace:*",
+    "@fitz/engine-llama-cpp": "workspace:*",
     "@fitz/inference-core": "workspace:*",
     "@fitz/observability": "workspace:*",
     "@fitz/protocol": "workspace:*",

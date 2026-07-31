@@ -10,6 +10,8 @@
     { "path": "packages/inference-core" },
     { "path": "packages/engine-fake" },
     { "path": "packages/engine-ninfer" },
+    { "path": "packages/engine-openai-compatible" },
+    { "path": "packages/engine-llama-cpp" },
     { "path": "packages/observability" },
     { "path": "packages/storage" },
     { "path": "packages/security" },
