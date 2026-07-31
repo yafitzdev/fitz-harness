@@ -27,6 +27,8 @@
   `after` or `Last-Event-ID`, and interrupted-run recovery after host restart.
 - Fitz-owned agent runtime boundary and an opt-in Pi SDK 0.83.0 adapter using in-memory Pi sessions,
   restricted tool allowlists, event translation, cancellation, and native-run integration.
+- Owner-scoped projects and sessions, ordered canonical transcripts, native run/session binding,
+  user-over-role tool policies, secure-default approval requests, durable decisions, and audit events.
 - Host APIs:
   - `GET /health`
   - `GET /v1/models`
@@ -41,7 +43,7 @@
 
 - Full JSON Schema/OpenAPI generation and exhaustive request compatibility.
 - Interactive device-pairing exchange, encrypted secret storage, and persistent/distributed rate windows.
-- Projects, canonical transcripts, full tool policy/approvals, and compaction.
+- Pi tool execution gating against the durable approval service, and compaction.
 - Tailscale connectivity.
 - Electron and consumer UI.
 - OS-backed secret storage.

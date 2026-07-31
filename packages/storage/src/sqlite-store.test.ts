@@ -101,4 +101,11 @@ describe("SqliteStore", () => {
     store.appendAgentEvent({ protocolVersion: "1", runId: "run-1", sequence: 1, timestamp: now, type: "run.created", data: {} }); expect(store.agentEventsAfter("run-1", 0)).toHaveLength(1); expect(store.getAgentRun("run-1")?.lastSequence).toBe(1);
     expect(store.recoverInterruptedAgentRuns()).toBe(1); expect(store.getAgentRun("run-1")?.status).toBe("interrupted"); store.close();
   });
+
+  it("persists projects, sessions, canonical transcripts, tool policy, and approvals", () => {
+    const store = SqliteStore.memory(); const now = new Date(0).toISOString(); store.createProject({ id: "project-1", name: "Fitz", createdAt: now, updatedAt: now }); store.createSession({ id: "session-1", projectId: "project-1", title: "Build", status: "active", createdAt: now, updatedAt: now });
+    const first = store.appendTranscriptEntry({ id: "entry-1", sessionId: "session-1", kind: "message", role: "user", content: { text: "hello" }, createdAt: now }); const second = store.appendTranscriptEntry({ id: "entry-2", sessionId: "session-1", kind: "message", role: "assistant", content: { text: "hi" }, createdAt: now }); expect([first.sequence, second.sequence]).toEqual([1, 2]); expect(store.transcriptAfter("session-1", 1)).toEqual([second]);
+    store.upsertToolPolicy({ subjectType: "role", subjectId: "consumer", toolName: "bash", decision: "deny", updatedAt: now }); expect(store.resolveToolPolicy(undefined, "consumer", "bash")).toBe("deny"); expect(store.resolveToolPolicy(undefined, "consumer", "read")).toBe("ask");
+    store.createToolApproval({ id: "approval-1", sessionId: "session-1", toolCallId: "call-1", toolName: "read", status: "pending", request: { path: "README.md" }, requestedAt: now }); expect(store.resolveToolApproval("approval-1", "approved", "user-1")).toBe(true); expect(store.getToolApproval("approval-1")?.status).toBe("approved"); store.close();
+  });
 });

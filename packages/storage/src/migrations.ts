@@ -153,4 +153,40 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_agent_events_timestamp ON agent_events(timestamp);
     `,
   },
+  {
+    version: 4,
+    sql: `
+      CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY, owner_user_id TEXT, name TEXT NOT NULL, root_path TEXT,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        owner_user_id TEXT, title TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('active', 'archived')),
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS transcript_entries (
+        id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        sequence INTEGER NOT NULL, kind TEXT NOT NULL, role TEXT, content_json TEXT NOT NULL,
+        created_at TEXT NOT NULL, UNIQUE(session_id, sequence)
+      );
+      CREATE TABLE IF NOT EXISTS tool_policies (
+        subject_type TEXT NOT NULL CHECK (subject_type IN ('role', 'user')), subject_id TEXT NOT NULL,
+        tool_name TEXT NOT NULL, decision TEXT NOT NULL CHECK (decision IN ('allow', 'deny', 'ask')),
+        updated_at TEXT NOT NULL, PRIMARY KEY (subject_type, subject_id, tool_name)
+      );
+      CREATE TABLE IF NOT EXISTS tool_approvals (
+        id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        run_id TEXT, tool_call_id TEXT NOT NULL, tool_name TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied', 'cancelled')),
+        request_json TEXT NOT NULL, requested_at TEXT NOT NULL, resolved_at TEXT,
+        decided_by_user_id TEXT, note TEXT
+      );
+      ALTER TABLE agent_runs ADD COLUMN session_id TEXT REFERENCES sessions(id);
+      CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_user_id, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_transcript_session ON transcript_entries(session_id, sequence);
+      CREATE INDEX IF NOT EXISTS idx_tool_approvals_status ON tool_approvals(status, requested_at);
+    `,
+  },
 ] as const;
