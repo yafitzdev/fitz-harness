@@ -1,5 +1,6 @@
 {
   "name": "@fitz/desktop", "version": "0.0.0", "private": true, "type": "module", "main": "dist/main.js",
   "scripts": { "build": "tsc -b && node scripts/copy-static.mjs", "typecheck": "tsc -b --pretty false", "start": "pnpm build && electron ." },
+  "dependencies": { "@fitz/connectivity": "workspace:*" },
   "devDependencies": { "electron": "43.2.0", "esbuild": "^0.25.0" }
 }

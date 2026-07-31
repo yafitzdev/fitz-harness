@@ -1,0 +1,3 @@
+export interface ReconnectPolicy { initialDelayMs: number; maximumDelayMs: number; multiplier: number; jitter: number }
+export const DEFAULT_RECONNECT_POLICY: ReconnectPolicy = { initialDelayMs: 500, maximumDelayMs: 15_000, multiplier: 1.8, jitter: 0.2 };
+export function reconnectDelay(attempt: number, random = Math.random, policy: ReconnectPolicy = DEFAULT_RECONNECT_POLICY): number { const base = Math.min(policy.maximumDelayMs, policy.initialDelayMs * policy.multiplier ** Math.max(0, attempt)); const factor = 1 + (random() * 2 - 1) * policy.jitter; return Math.max(0, Math.round(base * factor)); }

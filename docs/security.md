@@ -18,3 +18,9 @@ prompt size, output tokens, and queue depth.
 
 `FITZ_ADMIN_TOKEN` remains a development-only compatibility guard when required authentication is
 disabled.
+
+Administrators can issue short-lived, one-use pairing codes through
+`POST /api/v1/management/pairing-codes`. A new client redeems the code without prior authentication
+at `POST /api/v1/pairing/redeem` and receives its device token once. Only the keyed code and token
+hashes are stored. Reusing or redeeming an expired code fails, and device revocation applies on the
+next authenticated request.

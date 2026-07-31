@@ -4,6 +4,7 @@ import type {
   AgentEventEnvelope,
   AgentRunRecord,
   ProjectRecord,
+  PairingCodeRecord,
   SessionRecord,
   ToolApprovalRecord,
   ToolPolicyRecord,
@@ -330,6 +331,9 @@ export class SqliteStore {
     const rows = this.#database.prepare(`SELECT id, timestamp, actor_user_id, action, target_type, target_id, detail_json FROM audit_events ORDER BY timestamp DESC LIMIT ?`).all(limit) as unknown as AuditRow[];
     return rows.map((row) => ({ id: row.id, timestamp: row.timestamp, action: row.action, detail: JSON.parse(row.detail_json) as Record<string, unknown>, ...(row.actor_user_id ? { actorUserId: row.actor_user_id } : {}), ...(row.target_type ? { targetType: row.target_type } : {}), ...(row.target_id ? { targetId: row.target_id } : {}) }));
   }
+
+  createPairingCode(record: PairingCodeRecord, codeHash: string): void { this.#database.prepare(`INSERT INTO pairing_codes (id, code_hash, intended_role, expires_at, consumed_at, created_at) VALUES (?, ?, ?, ?, ?, ?)`).run(record.id, codeHash, record.intendedRole, record.expiresAt, record.consumedAt ?? null, record.createdAt); }
+  consumePairingCode(codeHash: string, timestamp: string): UserRecord["role"] | undefined { const row = this.#database.prepare(`UPDATE pairing_codes SET consumed_at = ? WHERE code_hash = ? AND consumed_at IS NULL AND expires_at > ? RETURNING intended_role`).get(timestamp, codeHash, timestamp) as { intended_role: UserRecord["role"] } | undefined; return row?.intended_role; }
 
   createAgentRun(run: AgentRunRecord): void {
     this.#database.prepare(`INSERT INTO agent_runs (id, route_id, owner_user_id, session_id, status, created_at, updated_at, last_sequence, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(run.id, run.routeId, run.ownerUserId ?? null, run.sessionId ?? null, run.status, run.createdAt, run.updatedAt, run.lastSequence, run.error ?? null);

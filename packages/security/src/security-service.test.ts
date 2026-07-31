@@ -21,4 +21,6 @@ describe("SecurityService", () => {
     security.enforceQuota(principal, 5, 2, 0);
     expect(() => security.enforceQuota(principal, 5, 2, 0)).toThrow(SecurityPolicyError); store.close();
   });
+
+  it("redeems a hashed one-time pairing code", () => { const store = SqliteStore.memory(); const security = new SecurityService(store, "pepper"); const pairing = security.issuePairingCode("agent", 60); expect(store.consumePairingCode(pairing.code, new Date().toISOString())).toBeUndefined(); const redeemed = security.redeemPairingCode(pairing.code, "Remote", "Phone"); expect(redeemed.user.role).toBe("agent"); expect(security.authenticate(`Bearer ${redeemed.token}`)?.device.id).toBe(redeemed.device.id); expect(() => security.redeemPairingCode(pairing.code, "Again", "Again")).toThrow("already used"); store.close(); });
 });

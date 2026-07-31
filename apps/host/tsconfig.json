@@ -12,6 +12,7 @@
     { "path": "../../packages/agent-core" },
     { "path": "../../packages/agent-pi" },
     { "path": "../../packages/context" },
+    { "path": "../../packages/connectivity" },
     { "path": "../../packages/protocol" },
     { "path": "../../packages/inference-core" },
     { "path": "../../packages/engine-fake" },

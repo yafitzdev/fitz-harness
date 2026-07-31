@@ -22,6 +22,10 @@ importers:
         version: 4.1.10(@opentelemetry/api@1.9.0)(@types/node@26.1.2)(vite@8.2.0(@types/node@26.1.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0))
 
   apps/desktop:
+    dependencies:
+      '@fitz/connectivity':
+        specifier: workspace:*
+        version: link:../../packages/connectivity
     devDependencies:
       electron:
         specifier: 43.2.0
@@ -38,6 +42,9 @@ importers:
       '@fitz/agent-pi':
         specifier: workspace:*
         version: link:../../packages/agent-pi
+      '@fitz/connectivity':
+        specifier: workspace:*
+        version: link:../../packages/connectivity
       '@fitz/context':
         specifier: workspace:*
         version: link:../../packages/context
@@ -83,6 +90,8 @@ importers:
       '@fitz/protocol':
         specifier: workspace:*
         version: link:../protocol
+
+  packages/connectivity: {}
 
   packages/context:
     dependencies:

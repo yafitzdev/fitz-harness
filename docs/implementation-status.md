@@ -37,6 +37,8 @@
   CommonJS preload.
 - Initial desktop UI with project/task sidebar, transcript view, composer, route selector, lifecycle
   feedback, native run polling/replay, and project/session creation.
+- Tailscale state detection and opt-in private HTTPS Serve management, one-time hashed pairing codes,
+  pairing redemption into revocable device credentials, and bounded desktop reconnect/backoff.
 - Host APIs:
   - `GET /health`
   - `GET /v1/models`
@@ -52,7 +54,7 @@
 - Full JSON Schema/OpenAPI generation and exhaustive request compatibility.
 - Interactive device-pairing exchange, encrypted secret storage, and persistent/distributed rate windows.
 - Pi tool execution gating against the durable approval service and model-assisted summary quality.
-- Tailscale connectivity.
+- Tailscale installation/onboarding on the target machine and live tailnet validation.
 - Desktop UX refinement, richer event rendering, and accessibility polish.
 - OS-backed secret storage.
 - Backpressure limits and retained stream replay for active completions.
