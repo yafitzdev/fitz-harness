@@ -2,11 +2,13 @@ import { reconnectDelay } from "@fitz/connectivity/reconnect";
 type Json = Record<string, any>; let currentProject: string | undefined; let currentSession: string | undefined; let lastSequence = 0;
 const projects = element("projects"); const sessions = element("sessions"); const messages = element("messages"); const model = element("model") as HTMLSelectElement; const form = element("composer") as HTMLFormElement; const prompt = element("prompt") as HTMLTextAreaElement; const status = element("status");
 const artifacts = element("artifacts"); const artifactPreview = element("artifact-preview"); const artifactFile = element("artifact-file") as HTMLInputElement;
+const updateButton = element("update") as HTMLButtonElement;
 
 void initialize();
 form.addEventListener("submit", (event) => { event.preventDefault(); void sendPrompt(); });
 element("new-project").addEventListener("click", () => void createProject()); element("new-session").addEventListener("click", () => void createSession());
 element("add-artifact").addEventListener("click", () => artifactFile.click()); artifactFile.addEventListener("change", () => void uploadArtifact());
+updateButton.addEventListener("click", () => void window.fitz.installUpdate()); window.fitz.onUpdateStatus((updateStatus) => { updateButton.hidden = updateStatus !== "downloaded"; updateButton.textContent = "Restart to update"; });
 
 async function initialize(): Promise<void> { try { setStatus("Connecting…", "loading"); const [health, models] = await Promise.all([api("/health"), api("/v1/models")]); for (const card of models.data ?? []) model.add(new Option(card.display_name ?? card.id, card.id)); setStatus(health.engine?.state ?? "UNLOADED", "idle"); await loadProjects(); } catch (error) { setStatus(errorMessage(error), "error"); } }
 async function loadProjects(): Promise<void> { const response = await api("/api/v1/projects"); projects.replaceChildren(); for (const project of response.data ?? []) projects.append(button(project.name, () => selectProject(project.id))); if (!currentProject && response.data?.[0]) await selectProject(response.data[0].id); }

@@ -1,0 +1,32 @@
+name: Windows package
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths: ["apps/desktop/**", "apps/host/**", "packages/**", "scripts/windows/**", "pnpm-lock.yaml"]
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 11.9.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22.23.2, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm smoke
+      - run: pnpm host:pack:win
+      - run: pnpm host:smoke:packaged
+      - run: pnpm --filter @fitz/desktop pack:win
+      - name: Smoke packaged executable
+        run: pnpm desktop:smoke:packaged
+      - run: pnpm --filter @fitz/desktop dist:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fitz-codex-windows
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.yml
+            release/*.zip

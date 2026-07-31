@@ -16,7 +16,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -b --pretty false",
-    "check": "pnpm typecheck && pnpm test"
+    "check": "pnpm typecheck && pnpm test",
+    "desktop:pack:win": "pnpm --filter @fitz/desktop pack:win",
+    "host:pack:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/package-host.ps1"
+    ,"host:smoke:packaged": "node scripts/smoke-packaged-host.mjs"
+    ,"desktop:smoke:packaged": "node scripts/smoke-packaged-desktop.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

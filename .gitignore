@@ -8,6 +8,7 @@ coverage/
 .env.*
 !.env.example
 data/
+release/
 tmp/
 .DS_Store
 Thumbs.db

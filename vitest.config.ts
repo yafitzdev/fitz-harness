@@ -29,7 +29,8 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["apps/**/*.test.ts", "packages/**/*.test.ts"],
+    include: ["apps/{desktop,host}/src/**/*.test.ts", "packages/*/src/**/*.test.ts"],
+    exclude: ["**/release/**"],
     testTimeout: 10_000,
     restoreMocks: true,
   },

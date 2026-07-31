@@ -1,6 +1,7 @@
 {
-  "name": "@fitz/desktop", "version": "0.0.0", "private": true, "type": "module", "main": "dist/main.js",
-  "scripts": { "build": "tsc -b && node scripts/copy-static.mjs", "typecheck": "tsc -b --pretty false", "start": "pnpm build && electron ." },
-  "dependencies": { "@fitz/connectivity": "workspace:*" },
-  "devDependencies": { "electron": "43.2.0", "esbuild": "^0.25.0" }
+  "name": "@fitz/desktop", "version": "0.0.0", "description": "Fitz Codex local-first agent desktop", "author": "Fitz Codex", "private": true, "type": "module", "main": "dist/bootstrap.cjs",
+  "scripts": { "build": "tsc -b && node scripts/copy-static.mjs", "typecheck": "tsc -b --pretty false", "start": "pnpm build && electron .", "pack:win": "pnpm build && electron-builder --win dir --publish never", "dist:win": "pnpm build && electron-builder --win nsis --publish never" },
+  "dependencies": { "@fitz/connectivity": "workspace:*", "electron-updater": "6.8.9" },
+  "devDependencies": { "electron": "43.2.0", "electron-builder": "26.15.3", "esbuild": "^0.25.0" },
+  "build": { "appId": "dev.yafitz.fitzcodex", "productName": "Fitz Codex", "asar": true, "files": ["dist/**/*", "package.json"], "directories": { "output": "release" }, "artifactName": "Fitz-Codex-${version}-${arch}.${ext}", "win": { "target": [{ "target": "nsis", "arch": ["x64"] }] }, "nsis": { "oneClick": false, "perMachine": false, "allowElevation": true, "createDesktopShortcut": true, "createStartMenuShortcut": true }, "publish": { "provider": "github", "owner": "yafitzdev", "repo": "fitz-codex" } }
 }

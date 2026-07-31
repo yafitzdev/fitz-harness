@@ -6,3 +6,4 @@ await build({ entryPoints: [fileURLToPath(new URL("../src/renderer.ts", import.m
 mkdirSync(new URL("../dist/renderer/", import.meta.url), { recursive: true });
 cpSync(new URL("../src/renderer/index.html", import.meta.url), new URL("../dist/renderer/index.html", import.meta.url));
 cpSync(new URL("../src/renderer/styles.css", import.meta.url), new URL("../dist/renderer/styles.css", import.meta.url));
+cpSync(new URL("../src/bootstrap.cjs", import.meta.url), new URL("../dist/bootstrap.cjs", import.meta.url));

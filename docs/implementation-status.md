@@ -42,6 +42,9 @@
 - Owner-scoped artifact metadata and content storage with SHA-256 integrity metadata and size bounds,
   strict MIME classification, defensive content headers, and a desktop artifact panel with inert text,
   allowlisted media, sandboxed PDF preview, upload, and binary fallback.
+- Windows NSIS desktop packaging, packaged-main smoke mode, GitHub release update checks/downloads,
+  portable host zip with bundled Node runtime, optional user-logon scheduled task scripts, and a
+  Windows CI packaging/smoke workflow.
 - Host APIs:
   - `GET /health`
   - `GET /v1/models`
