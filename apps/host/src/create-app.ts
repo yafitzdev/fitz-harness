@@ -30,6 +30,7 @@ import { SecurityPolicyError, SecurityService, type AuthenticatedPrincipal } fro
 import { SqliteStore } from "@fitz/storage";
 import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
 import { AgentRunCoordinator } from "./agent-runs.js";
+import type { AgentRuntime } from "@fitz/agent-core";
 
 export interface CreateHostOptions {
   store?: SqliteStore;
@@ -44,6 +45,7 @@ export interface CreateHostOptions {
   authMode?: "disabled" | "required";
   authPepper?: string;
   security?: SecurityService;
+  agentRuntime?: AgentRuntime;
 }
 
 export interface HostRuntime {
@@ -98,7 +100,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   );
   const lifecycle = new LifecycleManager({ adapters, events, resources });
   const scheduler = new InferenceScheduler(routes, lifecycle, events);
-  const agentRuns = new AgentRunCoordinator(store, scheduler);
+  const agentRuns = new AgentRunCoordinator(store, scheduler, options.agentRuntime);
   const metrics = new MetricsRegistry();
   const unsubscribePersistence = events.subscribe((event) => {
     store.appendLifecycleEvent(event);

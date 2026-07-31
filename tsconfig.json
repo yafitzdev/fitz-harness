@@ -2,6 +2,8 @@
   "files": [],
   "references": [
     { "path": "packages/protocol" },
+    { "path": "packages/agent-core" },
+    { "path": "packages/agent-pi" },
     { "path": "packages/inference-core" },
     { "path": "packages/engine-fake" },
     { "path": "packages/engine-ninfer" },

@@ -5,6 +5,7 @@ import { NInferEngineAdapter, buildCurrentNInferRecipe } from "@fitz/engine-ninf
 import type { Route } from "@fitz/protocol";
 import { SqliteStore } from "@fitz/storage";
 import { createHost } from "./create-app.js";
+import { PiAgentRuntime } from "@fitz/agent-pi";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const defaultDataPath = resolve(moduleDirectory, "../../../data/fitz.db");
@@ -28,6 +29,7 @@ const runtime = createHost({
   ...(authMode === "required" ? { authPepper: requiredEnvironment("FITZ_AUTH_PEPPER") } : {}),
   ...engineOptions,
   ...(process.env.FITZ_ADMIN_TOKEN ? { adminToken: process.env.FITZ_ADMIN_TOKEN } : {}),
+  ...(process.env.FITZ_AGENT_RUNTIME === "pi" ? { agentRuntime: new PiAgentRuntime({ cwd: process.env.FITZ_AGENT_CWD ?? process.cwd() }) } : {}),
 });
 
 if (authMode === "required" && runtime.store.listUsers().length === 0) {

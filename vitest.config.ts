@@ -4,6 +4,8 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   resolve: {
     alias: {
+      "@fitz/agent-core": fileURLToPath(new URL("./packages/agent-core/src/index.ts", import.meta.url)),
+      "@fitz/agent-pi": fileURLToPath(new URL("./packages/agent-pi/src/index.ts", import.meta.url)),
       "@fitz/protocol": fileURLToPath(new URL("./packages/protocol/src/index.ts", import.meta.url)),
       "@fitz/inference-core": fileURLToPath(
         new URL("./packages/inference-core/src/index.ts", import.meta.url),

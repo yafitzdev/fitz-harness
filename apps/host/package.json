@@ -11,6 +11,8 @@
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
+    "@fitz/agent-core": "workspace:*",
+    "@fitz/agent-pi": "workspace:*",
     "@fitz/engine-fake": "workspace:*",
     "@fitz/engine-ninfer": "workspace:*",
     "@fitz/inference-core": "workspace:*",

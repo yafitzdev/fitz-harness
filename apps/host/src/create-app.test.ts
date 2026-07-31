@@ -210,4 +210,10 @@ describe("Fitz host", () => {
     const resumed = await runtime.app.inject({ method: "GET", url: `/api/v1/agent/runs/${runId}/events?after=2` }); expect(resumed.json().events.every((event: { sequence: number }) => event.sequence > 2)).toBe(true);
     const sse = await runtime.app.inject({ method: "GET", url: `/api/v1/agent/runs/${runId}/events`, headers: { accept: "text/event-stream", "last-event-id": "2" } }); expect(sse.statusCode).toBe(200); expect(sse.body).toContain("event: run.completed"); expect(sse.body).not.toContain("id: 1\n"); await runtime.app.close();
   });
+
+  it("routes native runs through a configured agent runtime", async () => {
+    const runtime = createHost({ agentRuntime: { id: "test-agent", run: () => { const events = (async function* () { yield { type: "assistant.delta" as const, text: "agent output" }; yield { type: "tool.started" as const, toolCallId: "tool-1", toolName: "read" }; yield { type: "tool.completed" as const, toolCallId: "tool-1", toolName: "read", result: "ok" }; })(); return Object.assign(events, { cancel: () => undefined }); } } });
+    const created = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", messages: [{ role: "user", content: "use agent" }] } }); const runId = created.json().data.id; await new Promise((resolve) => setTimeout(resolve, 5)); const replay = await runtime.app.inject({ method: "GET", url: `/api/v1/agent/runs/${runId}/events` });
+    expect(replay.json().events.map((event: { type: string }) => event.type)).toEqual(["run.created", "run.started", "assistant.delta", "tool.started", "tool.completed", "run.completed"]); await runtime.app.close();
+  });
 });

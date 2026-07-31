@@ -25,6 +25,8 @@
 - Versioned native agent runs with durable run state and sequenced events, background execution
   across client disconnects, cancellation, owner isolation, JSON event replay, resumable SSE via
   `after` or `Last-Event-ID`, and interrupted-run recovery after host restart.
+- Fitz-owned agent runtime boundary and an opt-in Pi SDK 0.83.0 adapter using in-memory Pi sessions,
+  restricted tool allowlists, event translation, cancellation, and native-run integration.
 - Host APIs:
   - `GET /health`
   - `GET /v1/models`
@@ -39,7 +41,7 @@
 
 - Full JSON Schema/OpenAPI generation and exhaustive request compatibility.
 - Interactive device-pairing exchange, encrypted secret storage, and persistent/distributed rate windows.
-- Pi integration, projects, transcripts, tools, approvals, and compaction.
+- Projects, canonical transcripts, full tool policy/approvals, and compaction.
 - Tailscale connectivity.
 - Electron and consumer UI.
 - OS-backed secret storage.
