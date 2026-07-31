@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 const html = readFileSync(new URL("./renderer/index.html", import.meta.url), "utf8");
 const renderer = readFileSync(new URL("./renderer.ts", import.meta.url), "utf8");
+const main = readFileSync(new URL("./main.ts", import.meta.url), "utf8");
 
 describe("desktop renderer shell", () => {
   it("wires every visible shell action to a renderer interaction", () => {
@@ -39,10 +40,20 @@ describe("desktop renderer shell", () => {
     expect(renderer).not.toContain("window.alert(");
   });
 
+  it("uses one integrated title bar with functional window and application menus", () => {
+    expect(html).toContain('class="app-titlebar drag-region"');
+    expect(html).toContain('data-app-menu="File"');
+    expect(html).toContain('data-window-action="minimize"');
+    expect(main).toContain("frame: false");
+    expect(main).toContain('ipcMain.handle("fitz:show-menu"');
+    expect(main).toContain('ipcMain.handle("fitz:window-action"');
+  });
+
   it("exposes working keyboard, retry, attachment, and cancellation paths", () => {
     expect(renderer).toContain('event.key === "Enter"');
     expect(renderer).toContain('connectionStatus.addEventListener("click"');
     expect(renderer).toContain("artifactFile.click()");
+    expect(renderer).toContain('api(`/api/v1/artifacts/${artifact.id}`, "DELETE")');
     expect(renderer).toContain("window.fitz.chooseFolder()");
     expect(renderer).toContain("window.fitz.openPath(path)");
     expect(renderer).toContain("window.fitz.copyText(value)");

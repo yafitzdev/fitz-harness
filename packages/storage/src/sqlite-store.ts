@@ -375,6 +375,7 @@ export class SqliteStore {
   getArtifact(id: string): ArtifactRecord | undefined { const row = this.#database.prepare(`SELECT id, session_id, name, mime_type, kind, byte_size, sha256, created_at, created_by_user_id, metadata_json FROM artifacts WHERE id = ?`).get(id) as ArtifactRow | undefined; return row ? mapArtifact(row) : undefined; }
   listArtifacts(sessionId: string): ArtifactRecord[] { return (this.#database.prepare(`SELECT id, session_id, name, mime_type, kind, byte_size, sha256, created_at, created_by_user_id, metadata_json FROM artifacts WHERE session_id = ? ORDER BY created_at DESC`).all(sessionId) as unknown as ArtifactRow[]).map(mapArtifact); }
   getArtifactContent(id: string): Uint8Array | undefined { const row = this.#database.prepare(`SELECT content FROM artifacts WHERE id = ?`).get(id) as { content: Uint8Array } | undefined; return row?.content; }
+  deleteArtifact(id: string): boolean { return this.#database.prepare(`DELETE FROM artifacts WHERE id = ?`).run(id).changes > 0; }
 
   setSetting(key: string, value: unknown): void {
     this.#database

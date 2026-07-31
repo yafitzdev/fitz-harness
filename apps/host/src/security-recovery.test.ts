@@ -39,6 +39,7 @@ describe("host security and recovery boundaries", () => {
     for (const [method, url] of [
       ["GET", `/api/v1/sessions/${sessionId}`],
       ["GET", `/api/v1/artifacts/${artifact.json().data.id}/content`],
+      ["DELETE", `/api/v1/artifacts/${artifact.json().data.id}`],
       ["GET", `/api/v1/agent/runs/${run.json().data.id}`],
       ["POST", `/api/v1/tool-approvals/${approval.json().data.id}/decision`],
     ] as const) {

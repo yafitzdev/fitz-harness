@@ -8,14 +8,23 @@
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
+    <header class="app-titlebar drag-region">
+      <div class="titlebar-navigation no-drag">
+        <button id="sidebar-menu" class="titlebar-icon" type="button" title="Collapse sidebar" aria-label="Collapse sidebar">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4" width="14" height="12" rx="2"></rect><path d="M7 4v12"></path></svg>
+        </button>
+        <nav class="app-menu" aria-label="Application menu">
+          <button type="button" data-app-menu="File">File</button><button type="button" data-app-menu="Edit">Edit</button><button type="button" data-app-menu="View">View</button><button type="button" data-app-menu="Help">Help</button>
+        </nav>
+      </div>
+      <div class="window-controls no-drag">
+        <button type="button" data-window-action="minimize" aria-label="Minimize"><svg viewBox="0 0 20 20"><path d="M5 10h10"></path></svg></button>
+        <button type="button" data-window-action="maximize" aria-label="Maximize"><svg viewBox="0 0 20 20"><rect x="5" y="5" width="10" height="10" rx="1"></rect></svg></button>
+        <button class="window-close" type="button" data-window-action="close" aria-label="Close"><svg viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15"></path></svg></button>
+      </div>
+    </header>
     <div class="app-shell">
       <aside class="sidebar" aria-label="Workspace navigation">
-        <div class="brand-row drag-region">
-          <button id="sidebar-menu" class="icon-button no-drag" type="button" title="Collapse sidebar" aria-label="Collapse sidebar">
-            <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4" width="14" height="12" rx="2"></rect><path d="M7 4v12"></path></svg>
-          </button>
-        </div>
-
         <button id="new-session" class="nav-action" type="button">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 15.5 5 12l8.8-8.8a1.4 1.4 0 0 1 2 2L7 14l-3 .5Z"></path><path d="m12.7 4.3 3 3"></path></svg>
           <span>New chat</span>

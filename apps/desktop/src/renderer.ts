@@ -92,6 +92,9 @@ element("new-project").addEventListener("click", () => openProjectDialog());
 element("new-session").addEventListener("click", () => openTaskDialog());
 element("sidebar-menu").addEventListener("click", toggleSidebar);
 element("sidebar-restore").addEventListener("click", toggleSidebar);
+for (const menuButton of document.querySelectorAll<HTMLButtonElement>("[data-app-menu]")) menuButton.addEventListener("click", () => { const rect = menuButton.getBoundingClientRect(); void window.fitz.showMenu(menuButton.dataset.appMenu ?? "", Math.round(rect.left), Math.round(rect.bottom)); });
+for (const windowButton of document.querySelectorAll<HTMLButtonElement>("[data-window-action]")) windowButton.addEventListener("click", () => void window.fitz.windowAction(windowButton.dataset.windowAction as "minimize" | "maximize" | "close"));
+window.fitz.onMenuCommand((command) => { if (command === "new-chat") openTaskDialog(); else if (command === "new-project") openProjectDialog(); else if (command === "toggle-sidebar") toggleSidebar(); else if (command === "toggle-environment") setContextPanel(contextPanel.hasAttribute("hidden")); });
 sidebarResizer.addEventListener("pointerdown", beginSidebarResize);
 sidebarResizer.addEventListener("keydown", resizeSidebarWithKeyboard);
 connectionStatus.addEventListener("click", () => void initialize());
@@ -554,12 +557,19 @@ async function loadArtifacts(): Promise<void> {
     const name = document.createElement("span"); name.textContent = artifact.name;
     const size = document.createElement("small"); size.textContent = formatBytes(artifact.byteSize);
     value.append(name, size); value.addEventListener("click", () => void previewArtifact(artifact, value)); artifacts.append(value);
-    const chip = document.createElement("button"); chip.type = "button"; chip.className = "attachment-chip";
+    const chip = document.createElement("div"); chip.className = "attachment-chip";
+    const chipPreview = document.createElement("button"); chipPreview.type = "button"; chipPreview.className = "attachment-preview"; chipPreview.setAttribute("aria-label", `Preview ${artifact.name}`);
     const chipName = document.createElement("span"); chipName.textContent = artifact.name;
     const chipSize = document.createElement("small"); chipSize.textContent = formatBytes(artifact.byteSize);
-    chip.append(chipName, chipSize); chip.addEventListener("click", () => { setContextPanel(true); void previewArtifact(artifact, value); }); composerAttachments.append(chip);
+    const remove = document.createElement("button"); remove.type = "button"; remove.className = "attachment-remove"; remove.title = `Remove ${artifact.name}`; remove.setAttribute("aria-label", `Remove ${artifact.name}`); remove.textContent = "×";
+    chipPreview.append(chipName, chipSize); chipPreview.addEventListener("click", () => { setContextPanel(true); void previewArtifact(artifact, value); }); remove.addEventListener("click", () => void removeArtifact(artifact)); chip.append(chipPreview, remove); composerAttachments.append(chip);
   }
   composerAttachments.hidden = composerAttachments.childElementCount === 0;
+}
+
+async function removeArtifact(artifact: Json): Promise<void> {
+  try { await api(`/api/v1/artifacts/${artifact.id}`, "DELETE"); await loadArtifacts(); showToast(`Removed ${artifact.name}`); }
+  catch (error) { showToast(errorMessage(error)); }
 }
 
 function chooseArtifact(): void {
