@@ -29,6 +29,9 @@
   restricted tool allowlists, event translation, cancellation, and native-run integration.
 - Owner-scoped projects and sessions, ordered canonical transcripts, native run/session binding,
   user-over-role tool policies, secure-default approval requests, durable decisions, and audit events.
+- Fitz-owned token estimation and context budgeting, canonical-session reconstruction, injectable
+  summarization, deterministic initial compaction, recent-message preservation, and durable
+  compaction transcript records.
 - Host APIs:
   - `GET /health`
   - `GET /v1/models`
@@ -43,7 +46,7 @@
 
 - Full JSON Schema/OpenAPI generation and exhaustive request compatibility.
 - Interactive device-pairing exchange, encrypted secret storage, and persistent/distributed rate windows.
-- Pi tool execution gating against the durable approval service, and compaction.
+- Pi tool execution gating against the durable approval service and model-assisted summary quality.
 - Tailscale connectivity.
 - Electron and consumer UI.
 - OS-backed secret storage.

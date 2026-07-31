@@ -29,6 +29,9 @@ importers:
       '@fitz/agent-pi':
         specifier: workspace:*
         version: link:../../packages/agent-pi
+      '@fitz/context':
+        specifier: workspace:*
+        version: link:../../packages/context
       '@fitz/engine-fake':
         specifier: workspace:*
         version: link:../../packages/engine-fake
@@ -71,6 +74,15 @@ importers:
       '@fitz/protocol':
         specifier: workspace:*
         version: link:../protocol
+
+  packages/context:
+    dependencies:
+      '@fitz/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@fitz/storage':
+        specifier: workspace:*
+        version: link:../storage
 
   packages/engine-fake:
     dependencies:

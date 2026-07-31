@@ -13,6 +13,7 @@
   "dependencies": {
     "@fitz/agent-core": "workspace:*",
     "@fitz/agent-pi": "workspace:*",
+    "@fitz/context": "workspace:*",
     "@fitz/engine-fake": "workspace:*",
     "@fitz/engine-ninfer": "workspace:*",
     "@fitz/inference-core": "workspace:*",

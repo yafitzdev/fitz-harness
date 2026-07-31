@@ -9,11 +9,11 @@ export class AgentRunCoordinator {
   readonly #active = new Map<string, AgentRuntimeRun | ScheduledStream>();
   readonly #listeners = new Map<string, Set<(event: AgentEventEnvelope) => void>>();
   constructor(private readonly store: SqliteStore, private readonly scheduler: InferenceScheduler, private readonly runtime?: AgentRuntime) {}
-  start(request: AgentRunRequest, ownerUserId?: string): AgentRunRecord {
+  start(request: AgentRunRequest, ownerUserId?: string, canonicalMessages = request.messages): AgentRunRecord {
     const stream = this.runtime ? this.runtime.run(request) : this.scheduler.enqueue(request.model, { messages: request.messages, ...(request.maxTokens !== undefined ? { maxTokens: request.maxTokens } : {}), ...(request.temperature !== undefined ? { temperature: request.temperature } : {}), ...(ownerUserId ? { userId: ownerUserId } : {}) });
     const id = "requestId" in stream ? stream.requestId : randomUUID();
     const now = new Date().toISOString(); const run: AgentRunRecord = { id, routeId: request.model, status: "queued", createdAt: now, updatedAt: now, lastSequence: 0, ...(ownerUserId ? { ownerUserId } : {}), ...(request.sessionId ? { sessionId: request.sessionId } : {}) };
-    if (request.sessionId) for (const message of request.messages) this.store.appendTranscriptEntry({ id: randomUUID(), sessionId: request.sessionId, kind: "message", role: message.role, content: { text: message.content, ...(message.name ? { name: message.name } : {}) }, createdAt: now });
+    if (request.sessionId) for (const message of canonicalMessages) this.store.appendTranscriptEntry({ id: randomUUID(), sessionId: request.sessionId, kind: "message", role: message.role, content: { text: message.content, ...(message.name ? { name: message.name } : {}) }, createdAt: now });
     this.store.createAgentRun(run); this.#active.set(run.id, stream); this.#emit(run.id, "run.created", { routeId: request.model }); void this.#consume(run.id, stream); return this.store.getAgentRun(run.id)!;
   }
   get(id: string): AgentRunRecord | undefined { return this.store.getAgentRun(id); }

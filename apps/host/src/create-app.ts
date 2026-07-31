@@ -33,6 +33,7 @@ import { SqliteStore } from "@fitz/storage";
 import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
 import { AgentRunCoordinator } from "./agent-runs.js";
 import type { AgentRuntime } from "@fitz/agent-core";
+import { ContextManager } from "@fitz/context";
 
 export interface CreateHostOptions {
   store?: SqliteStore;
@@ -48,6 +49,7 @@ export interface CreateHostOptions {
   authPepper?: string;
   security?: SecurityService;
   agentRuntime?: AgentRuntime;
+  contextManager?: ContextManager;
 }
 
 export interface HostRuntime {
@@ -58,6 +60,7 @@ export interface HostRuntime {
   lifecycle: LifecycleManager;
   scheduler: InferenceScheduler;
   agentRuns: AgentRunCoordinator;
+  context: ContextManager;
   metrics: MetricsRegistry;
   security?: SecurityService;
   fakeAdapter?: FakeEngineAdapter;
@@ -103,6 +106,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const lifecycle = new LifecycleManager({ adapters, events, resources });
   const scheduler = new InferenceScheduler(routes, lifecycle, events);
   const agentRuns = new AgentRunCoordinator(store, scheduler, options.agentRuntime);
+  const context = options.contextManager ?? new ContextManager(store);
   const metrics = new MetricsRegistry();
   const unsubscribePersistence = events.subscribe((event) => {
     store.appendLifecycleEvent(event);
@@ -252,9 +256,9 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       if (body.sessionId) { const session = store.getSession(body.sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); }
       if (principal && !security?.authorizeRoute(principal, body.model)) return reply.code(403).send({ error: "Route access denied" });
       if (principal) { const promptChars = body.messages.reduce((total, message) => total + message.content.length, 0); security?.enforceQuota(principal, promptChars, body.maxTokens ?? principal.quota.maxOutputTokens, scheduler.queueDepth); }
-      const run = agentRuns.start(body, principal?.user.id); security?.audit("agent-run.created", principal?.user.id, "agent-run", run.id, { routeId: run.routeId });
-      return reply.code(202).send({ protocolVersion: PROTOCOL_VERSION, data: run });
-    } catch (error) { return reply.code(error instanceof SecurityPolicyError ? 429 : 400).send({ error: errorMessage(error) }); }
+      const resolved = routes.resolve(body.model); const prepared = await context.prepare(body, resolved.recipe.contextTokens); const run = agentRuns.start(prepared.request, principal?.user.id, body.messages); security?.audit("agent-run.created", principal?.user.id, "agent-run", run.id, { routeId: run.routeId, compacted: prepared.compacted });
+      return reply.code(202).send({ protocolVersion: PROTOCOL_VERSION, data: run, context: { compacted: prepared.compacted, estimatedInputTokens: prepared.estimatedInputTokens, budgetTokens: prepared.budgetTokens } });
+    } catch (error) { return reply.code(error instanceof SecurityPolicyError ? 429 : error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) }); }
   });
   app.get("/api/v1/agent/runs", async (request) => { const principal = principals.get(request); const query = request.query as { limit?: string }; return { protocolVersion: PROTOCOL_VERSION, data: agentRuns.list(principal?.user.role === "administrator" ? undefined : principal?.user.id, Math.min(toNonNegativeInteger(query.limit, 100), 1000)) }; });
   app.get("/api/v1/agent/runs/:runId", async (request, reply) => { const run = agentRuns.get((request.params as { runId: string }).runId); if (!run) return reply.code(404).send({ error: "Run not found" }); if (!canAccessRun(principals.get(request), run.ownerUserId)) return reply.code(403).send({ error: "Run access denied" }); return { protocolVersion: PROTOCOL_VERSION, data: run }; });
@@ -435,6 +439,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     lifecycle,
     scheduler,
     agentRuns,
+    context,
     metrics,
     ...(security ? { security } : {}),
     ...(fakeAdapter ? { fakeAdapter } : {}),
