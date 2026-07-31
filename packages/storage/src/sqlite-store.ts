@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import type {
   AuditEventRecord,
   AgentEventEnvelope,
+  ArtifactRecord,
   AgentRunRecord,
   ProjectRecord,
   PairingCodeRecord,
@@ -57,6 +58,7 @@ interface SessionRow { id: string; project_id: string; owner_user_id: string | n
 interface TranscriptRow { id: string; session_id: string; sequence: number; kind: TranscriptEntryRecord["kind"]; role: TranscriptEntryRecord["role"] | null; content_json: string; created_at: string }
 interface ToolPolicyRow { subject_type: ToolPolicyRecord["subjectType"]; subject_id: string; tool_name: string; decision: ToolPolicyRecord["decision"]; updated_at: string }
 interface ToolApprovalRow { id: string; session_id: string; run_id: string | null; tool_call_id: string; tool_name: string; status: ToolApprovalRecord["status"]; request_json: string; requested_at: string; resolved_at: string | null; decided_by_user_id: string | null; note: string | null }
+interface ArtifactRow { id: string; session_id: string; name: string; mime_type: string; kind: ArtifactRecord["kind"]; byte_size: number; sha256: string; created_at: string; created_by_user_id: string | null; metadata_json: string }
 
 export class SqliteStore {
   readonly #database: DatabaseSync;
@@ -369,6 +371,10 @@ export class SqliteStore {
   getToolApproval(id: string): ToolApprovalRecord | undefined { const row = this.#database.prepare(`SELECT id, session_id, run_id, tool_call_id, tool_name, status, request_json, requested_at, resolved_at, decided_by_user_id, note FROM tool_approvals WHERE id = ?`).get(id) as ToolApprovalRow | undefined; return row ? mapApproval(row) : undefined; }
   listToolApprovals(sessionId?: string, status?: ToolApprovalRecord["status"]): ToolApprovalRecord[] { let rows; if (sessionId && status) rows = this.#database.prepare(`SELECT * FROM tool_approvals WHERE session_id = ? AND status = ? ORDER BY requested_at`).all(sessionId, status); else if (sessionId) rows = this.#database.prepare(`SELECT * FROM tool_approvals WHERE session_id = ? ORDER BY requested_at`).all(sessionId); else if (status) rows = this.#database.prepare(`SELECT * FROM tool_approvals WHERE status = ? ORDER BY requested_at`).all(status); else rows = this.#database.prepare(`SELECT * FROM tool_approvals ORDER BY requested_at`).all(); return (rows as unknown as ToolApprovalRow[]).map(mapApproval); }
   resolveToolApproval(id: string, status: "approved" | "denied", decidedByUserId?: string, note?: string): boolean { return Number(this.#database.prepare(`UPDATE tool_approvals SET status = ?, resolved_at = ?, decided_by_user_id = ?, note = ? WHERE id = ? AND status = 'pending'`).run(status, new Date().toISOString(), decidedByUserId ?? null, note ?? null, id).changes) > 0; }
+  createArtifact(artifact: ArtifactRecord, content: Uint8Array): void { this.#database.prepare(`INSERT INTO artifacts (id, session_id, name, mime_type, kind, byte_size, sha256, content, created_at, created_by_user_id, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(artifact.id, artifact.sessionId, artifact.name, artifact.mimeType, artifact.kind, artifact.byteSize, artifact.sha256, content, artifact.createdAt, artifact.createdByUserId ?? null, JSON.stringify(artifact.metadata)); }
+  getArtifact(id: string): ArtifactRecord | undefined { const row = this.#database.prepare(`SELECT id, session_id, name, mime_type, kind, byte_size, sha256, created_at, created_by_user_id, metadata_json FROM artifacts WHERE id = ?`).get(id) as ArtifactRow | undefined; return row ? mapArtifact(row) : undefined; }
+  listArtifacts(sessionId: string): ArtifactRecord[] { return (this.#database.prepare(`SELECT id, session_id, name, mime_type, kind, byte_size, sha256, created_at, created_by_user_id, metadata_json FROM artifacts WHERE session_id = ? ORDER BY created_at DESC`).all(sessionId) as unknown as ArtifactRow[]).map(mapArtifact); }
+  getArtifactContent(id: string): Uint8Array | undefined { const row = this.#database.prepare(`SELECT content FROM artifacts WHERE id = ?`).get(id) as { content: Uint8Array } | undefined; return row?.content; }
 
   setSetting(key: string, value: unknown): void {
     this.#database
@@ -400,3 +406,4 @@ function mapProject(row: ProjectRow): ProjectRecord { return { id: row.id, name:
 function mapSession(row: SessionRow): SessionRecord { return { id: row.id, projectId: row.project_id, title: row.title, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at, ...(row.owner_user_id ? { ownerUserId: row.owner_user_id } : {}) }; }
 function mapTranscript(row: TranscriptRow): TranscriptEntryRecord { return { id: row.id, sessionId: row.session_id, sequence: row.sequence, kind: row.kind, content: JSON.parse(row.content_json) as Record<string, unknown>, createdAt: row.created_at, ...(row.role ? { role: row.role } : {}) }; }
 function mapApproval(row: ToolApprovalRow): ToolApprovalRecord { return { id: row.id, sessionId: row.session_id, toolCallId: row.tool_call_id, toolName: row.tool_name, status: row.status, request: JSON.parse(row.request_json) as Record<string, unknown>, requestedAt: row.requested_at, ...(row.run_id ? { runId: row.run_id } : {}), ...(row.resolved_at ? { resolvedAt: row.resolved_at } : {}), ...(row.decided_by_user_id ? { decidedByUserId: row.decided_by_user_id } : {}), ...(row.note ? { note: row.note } : {}) }; }
+function mapArtifact(row: ArtifactRow): ArtifactRecord { return { id: row.id, sessionId: row.session_id, name: row.name, mimeType: row.mime_type, kind: row.kind, byteSize: row.byte_size, sha256: row.sha256, createdAt: row.created_at, metadata: JSON.parse(row.metadata_json) as Record<string, unknown>, ...(row.created_by_user_id ? { createdByUserId: row.created_by_user_id } : {}) }; }

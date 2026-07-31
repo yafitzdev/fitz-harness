@@ -57,6 +57,9 @@ importers:
       '@fitz/inference-core':
         specifier: workspace:*
         version: link:../../packages/inference-core
+      '@fitz/media':
+        specifier: workspace:*
+        version: link:../../packages/media
       '@fitz/observability':
         specifier: workspace:*
         version: link:../../packages/observability
@@ -121,6 +124,12 @@ importers:
         version: link:../protocol
 
   packages/inference-core:
+    dependencies:
+      '@fitz/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+
+  packages/media:
     dependencies:
       '@fitz/protocol':
         specifier: workspace:*

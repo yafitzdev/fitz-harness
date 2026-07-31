@@ -13,6 +13,7 @@
     { "path": "../../packages/agent-pi" },
     { "path": "../../packages/context" },
     { "path": "../../packages/connectivity" },
+    { "path": "../../packages/media" },
     { "path": "../../packages/protocol" },
     { "path": "../../packages/inference-core" },
     { "path": "../../packages/engine-fake" },

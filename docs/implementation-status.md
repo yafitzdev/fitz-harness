@@ -39,6 +39,9 @@
   feedback, native run polling/replay, and project/session creation.
 - Tailscale state detection and opt-in private HTTPS Serve management, one-time hashed pairing codes,
   pairing redemption into revocable device credentials, and bounded desktop reconnect/backoff.
+- Owner-scoped artifact metadata and content storage with SHA-256 integrity metadata and size bounds,
+  strict MIME classification, defensive content headers, and a desktop artifact panel with inert text,
+  allowlisted media, sandboxed PDF preview, upload, and binary fallback.
 - Host APIs:
   - `GET /health`
   - `GET /v1/models`

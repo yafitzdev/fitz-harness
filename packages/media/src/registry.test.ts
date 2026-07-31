@@ -1,0 +1,3 @@
+import { describe, expect, it } from "vitest";
+import { classifyArtifact, normalizeMimeType } from "./registry.js";
+describe("artifact registry", () => { it("only previews an explicit inert MIME allowlist", () => { expect(classifyArtifact("image/png")).toBe("image"); expect(classifyArtifact("text/plain", "app.ts")).toBe("code"); expect(classifyArtifact("text/html")).toBe("code"); expect(classifyArtifact("image/svg+xml")).toBe("binary"); expect(classifyArtifact("application/octet-stream")).toBe("binary"); }); it("rejects malformed MIME values", () => { expect(() => normalizeMimeType("text/html\r\nx-evil: yes")).toThrow(); }); });

@@ -189,4 +189,16 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_tool_approvals_status ON tool_approvals(status, requested_at);
     `,
   },
+  {
+    version: 5,
+    sql: `
+      CREATE TABLE IF NOT EXISTS artifacts (
+        id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        name TEXT NOT NULL, mime_type TEXT NOT NULL, kind TEXT NOT NULL, byte_size INTEGER NOT NULL,
+        sha256 TEXT NOT NULL, content BLOB NOT NULL, created_at TEXT NOT NULL,
+        created_by_user_id TEXT, metadata_json TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE INDEX IF NOT EXISTS idx_artifacts_session ON artifacts(session_id, created_at DESC);
+    `,
+  },
 ] as const;

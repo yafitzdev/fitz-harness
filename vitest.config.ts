@@ -9,6 +9,7 @@ export default defineConfig({
       "@fitz/context": fileURLToPath(new URL("./packages/context/src/index.ts", import.meta.url)),
       "@fitz/connectivity/reconnect": fileURLToPath(new URL("./packages/connectivity/src/reconnect.ts", import.meta.url)),
       "@fitz/connectivity": fileURLToPath(new URL("./packages/connectivity/src/index.ts", import.meta.url)),
+      "@fitz/media": fileURLToPath(new URL("./packages/media/src/index.ts", import.meta.url)),
       "@fitz/protocol": fileURLToPath(new URL("./packages/protocol/src/index.ts", import.meta.url)),
       "@fitz/inference-core": fileURLToPath(
         new URL("./packages/inference-core/src/index.ts", import.meta.url),
