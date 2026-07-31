@@ -32,6 +32,11 @@
 - Fitz-owned token estimation and context budgeting, canonical-session reconstruction, injectable
   summarization, deterministic initial compaction, recent-message preservation, and durable
   compaction transcript records.
+- Electron 43 shell with sandboxing, context isolation, Node-disabled renderer, restrictive CSP,
+  navigation controls, path-limited IPC fetch proxy, main-process device credentials, and a bundled
+  CommonJS preload.
+- Initial desktop UI with project/task sidebar, transcript view, composer, route selector, lifecycle
+  feedback, native run polling/replay, and project/session creation.
 - Host APIs:
   - `GET /health`
   - `GET /v1/models`
@@ -48,6 +53,6 @@
 - Interactive device-pairing exchange, encrypted secret storage, and persistent/distributed rate windows.
 - Pi tool execution gating against the durable approval service and model-assisted summary quality.
 - Tailscale connectivity.
-- Electron and consumer UI.
+- Desktop UX refinement, richer event rendering, and accessibility polish.
 - OS-backed secret storage.
 - Backpressure limits and retained stream replay for active completions.

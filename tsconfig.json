@@ -12,5 +12,6 @@
     { "path": "packages/storage" },
     { "path": "packages/security" },
     { "path": "apps/host" }
+    ,{ "path": "apps/desktop" }
   ]
 }
