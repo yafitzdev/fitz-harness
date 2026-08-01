@@ -40,6 +40,7 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('<dialog id="project-dialog"');
     expect(html).toContain('<dialog id="task-dialog"');
     expect(html).toContain('<dialog id="rename-dialog"');
+    expect(html).toContain('<dialog id="remove-project-dialog"');
     expect(html).toContain('id="management-editor"');
     expect(html).toContain('id="engine-form" class="management-editor-form"');
     expect(html).toContain('id="recipe-form" class="management-editor-form"');
@@ -136,5 +137,21 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("showProjectHover(project, projectItem)");
     expect(renderer).toContain("sessionsByProject.get(project.id)");
     expect(renderer).toContain("openProjectRenameDialog(hoveredProjectId)");
+  });
+
+  it("matches the project hover controls and menu actions", () => {
+    expect(renderer).toContain('className = "tree-quick-action"');
+    expect(renderer).toContain("New chat in ${label}");
+    for (const label of ["Pin project", "Open in Explorer", "Create permanent worktree", "Edit project", "Archive chats", "Remove"]) {
+      expect(renderer).toContain(`"${label}"`);
+    }
+    expect(renderer).toContain('api(`/api/v1/projects/${id}`, "DELETE")');
+  });
+
+  it("clears the starter screen and reports model loading before output arrives", () => {
+    expect(renderer).toContain('messages.querySelector(".landing, .new-chat-landing")');
+    expect(renderer).toContain('appendRunActivity("Starting model…")');
+    expect(renderer).toContain('activity.textContent = "Loading model…"');
+    expect(renderer).toContain('api("/api/v1/management/status")');
   });
 });

@@ -26,6 +26,7 @@ let currentBranch = "main";
 let availableBranches: string[] = [];
 let hoveredProjectId: string | undefined;
 let projectHoverHideTimer: ReturnType<typeof setTimeout> | undefined;
+let removeProjectTarget: string | undefined;
 let editingRecipe: Json | undefined;
 let renameTarget: { kind: "project" | "task"; id: string } | undefined;
 const pinnedProjects = storedSet("fitz-pinned-projects");
@@ -127,6 +128,9 @@ const hoverProjectPath = element("hover-project-path") as HTMLButtonElement;
 const hoverProjectPathLabel = element("hover-project-path-label");
 const hoverProjectPin = element("hover-project-pin") as HTMLButtonElement;
 const hoverProjectEdit = element("hover-project-edit") as HTMLButtonElement;
+const removeProjectDialog = element("remove-project-dialog") as HTMLDialogElement;
+const removeProjectForm = element("remove-project-form") as HTMLFormElement;
+const removeProjectName = element("remove-project-name");
 const toast = element("toast");
 
 restoreSidebarWidth();
@@ -206,6 +210,7 @@ hoverProjectEdit.addEventListener("click", () => { if (hoveredProjectId) openPro
 element("rename-task").addEventListener("click", openRenameDialog);
 element("archive-task").addEventListener("click", () => void archiveCurrentTask());
 renameForm.addEventListener("submit", (event) => { event.preventDefault(); void renameCurrentTask(); });
+removeProjectForm.addEventListener("submit", (event) => { event.preventDefault(); void removeProject(); });
 updateButton.addEventListener("click", () => void window.fitz.installUpdate());
 window.fitz.onUpdateStatus((updateStatus) => {
   updateButton.hidden = updateStatus !== "downloaded";
@@ -287,7 +292,7 @@ function renderProjectTree(): void {
     const projectItem = treeItem(project.name, "project-row", folderIcon(), () => {
       if (project.id === currentProject) toggleProjectExpansion(project.id, group);
       else void selectProject(project.id);
-    }, (toggle, event) => openSidebarMenu("project", project.id, toggle, event));
+    }, (toggle, event) => openSidebarMenu("project", project.id, toggle, event), () => openNewChatForProject(project.id));
     const projectButton = projectItem.querySelector(".project-row") as HTMLButtonElement;
     projectButton.classList.toggle("active", project.id === currentProject && !currentSession && !newChatMode);
     projectButton.setAttribute("aria-expanded", String(expandedProjects.has(project.id)));
@@ -395,6 +400,8 @@ function openNewChat(): void {
   refreshComposerState();
   prompt.focus();
 }
+
+function openNewChatForProject(id: string): void { currentProject = id; expandedProjects.add(id); saveSet("fitz-expanded-projects", expandedProjects); openNewChat(); }
 
 function showNewChatLanding(): void {
   messages.replaceChildren();
@@ -557,15 +564,14 @@ function openSidebarMenu(kind: "project" | "task", id: string, toggle: HTMLButto
 function buildProjectMenu(id: string): void {
   const project = projectRecords.find((item) => item.id === id);
   if (!project) return;
-  addMenuItem(pinnedProjects.has(id) ? "Unpin project" : "Pin project", () => toggleStored(pinnedProjects, id, "fitz-pinned-projects"));
-  addMenuItem("Rename project", () => openProjectRenameDialog(id));
-  addMenuItem("Edit source folder", () => void editProjectFolder(id));
-  if (project.rootPath) {
-    addMenuItem("Open in Explorer", () => void openProjectPath(project.rootPath));
-    addMenuItem("Copy working directory", () => void copyValue(project.rootPath, "Working directory copied"));
-  }
+  const sessions = sessionsByProject.get(id) ?? [];
+  addMenuItem(pinnedProjects.has(id) ? "Unpin project" : "Pin project", () => toggleStored(pinnedProjects, id, "fitz-pinned-projects"), false, '<path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path>');
+  addMenuItem("Open in Explorer", () => { if (project.rootPath) void openProjectPath(project.rootPath); }, false, '<path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path><path d="M3.5 6.5V4h5l1.5 2"></path>', !project.rootPath);
+  addMenuItem("Create permanent worktree", () => openProjectWorktreeSetup(id), false, '<path d="M4 6h8M12 3l3 3-3 3M16 14H8M8 11l-3 3 3 3"></path>', !project.rootPath);
+  addMenuItem("Edit project", () => openProjectRenameDialog(id), false, '<circle cx="10" cy="10" r="3"></circle><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M15.3 4.7l-1.4 1.4M6.1 13.9l-1.4 1.4"></path>');
   addMenuSeparator();
-  addMenuItem("Archive chats", () => void archiveProjectChats(id), true);
+  addMenuItem("Archive chats", () => void archiveProjectChats(id), false, '<rect x="3" y="5" width="14" height="11" rx="2"></rect><path d="M3 8h14M8 11h4"></path>', sessions.length === 0);
+  addMenuItem("Remove", () => openRemoveProjectDialog(id), false, '<path d="m5 5 10 10M15 5 5 15"></path>');
 }
 
 function buildTaskMenu(id: string): void {
@@ -587,9 +593,9 @@ function buildTaskMenu(id: string): void {
   addMenuItem("Continue in new chat", () => void continueInNewChat(session));
 }
 
-function addMenuItem(label: string, action: () => void, danger = false): void {
-  const button = document.createElement("button"); button.type = "button"; button.classList.toggle("danger", danger);
-  const text = document.createElement("span"); text.className = "menu-label"; text.textContent = label; button.append(text);
+function addMenuItem(label: string, action: () => void, danger = false, icon?: string, disabled = false): void {
+  const button = document.createElement("button"); button.type = "button"; button.classList.toggle("danger", danger); button.disabled = disabled;
+  const text = document.createElement("span"); text.className = "menu-label"; text.textContent = label; if (icon) button.append(svg(icon)); button.append(text);
   button.addEventListener("click", () => { closePopovers(); action(); }); sidebarContextMenu.append(button);
 }
 
@@ -605,6 +611,17 @@ async function editProjectFolder(id: string): Promise<void> {
   if (!folder) return;
   try { await api(`/api/v1/projects/${id}`, "PATCH", { rootPath: folder }); await loadProjects(id, currentSession); showToast("Source folder updated"); }
   catch (error) { showToast(errorMessage(error)); }
+}
+
+function openProjectWorktreeSetup(id: string): void { openNewChatForProject(id); newChatEnvironmentMenu.hidden = false; newChatEnvironmentControl.setAttribute("aria-expanded", "true"); createWorktreeForm.hidden = false; newWorktreeBranch.focus(); }
+
+function openRemoveProjectDialog(id: string): void { const project = projectRecords.find((item) => item.id === id); if (!project) return; removeProjectTarget = id; removeProjectName.textContent = project.name; removeProjectDialog.showModal(); }
+
+async function removeProject(): Promise<void> {
+  if (!removeProjectTarget) return; const id = removeProjectTarget; setFormBusy(removeProjectForm, true);
+  try { await api(`/api/v1/projects/${id}`, "DELETE"); pinnedProjects.delete(id); expandedProjects.delete(id); saveSet("fitz-pinned-projects", pinnedProjects); saveSet("fitz-expanded-projects", expandedProjects); removeProjectDialog.close(); removeProjectTarget = undefined; currentProject = currentProject === id ? undefined : currentProject; currentSession = undefined; await loadProjects(currentProject); showToast("Project removed"); }
+  catch (error) { showToast(errorMessage(error)); }
+  finally { setFormBusy(removeProjectForm, false); }
 }
 
 async function openProjectPath(path: string): Promise<void> { try { await window.fitz.openPath(path); } catch (error) { showToast(errorMessage(error)); } }
@@ -986,8 +1003,9 @@ async function sendPrompt(): Promise<void> {
   if (!model.value) { showToast("No model route is available"); return; }
   prompt.value = "";
   resizePrompt();
-  if (messages.querySelector(".landing")) messages.replaceChildren();
+  if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   appendMessage("user", content);
+  const activity = appendRunActivity("Starting model…");
   sessionTokenEstimate += estimateTokens(content);
   updateContextMeter();
   setStatus("Queued", "loading");
@@ -1003,8 +1021,9 @@ async function sendPrompt(): Promise<void> {
     lastSequence = 0;
     engineState.textContent = "QUEUED";
     refreshComposerState();
-    await followRun(runId);
+    await followRun(runId, activity);
   } catch (error) {
+    activity.remove();
     appendMessage("system", errorMessage(error));
     setStatus("Failed", "error");
   } finally {
@@ -1025,10 +1044,11 @@ async function cancelRun(): Promise<void> {
   }
 }
 
-async function followRun(runId: string): Promise<void> {
+async function followRun(runId: string, activity: HTMLElement): Promise<void> {
   let assistant: HTMLElement | undefined;
   let done = false;
   let reconnectAttempt = 0;
+  let nextEnginePoll = 0;
   while (!done && currentRun === runId) {
     let replay: Json;
     try {
@@ -1042,9 +1062,9 @@ async function followRun(runId: string): Promise<void> {
     }
     for (const event of replay.events ?? []) {
       lastSequence = event.sequence;
-      if (event.type === "run.started") { setStatus("Working", "active"); engineState.textContent = "WORKING"; }
+      if (event.type === "run.started") { setStatus("Working", "active"); engineState.textContent = "WORKING"; activity.textContent = "Loading model…"; }
       if (event.type === "assistant.delta") {
-        assistant ??= appendMessage("assistant", "");
+        if (!assistant) { activity.remove(); assistant = appendMessage("assistant", ""); }
         const delta = event.data.text ?? ""; assistant.textContent += delta; sessionTokenEstimate += estimateTokens(delta); updateContextMeter();
         messages.scrollTop = messages.scrollHeight;
       }
@@ -1053,8 +1073,14 @@ async function followRun(runId: string): Promise<void> {
         const success = event.type === "run.completed";
         setStatus(success ? "Ready" : event.type.slice(4), success ? "idle" : "error");
         engineState.textContent = success || event.type === "run.cancelled" ? "READY" : event.type.slice(4).toUpperCase();
-        if (!success && event.data?.error) appendMessage("system", event.data.error);
+        activity.remove();
+        if (!success && event.data?.error && event.type !== "run.cancelled") appendMessage("system", event.data.error);
+        if (success && !assistant) appendMessage("system", "The model completed without returning a response.");
       }
+    }
+    if (!done && !assistant && Date.now() >= nextEnginePoll) {
+      nextEnginePoll = Date.now() + 1_000;
+      try { const management = await api("/api/v1/management/status"); const state = String(management.engine?.state ?? ""); engineState.textContent = state || "WORKING"; activity.textContent = state === "READY" || state === "BUSY" ? "Thinking…" : state === "FAILED" ? `Model failed: ${management.engine?.failureReason ?? "Unknown error"}` : "Loading model…"; } catch { /* Run events remain authoritative. */ }
     }
     if (!done) await delay(350);
   }
@@ -1153,11 +1179,13 @@ function showConnectionFailure(detail: string): void {
 }
 
 function appendMessage(role: string, text: string): HTMLElement {
-  if (messages.querySelector(".landing")) messages.replaceChildren();
+  if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   const article = document.createElement("article"); article.className = `message ${role}`;
   if (role === "assistant") { const mark = document.createElement("span"); mark.className = "assistant-mark"; mark.append(sparkIcon()); article.append(mark); }
   const content = document.createElement("div"); content.className = "message-body"; content.textContent = text; article.append(content); messages.append(article); messages.scrollTop = messages.scrollHeight; return content;
 }
+
+function appendRunActivity(text: string): HTMLElement { const value = document.createElement("div"); value.className = "message run-activity"; value.textContent = text; messages.append(value); messages.scrollTop = messages.scrollHeight; return value; }
 
 function refreshComposerState(): void {
   const ready = Boolean((currentSession || (newChatMode && currentProject)) && model.value);
@@ -1248,11 +1276,13 @@ function setFormBusy(formElement: HTMLFormElement, busy: boolean): void { for (c
 function showToast(text: string): void { if (toastTimer) clearTimeout(toastTimer); toast.textContent = text; toast.hidden = false; toastTimer = setTimeout(() => { toast.hidden = true; }, 3_200); }
 function panelEmpty(text: string): HTMLElement { const value = document.createElement("div"); value.className = "panel-empty"; value.textContent = text; return value; }
 function loadingMessage(text: string): HTMLElement { const value = document.createElement("div"); value.className = "panel-empty"; value.textContent = text; return value; }
-function treeItem(label: string, className: string, icon: SVGElement, action: () => void, menu: (toggle: HTMLButtonElement, event: MouseEvent) => void): HTMLElement {
+function treeItem(label: string, className: string, icon: SVGElement, action: () => void, menu: (toggle: HTMLButtonElement, event: MouseEvent) => void, quickAction?: () => void): HTMLElement {
   const item = document.createElement("div"); item.className = "tree-item";
   const value = document.createElement("button"); value.type = "button"; value.className = className; const text = document.createElement("span"); text.textContent = label; value.append(icon, text); value.addEventListener("click", action);
   const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "tree-menu-toggle"; toggle.title = `${label} actions`; toggle.setAttribute("aria-label", `${label} actions`); toggle.setAttribute("aria-expanded", "false"); toggle.append(svg('<circle cx="5" cy="10" r="1"></circle><circle cx="10" cy="10" r="1"></circle><circle cx="15" cy="10" r="1"></circle>'));
-  toggle.addEventListener("click", (event) => menu(toggle, event)); value.addEventListener("contextmenu", (event) => menu(toggle, event)); item.append(value, toggle); return item;
+  toggle.addEventListener("click", (event) => menu(toggle, event)); value.addEventListener("contextmenu", (event) => menu(toggle, event)); item.append(value);
+  if (quickAction) { const quick = document.createElement("button"); quick.type = "button"; quick.className = "tree-quick-action"; quick.title = `New chat in ${label}`; quick.setAttribute("aria-label", `New chat in ${label}`); quick.append(svg('<path d="M9 4H5.2A2.2 2.2 0 0 0 3 6.2v8.6A2.2 2.2 0 0 0 5.2 17h8.6a2.2 2.2 0 0 0 2.2-2.2V11"></path><path d="m9.2 11.1.5-2.7 4.9-4.9a1.35 1.35 0 0 1 1.9 1.9l-4.9 4.9z"></path>')); quick.addEventListener("click", (event) => { event.stopPropagation(); quickAction(); }); item.append(quick); }
+  item.append(toggle); return item;
 }
 
 function storedSet(key: string): Set<string> { try { const value = JSON.parse(localStorage.getItem(key) ?? "[]"); return new Set(Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []); } catch { return new Set(); } }

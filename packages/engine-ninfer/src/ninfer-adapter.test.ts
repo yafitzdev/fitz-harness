@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NInferEngineAdapter, buildCurrentNInferRecipe, buildNInferProcessLaunch } from "./ninfer-adapter.js";
+import { NInferEngineAdapter, buildCurrentNInferRecipe, buildNInferProcessLaunch, type NInferInstanceHandle } from "./ninfer-adapter.js";
 import { validateNInferConfiguration } from "./config.js";
 
 describe("NInferEngineAdapter launch contract", () => {
@@ -54,5 +54,29 @@ describe("NInferEngineAdapter launch contract", () => {
     expect(launch.args).toContain("/opt/ninfer/build/apps/ninfer-serve");
     expect(launch.args.slice(-2)).toEqual(["--api-key", "generated-secret"]);
     expect(launch.stdin).toContain('exec "$@"');
+  });
+
+  it("enforces the readiness deadline when a health request hangs", async () => {
+    const adapter = new NInferEngineAdapter({
+      pollIntervalMs: 2,
+      fetch: (_input, init) => new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      }),
+    });
+    const instance = {
+      id: "stalled",
+      recipeId: "recipe",
+      modelId: "model",
+      baseUrl: "http://127.0.0.1:19001",
+      startedAt: new Date(),
+      apiKey: "secret-key",
+      process: { exitCode: null, signalCode: null },
+      logs: ["stderr: startup secret-key stalled"],
+      readinessTimeoutMs: 30,
+    } as unknown as NInferInstanceHandle;
+
+    await expect(adapter.waitUntilReady(instance, new AbortController().signal)).rejects.toThrow(
+      /Timed out waiting for NInfer.*\[REDACTED\]/,
+    );
   });
 });

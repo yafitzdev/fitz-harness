@@ -178,18 +178,36 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
           `NInfer exited before becoming ready (code ${instance.process.exitCode ?? instance.process.signalCode})`,
         );
       }
+      const probe = new AbortController();
+      const abortProbe = () => probe.abort(signal.reason);
+      const probeTimeout = setTimeout(
+        () => probe.abort(),
+        Math.max(1, Math.min(2_000, deadline - Date.now())),
+      );
+      signal.addEventListener("abort", abortProbe, { once: true });
       try {
         const response = await this.#fetch(`${instance.baseUrl}/health`, {
           headers: authorization(instance.apiKey),
-          signal,
+          signal: probe.signal,
         });
         if (response.ok) return { modelId: instance.modelId, baseUrl: instance.baseUrl };
       } catch (error) {
-        if (signal.aborted) throw error;
+        if (signal.aborted) throw abortError();
+      } finally {
+        clearTimeout(probeTimeout);
+        signal.removeEventListener("abort", abortProbe);
       }
-      await delay(this.#pollIntervalMs, signal);
+      if (Date.now() < deadline) {
+        await delay(Math.min(this.#pollIntervalMs, deadline - Date.now()), signal);
+      }
     }
-    throw new Error(`Timed out waiting for NInfer at ${instance.baseUrl}`);
+    const recentLogs = instance.logs
+      .slice(-6)
+      .map((line) => line.replaceAll(instance.apiKey, "[REDACTED]"))
+      .join(" | ");
+    throw new Error(
+      `Timed out waiting for NInfer at ${instance.baseUrl}${recentLogs ? `. Recent logs: ${recentLogs}` : ""}`,
+    );
   }
 
   async *streamChat(

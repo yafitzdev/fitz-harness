@@ -68,16 +68,17 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .project-row, .task-row { width: 100%; display: flex; align-items: center; gap: 8px; min-width: 0; background: transparent; color: var(--muted); border-radius: 10px; cursor: pointer; text-align: left; }
 .project-row { padding: 7px 8px; color: #c8cbc5; font-weight: 550; }
 .task-row { padding: 6px 34px 6px 30px; font-size: 13.5px; }
-.tree-item:has(.project-row) .project-row { padding-right: 34px; }
+.tree-item:has(.project-row) .project-row { padding-right: 62px; }
 .project-row:hover, .task-row:hover { background: rgba(255,255,255,.045); color: var(--text); }
 .project-row.active, .task-row.active { background: rgba(255,255,255,.09); color: var(--text); }
 .project-row span, .task-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-row svg, .task-row svg { flex: 0 0 auto; width: 14px; height: 14px; }
 .task-row .activity-dot { width: 7px; height: 7px; margin-left: auto; border-radius: 50%; background: var(--muted); opacity: .65; }
-.tree-menu-toggle { position: absolute; z-index: 2; top: 50%; right: 4px; width: 27px; height: 27px; display: grid; place-items: center; padding: 0; border-radius: 7px; transform: translateY(-50%); background: transparent; color: var(--muted); cursor: pointer; opacity: 0; }
-.tree-item:hover .tree-menu-toggle, .tree-item:focus-within .tree-menu-toggle, .tree-menu-toggle[aria-expanded="true"] { opacity: 1; }
-.tree-menu-toggle:hover { background: rgba(255,255,255,.08); color: var(--text); }
-.tree-menu-toggle svg { width: 15px; height: 15px; }
+.tree-menu-toggle, .tree-quick-action { position: absolute; z-index: 2; top: 50%; width: 27px; height: 27px; display: grid; place-items: center; padding: 0; border-radius: 7px; transform: translateY(-50%); background: transparent; color: var(--muted); cursor: pointer; opacity: 0; }
+.tree-menu-toggle { right: 4px; }.tree-quick-action { right: 31px; }
+.tree-item:hover .tree-menu-toggle, .tree-item:hover .tree-quick-action, .tree-item:focus-within .tree-menu-toggle, .tree-item:focus-within .tree-quick-action, .tree-menu-toggle[aria-expanded="true"] { opacity: 1; }
+.tree-menu-toggle:hover, .tree-quick-action:hover { background: rgba(255,255,255,.08); color: var(--text); }
+.tree-menu-toggle svg, .tree-quick-action svg { width: 15px; height: 15px; }
 .tree-empty { padding: 6px 9px 8px 30px; color: var(--subtle); font-size: 12px; }
 .sidebar-spacer { flex: 1; }
 .connection-card { display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px; border-radius: 8px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
@@ -104,6 +105,8 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .task-menu { top: 38px; left: 120px; width: 250px; }
 .menu-surface button { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 11px; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; text-align: left; }
 .menu-surface button:hover { background: rgba(255,255,255,.07); }
+.menu-surface button:disabled { color: #777a75; cursor: default; }
+.menu-surface button:disabled:hover { background: transparent; }
 .menu-surface button.danger { color: #f1a19d; }
 .menu-surface hr { height: 1px; margin: 6px 4px; border: 0; background: #4a4c49; }
 .menu-surface svg { flex: 0 0 auto; color: var(--muted); }
@@ -131,6 +134,9 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .project-hover-action:disabled { color: var(--subtle); cursor: default; }
 .header-actions { display: flex; align-items: center; gap: 6px; }
 .quiet-button { padding: 7px 10px; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer; }
+.dialog-copy { margin: 0 0 18px; color: var(--muted); line-height: 1.5; }
+.dialog-copy strong { color: var(--text); }
+.danger-button { padding: 8px 13px; border-radius: 8px; background: #b33b35; color: white; font-weight: 600; cursor: pointer; }
 
 .messages { min-height: 0; overflow-y: auto; padding: 32px max(28px, calc((100% - 780px) / 2)) 150px; scroll-behavior: smooth; }
 .workspace.new-chat-open .workspace-header { visibility: hidden; border-color: transparent; }
@@ -160,13 +166,15 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .assistant-mark svg { width: 13px; height: 13px; }
 .message-body { min-width: 0; white-space: pre-wrap; word-break: break-word; color: #dedfd9; }
 .message.system { padding: 10px 12px; border-left: 2px solid var(--red); background: rgba(232,124,120,.06); color: #efaaa6; }
+.run-activity { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+.run-activity::before { content: ""; width: 14px; height: 14px; flex: 0 0 auto; border: 2px solid #50534f; border-top-color: #b6b9b3; border-radius: 50%; animation: spin 850ms linear infinite; }
 .message-meta { margin-bottom: 5px; color: var(--subtle); font-size: 11px; text-transform: capitalize; }
 
 .composer-dock { position: absolute; z-index: 4; left: 50%; bottom: 12px; width: min(740px, calc(100% - 36px)); transform: translateX(-50%); }
 .composer-card { position: relative; overflow: visible; border: 1px solid #3d403d; border-radius: 22px; background: #303230; box-shadow: 0 12px 34px rgba(0,0,0,.24); transition: border-color 120ms ease, box-shadow 120ms ease; }
 .composer-card:focus-within { border-color: #555953; box-shadow: 0 12px 34px rgba(0,0,0,.3), 0 0 0 1px rgba(255,255,255,.03); }
 .composer-attachments { display: flex; gap: 9px; padding: 12px 13px 0; overflow-x: auto; }
-.new-chat-context { position: absolute; z-index: 2; left: 14px; right: 14px; bottom: calc(100% - 11px); height: 49px; display: flex; align-items: flex-start; gap: 5px; padding: 7px 12px 0; border: 1px solid #272927; border-bottom: 0; border-radius: 20px 20px 0 0; background: #202220; color: #ecece8; font-size: 12px; }
+.new-chat-context { position: absolute; z-index: 2; left: 16px; right: 16px; bottom: calc(100% - 12px); height: 49px; display: flex; align-items: flex-start; gap: 5px; padding: 7px 11px 0; border: 1px solid #272927; border-bottom: 0; border-radius: 20px 20px 0 0; background: #202220; color: #ecece8; font-size: 12px; }
 .new-chat-context-item { min-width: 0; min-height: 30px; display: inline-flex; align-items: center; gap: 7px; padding: 5px 8px; border-radius: 16px; background: transparent; color: inherit; cursor: pointer; }
 .new-chat-context-item:hover, .new-chat-context-item[aria-expanded="true"] { background: rgba(255,255,255,.065); }
 .new-chat-context-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
