@@ -19,6 +19,29 @@ describe("Fitz host", () => {
     await runtime.app.close();
   });
 
+  it("persists recipe changes from the management API", async () => {
+    const runtime = createHost();
+    const response = await runtime.app.inject({
+      method: "PUT",
+      url: "/api/v1/management/recipes/custom-recipe",
+      payload: {
+        playbookId: "custom-playbook",
+        displayName: "Custom Recipe",
+        adapter: "fake",
+        modelId: "fake-custom-v1",
+        contextTokens: 64_000,
+        capabilities: { chatCompletions: true, streaming: true, toolCalls: false, responseFormat: false, minP: false, maxConcurrentGenerations: 1 },
+        lifecycle: { loadPolicy: "onDemand", evictionPolicy: "idle-ttl", idleTtlSeconds: 300, minimumResidencySeconds: 0 },
+        configuration: { temperature: 0.2 },
+      },
+    });
+    const status = await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" });
+
+    expect(response.statusCode).toBe(200);
+    expect(status.json().recipes).toContainEqual(expect.objectContaining({ id: "custom-recipe", playbookId: "custom-playbook" }));
+    await runtime.app.close();
+  });
+
   it("serves a non-streaming OpenAI-compatible completion and records lifecycle events", async () => {
     const runtime = createHost();
     const response = await runtime.app.inject({

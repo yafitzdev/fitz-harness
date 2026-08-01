@@ -367,6 +367,22 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   );
 
   app.put(
+    "/api/v1/management/recipes/:recipeId",
+    { preHandler: adminGuard(options.adminToken, authMode, principals) },
+    async (request, reply) => {
+      const recipeId = (request.params as { recipeId: string }).recipeId;
+      try {
+        const recipe = parseRecipe(request.body, recipeId);
+        store.upsertRecipe(recipe);
+        routes.upsertRecipe(recipe);
+        return { data: recipe };
+      } catch (error) {
+        return reply.code(400).send({ error: errorMessage(error) });
+      }
+    },
+  );
+
+  app.put(
     "/api/v1/management/routes/:routeId",
     { preHandler: adminGuard(options.adminToken, authMode, principals) },
     async (request, reply) => {
@@ -570,6 +586,40 @@ function parseRoute(value: unknown, routeId: string): Route {
     ...(typeof value.isDefault === "boolean" ? { isDefault: value.isDefault } : {}),
   };
 }
+
+function parseRecipe(value: unknown, recipeId: string): Recipe {
+  const body = requireRecord(value);
+  const capabilities = requireRecord(body.capabilities);
+  const lifecycle = requireRecord(body.lifecycle);
+  const configuration = requireRecord(body.configuration);
+  const booleanCapability = (name: string): boolean => {
+    const capability = capabilities[name];
+    if (typeof capability !== "boolean") throw new TypeError(`capabilities.${name} must be a boolean`);
+    return capability;
+  };
+  const loadPolicy = lifecycle.loadPolicy;
+  if (loadPolicy !== "onDemand" && loadPolicy !== "manual") throw new TypeError("lifecycle.loadPolicy is invalid");
+  const evictionPolicy = lifecycle.evictionPolicy;
+  if (evictionPolicy !== "immediate" && evictionPolicy !== "idle-ttl" && evictionPolicy !== "never" && evictionPolicy !== "manual") throw new TypeError("lifecycle.evictionPolicy is invalid");
+  return {
+    id: recipeId,
+    playbookId: requireString(body.playbookId, "playbookId"),
+    displayName: requireString(body.displayName, "displayName"),
+    adapter: requireString(body.adapter, "adapter"),
+    modelId: requireString(body.modelId, "modelId"),
+    contextTokens: requireInteger(body.contextTokens),
+    capabilities: {
+      chatCompletions: booleanCapability("chatCompletions"), streaming: booleanCapability("streaming"), toolCalls: booleanCapability("toolCalls"),
+      responseFormat: booleanCapability("responseFormat"), minP: booleanCapability("minP"), maxConcurrentGenerations: requireInteger(capabilities.maxConcurrentGenerations),
+    },
+    lifecycle: {
+      loadPolicy, evictionPolicy, idleTtlSeconds: nonNegativeInteger(lifecycle.idleTtlSeconds, "lifecycle.idleTtlSeconds"), minimumResidencySeconds: nonNegativeInteger(lifecycle.minimumResidencySeconds, "lifecycle.minimumResidencySeconds"),
+    },
+    configuration,
+  };
+}
+
+function nonNegativeInteger(value: unknown, name: string): number { if (!Number.isInteger(value) || (value as number) < 0) throw new TypeError(`${name} must be a non-negative integer`); return value as number; }
 
 function parseAgentRunRequest(value: unknown): AgentRunRequest { const parsed = parseChatCompletionRequest(value); const source = requireRecord(value); return { model: parsed.model, messages: parsed.messages, ...(parsed.max_tokens !== undefined ? { maxTokens: parsed.max_tokens } : {}), ...(parsed.temperature !== undefined ? { temperature: parsed.temperature } : {}), ...(typeof source.sessionId === "string" ? { sessionId: source.sessionId } : {}) }; }
 function canAccessRun(principal: AuthenticatedPrincipal | undefined, ownerUserId: string | undefined): boolean { return !principal || principal.user.role === "administrator" || principal.user.id === ownerUserId; }

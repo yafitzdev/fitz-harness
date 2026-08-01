@@ -14,10 +14,14 @@ let sessionTokenEstimate = 0;
 let contextTokenLimit = 131_072;
 let managementConfiguration: Json | undefined;
 let managementView: "playbooks" | "recipes" | "routes" = "playbooks";
+let newChatMode = false;
+let editingRecipe: Json | undefined;
+let editingRoute: Json | undefined;
 let renameTarget: { kind: "project" | "task"; id: string } | undefined;
 const pinnedProjects = storedSet("fitz-pinned-projects");
 const pinnedSessions = storedSet("fitz-pinned-sessions");
 const unreadSessions = storedSet("fitz-unread-sessions");
+const expandedProjects = storedSet("fitz-expanded-projects");
 
 const shell = query(".app-shell");
 const workspaceHeader = query(".workspace-header");
@@ -39,7 +43,10 @@ const contextUsagePopover = element("context-usage-popover");
 const contextPercent = element("context-percent");
 const contextTokens = element("context-tokens");
 const form = element("composer") as HTMLFormElement;
+const workspace = query(".workspace");
 const prompt = element("prompt") as HTMLTextAreaElement;
+const newChatContext = element("new-chat-context");
+const newChatProject = element("new-chat-project");
 const status = element("status");
 const sendButton = element("send") as HTMLButtonElement;
 const attachButton = element("attach") as HTMLButtonElement;
@@ -81,6 +88,14 @@ const playbookList = element("playbook-list");
 const playbookSearch = element("playbook-search") as HTMLInputElement;
 const managementTitle = element("management-title");
 const managementDescription = element("management-description");
+const recipeDialog = element("recipe-dialog") as HTMLDialogElement;
+const recipeForm = element("recipe-form") as HTMLFormElement;
+const routeDialog = element("route-dialog") as HTMLDialogElement;
+const routeForm = element("route-form") as HTMLFormElement;
+const chatHoverCard = element("chat-hover-card");
+const hoverChatTitle = element("hover-chat-title");
+const hoverChatAge = element("hover-chat-age");
+const hoverProjectName = element("hover-project-name");
 const toast = element("toast");
 
 restoreSidebarWidth();
@@ -99,7 +114,7 @@ prompt.addEventListener("keydown", (event) => {
   }
 });
 document.addEventListener("keydown", (event) => {
-  if (event.ctrlKey && event.key.toLowerCase() === "n") { event.preventDefault(); openTaskDialog(); }
+  if (event.ctrlKey && event.key.toLowerCase() === "n") { event.preventDefault(); openNewChat(); }
   if (event.ctrlKey && event.key.toLowerCase() === "b") { event.preventDefault(); toggleSidebar(); }
   if (event.ctrlKey && event.altKey && event.key.toLowerCase() === "r") { event.preventDefault(); openRenameDialog(); }
   if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "a") { event.preventDefault(); void archiveCurrentTask(); }
@@ -107,16 +122,17 @@ document.addEventListener("keydown", (event) => {
 });
 
 element("new-project").addEventListener("click", () => openProjectDialog());
-element("new-session").addEventListener("click", () => openTaskDialog());
+element("new-session").addEventListener("click", openNewChat);
 element("manage-playbooks").addEventListener("click", () => void openPlaybookPage());
 element("refresh-playbooks").addEventListener("click", () => void loadManagementConfiguration(true));
+element("create-management").addEventListener("click", () => managementView === "routes" ? openRouteDialog() : openRecipeDialog());
 playbookSearch.addEventListener("input", renderManagementPage);
 for (const tab of document.querySelectorAll<HTMLButtonElement>("[data-management-view]")) tab.addEventListener("click", () => { managementView = tab.dataset.managementView as typeof managementView; playbookSearch.value = ""; renderManagementPage(); });
 element("sidebar-menu").addEventListener("click", toggleSidebar);
 element("sidebar-restore").addEventListener("click", toggleSidebar);
 for (const menuButton of document.querySelectorAll<HTMLButtonElement>("[data-app-menu]")) menuButton.addEventListener("click", () => { const rect = menuButton.getBoundingClientRect(); void window.fitz.showMenu(menuButton.dataset.appMenu ?? "", Math.round(rect.left), Math.round(rect.bottom)); });
 for (const windowButton of document.querySelectorAll<HTMLButtonElement>("[data-window-action]")) windowButton.addEventListener("click", () => void window.fitz.windowAction(windowButton.dataset.windowAction as "minimize" | "maximize" | "close"));
-window.fitz.onMenuCommand((command) => { if (command === "new-chat") openTaskDialog(); else if (command === "new-project") openProjectDialog(); else if (command === "toggle-sidebar") toggleSidebar(); else if (command === "toggle-environment") setContextPanel(contextPanel.hasAttribute("hidden")); });
+window.fitz.onMenuCommand((command) => { if (command === "new-chat") openNewChat(); else if (command === "new-project") openProjectDialog(); else if (command === "toggle-sidebar") toggleSidebar(); else if (command === "toggle-environment") setContextPanel(contextPanel.hasAttribute("hidden")); });
 sidebarResizer.addEventListener("pointerdown", beginSidebarResize);
 sidebarResizer.addEventListener("keydown", resizeSidebarWithKeyboard);
 connectionStatus.addEventListener("click", () => void initialize());
@@ -147,6 +163,8 @@ window.fitz.onUpdateStatus((updateStatus) => {
 });
 projectForm.addEventListener("submit", (event) => { event.preventDefault(); void createProject(); });
 taskForm.addEventListener("submit", (event) => { event.preventDefault(); void createSession(); });
+recipeForm.addEventListener("submit", (event) => { event.preventDefault(); void saveRecipe(); });
+routeForm.addEventListener("submit", (event) => { event.preventDefault(); void saveRoute(); });
 for (const closeButton of document.querySelectorAll<HTMLElement>("[data-close-dialog]")) {
   closeButton.addEventListener("click", () => {
     const dialog = document.getElementById(closeButton.dataset.closeDialog ?? "") as HTMLDialogElement | null;
@@ -189,6 +207,7 @@ async function loadProjects(preferredProject?: string, preferredSession?: string
 
   if (preferredProject && projectRecords.some((project) => project.id === preferredProject)) currentProject = preferredProject;
   else if (!currentProject || !projectRecords.some((project) => project.id === currentProject)) currentProject = projectRecords[0]?.id;
+  if (currentProject && expandedProjects.size === 0) { expandedProjects.add(currentProject); saveSet("fitz-expanded-projects", expandedProjects); }
 
   if (preferredSession) currentSession = preferredSession;
   const selectedSessions = currentProject ? sessionsByProject.get(currentProject) ?? [] : [];
@@ -212,24 +231,28 @@ function renderProjectTree(): void {
   const orderedProjects = [...projectRecords].sort((left, right) => Number(pinnedProjects.has(right.id)) - Number(pinnedProjects.has(left.id)));
   for (const project of orderedProjects) {
     const group = document.createElement("div");
-    group.className = "project-group";
-    const projectItem = treeItem(project.name, "project-row", folderIcon(), () => void selectProject(project.id), (toggle, event) => openSidebarMenu("project", project.id, toggle, event));
+    group.className = "project-group"; group.classList.toggle("expanded", expandedProjects.has(project.id)); group.dataset.projectId = project.id;
+    const projectItem = treeItem(project.name, "project-row", folderIcon(), () => {
+      if (project.id === currentProject) toggleProjectExpansion(project.id, group);
+      else void selectProject(project.id);
+    }, (toggle, event) => openSidebarMenu("project", project.id, toggle, event));
     const projectButton = projectItem.querySelector(".project-row") as HTMLButtonElement;
-    projectButton.classList.toggle("active", project.id === currentProject && !currentSession);
+    projectButton.classList.toggle("active", project.id === currentProject && !currentSession && !newChatMode);
+    projectButton.setAttribute("aria-expanded", String(expandedProjects.has(project.id)));
     group.append(projectItem);
-    if (project.id === currentProject) {
-      const projectSessions = [...(sessionsByProject.get(project.id) ?? [])].sort((left, right) => Number(pinnedSessions.has(right.id)) - Number(pinnedSessions.has(left.id)));
+    const children = document.createElement("div"); children.className = "project-children"; const childrenInner = document.createElement("div"); childrenInner.className = "project-children-inner"; children.append(childrenInner); group.append(children);
+    const projectSessions = [...(sessionsByProject.get(project.id) ?? [])].sort((left, right) => Number(pinnedSessions.has(right.id)) - Number(pinnedSessions.has(left.id)));
       if (projectSessions.length === 0) {
-        const emptyState = document.createElement("div"); emptyState.className = "tree-empty"; emptyState.textContent = "No tasks"; group.append(emptyState);
+        const emptyState = document.createElement("div"); emptyState.className = "tree-empty"; emptyState.textContent = "No chats"; childrenInner.append(emptyState);
       }
       for (const session of projectSessions) {
-        const sessionItem = treeItem(session.title, "task-row", chatIcon(), () => void selectSession(session.id), (toggle, event) => openSidebarMenu("task", session.id, toggle, event));
+        const sessionItem = treeItem(session.title, "task-row", chatIcon(), () => void selectSession(session.id, true, project.id), (toggle, event) => openSidebarMenu("task", session.id, toggle, event));
         const sessionButton = sessionItem.querySelector(".task-row") as HTMLButtonElement;
         sessionButton.classList.toggle("active", session.id === currentSession);
         if (unreadSessions.has(session.id)) { const dot = document.createElement("span"); dot.className = "activity-dot"; dot.setAttribute("aria-label", "Unread"); sessionButton.append(dot); }
-        group.append(sessionItem);
+        sessionItem.addEventListener("mouseenter", () => showChatHover(session, project, sessionItem)); sessionItem.addEventListener("mouseleave", hideChatHover); sessionButton.addEventListener("focus", () => showChatHover(session, project, sessionItem)); sessionButton.addEventListener("blur", hideChatHover);
+        childrenInner.append(sessionItem);
       }
-    }
     projects.append(group);
   }
   updateTitles();
@@ -237,7 +260,9 @@ function renderProjectTree(): void {
 
 async function selectProject(id: string): Promise<void> {
   showConversationWorkspace();
+  newChatMode = false;
   currentProject = id;
+  expandedProjects.add(id); saveSet("fitz-expanded-projects", expandedProjects);
   const projectSessions = sessionsByProject.get(id) ?? [];
   currentSession = projectSessions[0]?.id;
   renderProjectTree();
@@ -246,8 +271,14 @@ async function selectProject(id: string): Promise<void> {
   refreshComposerState();
 }
 
-async function selectSession(id: string, rerender = true): Promise<void> {
+async function selectSession(id: string, rerender = true, projectId?: string): Promise<void> {
+  hideChatHover();
   showConversationWorkspace();
+  newChatMode = false;
+  workspace.classList.remove("new-chat-open");
+  newChatContext.hidden = true;
+  if (projectId) currentProject = projectId;
+  if (currentProject) { expandedProjects.add(currentProject); saveSet("fitz-expanded-projects", expandedProjects); }
   currentSession = id;
   if (unreadSessions.delete(id)) saveSet("fitz-unread-sessions", unreadSessions);
   lastSequence = 0;
@@ -270,6 +301,60 @@ async function selectSession(id: string, rerender = true): Promise<void> {
   }
   refreshComposerState();
   prompt.focus();
+}
+
+function toggleProjectExpansion(id: string, group: HTMLElement): void {
+  const expanded = !expandedProjects.has(id);
+  if (expanded) expandedProjects.add(id); else expandedProjects.delete(id);
+  saveSet("fitz-expanded-projects", expandedProjects);
+  group.classList.toggle("expanded", expanded);
+  group.querySelector<HTMLButtonElement>(".project-row")?.setAttribute("aria-expanded", String(expanded));
+}
+
+function openNewChat(): void {
+  if (currentRun) { showToast("Stop the current response before starting a new chat"); return; }
+  showConversationWorkspace();
+  setContextPanel(false);
+  if (projectRecords.length === 0) { openProjectDialog(true); return; }
+  currentProject ??= projectRecords[0]?.id;
+  if (!currentProject) return;
+  newChatMode = true;
+  currentSession = undefined;
+  sessionTokenEstimate = 0;
+  expandedProjects.add(currentProject);
+  saveSet("fitz-expanded-projects", expandedProjects);
+  workspace.classList.add("new-chat-open");
+  newChatProject.textContent = projectRecords.find((project) => project.id === currentProject)?.name ?? "Project";
+  newChatContext.hidden = false;
+  prompt.value = "";
+  composerAttachments.replaceChildren();
+  composerAttachments.hidden = true;
+  renderProjectTree();
+  showNewChatLanding();
+  updateContextMeter();
+  refreshComposerState();
+  prompt.focus();
+}
+
+function showNewChatLanding(): void {
+  messages.replaceChildren();
+  const project = projectRecords.find((item) => item.id === currentProject);
+  const landing = document.createElement("div"); landing.className = "new-chat-landing";
+  const mark = document.createElement("div"); mark.className = "landing-mark"; mark.append(sparkIcon());
+  const heading = document.createElement("h1"); heading.textContent = `What should we build in ${project?.name ?? "this project"}?`;
+  const suggestions = [
+    ["Explore and understand code", '<path d="M4 15 7 5l4 3 5-4-3 11-4-3z"></path>'],
+    ["Build a new feature, app, or tool", '<path d="m5 15 5-10 5 10M7 11h6"></path>'],
+    ["Review code and suggest changes", '<path d="M15 6a6 6 0 1 0 1 7"></path><path d="m13 3 3 3-3 3"></path>'],
+    ["Fix issues and failures", '<path d="M7 7 5 4M13 7l2-3M6 10h8v5H6z"></path><path d="M3 11h3M14 11h3"></path>'],
+  ];
+  const grid = document.createElement("div"); grid.className = "starter-grid";
+  for (const [label, iconPath] of suggestions) {
+    const button = document.createElement("button"); button.type = "button"; button.className = "starter-card"; button.append(svg(iconPath!), Object.assign(document.createElement("span"), { textContent: label }));
+    button.addEventListener("click", () => { prompt.value = label!; resizePrompt(); updateContextMeter(); refreshComposerState(); prompt.focus(); });
+    grid.append(button);
+  }
+  landing.append(mark, heading, grid); messages.append(landing); updateTitles();
 }
 
 function openProjectDialog(afterCreateTask = false): void {
@@ -302,7 +387,7 @@ async function createProject(): Promise<void> {
     projectDialog.close();
     await loadProjects(response.data.id);
     showToast(`Created ${name}`);
-    if (pendingTaskAfterProject) { pendingTaskAfterProject = false; openTaskDialog(); }
+    if (pendingTaskAfterProject) { pendingTaskAfterProject = false; openNewChat(); }
   } catch (error) {
     showToast(errorMessage(error));
   } finally {
@@ -529,7 +614,7 @@ function renderManagementPage(): void {
     const card = document.createElement("section"); card.className = "playbook-card";
     const heading = document.createElement("h3"); heading.textContent = playbookId; card.append(heading);
     for (const recipe of playbookRecipes) {
-      const recipeCard = document.createElement("div"); recipeCard.className = "recipe-card";
+      const recipeCard = document.createElement("button"); recipeCard.type = "button"; recipeCard.className = "recipe-card"; recipeCard.addEventListener("click", () => openRecipeDialog(recipe));
       const name = document.createElement("span"); name.textContent = recipe.displayName;
       const context = document.createElement("code"); context.textContent = `${formatTokenCount(recipe.contextTokens)} ctx`;
       const detail = document.createElement("small"); const attachedRoutes = routes.filter((route: Json) => route.recipeId === recipe.id).map((route: Json) => route.displayName).join(", "); detail.textContent = `${recipe.adapter} · ${recipe.modelId}${attachedRoutes ? ` · Routes: ${attachedRoutes}` : ""}`;
@@ -542,7 +627,7 @@ function renderManagementPage(): void {
 function renderRecipeList(recipes: Json[], routes: Json[]): void {
   if (!recipes.length) { playbookList.append(panelEmpty("No recipes match this search")); return; }
   for (const recipe of recipes) {
-    const card = document.createElement("article"); card.className = "management-list-row";
+    const card = document.createElement("button"); card.type = "button"; card.className = "management-list-row"; card.addEventListener("click", () => openRecipeDialog(recipe));
     const icon = document.createElement("span"); icon.className = "management-row-icon"; icon.append(sparkIcon());
     const content = document.createElement("div"); const name = document.createElement("strong"); name.textContent = recipe.displayName; const detail = document.createElement("small"); detail.textContent = `${recipe.playbookId} · ${recipe.adapter} · ${recipe.modelId}`; content.append(name, detail);
     const meta = document.createElement("span"); const routeNames = routes.filter((route: Json) => route.recipeId === recipe.id).map((route: Json) => route.displayName).join(", "); meta.textContent = `${formatTokenCount(recipe.contextTokens)} context${routeNames ? ` · ${routeNames}` : ""}`; card.append(icon, content, meta); playbookList.append(card);
@@ -552,11 +637,65 @@ function renderRecipeList(recipes: Json[], routes: Json[]): void {
 function renderRouteList(routes: Json[]): void {
   if (!routes.length) { playbookList.append(panelEmpty("No routes match this search")); return; }
   for (const route of routes) {
-    const card = document.createElement("article"); card.className = "management-list-row";
+    const card = document.createElement("button"); card.type = "button"; card.className = "management-list-row"; card.addEventListener("click", () => openRouteDialog(route));
     const icon = document.createElement("span"); icon.className = "management-row-icon route-icon"; icon.append(svg('<path d="M4 5h5l2 3h5M4 15h5l2-3h5"></path><path d="m14 6 2-1-2-1M14 14l2 1-2 1"></path>'));
     const content = document.createElement("div"); const name = document.createElement("strong"); name.textContent = route.displayName; const detail = document.createElement("small"); detail.textContent = route.description || route.id; content.append(name, detail);
     const meta = document.createElement("span"); meta.textContent = `${route.enabled ? "Enabled" : "Disabled"} · ${route.recipeId}`; card.append(icon, content, meta); playbookList.append(card);
   }
+}
+
+function openRecipeDialog(recipe?: Json): void {
+  editingRecipe = recipe;
+  recipeForm.reset();
+  element("recipe-dialog-title").textContent = recipe ? "Edit recipe" : managementView === "playbooks" ? "Create playbook recipe" : "Create recipe";
+  const value = (id: string) => element(id) as HTMLInputElement;
+  value("recipe-playbook-id").value = recipe?.playbookId ?? "";
+  value("recipe-id").value = recipe?.id ?? ""; value("recipe-id").readOnly = Boolean(recipe);
+  value("recipe-display-name").value = recipe?.displayName ?? "";
+  value("recipe-adapter").value = recipe?.adapter ?? "fake";
+  value("recipe-model-id").value = recipe?.modelId ?? "";
+  value("recipe-context-tokens").value = String(recipe?.contextTokens ?? 131_072);
+  (element("recipe-configuration") as HTMLTextAreaElement).value = JSON.stringify(recipe?.configuration ?? {}, null, 2);
+  recipeDialog.showModal(); value("recipe-playbook-id").focus();
+}
+
+async function saveRecipe(): Promise<void> {
+  const value = (id: string) => (element(id) as HTMLInputElement).value.trim();
+  let configuration: Json;
+  try { configuration = JSON.parse((element("recipe-configuration") as HTMLTextAreaElement).value || "{}"); }
+  catch { showToast("Configuration must be valid JSON"); return; }
+  const id = value("recipe-id"); if (!id) return;
+  setFormBusy(recipeForm, true);
+  try {
+    await api(`/api/v1/management/recipes/${encodeURIComponent(id)}`, "PUT", {
+      playbookId: value("recipe-playbook-id"), displayName: value("recipe-display-name"), adapter: value("recipe-adapter"), modelId: value("recipe-model-id"),
+      contextTokens: Number(value("recipe-context-tokens")), configuration,
+      capabilities: editingRecipe?.capabilities ?? { chatCompletions: true, streaming: true, toolCalls: false, responseFormat: false, minP: false, maxConcurrentGenerations: 1 },
+      lifecycle: editingRecipe?.lifecycle ?? { loadPolicy: "onDemand", evictionPolicy: "idle-ttl", idleTtlSeconds: 300, minimumResidencySeconds: 0 },
+    });
+    recipeDialog.close(); await loadManagementConfiguration(true); showToast("Recipe saved");
+  } catch (error) { showToast(errorMessage(error)); } finally { setFormBusy(recipeForm, false); }
+}
+
+function openRouteDialog(route?: Json): void {
+  editingRoute = route;
+  routeForm.reset(); element("route-dialog-title").textContent = route ? "Edit route" : "Create route";
+  const value = (id: string) => element(id) as HTMLInputElement;
+  value("route-id").value = route?.id ?? ""; value("route-id").readOnly = Boolean(route);
+  value("route-display-name").value = route?.displayName ?? ""; value("route-description").value = route?.description ?? "";
+  (element("route-enabled") as HTMLInputElement).checked = route?.enabled ?? true;
+  const recipeSelect = element("route-recipe-id") as HTMLSelectElement; recipeSelect.replaceChildren();
+  for (const recipe of managementConfiguration?.recipes ?? []) recipeSelect.add(new Option(recipe.displayName, recipe.id, false, recipe.id === route?.recipeId));
+  routeDialog.showModal(); value("route-id").focus();
+}
+
+async function saveRoute(): Promise<void> {
+  const value = (id: string) => (element(id) as HTMLInputElement).value.trim(); const id = value("route-id"); if (!id) return;
+  setFormBusy(routeForm, true);
+  try {
+    await api(`/api/v1/management/routes/${encodeURIComponent(id)}`, "PUT", { displayName: value("route-display-name"), description: value("route-description"), recipeId: (element("route-recipe-id") as HTMLSelectElement).value, enabled: (element("route-enabled") as HTMLInputElement).checked, ...(typeof editingRoute?.isDefault === "boolean" ? { isDefault: editingRoute.isDefault } : {}) });
+    routeDialog.close(); await loadManagementConfiguration(true); showToast("Route saved");
+  } catch (error) { showToast(errorMessage(error)); } finally { setFormBusy(routeForm, false); }
 }
 
 function updateModelControls(): void {
@@ -602,6 +741,7 @@ function closePopovers(): void {
   contextUsagePopover.hidden = true;
   taskMenu.hidden = true;
   sidebarContextMenu.hidden = true;
+  hideChatHover();
   modelToggle.setAttribute("aria-expanded", "false");
   contextMeter.setAttribute("aria-expanded", "false");
   taskMenuToggle.setAttribute("aria-expanded", "false");
@@ -612,7 +752,21 @@ function closePopovers(): void {
 async function sendPrompt(): Promise<void> {
   const content = prompt.value.trim();
   if (!content) return;
-  if (!currentSession) { openTaskDialog(); return; }
+  if (!currentSession && newChatMode && currentProject) {
+    try {
+      const title = content.split(/\r?\n/, 1)[0]!.trim().slice(0, 80) || "New chat";
+      const response = await api(`/api/v1/projects/${currentProject}/sessions`, "POST", { title });
+      const sessions = sessionsByProject.get(currentProject) ?? [];
+      sessions.unshift(response.data);
+      sessionsByProject.set(currentProject, sessions);
+      currentSession = response.data.id;
+      newChatMode = false;
+      workspace.classList.remove("new-chat-open");
+      newChatContext.hidden = true;
+      renderProjectTree();
+    } catch (error) { showToast(errorMessage(error)); return; }
+  }
+  if (!currentSession) { openNewChat(); return; }
   if (!model.value) { showToast("No model route is available"); return; }
   prompt.value = "";
   resizePrompt();
@@ -767,7 +921,7 @@ function showLanding(hasTask = false): void {
   landing.append(mark, heading, detail);
   if (!hasTask) {
     const action = document.createElement("button"); action.type = "button"; action.className = "primary-button"; action.textContent = currentProject ? "New task" : "Create project";
-    action.addEventListener("click", () => currentProject ? openTaskDialog() : openProjectDialog(true)); landing.append(action);
+    action.addEventListener("click", () => currentProject ? openNewChat() : openProjectDialog(true)); landing.append(action);
   }
   messages.append(landing);
   updateTitles();
@@ -790,7 +944,7 @@ function appendMessage(role: string, text: string): HTMLElement {
 }
 
 function refreshComposerState(): void {
-  const ready = Boolean(currentSession && model.value);
+  const ready = Boolean((currentSession || (newChatMode && currentProject)) && model.value);
   prompt.disabled = !ready || Boolean(currentRun);
   model.disabled = model.options.length === 0 || Boolean(currentRun);
   effort.disabled = Boolean(currentRun);
@@ -811,6 +965,22 @@ function updateTitles(): void {
   taskTitle.textContent = session?.title ?? "";
   taskMenuToggle.hidden = !session;
 }
+
+function showChatHover(session: Json, project: Json, anchor: HTMLElement): void {
+  const updated = new Date(session.updatedAt ?? session.createdAt ?? Date.now()).getTime();
+  const ageMilliseconds = Math.max(0, Date.now() - updated);
+  const days = Math.floor(ageMilliseconds / 86_400_000);
+  const hours = Math.floor(ageMilliseconds / 3_600_000);
+  hoverChatTitle.textContent = session.title;
+  hoverChatAge.textContent = days ? `${days}d` : hours ? `${hours}h` : "now";
+  hoverProjectName.textContent = project.name;
+  const bounds = anchor.getBoundingClientRect();
+  chatHoverCard.style.left = `${Math.min(window.innerWidth - 318, bounds.right + 10)}px`;
+  chatHoverCard.style.top = `${Math.max(52, Math.min(window.innerHeight - 145, bounds.top - 4))}px`;
+  chatHoverCard.hidden = false;
+}
+
+function hideChatHover(): void { chatHoverCard.hidden = true; }
 
 function setContextPanel(open: boolean): void {
   contextPanel.hidden = !open;

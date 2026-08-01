@@ -13,6 +13,7 @@ describe("desktop renderer shell", () => {
       "sidebar-resizer",
       "new-session",
       "manage-playbooks",
+      "create-management",
       "new-project",
       "connection-status",
       "context-toggle",
@@ -39,6 +40,8 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('<dialog id="project-dialog"');
     expect(html).toContain('<dialog id="task-dialog"');
     expect(html).toContain('<dialog id="rename-dialog"');
+    expect(html).toContain('<dialog id="recipe-dialog"');
+    expect(html).toContain('<dialog id="route-dialog"');
     expect(renderer).not.toContain("window.prompt(");
     expect(renderer).not.toContain("window.alert(");
   });
@@ -77,6 +80,7 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('openSidebarMenu("task"');
     expect(renderer).toContain('openSettingsSubmenu(row.dataset.setting');
     expect(renderer).toContain('api("/api/v1/management/status")');
+    expect(renderer).toContain('/api/v1/management/recipes/${encodeURIComponent(id)}');
     expect(renderer).toContain("sessionTokenEstimate += estimateTokens");
     expect(renderer).toContain('api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" })');
     expect(renderer).toContain("maxTokens: Number(effort.value)");
