@@ -71,14 +71,23 @@ function ninferOptions() {
 }
 
 function reconcileNInferConfiguration(store: SqliteStore): void {
+  const playbook = createNInferPlaybook();
+  const templatesById = new Map(playbook.recipes.map((recipe) => [recipe.id, recipe]));
   for (const recipe of store.listRecipes()) {
-    if (recipe.playbookId === "ninfer-qwen36") store.upsertRecipe({ ...recipe, playbookId: NINFER_PLAYBOOK_ID });
+    const template = templatesById.get(recipe.id);
+    const migratedPlaybookId = recipe.playbookId === "ninfer-qwen36" ? NINFER_PLAYBOOK_ID : recipe.playbookId;
+    const migratedLifecycle = template && recipe.lifecycle.evictionPolicy === "idle-ttl" && recipe.lifecycle.idleTtlSeconds === 60
+      ? { ...recipe.lifecycle, idleTtlSeconds: template.lifecycle.idleTtlSeconds }
+      : recipe.lifecycle;
+    if (migratedPlaybookId !== recipe.playbookId || migratedLifecycle !== recipe.lifecycle) {
+      store.upsertRecipe({ ...recipe, playbookId: migratedPlaybookId, lifecycle: migratedLifecycle });
+    }
   }
-  const templates = createNInferPlaybook().routes;
+  const templates = playbook.routes;
   const existingRoutes = store.listRoutes();
   const existingById = new Map(existingRoutes.map((route) => [route.id, route]));
   const legacyDefault = existingById.get("default-agent");
-  const recipeIds = new Set([...store.listRecipes(), ...createNInferPlaybook().recipes].map((recipe) => recipe.id));
+  const recipeIds = new Set([...store.listRecipes(), ...playbook.recipes].map((recipe) => recipe.id));
   for (const route of existingRoutes) {
     if (!templates.some((template) => template.id === route.id)) store.deleteRoute(route.id);
   }

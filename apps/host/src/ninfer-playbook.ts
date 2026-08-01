@@ -68,6 +68,7 @@ function recipe(id: string, displayName: string, modelId: string, artifact: stri
     ...value,
     playbookId: NINFER_PLAYBOOK_ID,
     displayName,
+    lifecycle: { ...value.lifecycle, idleTtlSeconds: 1_800 },
     configuration: { ...value.configuration, readinessTimeoutMs: 180_000 },
   };
 }

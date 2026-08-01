@@ -1006,6 +1006,7 @@ async function sendPrompt(): Promise<void> {
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   appendMessage("user", content);
   const activity = appendRunActivity("Starting model…");
+  const runStartedAt = Date.now();
   sessionTokenEstimate += estimateTokens(content);
   updateContextMeter();
   setStatus("Queued", "loading");
@@ -1021,7 +1022,7 @@ async function sendPrompt(): Promise<void> {
     lastSequence = 0;
     engineState.textContent = "QUEUED";
     refreshComposerState();
-    await followRun(runId, activity);
+    await followRun(runId, activity, runStartedAt);
   } catch (error) {
     activity.remove();
     appendMessage("system", errorMessage(error));
@@ -1044,7 +1045,7 @@ async function cancelRun(): Promise<void> {
   }
 }
 
-async function followRun(runId: string, activity: HTMLElement): Promise<void> {
+async function followRun(runId: string, activity: HTMLElement, runStartedAt: number): Promise<void> {
   let assistant: HTMLElement | undefined;
   let done = false;
   let reconnectAttempt = 0;
@@ -1062,7 +1063,7 @@ async function followRun(runId: string, activity: HTMLElement): Promise<void> {
     }
     for (const event of replay.events ?? []) {
       lastSequence = event.sequence;
-      if (event.type === "run.started") { setStatus("Working", "active"); engineState.textContent = "WORKING"; activity.textContent = "Loading model…"; }
+      if (event.type === "run.started") { setStatus("Working", "active"); engineState.textContent = "WORKING"; setRunActivity(activity, "Loading model", runStartedAt); }
       if (event.type === "assistant.delta") {
         if (!assistant) { activity.remove(); assistant = appendMessage("assistant", ""); }
         const delta = event.data.text ?? ""; assistant.textContent += delta; sessionTokenEstimate += estimateTokens(delta); updateContextMeter();
@@ -1080,7 +1081,17 @@ async function followRun(runId: string, activity: HTMLElement): Promise<void> {
     }
     if (!done && !assistant && Date.now() >= nextEnginePoll) {
       nextEnginePoll = Date.now() + 1_000;
-      try { const management = await api("/api/v1/management/status"); const state = String(management.engine?.state ?? ""); engineState.textContent = state || "WORKING"; activity.textContent = state === "READY" || state === "BUSY" ? "Thinking…" : state === "FAILED" ? `Model failed: ${management.engine?.failureReason ?? "Unknown error"}` : "Loading model…"; } catch { /* Run events remain authoritative. */ }
+      try {
+        const management = await api("/api/v1/management/status");
+        const state = String(management.engine?.state ?? "");
+        const recipeId = String(management.engine?.recipeId ?? "");
+        const recipe = (management.recipes ?? []).find((candidate: Json) => candidate.id === recipeId);
+        const modelName = String(recipe?.displayName ?? "").replace(/\s*[·•]\s*(Fast|Best)\s*$/i, "");
+        engineState.textContent = state || "WORKING";
+        if (state === "READY" || state === "BUSY") setRunActivity(activity, "Thinking", runStartedAt);
+        else if (state === "FAILED") activity.textContent = `Model failed: ${management.engine?.failureReason ?? "Unknown error"}`;
+        else setRunActivity(activity, modelName ? `Loading ${modelName}` : "Loading model", runStartedAt);
+      } catch { setRunActivity(activity, "Loading model", runStartedAt); }
     }
     if (!done) await delay(350);
   }
@@ -1187,6 +1198,10 @@ function appendMessage(role: string, text: string): HTMLElement {
 
 function appendRunActivity(text: string): HTMLElement { const value = document.createElement("div"); value.className = "message run-activity"; value.textContent = text; messages.append(value); messages.scrollTop = messages.scrollHeight; return value; }
 
+function setRunActivity(activity: HTMLElement, label: string, startedAt: number): void {
+  activity.textContent = `${label}… ${formatElapsed(Date.now() - startedAt)}`;
+}
+
 function refreshComposerState(): void {
   const ready = Boolean((currentSession || (newChatMode && currentProject)) && model.value);
   prompt.disabled = !ready || Boolean(currentRun);
@@ -1281,7 +1296,7 @@ function treeItem(label: string, className: string, icon: SVGElement, action: ()
   const value = document.createElement("button"); value.type = "button"; value.className = className; const text = document.createElement("span"); text.textContent = label; value.append(icon, text); value.addEventListener("click", action);
   const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "tree-menu-toggle"; toggle.title = `${label} actions`; toggle.setAttribute("aria-label", `${label} actions`); toggle.setAttribute("aria-expanded", "false"); toggle.append(svg('<circle cx="5" cy="10" r="1"></circle><circle cx="10" cy="10" r="1"></circle><circle cx="15" cy="10" r="1"></circle>'));
   toggle.addEventListener("click", (event) => menu(toggle, event)); value.addEventListener("contextmenu", (event) => menu(toggle, event)); item.append(value);
-  if (quickAction) { const quick = document.createElement("button"); quick.type = "button"; quick.className = "tree-quick-action"; quick.title = `New chat in ${label}`; quick.setAttribute("aria-label", `New chat in ${label}`); quick.append(svg('<path d="M9 4H5.2A2.2 2.2 0 0 0 3 6.2v8.6A2.2 2.2 0 0 0 5.2 17h8.6a2.2 2.2 0 0 0 2.2-2.2V11"></path><path d="m9.2 11.1.5-2.7 4.9-4.9a1.35 1.35 0 0 1 1.9 1.9l-4.9 4.9z"></path>')); quick.addEventListener("click", (event) => { event.stopPropagation(); quickAction(); }); item.append(quick); }
+  if (quickAction) { const quick = document.createElement("button"); quick.type = "button"; quick.className = "tree-quick-action"; quick.title = `New chat in ${label}`; quick.setAttribute("aria-label", `New chat in ${label}`); quick.append(svg('<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"></path>', "0 0 24 24")); quick.addEventListener("click", (event) => { event.stopPropagation(); quickAction(); }); item.append(quick); }
   item.append(toggle); return item;
 }
 
@@ -1296,7 +1311,7 @@ async function api(path: string, method = "GET", body?: unknown): Promise<Json> 
   return parsed;
 }
 
-function svg(path: string): SVGElement { const value = document.createElementNS("http://www.w3.org/2000/svg", "svg"); value.setAttribute("viewBox", "0 0 20 20"); value.setAttribute("aria-hidden", "true"); value.innerHTML = path; return value; }
+function svg(path: string, viewBox = "0 0 20 20"): SVGElement { const value = document.createElementNS("http://www.w3.org/2000/svg", "svg"); value.setAttribute("viewBox", viewBox); value.setAttribute("aria-hidden", "true"); value.innerHTML = path; return value; }
 function folderIcon(): SVGElement { return svg('<path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path><path d="M3.5 6.5V4h5l1.5 2"></path>'); }
 function chatIcon(): SVGElement { return svg('<path d="M4 4.5h12v9H9l-3.5 2.5v-2.5H4z"></path>'); }
 function sparkIcon(): SVGElement { return svg('<path d="M10 2.8c.5 3.7 2.4 5.8 6.2 7.2-3.8 1.4-5.7 3.5-6.2 7.2-.5-3.7-2.4-5.8-6.2-7.2C7.6 8.6 9.5 6.5 10 2.8Z"></path>'); }
@@ -1308,6 +1323,12 @@ function delay(milliseconds: number): Promise<void> { return new Promise((resolv
 function bytesToBase64(bytes: Uint8Array): string { let binary = ""; for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000)); return btoa(binary); }
 function base64Bytes(value: string): Uint8Array { const binary = atob(value); return Uint8Array.from(binary, (character) => character.charCodeAt(0)); }
 function formatBytes(value: number): string { return value < 1024 ? `${value} B` : `${(value / 1024).toFixed(1)} KB`; }
+
+function formatElapsed(value: number): string {
+  const seconds = Math.max(0, Math.floor(value / 1_000));
+  const minutes = Math.floor(seconds / 60);
+  return minutes > 0 ? `${minutes}m ${String(seconds % 60).padStart(2, "0")}s` : `${seconds}s`;
+}
 function estimateTokens(value: string): number { return value ? Math.max(1, Math.ceil(value.length / 4)) : 0; }
 function formatTokenCount(value: number): string { return value >= 1000 ? `${Math.round(value / 1000)}k` : String(Math.round(value)); }
 class HttpError extends Error { constructor(message: string, readonly status: number) { super(message); } }

@@ -142,6 +142,7 @@ describe("desktop renderer shell", () => {
   it("matches the project hover controls and menu actions", () => {
     expect(renderer).toContain('className = "tree-quick-action"');
     expect(renderer).toContain("New chat in ${label}");
+    expect(styles).toContain(".project-group:hover > .tree-item .tree-quick-action");
     for (const label of ["Pin project", "Open in Explorer", "Create permanent worktree", "Edit project", "Archive chats", "Remove"]) {
       expect(renderer).toContain(`"${label}"`);
     }
@@ -151,7 +152,8 @@ describe("desktop renderer shell", () => {
   it("clears the starter screen and reports model loading before output arrives", () => {
     expect(renderer).toContain('messages.querySelector(".landing, .new-chat-landing")');
     expect(renderer).toContain('appendRunActivity("Starting model…")');
-    expect(renderer).toContain('activity.textContent = "Loading model…"');
+    expect(renderer).toContain('setRunActivity(activity, "Loading model", runStartedAt)');
+    expect(renderer).toContain("formatElapsed(Date.now() - startedAt)");
     expect(renderer).toContain('api("/api/v1/management/status")');
   });
 });
