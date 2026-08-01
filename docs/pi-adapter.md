@@ -1,14 +1,15 @@
 # Pi adapter
 
 Fitz pins `@earendil-works/pi-coding-agent` 0.83.0 behind the `@fitz/agent-core` runtime contract.
-The host remains on its deterministic direct-inference path by default. Set
-`FITZ_AGENT_RUNTIME=pi` to route native agent runs through Pi, and optionally set
-`FITZ_AGENT_CWD` to the project directory visible to Pi.
+Desktop agent runs use Pi by default. Set `FITZ_AGENT_RUNTIME=direct` only when a raw completion
+path is needed for diagnostics. Pi receives the selected Fitz route as an OpenAI-compatible model,
+so model lifecycle and routing remain owned by Fitz while Pi owns the coding-agent loop.
 
-Each initial run uses an in-memory Pi session and translates Pi text deltas and tool lifecycle
-events into Fitz protocol events. Cancellation propagates to `AgentSession.abort()`, and the session
-is disposed after completion or failure.
+Each run uses an in-memory Pi session rooted at the selected project's folder and enables Pi's
+read, bash, edit, write, grep, find, and ls tools. Tool definitions and streamed tool calls pass
+through the Fitz OpenAI gateway to the selected engine. Pi tool lifecycle events return through the
+native run protocol. Cancellation propagates to `AgentSession.abort()`, and the session is disposed
+after completion or failure.
 
-The first integration enables no Pi tools. Fitz will supply an explicit allowlist once durable tool
-policy and approval handling are available. Pi model and credential selection currently use Pi's
-standard SDK configuration; Fitz-owned provider/model wiring is a later refinement of this adapter.
+`FITZ_AGENT_CWD` can force a fixed working folder, and `FITZ_AGENT_BASE_URL` can override the local
+gateway URL. Normal desktop use needs neither override.

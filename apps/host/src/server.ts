@@ -22,6 +22,7 @@ const reserveVramMiB = parseNonNegativeInteger(
   "FITZ_RESERVE_VRAM_MIB",
 );
 const authMode = process.env.FITZ_AUTH_MODE === "required" ? "required" : "disabled";
+const agentRuntimeMode = process.env.FITZ_AGENT_RUNTIME ?? "pi";
 
 mkdirSync(dirname(databasePath), { recursive: true });
 const engineOptions = engineModeOptions(engineMode);
@@ -35,7 +36,17 @@ const runtime = createHost({
   ...(authMode === "required" ? { authPepper: requiredEnvironment("FITZ_AUTH_PEPPER") } : {}),
   ...engineOptions,
   ...(process.env.FITZ_ADMIN_TOKEN ? { adminToken: process.env.FITZ_ADMIN_TOKEN } : {}),
-  ...(process.env.FITZ_AGENT_RUNTIME === "pi" ? { agentRuntime: new PiAgentRuntime({ cwd: process.env.FITZ_AGENT_CWD ?? process.cwd() }) } : {}),
+  ...(agentRuntimeMode === "pi" ? {
+    agentRuntime: new PiAgentRuntime({
+      baseUrl: process.env.FITZ_AGENT_BASE_URL ?? `http://127.0.0.1:${port}/v1`,
+      cwd: (request) => {
+        if (process.env.FITZ_AGENT_CWD) return process.env.FITZ_AGENT_CWD;
+        const session = request.sessionId ? store.getSession(request.sessionId) : undefined;
+        const project = session ? store.getProject(session.projectId) : undefined;
+        return project?.rootPath ?? process.cwd();
+      },
+    }),
+  } : {}),
 });
 
 if (authMode === "required" && runtime.store.listUsers().length === 0) {
@@ -79,8 +90,11 @@ function reconcileNInferConfiguration(store: SqliteStore): void {
     const migratedLifecycle = template && recipe.lifecycle.evictionPolicy === "idle-ttl" && recipe.lifecycle.idleTtlSeconds === 60
       ? { ...recipe.lifecycle, idleTtlSeconds: template.lifecycle.idleTtlSeconds }
       : recipe.lifecycle;
-    if (migratedPlaybookId !== recipe.playbookId || migratedLifecycle !== recipe.lifecycle) {
-      store.upsertRecipe({ ...recipe, playbookId: migratedPlaybookId, lifecycle: migratedLifecycle });
+    const migratedCapabilities = template && !recipe.capabilities.toolCalls
+      ? { ...recipe.capabilities, toolCalls: true }
+      : recipe.capabilities;
+    if (migratedPlaybookId !== recipe.playbookId || migratedLifecycle !== recipe.lifecycle || migratedCapabilities !== recipe.capabilities) {
+      store.upsertRecipe({ ...recipe, playbookId: migratedPlaybookId, lifecycle: migratedLifecycle, capabilities: migratedCapabilities });
     }
   }
   const templates = playbook.routes;

@@ -6,7 +6,18 @@ export interface OpenAICompatibleClientOptions {
 }
 
 interface StreamChunk {
-  choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
+  choices?: Array<{
+    delta?: {
+      content?: string;
+      tool_calls?: Array<{
+        index: number;
+        id?: string;
+        type?: "function";
+        function?: { name?: string; arguments?: string };
+      }>;
+    };
+    finish_reason?: string | null;
+  }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number };
   error?: { message?: string };
 }
@@ -47,6 +58,9 @@ export class OpenAICompatibleClient {
         ...(request.topP !== undefined ? { top_p: request.topP } : {}),
         ...(request.stop !== undefined ? { stop: request.stop } : {}),
         ...(request.userId ? { user: request.userId } : {}),
+        ...(request.tools !== undefined ? { tools: request.tools } : {}),
+        ...(request.toolChoice !== undefined ? { tool_choice: request.toolChoice } : {}),
+        ...(request.parallelToolCalls !== undefined ? { parallel_tool_calls: request.parallelToolCalls } : {}),
       }),
       signal,
     });
@@ -60,6 +74,7 @@ export class OpenAICompatibleClient {
       const finishReason = normalizeFinishReason(choice?.finish_reason);
       yield {
         text: choice?.delta?.content ?? "",
+        ...(choice?.delta?.tool_calls?.length ? { toolCalls: choice.delta.tool_calls } : {}),
         ...(finishReason ? { finishReason } : {}),
         ...(chunk.usage?.prompt_tokens !== undefined ? { promptTokens: chunk.usage.prompt_tokens } : {}),
         ...(chunk.usage?.completion_tokens !== undefined
@@ -111,7 +126,8 @@ function joinUrl(baseUrl: string, path: string): string {
 
 function normalizeFinishReason(value: string | null | undefined): InferenceDelta["finishReason"] {
   if (value === "length") return "length";
-  if (value === "stop" || value === "stop_token" || value === "tool_calls") return "stop";
+  if (value === "tool_calls") return "tool_calls";
+  if (value === "stop" || value === "stop_token") return "stop";
   return undefined;
 }
 

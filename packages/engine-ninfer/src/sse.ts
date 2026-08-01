@@ -1,6 +1,14 @@
 export interface NInferStreamChunk {
   choices?: Array<{
-    delta?: { content?: string };
+    delta?: {
+      content?: string;
+      tool_calls?: Array<{
+        index: number;
+        id?: string;
+        type?: "function";
+        function?: { name?: string; arguments?: string };
+      }>;
+    };
     finish_reason?: string | null;
   }>;
   usage?: {

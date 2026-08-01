@@ -79,4 +79,34 @@ describe("NInferEngineAdapter launch contract", () => {
       /Timed out waiting for NInfer.*\[REDACTED\]/,
     );
   });
+
+  it("forwards tools and returns streamed function-call deltas", async () => {
+    let requestBody: any;
+    const encoder = new TextEncoder();
+    const adapter = new NInferEngineAdapter({
+      fetch: async (_input, init) => {
+        requestBody = JSON.parse(String(init?.body));
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"read","arguments":"{\\"path\\":\\"README.md\\"}"}}]}}]}\n\n'));
+            controller.enqueue(encoder.encode('data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n'));
+            controller.close();
+          },
+        });
+        return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+      },
+    });
+    const instance = { modelId: "qwen", baseUrl: "http://127.0.0.1:19001", apiKey: "secret" } as NInferInstanceHandle;
+    const chunks = [];
+    for await (const chunk of adapter.streamChat(instance, {
+      id: "request", routeId: "smart", messages: [{ role: "user", content: "read" }],
+      tools: [{ type: "function", function: { name: "read", parameters: { type: "object" } } }],
+      toolChoice: "auto",
+    }, new AbortController().signal)) chunks.push(chunk);
+    expect(requestBody).toMatchObject({ model: "qwen", tools: [expect.objectContaining({ function: expect.objectContaining({ name: "read" }) })], tool_choice: "auto" });
+    expect(chunks).toEqual([
+      expect.objectContaining({ toolCalls: [expect.objectContaining({ id: "call-1", function: expect.objectContaining({ name: "read" }) })] }),
+      expect.objectContaining({ finishReason: "tool_calls" }),
+    ]);
+  });
 });

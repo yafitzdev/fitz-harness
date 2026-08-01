@@ -22,7 +22,7 @@
 - Required-auth mode with HMAC-SHA-256 device bearer credentials, durable users and devices,
   administrator/agent/consumer roles, per-user route grants and quotas, device revocation, audit
   history, and bootstrap-administrator provisioning.
-- Versioned native agent runs with durable run state and sequenced events, background execution
+- Versioned native Pi coding-agent runs with durable run state, sequenced text/tool events, project-rooted coding tools, and background execution
   across client disconnects, cancellation, owner isolation, JSON event replay, resumable SSE via
   `after` or `Last-Event-ID`, and interrupted-run recovery after host restart.
 - Fitz-owned agent runtime boundary and an opt-in Pi SDK 0.83.0 adapter using in-memory Pi sessions,

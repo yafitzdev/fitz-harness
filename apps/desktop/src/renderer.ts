@@ -1069,6 +1069,17 @@ async function followRun(runId: string, activity: HTMLElement, runStartedAt: num
         const delta = event.data.text ?? ""; assistant.textContent += delta; sessionTokenEstimate += estimateTokens(delta); updateContextMeter();
         messages.scrollTop = messages.scrollHeight;
       }
+      if (event.type === "tool.started") {
+        const toolName = String(event.data?.toolName ?? "tool");
+        setStatus(`Running ${toolName}`, "active");
+        engineState.textContent = toolName.toUpperCase();
+        if (!assistant) setRunActivity(activity, `Running ${toolName}`, runStartedAt);
+      }
+      if (event.type === "tool.completed") {
+        setStatus("Working", "active");
+        engineState.textContent = "WORKING";
+        if (!assistant) setRunActivity(activity, "Thinking", runStartedAt);
+      }
       if (["run.completed", "run.failed", "run.cancelled", "run.interrupted"].includes(event.type)) {
         done = true;
         const success = event.type === "run.completed";

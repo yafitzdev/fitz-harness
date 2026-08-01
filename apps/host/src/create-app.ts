@@ -202,6 +202,9 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       if (body.stream !== false && !resolved.recipe.capabilities.streaming) {
         throw new TypeError(`Route ${body.model} does not support streaming`);
       }
+      if (body.tools?.length && !resolved.recipe.capabilities.toolCalls) {
+        throw new TypeError(`Route ${body.model} does not support tool calls`);
+      }
     } catch (error) {
       const statusCode = error instanceof RouteNotFoundError ? 404 : error instanceof SecurityPolicyError ? 429 : 400;
       return reply.code(statusCode).send(openAIError(error, "invalid_request_error"));
@@ -213,6 +216,9 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),
       ...(body.top_p !== undefined ? { topP: body.top_p } : {}),
       ...(body.stop !== undefined ? { stop: body.stop } : {}),
+      ...(body.tools !== undefined ? { tools: body.tools } : {}),
+      ...(body.tool_choice !== undefined ? { toolChoice: body.tool_choice } : {}),
+      ...(body.parallel_tool_calls !== undefined ? { parallelToolCalls: body.parallel_tool_calls } : {}),
       ...(principals.get(request) ? { userId: principals.get(request)!.user.id } : body.user !== undefined ? { userId: body.user } : {}),
     });
 
@@ -250,7 +256,10 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
             completionId,
             created,
             body.model,
-            delta.text ? { content: delta.text } : {},
+            {
+              ...(delta.text ? { content: delta.text } : {}),
+              ...(delta.toolCalls?.length ? { tool_calls: delta.toolCalls } : {}),
+            },
             delta.finishReason ?? null,
           ),
         );
@@ -643,8 +652,16 @@ async function collectCompletion(
   let promptTokens = 0;
   let completionTokens = 0;
   let finishReason = "stop";
+  const toolCalls = new Map<number, { id: string; type: "function"; function: { name: string; arguments: string } }>();
   for await (const delta of stream) {
     content += delta.text;
+    for (const call of delta.toolCalls ?? []) {
+      const current = toolCalls.get(call.index) ?? { id: "", type: "function" as const, function: { name: "", arguments: "" } };
+      if (call.id) current.id = call.id;
+      if (call.function?.name) current.function.name += call.function.name;
+      if (call.function?.arguments) current.function.arguments += call.function.arguments;
+      toolCalls.set(call.index, current);
+    }
     if (delta.promptTokens !== undefined) promptTokens = delta.promptTokens;
     if (delta.completionTokens !== undefined) completionTokens = delta.completionTokens;
     if (delta.finishReason) finishReason = delta.finishReason;
@@ -654,7 +671,11 @@ async function collectCompletion(
     object: "chat.completion",
     created: Math.floor(Date.now() / 1_000),
     model,
-    choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: finishReason }],
+    choices: [{
+      index: 0,
+      message: { role: "assistant", content, ...(toolCalls.size ? { tool_calls: [...toolCalls.values()] } : {}) },
+      finish_reason: finishReason,
+    }],
     usage: {
       prompt_tokens: promptTokens,
       completion_tokens: completionTokens,

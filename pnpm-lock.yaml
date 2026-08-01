@@ -97,6 +97,9 @@ importers:
 
   packages/agent-pi:
     dependencies:
+      '@earendil-works/pi-ai':
+        specifier: 0.83.0
+        version: 0.83.0(ws@8.21.1)(zod@4.4.3)
       '@earendil-works/pi-coding-agent':
         specifier: 0.83.0
         version: 0.83.0(ws@8.21.1)(zod@4.4.3)
@@ -3311,6 +3314,7 @@ snapshots:
 
   '@fitz/agent-pi@file:packages/agent-pi':
     dependencies:
+      '@earendil-works/pi-ai': 0.83.0(ws@8.21.1)(zod@4.4.3)
       '@earendil-works/pi-coding-agent': 0.83.0(ws@8.21.1)(zod@4.4.3)
       '@fitz/agent-core': file:packages/agent-core
       '@fitz/protocol': file:packages/protocol

@@ -226,6 +226,9 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
         ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
         ...(request.topP !== undefined ? { top_p: request.topP } : {}),
         ...(request.stop !== undefined ? { stop: request.stop } : {}),
+        ...(request.tools !== undefined ? { tools: request.tools } : {}),
+        ...(request.toolChoice !== undefined ? { tool_choice: request.toolChoice } : {}),
+        ...(request.parallelToolCalls !== undefined ? { parallel_tool_calls: request.parallelToolCalls } : {}),
       }),
       signal,
     });
@@ -239,6 +242,7 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
       const finishReason = normalizeFinishReason(choice?.finish_reason);
       yield {
         text: choice?.delta?.content ?? "",
+        ...(choice?.delta?.tool_calls?.length ? { toolCalls: choice.delta.tool_calls } : {}),
         ...(finishReason ? { finishReason } : {}),
         ...(chunk.usage?.prompt_tokens !== undefined
           ? { promptTokens: chunk.usage.prompt_tokens }
@@ -339,7 +343,7 @@ export function buildCurrentNInferRecipe(
     capabilities: {
       chatCompletions: true,
       streaming: true,
-      toolCalls: false,
+      toolCalls: true,
       responseFormat: false,
       minP: false,
       maxConcurrentGenerations: 1,
@@ -420,7 +424,8 @@ async function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
 
 function normalizeFinishReason(value: string | null | undefined): InferenceDelta["finishReason"] {
   if (value === "length") return "length";
-  if (value === "stop" || value === "stop_token" || value === "tool_calls") return "stop";
+  if (value === "tool_calls") return "tool_calls";
+  if (value === "stop" || value === "stop_token") return "stop";
   return undefined;
 }
 

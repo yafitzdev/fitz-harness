@@ -1,10 +1,39 @@
 export type ChatRole = "system" | "user" | "assistant" | "tool";
 
+export interface ChatToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+}
+
+export interface ChatToolCallDelta {
+  index: number;
+  id?: string;
+  type?: "function";
+  function?: { name?: string; arguments?: string };
+}
+
+export interface ChatCompletionTool {
+  type: "function";
+  function: {
+    name: string;
+    description?: string;
+    parameters: Record<string, unknown>;
+    strict?: boolean;
+  };
+}
+
+export type ChatToolChoice = "none" | "auto" | "required" | {
+  type: "function";
+  function: { name: string };
+};
+
 export interface ChatMessage {
   role: ChatRole;
   content: string;
   name?: string;
   tool_call_id?: string;
+  tool_calls?: ChatToolCall[];
 }
 
 export interface ChatCompletionRequest {
@@ -16,6 +45,9 @@ export interface ChatCompletionRequest {
   top_p?: number;
   stop?: string | string[];
   user?: string;
+  tools?: ChatCompletionTool[];
+  tool_choice?: ChatToolChoice;
+  parallel_tool_calls?: boolean;
 }
 
 export interface InferenceRequest {
@@ -27,11 +59,15 @@ export interface InferenceRequest {
   topP?: number;
   stop?: string | string[];
   userId?: string;
+  tools?: ChatCompletionTool[];
+  toolChoice?: ChatToolChoice;
+  parallelToolCalls?: boolean;
 }
 
 export interface InferenceDelta {
   text: string;
-  finishReason?: "stop" | "length" | "cancelled";
+  toolCalls?: ChatToolCallDelta[];
+  finishReason?: "stop" | "length" | "tool_calls" | "cancelled";
   promptTokens?: number;
   completionTokens?: number;
 }
@@ -110,6 +146,12 @@ export function parseChatCompletionRequest(value: unknown): ChatCompletionReques
     if (typeof value.user !== "string") throw new TypeError("user must be a string");
     request.user = value.user;
   }
+  if (value.tools !== undefined) request.tools = parseTools(value.tools);
+  if (value.tool_choice !== undefined) request.tool_choice = parseToolChoice(value.tool_choice);
+  if (value.parallel_tool_calls !== undefined) {
+    if (typeof value.parallel_tool_calls !== "boolean") throw new TypeError("parallel_tool_calls must be a boolean");
+    request.parallel_tool_calls = value.parallel_tool_calls;
+  }
 
   return request;
 }
@@ -117,14 +159,68 @@ export function parseChatCompletionRequest(value: unknown): ChatCompletionReques
 function parseMessage(value: unknown, index: number): ChatMessage {
   if (!isRecord(value)) throw new TypeError(`messages[${index}] must be an object`);
   if (!isChatRole(value.role)) throw new TypeError(`messages[${index}].role is invalid`);
-  if (typeof value.content !== "string") {
-    throw new TypeError(`messages[${index}].content must be a string`);
-  }
-
-  const message: ChatMessage = { role: value.role, content: value.content };
+  const message: ChatMessage = { role: value.role, content: parseMessageContent(value.content, index) };
   if (typeof value.name === "string") message.name = value.name;
   if (typeof value.tool_call_id === "string") message.tool_call_id = value.tool_call_id;
+  if (value.tool_calls !== undefined) {
+    if (value.role !== "assistant") throw new TypeError(`messages[${index}].tool_calls requires the assistant role`);
+    message.tool_calls = parseToolCalls(value.tool_calls, `messages[${index}].tool_calls`);
+  }
   return message;
+}
+
+function parseMessageContent(value: unknown, index: number): string {
+  if (typeof value === "string") return value;
+  if (value === null) return "";
+  if (Array.isArray(value) && value.length > 0) {
+    return value.map((part, partIndex) => {
+      if (!isRecord(part) || (part.type !== "text" && part.type !== "input_text") || typeof part.text !== "string") {
+        throw new TypeError(`messages[${index}].content[${partIndex}] must be a text part`);
+      }
+      return part.text;
+    }).join("");
+  }
+  throw new TypeError(`messages[${index}].content must be a string or text parts`);
+}
+
+function parseTools(value: unknown): ChatCompletionTool[] {
+  if (!Array.isArray(value) || value.length === 0) throw new TypeError("tools must be a non-empty array");
+  return value.map((item, index) => {
+    if (!isRecord(item) || item.type !== "function" || !isRecord(item.function)) throw new TypeError(`tools[${index}] must be a function tool`);
+    const definition = item.function;
+    if (typeof definition.name !== "string" || !definition.name) throw new TypeError(`tools[${index}].function.name must be a non-empty string`);
+    if (!isRecord(definition.parameters)) throw new TypeError(`tools[${index}].function.parameters must be an object`);
+    if (definition.description !== undefined && typeof definition.description !== "string") throw new TypeError(`tools[${index}].function.description must be a string`);
+    if (definition.strict !== undefined && typeof definition.strict !== "boolean") throw new TypeError(`tools[${index}].function.strict must be a boolean`);
+    return {
+      type: "function",
+      function: {
+        name: definition.name,
+        parameters: definition.parameters,
+        ...(typeof definition.description === "string" ? { description: definition.description } : {}),
+        ...(typeof definition.strict === "boolean" ? { strict: definition.strict } : {}),
+      },
+    };
+  });
+}
+
+function parseToolChoice(value: unknown): ChatToolChoice {
+  if (value === "none" || value === "auto" || value === "required") return value;
+  if (!isRecord(value) || value.type !== "function" || !isRecord(value.function) || typeof value.function.name !== "string" || !value.function.name) {
+    throw new TypeError("tool_choice must be none, auto, required, or a named function");
+  }
+  return { type: "function", function: { name: value.function.name } };
+}
+
+function parseToolCalls(value: unknown, name: string): ChatToolCall[] {
+  if (!Array.isArray(value) || value.length === 0) throw new TypeError(`${name} must be a non-empty array`);
+  return value.map((item, index) => {
+    if (!isRecord(item) || typeof item.id !== "string" || item.type !== "function" || !isRecord(item.function)
+      || typeof item.function.name !== "string" || typeof item.function.arguments !== "string") {
+      throw new TypeError(`${name}[${index}] must be a function call`);
+    }
+    return { id: item.id, type: "function", function: { name: item.function.name, arguments: item.function.arguments } };
+  });
 }
 
 function isChatRole(value: unknown): value is ChatRole {
