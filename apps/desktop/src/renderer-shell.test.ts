@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 const html = readFileSync(new URL("./renderer/index.html", import.meta.url), "utf8");
 const renderer = readFileSync(new URL("./renderer.ts", import.meta.url), "utf8");
+const styles = readFileSync(new URL("./renderer/styles.css", import.meta.url), "utf8");
 const main = readFileSync(new URL("./main.ts", import.meta.url), "utf8");
 
 describe("desktop renderer shell", () => {
@@ -13,7 +14,6 @@ describe("desktop renderer shell", () => {
       "sidebar-resizer",
       "new-session",
       "manage-playbooks",
-      "create-management",
       "new-project",
       "connection-status",
       "context-toggle",
@@ -72,6 +72,13 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("openEngineEditor");
     expect(renderer).toContain('/api/v1/management/engines/${encodeURIComponent(folderName)}');
     expect(renderer).not.toContain("ENGINE_CATALOG");
+    expect(html).not.toContain("Add engine");
+    expect(html).not.toContain("engine-root-path");
+    expect(renderer).not.toContain('status.textContent = engine ? "Registered"');
+    expect(renderer).not.toContain("${folder.rootPath}");
+    expect(styles).toContain(".recipe-route-toggle { align-self: center; display: flex; align-items: center; gap: 1px; margin-right: 12px; padding: 2px; border: 0;");
+    expect(renderer).toContain('class="route-icon-cut"');
+    expect(renderer).toContain('class="route-icon-filled" cx="10" cy="10" r="2.25"');
     expect(html).not.toContain("NiNfer");
     expect(html).not.toContain("llama.cpp");
     expect(html).not.toContain("vLLM");

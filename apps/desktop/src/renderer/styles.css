@@ -247,10 +247,6 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .management-page-content { width: min(820px, calc(100% - 48px)); margin: 44px auto 80px; }
 .management-page-content h1 { margin: 0; font-size: 28px; font-weight: 560; letter-spacing: -.03em; }
 .management-page-content > p { margin: 5px 0 24px; color: var(--muted); font-size: 15px; }
-.engine-root-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 18px; padding: 12px 14px; border: 1px solid var(--border-soft); border-radius: 11px; background: #1d1f1d; }
-.engine-root-bar > div { min-width: 0; display: grid; gap: 3px; }
-.engine-root-bar small { color: var(--muted); }
-.engine-root-bar code { overflow: hidden; color: #cfd1cc; font: 12px/1.4 "Cascadia Mono", Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .management-search { height: 40px; display: flex; align-items: center; gap: 9px; margin-bottom: 28px; padding: 0 13px; border: 1px solid #4b4e4a; border-radius: 20px; background: #303230; color: var(--muted); }
 .management-search:focus-within { border-color: #6b6e69; }
 .management-search svg { flex: 0 0 auto; }
@@ -259,13 +255,9 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .playbook-list { display: grid; gap: 12px; }
 .playbook-card { padding: 4px 0 18px; border-bottom: 1px solid var(--border-soft); }
 .playbook-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 10px; }
-.playbook-heading > div:first-child { min-width: 0; display: grid; gap: 3px; }
+.playbook-heading > div:first-child { min-width: 0; }
 .playbook-card h3 { margin: 0; font-size: 15px; }
-.playbook-heading small { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .playbook-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
-.engine-status { padding: 4px 7px; border-radius: 7px; background: #252725; color: var(--muted); font-size: 10px; text-transform: capitalize; }
-.engine-status.status-installed { color: #cdd0ca; }
-.engine-status.status-failed { color: #d1a3a3; }
 .recipe-card { width: 100%; min-height: 66px; display: grid; grid-template-columns: minmax(0,1fr) auto; overflow: hidden; border-radius: 10px; background: #242624; color: var(--text); transition: background-color 120ms ease; }
 .recipe-card + .recipe-card { margin-top: 7px; }
 .recipe-card:hover, .recipe-card:focus-within { background: #292b29; }
@@ -273,7 +265,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .recipe-card-details span, .recipe-card-details small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recipe-card-details small { color: var(--muted); }
 .recipe-card-details code { color: #b8bbb5; font: 11px/1.4 "Cascadia Mono", Consolas, monospace; }
-.recipe-route-toggle { align-self: center; display: flex; align-items: center; gap: 1px; margin-right: 12px; padding: 2px; border: 1px solid #3d403c; border-radius: 11px; background: #1c1e1c; }
+.recipe-route-toggle { align-self: center; display: flex; align-items: center; gap: 1px; margin-right: 12px; padding: 2px; border: 0; border-radius: 11px; background: #1c1e1c; }
 .route-symbol { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 9px; background: transparent; color: #777b74; cursor: pointer; transition: background-color 100ms ease, color 100ms ease; }
 .route-symbol:hover { background: #303230; color: #d5d7d2; }
 .route-symbol.active { background: #303230; color: #ebece8; }
@@ -281,6 +273,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .route-symbol .route-icon-filled { display: none; fill: currentColor; stroke: none; }
 .route-symbol.active .route-icon-outline { display: none; }
 .route-symbol.active .route-icon-filled { display: block; }
+.route-symbol.active .route-icon-cut { fill: none; stroke: #303230; stroke-width: 1.45; stroke-linecap: round; stroke-linejoin: round; }
 .management-editor { width: min(820px, calc(100% - 48px)); margin: 28px auto 80px; }
 .management-back { display: inline-flex; align-items: center; gap: 5px; margin: 0 0 24px -8px; padding: 7px 8px; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
 .management-back:hover { background: rgba(255,255,255,.05); color: var(--text); }
@@ -295,9 +288,6 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .management-editor-form input:focus, .management-editor-form select:focus, .management-editor-form textarea:focus { border-color: #626660; }
 .configuration-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
 .configuration-grid .wide-field { grid-column: 1 / -1; }
-.engine-folder-preview { display: grid; gap: 5px; padding: 13px 14px; border: 1px solid var(--border-soft); border-radius: 10px; background: #1d1f1d; }
-.engine-folder-preview small, .engine-folder-preview span { color: var(--muted); font-size: 12px; }
-.engine-folder-preview code { color: #d6d8d3; font: 12px/1.5 "Cascadia Mono", Consolas, monospace; overflow-wrap: anywhere; }
 .management-editor-form textarea { min-height: 150px; resize: vertical; font: 12px/1.5 "Cascadia Mono", Consolas, monospace; }
 .configuration-grid .check-label { display: flex; align-items: center; gap: 9px; align-self: end; min-height: 39px; }
 .configuration-grid .check-label input { width: auto; }

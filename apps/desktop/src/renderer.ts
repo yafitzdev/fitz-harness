@@ -5,8 +5,8 @@ type FixedRouteId = "fast" | "default" | "smart";
 
 const FIXED_ROUTES: readonly { id: FixedRouteId; label: string; icon: string }[] = [
   { id: "fast", label: "Fast", icon: '<path class="route-icon-outline" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path><path class="route-icon-filled" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path>' },
-  { id: "default", label: "Default", icon: '<g class="route-icon-outline"><circle cx="10" cy="10" r="6"></circle><circle cx="10" cy="10" r="1.6"></circle></g><circle class="route-icon-filled" cx="10" cy="10" r="6"></circle>' },
-  { id: "smart", label: "Smart", icon: '<g class="route-icon-outline"><path d="M8.75 2.75A3.25 3.25 0 0 0 4.3 5.7 3.2 3.2 0 0 0 3 8.3a3.5 3.5 0 0 0 2.1 3.2V14a3.25 3.25 0 0 0 3.65 3.2M11.25 2.75a3.25 3.25 0 0 1 4.45 2.95A3.2 3.2 0 0 1 17 8.3a3.5 3.5 0 0 1-2.1 3.2V14a3.25 3.25 0 0 1-3.65 3.2M8.75 2.75V17.2M11.25 2.75V17.2M5.1 8h3.65M11.25 8h3.65M5.1 12h3.65M11.25 12h3.65"></path></g><path class="route-icon-filled" d="M8.75 2.5A3.5 3.5 0 0 0 4.1 5.7 3.4 3.4 0 0 0 3 8.2c0 1.5.75 2.8 2 3.6V14a3.5 3.5 0 0 0 3.75 3.5v-15Zm2.5 0v15A3.5 3.5 0 0 0 15 14v-2.2a4 4 0 0 0 2-3.6 3.4 3.4 0 0 0-1.1-2.5 3.5 3.5 0 0 0-4.65-3.2Z"></path>' },
+  { id: "default", label: "Default", icon: '<g class="route-icon-outline"><circle cx="10" cy="10" r="6"></circle><circle cx="10" cy="10" r="1.6"></circle></g><circle class="route-icon-filled" cx="10" cy="10" r="2.25"></circle>' },
+  { id: "smart", label: "Smart", icon: '<g class="route-icon-outline"><path d="M8.75 2.75A3.25 3.25 0 0 0 4.3 5.7 3.2 3.2 0 0 0 3 8.3a3.5 3.5 0 0 0 2.1 3.2V14a3.25 3.25 0 0 0 3.65 3.2M11.25 2.75a3.25 3.25 0 0 1 4.45 2.95A3.2 3.2 0 0 1 17 8.3a3.5 3.5 0 0 1-2.1 3.2V14a3.25 3.25 0 0 1-3.65 3.2M8.75 2.75V17.2M11.25 2.75V17.2M5.1 8h3.65M11.25 8h3.65M5.1 12h3.65M11.25 12h3.65"></path></g><g class="route-icon-filled"><path d="M8.8 2.35A3.65 3.65 0 0 0 4 5.55 3.55 3.55 0 0 0 2.65 8.3c0 1.6.8 3 2.15 3.85V14a3.75 3.75 0 0 0 4 3.65V2.35Zm2.4 0v15.3A3.75 3.75 0 0 0 15.2 14v-1.85a4.35 4.35 0 0 0 2.15-3.85A3.55 3.55 0 0 0 16 5.55a3.65 3.65 0 0 0-4.8-3.2Z"></path><path class="route-icon-cut" d="M8.8 6.35H6.6l-1.15-1M8.8 10H5.9l-1.15 1M8.8 13.65H6.7l-1 1M11.2 6.35h2.2l1.15-1M11.2 10h2.9l1.15 1M11.2 13.65h2.1l1 1"></path></g>' },
 ];
 
 let projectRecords: Json[] = [];
@@ -95,7 +95,6 @@ const managementTitle = element("management-title");
 const managementDescription = element("management-description");
 const managementBrowser = element("management-browser");
 const managementEditor = element("management-editor");
-const createManagement = element("create-management") as HTMLButtonElement;
 const engineForm = element("engine-form") as HTMLFormElement;
 const recipeForm = element("recipe-form") as HTMLFormElement;
 const chatHoverCard = element("chat-hover-card");
@@ -131,8 +130,6 @@ element("new-project").addEventListener("click", () => openProjectDialog());
 element("new-session").addEventListener("click", openNewChat);
 element("manage-playbooks").addEventListener("click", () => void openPlaybookPage());
 element("refresh-playbooks").addEventListener("click", () => void loadManagementConfiguration(true));
-createManagement.addEventListener("click", openEngineEditor);
-element("choose-engine-root").addEventListener("click", () => void chooseEngineRoot());
 element("close-management-editor").addEventListener("click", closeManagementEditor);
 for (const button of document.querySelectorAll<HTMLButtonElement>("[data-close-management-editor]")) button.addEventListener("click", closeManagementEditor);
 playbookSearch.addEventListener("input", renderManagementPage);
@@ -606,10 +603,9 @@ function renderManagementPage(): void {
   const configuration = managementConfiguration;
   playbookList.replaceChildren();
   managementTitle.textContent = "Playbooks";
-  managementDescription.textContent = "Manage inference engines, recipes, and routing in one place";
+  managementDescription.textContent = "Engine folders appear automatically. Configure their recipes and routing here.";
   playbookSearch.placeholder = "Search playbooks";
   if (!configuration) { playbookList.append(panelEmpty("Management data is unavailable")); return; }
-  element("engine-root-path").textContent = configuration.engineRoot ?? "Not configured";
   const recipes = configuration.recipes ?? [];
   const routes = configuration.routes ?? [];
   const folders = configuration.engineFolders ?? [];
@@ -628,10 +624,8 @@ function renderManagementPage(): void {
     const heading = document.createElement("div"); heading.className = "playbook-heading";
     const identity = document.createElement("div");
     const title = document.createElement("h3"); title.textContent = engine?.displayName ?? playbookId;
-    const metadata = document.createElement("small"); metadata.textContent = engine ? `${engine.connectionMode} · ${engine.runtime} · ${folder.rootPath}` : folder.rootPath;
-    identity.append(title, metadata);
+    identity.append(title);
     const headingActions = document.createElement("div"); headingActions.className = "playbook-actions";
-    const status = document.createElement("span"); status.className = `engine-status ${engine ? "status-installed" : ""}`; status.textContent = engine ? "Registered" : "Needs setup"; headingActions.append(status);
     const configure = document.createElement("button"); configure.type = "button"; configure.className = "quiet-button compact-button"; configure.textContent = engine ? "Configure" : "Set up"; configure.addEventListener("click", () => openEngineEditor(folder)); headingActions.append(configure);
     if (engine) { const addRecipe = document.createElement("button"); addRecipe.type = "button"; addRecipe.className = "quiet-button compact-button"; addRecipe.textContent = "Add recipe"; addRecipe.addEventListener("click", () => openRecipeEditor(undefined, { ...engine, rootPath: folder.rootPath })); headingActions.append(addRecipe); }
     heading.append(identity, headingActions); card.append(heading);
@@ -680,8 +674,9 @@ function openEngineEditor(folder?: Json): void {
   const folderSelect = element("engine-folder") as HTMLSelectElement;
   folderSelect.replaceChildren();
   const folders = managementConfiguration?.engineFolders ?? [];
-  for (const candidate of folders) { const option = document.createElement("option"); option.value = candidate.folderName; option.textContent = candidate.engine ? `${candidate.folderName} · registered` : candidate.folderName; folderSelect.append(option); }
+  for (const candidate of folders) { const option = document.createElement("option"); option.value = candidate.folderName; option.textContent = candidate.folderName; folderSelect.append(option); }
   const preferred = folder ?? folders.find((candidate: Json) => !candidate.registered) ?? folders[0];
+  element("engine-editor-title").textContent = preferred?.engine ? "Configure engine" : "Set up engine";
   if (preferred) folderSelect.value = preferred.folderName;
   else { const option = document.createElement("option"); option.textContent = "No folders found"; option.disabled = true; option.selected = true; folderSelect.append(option); }
   applyEngineFolderChoice();
@@ -703,7 +698,6 @@ function applyEngineFolderChoice(): void {
   value("engine-arguments").value = (engine?.launchArguments ?? []).join("\n");
   value("engine-working-directory").value = engine?.workingDirectory ?? ".";
   value("engine-wsl-distribution").value = engine?.wslDistribution ?? "Ubuntu";
-  element("engine-folder-preview").textContent = folder?.rootPath ?? managementConfiguration?.engineRoot ?? "Engine root unavailable";
   (engineForm.querySelector('button[type="submit"]') as HTMLButtonElement).disabled = !folder;
   updateEngineFieldVisibility();
 }
@@ -714,15 +708,6 @@ function updateEngineFieldVisibility(): void {
   element("engine-runtime-field").hidden = !managed;
   element("engine-base-url-field").hidden = managed;
   element("engine-wsl-field").hidden = !managed || (element("engine-runtime") as HTMLSelectElement).value !== "wsl";
-}
-
-async function chooseEngineRoot(): Promise<void> {
-  const rootPath = await window.fitz.chooseFolder();
-  if (!rootPath) return;
-  try {
-    await api("/api/v1/management/engine-root", "PUT", { rootPath });
-    await loadManagementConfiguration(true);
-  } catch (error) { showToast(errorMessage(error)); }
 }
 
 async function saveEngine(): Promise<void> {
@@ -792,7 +777,6 @@ function showManagementEditor(kind: "engine" | "recipe"): void {
   managementEditor.hidden = false;
   engineForm.hidden = kind !== "engine";
   recipeForm.hidden = kind !== "recipe";
-  createManagement.hidden = true;
   playbookPage.scrollTop = 0;
 }
 
@@ -801,7 +785,6 @@ function closeManagementEditor(): void {
   managementBrowser.hidden = false;
   engineForm.hidden = true;
   recipeForm.hidden = true;
-  createManagement.hidden = false;
 }
 
 function updateModelControls(): void {
