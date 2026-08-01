@@ -286,15 +286,6 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .management-back:hover { background: rgba(255,255,255,.05); color: var(--text); }
 .management-back svg { width: 17px; height: 17px; }
 .management-editor-form { display: grid; gap: 24px; }
-.engine-catalog { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 9px; margin: 0; padding: 0; border: 0; }
-.engine-catalog legend { margin-bottom: 10px; color: #c9cbc6; font-size: 13px; }
-.engine-catalog label { position: relative; display: block; }
-.engine-catalog input { position: absolute; opacity: 0; pointer-events: none; }
-.engine-catalog span { min-height: 70px; display: grid; align-content: center; gap: 4px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 11px; background: #1b1d1b; cursor: pointer; }
-.engine-catalog span:hover { background: #242624; }
-.engine-catalog input:checked + span { border-color: #8c8f89; background: #2c2e2c; }
-.engine-catalog strong { color: var(--text); font-size: 14px; }
-.engine-catalog small { color: var(--muted); }
 .editor-heading { padding-bottom: 21px; border-bottom: 1px solid var(--border-soft); }
 .editor-heading small { color: var(--muted); }
 .editor-heading h1 { margin: 4px 0 5px; font-size: 28px; font-weight: 560; letter-spacing: -.03em; }

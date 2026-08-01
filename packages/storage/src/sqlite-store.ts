@@ -15,7 +15,7 @@ import type {
   InferenceLifecycleEvent,
   InferenceRequestRecord,
   QueueUpdatedEvent,
-  PlaybookRecord,
+  EngineRegistration,
   Recipe,
   Route,
   UserQuota,
@@ -133,7 +133,7 @@ export class SqliteStore {
       );
   }
 
-  upsertPlaybook(playbook: PlaybookRecord): void {
+  upsertEngine(engine: EngineRegistration): void {
     this.#database.prepare(
       `INSERT INTO playbooks (id, name, adapter, configuration_json, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?)
@@ -143,34 +143,40 @@ export class SqliteStore {
          configuration_json = excluded.configuration_json,
          updated_at = excluded.updated_at`,
     ).run(
-      playbook.id,
-      playbook.displayName,
-      playbook.adapter,
+      engine.id,
+      engine.displayName,
+      "openai-compatible",
       JSON.stringify({
-        engineKind: playbook.engineKind,
-        repositoryUrl: playbook.repositoryUrl,
-        repositoryRef: playbook.repositoryRef,
-        rootPath: playbook.rootPath,
-        status: playbook.status,
+        folderName: engine.folderName,
+        connectionMode: engine.connectionMode,
+        runtime: engine.runtime,
+        baseUrl: engine.baseUrl,
+        healthPath: engine.healthPath,
+        launchCommand: engine.launchCommand,
+        launchArguments: engine.launchArguments,
+        workingDirectory: engine.workingDirectory,
+        wslDistribution: engine.wslDistribution,
       }),
-      playbook.createdAt,
-      playbook.updatedAt,
+      engine.createdAt,
+      engine.updatedAt,
     );
   }
 
-  getPlaybook(id: string): PlaybookRecord | undefined {
+  getEngine(id: string): EngineRegistration | undefined {
     const row = this.#database.prepare(
       "SELECT id, name, adapter, configuration_json, created_at, updated_at FROM playbooks WHERE id = ?",
     ).get(id) as PlaybookRow | undefined;
     return row ? mapPlaybook(row) : undefined;
   }
 
-  listPlaybooks(): PlaybookRecord[] {
+  listEngines(): EngineRegistration[] {
     const rows = this.#database.prepare(
       "SELECT id, name, adapter, configuration_json, created_at, updated_at FROM playbooks ORDER BY name",
     ).all() as unknown as PlaybookRow[];
     return rows.map(mapPlaybook);
   }
+
+  deleteEngine(id: string): boolean { return this.#database.prepare("DELETE FROM playbooks WHERE id = ?").run(id).changes > 0; }
 
   upsertRoute(route: Route): void {
     const now = new Date().toISOString();
@@ -454,7 +460,7 @@ export class SqliteStore {
 }
 
 function mapUser(row: UserRow): UserRecord { return { id: row.id, displayName: row.display_name, role: row.role, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at }; }
-function mapPlaybook(row: PlaybookRow): PlaybookRecord { const value = JSON.parse(row.configuration_json) as Pick<PlaybookRecord, "engineKind" | "repositoryUrl" | "repositoryRef" | "rootPath" | "status">; return { id: row.id, displayName: row.name, adapter: row.adapter, ...value, createdAt: row.created_at, updatedAt: row.updated_at }; }
+function mapPlaybook(row: PlaybookRow): EngineRegistration { const value = JSON.parse(row.configuration_json) as Omit<EngineRegistration, "id" | "displayName" | "createdAt" | "updatedAt">; return { id: row.id, displayName: row.name, ...value, createdAt: row.created_at, updatedAt: row.updated_at }; }
 function mapDevice(row: DeviceRow): DeviceRecord { return { id: row.id, userId: row.user_id, name: row.name, createdAt: row.created_at, ...(row.last_used_at ? { lastUsedAt: row.last_used_at } : {}), ...(row.revoked_at ? { revokedAt: row.revoked_at } : {}) }; }
 function mapAgentRun(row: AgentRunRow): AgentRunRecord { return { id: row.id, routeId: row.route_id, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at, lastSequence: row.last_sequence, ...(row.owner_user_id ? { ownerUserId: row.owner_user_id } : {}), ...(row.session_id ? { sessionId: row.session_id } : {}), ...(row.error ? { error: row.error } : {}) }; }
 function mapProject(row: ProjectRow): ProjectRecord { return { id: row.id, name: row.name, createdAt: row.created_at, updatedAt: row.updated_at, ...(row.owner_user_id ? { ownerUserId: row.owner_user_id } : {}), ...(row.root_path ? { rootPath: row.root_path } : {}) }; }

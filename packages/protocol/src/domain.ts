@@ -41,18 +41,21 @@ export interface Recipe {
   configuration: Readonly<Record<string, unknown>>;
 }
 
-export type PlaybookEngineKind = "ninfer" | "llama-cpp" | "vllm" | "custom";
-export type PlaybookInstallStatus = "configured" | "installing" | "installed" | "failed";
+export type EngineConnectionMode = "managed" | "external";
+export type EngineRuntime = "windows" | "wsl";
 
-export interface PlaybookRecord {
+export interface EngineRegistration {
   id: string;
+  folderName: string;
   displayName: string;
-  engineKind: PlaybookEngineKind;
-  adapter: string;
-  repositoryUrl: string;
-  repositoryRef: string;
-  rootPath: string;
-  status: PlaybookInstallStatus;
+  connectionMode: EngineConnectionMode;
+  runtime: EngineRuntime;
+  baseUrl: string;
+  healthPath: string;
+  launchCommand?: string;
+  launchArguments: string[];
+  workingDirectory?: string;
+  wslDistribution?: string;
   createdAt: string;
   updatedAt: string;
 }

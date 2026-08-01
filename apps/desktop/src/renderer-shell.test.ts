@@ -70,7 +70,11 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("assignFixedRoute(");
     expect(renderer).not.toContain("now uses ${recipe.displayName}");
     expect(renderer).toContain("openEngineEditor");
-    expect(renderer).toContain('/api/v1/management/playbooks/${encodeURIComponent(id)}');
+    expect(renderer).toContain('/api/v1/management/engines/${encodeURIComponent(folderName)}');
+    expect(renderer).not.toContain("ENGINE_CATALOG");
+    expect(html).not.toContain("NiNfer");
+    expect(html).not.toContain("llama.cpp");
+    expect(html).not.toContain("vLLM");
     expect(renderer).toContain("showConversationWorkspace()");
   });
 

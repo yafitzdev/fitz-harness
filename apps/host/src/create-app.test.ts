@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -61,31 +61,36 @@ describe("Fitz host", () => {
     await runtime.app.close();
   });
 
-  it("onboards every engine beneath one configured root", async () => {
+  it("registers an arbitrary engine folder without writing into it", async () => {
     const engineRoot = await mkdtemp(join(tmpdir(), "fitz-engines-"));
+    const engineFolder = join(engineRoot, "llama-custom");
+    mkdirSync(engineFolder);
     const runtime = createHost({ engineRoot });
     try {
+      const discovered = await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" });
+      expect(discovered.json().engineFolders).toContainEqual(expect.objectContaining({ folderName: "llama-custom", registered: false }));
       const response = await runtime.app.inject({
         method: "PUT",
-        url: "/api/v1/management/playbooks/llama-cpp",
+        url: "/api/v1/management/engines/llama-custom",
         payload: {
-          displayName: "llama.cpp",
-          engineKind: "llama-cpp",
-          adapter: "llama-cpp",
-          repositoryUrl: "https://github.com/ggml-org/llama.cpp.git",
-          repositoryRef: "master",
+          displayName: "My llama.cpp fork",
+          connectionMode: "managed",
+          runtime: "wsl",
+          baseUrl: "http://127.0.0.1:18080",
+          healthPath: "/v1/models",
+          launchCommand: "./build/bin/llama-server",
+          launchArguments: ["--port", "{port}"],
+          workingDirectory: ".",
+          wslDistribution: "Ubuntu",
         },
       });
       expect(response.statusCode).toBe(200);
-      expect(response.json().data.rootPath).toBe(join(engineRoot, "llama-cpp"));
-      expect(JSON.parse(readFileSync(join(engineRoot, "llama-cpp", "fitz-engine.json"), "utf8"))).toMatchObject({ id: "llama-cpp", engineKind: "llama-cpp" });
-      mkdirSync(join(engineRoot, "llama-cpp", "source", ".git"), { recursive: true });
-      const installed = await runtime.app.inject({ method: "POST", url: "/api/v1/management/playbooks/llama-cpp/install" });
-      expect(installed.statusCode).toBe(200);
-      expect(installed.json().data.status).toBe("installed");
+      expect(response.json().data.rootPath).toBe(engineFolder);
+      expect(readdirSync(engineFolder)).toEqual([]);
       const status = await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" });
       expect(status.json().engineRoot).toBe(engineRoot);
-      expect(status.json().playbooks).toContainEqual(expect.objectContaining({ id: "llama-cpp" }));
+      expect(status.json().engines).toContainEqual(expect.objectContaining({ id: "llama-custom", connectionMode: "managed" }));
+      expect(status.json().engineFolders).toContainEqual(expect.objectContaining({ folderName: "llama-custom", registered: true }));
     } finally {
       await runtime.app.close();
       rmSync(engineRoot, { recursive: true, force: true });

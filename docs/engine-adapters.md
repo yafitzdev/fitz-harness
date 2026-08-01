@@ -7,24 +7,27 @@ Fitz supports four engine modes through `FITZ_ENGINE_MODE`:
 - `openai-compatible` connects to an already-running OpenAI-compatible HTTP server.
 - `llama-cpp` launches and owns a `llama-server` process.
 
-## Managed engine folder
+## Engine repository folder
 
-The Playbooks workspace keeps every managed engine beneath one configurable root. The default on Windows is `%USERPROFILE%\Fitz\engines`. Each playbook owns one subfolder:
+The Playbooks workspace discovers immediate child folders beneath one configurable root. On Windows the default is `C:\Users\<user>\engines` (`%USERPROFILE%\engines`). Every child is an independent engine repository:
 
 ```text
-engines/
-  ninfer/
-    fitz-engine.json
-    source/
-  llama-cpp/
-    fitz-engine.json
-    source/
-  vllm/
-    fitz-engine.json
-    source/
+C:\Users\<user>\engines\
+  engine-one\       # untouched Git checkout
+  engine-two\       # untouched Git checkout
+  private-fork\     # untouched Git checkout
 ```
 
-Add engine registers the playbook, creates its folder, writes the manifest, and shallow-clones the selected Git branch or tag into `source`. Official NiNfer, llama.cpp, and vLLM repositories are built into the catalog; Custom fork accepts another HTTPS Git repository. Recipes belong to their engine and are added from its playbook card.
+Fitz treats this directory as read-only. It does not clone repositories, create folders, write manifests or sidecars, add a `.fitz` directory, or put generated build files in an engine checkout. Repository installation and Git updates therefore remain independent of Fitz.
+
+Add or clone any engine into the root, refresh Playbooks, and its folder appears as **Needs setup**. Registration records only the folder path and OpenAI-compatible connection/launch settings in Fitz's SQLite database. No engine names, repository URLs, or launch commands are built into onboarding.
+
+An engine can use either connection mode:
+
+- **Managed**: Fitz launches and stops a configured command on Windows or WSL. Arguments can contain `{host}`, `{port}`, `{model}`, and `{context}` placeholders. The working directory must remain inside the engine repository.
+- **External**: Fitz connects to an already-running OpenAI-compatible server URL.
+
+Recipes belong to their registered engine. Switching a Fast, Default, or Smart route lets the lifecycle manager stop the previous managed engine and load the selected recipe on demand.
 
 ## Generic OpenAI-compatible server
 

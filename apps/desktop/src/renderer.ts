@@ -9,13 +9,6 @@ const FIXED_ROUTES: readonly { id: FixedRouteId; label: string; icon: string }[]
   { id: "smart", label: "Smart", icon: '<g class="route-icon-outline"><path d="M8.75 2.75A3.25 3.25 0 0 0 4.3 5.7 3.2 3.2 0 0 0 3 8.3a3.5 3.5 0 0 0 2.1 3.2V14a3.25 3.25 0 0 0 3.65 3.2M11.25 2.75a3.25 3.25 0 0 1 4.45 2.95A3.2 3.2 0 0 1 17 8.3a3.5 3.5 0 0 1-2.1 3.2V14a3.25 3.25 0 0 1-3.65 3.2M8.75 2.75V17.2M11.25 2.75V17.2M5.1 8h3.65M11.25 8h3.65M5.1 12h3.65M11.25 12h3.65"></path></g><path class="route-icon-filled" d="M8.75 2.5A3.5 3.5 0 0 0 4.1 5.7 3.4 3.4 0 0 0 3 8.2c0 1.5.75 2.8 2 3.6V14a3.5 3.5 0 0 0 3.75 3.5v-15Zm2.5 0v15A3.5 3.5 0 0 0 15 14v-2.2a4 4 0 0 0 2-3.6 3.4 3.4 0 0 0-1.1-2.5 3.5 3.5 0 0 0-4.65-3.2Z"></path>' },
 ];
 
-const ENGINE_CATALOG: Record<string, { displayName: string; id: string; adapter: string; repositoryUrl: string; repositoryRef: string }> = {
-  ninfer: { displayName: "NiNfer", id: "ninfer", adapter: "ninfer", repositoryUrl: "https://github.com/Neroued/ninfer.git", repositoryRef: "master" },
-  "llama-cpp": { displayName: "llama.cpp", id: "llama-cpp", adapter: "llama-cpp", repositoryUrl: "https://github.com/ggml-org/llama.cpp.git", repositoryRef: "master" },
-  vllm: { displayName: "vLLM", id: "vllm", adapter: "openai-compatible", repositoryUrl: "https://github.com/vllm-project/vllm.git", repositoryRef: "main" },
-  custom: { displayName: "Custom engine", id: "custom-engine", adapter: "llama-cpp", repositoryUrl: "", repositoryRef: "main" },
-};
-
 let projectRecords: Json[] = [];
 const sessionsByProject = new Map<string, Json[]>();
 let currentProject: string | undefined;
@@ -180,8 +173,9 @@ projectForm.addEventListener("submit", (event) => { event.preventDefault(); void
 taskForm.addEventListener("submit", (event) => { event.preventDefault(); void createSession(); });
 recipeForm.addEventListener("submit", (event) => { event.preventDefault(); void saveRecipe(); });
 engineForm.addEventListener("submit", (event) => { event.preventDefault(); void saveEngine(); });
-for (const choice of engineForm.querySelectorAll<HTMLInputElement>('input[name="engine-kind"]')) choice.addEventListener("change", applyEngineCatalogChoice);
-for (const id of ["engine-id", "engine-display-name"]) element(id).addEventListener("input", updateEngineFolderPreview);
+(element("engine-folder") as HTMLSelectElement).addEventListener("change", applyEngineFolderChoice);
+(element("engine-connection") as HTMLSelectElement).addEventListener("change", updateEngineFieldVisibility);
+(element("engine-runtime") as HTMLSelectElement).addEventListener("change", updateEngineFieldVisibility);
 for (const closeButton of document.querySelectorAll<HTMLElement>("[data-close-dialog]")) {
   closeButton.addEventListener("click", () => {
     const dialog = document.getElementById(closeButton.dataset.closeDialog ?? "") as HTMLDialogElement | null;
@@ -618,29 +612,31 @@ function renderManagementPage(): void {
   element("engine-root-path").textContent = configuration.engineRoot ?? "Not configured";
   const recipes = configuration.recipes ?? [];
   const routes = configuration.routes ?? [];
-  const playbooks = configuration.playbooks ?? [];
+  const folders = configuration.engineFolders ?? [];
   const query = playbookSearch.value.trim().toLowerCase();
   const matches = (...values: unknown[]) => !query || values.some((value) => String(value ?? "").toLowerCase().includes(query));
-  const visiblePlaybooks = playbooks.filter((playbook: Json) => {
-    const playbookRecipes = recipes.filter((recipe: Json) => recipe.playbookId === playbook.id);
-    return matches(playbook.id, playbook.displayName, playbook.engineKind, playbook.repositoryUrl, ...playbookRecipes.flatMap((recipe: Json) => [recipe.displayName, recipe.modelId]));
+  const visibleFolders = folders.filter((folder: Json) => {
+    const engineRecipes = recipes.filter((recipe: Json) => recipe.playbookId === folder.folderName);
+    return matches(folder.folderName, folder.rootPath, folder.engine?.displayName, ...engineRecipes.flatMap((recipe: Json) => [recipe.displayName, recipe.modelId]));
   });
-  if (!visiblePlaybooks.length) { playbookList.append(panelEmpty("No playbooks are configured")); return; }
-  for (const playbook of visiblePlaybooks) {
-    const playbookId = playbook.id;
+  if (!visibleFolders.length) { playbookList.append(panelEmpty(`No engine folders found in ${configuration.engineRoot ?? "the configured root"}`)); return; }
+  for (const folder of visibleFolders) {
+    const engine = folder.engine;
+    const playbookId = folder.folderName;
     const playbookRecipes = recipes.filter((recipe: Json) => recipe.playbookId === playbookId);
     const card = document.createElement("section"); card.className = "playbook-card";
     const heading = document.createElement("div"); heading.className = "playbook-heading";
     const identity = document.createElement("div");
-    const title = document.createElement("h3"); title.textContent = playbook.displayName ?? playbookId;
-    const metadata = document.createElement("small"); metadata.textContent = `${playbook.engineKind ?? playbook.adapter} · ${playbook.rootPath ?? "Engine folder unavailable"}`;
+    const title = document.createElement("h3"); title.textContent = engine?.displayName ?? playbookId;
+    const metadata = document.createElement("small"); metadata.textContent = engine ? `${engine.connectionMode} · ${engine.runtime} · ${folder.rootPath}` : folder.rootPath;
     identity.append(title, metadata);
     const headingActions = document.createElement("div"); headingActions.className = "playbook-actions";
-    const status = document.createElement("span"); status.className = `engine-status status-${playbook.status ?? "configured"}`; status.textContent = playbook.status ?? "configured"; headingActions.append(status);
-    if (playbook.status !== "installed") { const install = document.createElement("button"); install.type = "button"; install.className = "quiet-button compact-button"; install.textContent = playbook.status === "failed" ? "Retry install" : "Install"; install.addEventListener("click", () => void installEngine(playbook, install)); headingActions.append(install); }
-    const addRecipe = document.createElement("button"); addRecipe.type = "button"; addRecipe.className = "quiet-button compact-button"; addRecipe.textContent = "Add recipe"; addRecipe.addEventListener("click", () => openRecipeEditor(undefined, playbook)); headingActions.append(addRecipe);
+    const status = document.createElement("span"); status.className = `engine-status ${engine ? "status-installed" : ""}`; status.textContent = engine ? "Registered" : "Needs setup"; headingActions.append(status);
+    const configure = document.createElement("button"); configure.type = "button"; configure.className = "quiet-button compact-button"; configure.textContent = engine ? "Configure" : "Set up"; configure.addEventListener("click", () => openEngineEditor(folder)); headingActions.append(configure);
+    if (engine) { const addRecipe = document.createElement("button"); addRecipe.type = "button"; addRecipe.className = "quiet-button compact-button"; addRecipe.textContent = "Add recipe"; addRecipe.addEventListener("click", () => openRecipeEditor(undefined, { ...engine, rootPath: folder.rootPath })); headingActions.append(addRecipe); }
     heading.append(identity, headingActions); card.append(heading);
-    if (!playbookRecipes.length) card.append(panelEmpty("No recipes yet"));
+    if (engine && !playbookRecipes.length) card.append(panelEmpty("No recipes yet"));
+    if (!engine) { playbookList.append(card); continue; }
     for (const recipe of playbookRecipes) {
       const recipeCard = document.createElement("article"); recipeCard.className = "recipe-card";
       const recipeDetails = document.createElement("button"); recipeDetails.type = "button"; recipeDetails.className = "recipe-card-details"; recipeDetails.addEventListener("click", () => openRecipeEditor(recipe));
@@ -679,31 +675,45 @@ async function assignFixedRoute(definition: (typeof FIXED_ROUTES)[number], recip
   }
 }
 
-function openEngineEditor(): void {
+function openEngineEditor(folder?: Json): void {
   engineForm.reset();
-  const defaultChoice = engineForm.querySelector<HTMLInputElement>('input[name="engine-kind"][value="ninfer"]');
-  if (defaultChoice) defaultChoice.checked = true;
-  applyEngineCatalogChoice();
+  const folderSelect = element("engine-folder") as HTMLSelectElement;
+  folderSelect.replaceChildren();
+  const folders = managementConfiguration?.engineFolders ?? [];
+  for (const candidate of folders) { const option = document.createElement("option"); option.value = candidate.folderName; option.textContent = candidate.engine ? `${candidate.folderName} · registered` : candidate.folderName; folderSelect.append(option); }
+  const preferred = folder ?? folders.find((candidate: Json) => !candidate.registered) ?? folders[0];
+  if (preferred) folderSelect.value = preferred.folderName;
+  else { const option = document.createElement("option"); option.textContent = "No folders found"; option.disabled = true; option.selected = true; folderSelect.append(option); }
+  applyEngineFolderChoice();
   showManagementEditor("engine");
-  (element("engine-display-name") as HTMLInputElement).focus();
+  (preferred ? element("engine-display-name") : folderSelect).focus();
 }
 
-function applyEngineCatalogChoice(): void {
-  const kind = engineForm.querySelector<HTMLInputElement>('input[name="engine-kind"]:checked')?.value ?? "ninfer";
-  const definition = ENGINE_CATALOG[kind] ?? ENGINE_CATALOG.custom!;
-  (element("engine-display-name") as HTMLInputElement).value = definition.displayName;
-  (element("engine-id") as HTMLInputElement).value = definition.id;
-  (element("engine-repository") as HTMLInputElement).value = definition.repositoryUrl;
-  (element("engine-ref") as HTMLInputElement).value = definition.repositoryRef;
-  (element("engine-adapter") as HTMLSelectElement).value = definition.adapter;
-  updateEngineFolderPreview();
+function applyEngineFolderChoice(): void {
+  const folderName = (element("engine-folder") as HTMLSelectElement).value;
+  const folder = (managementConfiguration?.engineFolders ?? []).find((candidate: Json) => candidate.folderName === folderName);
+  const engine = folder?.engine;
+  const value = (id: string) => element(id) as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+  value("engine-display-name").value = engine?.displayName ?? folderName;
+  value("engine-connection").value = engine?.connectionMode ?? "managed";
+  value("engine-runtime").value = engine?.runtime ?? "windows";
+  value("engine-base-url").value = engine?.baseUrl ?? "http://127.0.0.1:18080";
+  value("engine-health-path").value = engine?.healthPath ?? "/v1/models";
+  value("engine-command").value = engine?.launchCommand ?? "";
+  value("engine-arguments").value = (engine?.launchArguments ?? []).join("\n");
+  value("engine-working-directory").value = engine?.workingDirectory ?? ".";
+  value("engine-wsl-distribution").value = engine?.wslDistribution ?? "Ubuntu";
+  element("engine-folder-preview").textContent = folder?.rootPath ?? managementConfiguration?.engineRoot ?? "Engine root unavailable";
+  (engineForm.querySelector('button[type="submit"]') as HTMLButtonElement).disabled = !folder;
+  updateEngineFieldVisibility();
 }
 
-function updateEngineFolderPreview(): void {
-  const root = String(managementConfiguration?.engineRoot ?? "").replace(/[\\/]+$/, "");
-  const id = (element("engine-id") as HTMLInputElement).value.trim() || "engine-folder";
-  const separator = root.includes("\\") ? "\\" : "/";
-  element("engine-folder-preview").textContent = root ? `${root}${separator}${id}` : id;
+function updateEngineFieldVisibility(): void {
+  const managed = (element("engine-connection") as HTMLSelectElement).value === "managed";
+  element("engine-managed-fields").hidden = !managed;
+  element("engine-runtime-field").hidden = !managed;
+  element("engine-base-url-field").hidden = managed;
+  element("engine-wsl-field").hidden = !managed || (element("engine-runtime") as HTMLSelectElement).value !== "wsl";
 }
 
 async function chooseEngineRoot(): Promise<void> {
@@ -717,32 +727,25 @@ async function chooseEngineRoot(): Promise<void> {
 
 async function saveEngine(): Promise<void> {
   const value = (id: string) => (element(id) as HTMLInputElement | HTMLSelectElement).value.trim();
-  const kind = engineForm.querySelector<HTMLInputElement>('input[name="engine-kind"]:checked')?.value ?? "custom";
-  const id = value("engine-id");
-  if (!id) return;
+  const folderName = value("engine-folder");
+  if (!folderName) return;
   setFormBusy(engineForm, true);
-  let registered = false;
   try {
-    await api(`/api/v1/management/playbooks/${encodeURIComponent(id)}`, "PUT", {
+    await api(`/api/v1/management/engines/${encodeURIComponent(folderName)}`, "PUT", {
       displayName: value("engine-display-name"),
-      engineKind: kind,
-      adapter: value("engine-adapter"),
-      repositoryUrl: value("engine-repository"),
-      repositoryRef: value("engine-ref"),
+      connectionMode: value("engine-connection"),
+      runtime: value("engine-runtime"),
+      baseUrl: value("engine-base-url"),
+      healthPath: value("engine-health-path"),
+      launchCommand: value("engine-command"),
+      launchArguments: (element("engine-arguments") as HTMLTextAreaElement).value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
+      workingDirectory: value("engine-working-directory"),
+      wslDistribution: value("engine-wsl-distribution"),
     });
-    registered = true;
-    await api(`/api/v1/management/playbooks/${encodeURIComponent(id)}/install`, "POST");
+    closeManagementEditor();
+    await loadManagementConfiguration(true);
   } catch (error) { showToast(errorMessage(error)); }
-  finally {
-    setFormBusy(engineForm, false);
-    if (registered) { closeManagementEditor(); await loadManagementConfiguration(true); }
-  }
-}
-
-async function installEngine(playbook: Json, button: HTMLButtonElement): Promise<void> {
-  button.disabled = true; button.textContent = "Installing…";
-  try { await api(`/api/v1/management/playbooks/${encodeURIComponent(playbook.id)}/install`, "POST"); await loadManagementConfiguration(true); }
-  catch (error) { showToast(errorMessage(error)); await loadManagementConfiguration(true); }
+  finally { setFormBusy(engineForm, false); }
 }
 
 function openRecipeEditor(recipe?: Json, playbook?: Json): void {
@@ -752,14 +755,17 @@ function openRecipeEditor(recipe?: Json, playbook?: Json): void {
   const value = (id: string) => element(id) as HTMLInputElement;
   const playbookIds = [...new Set((managementConfiguration?.recipes ?? []).map((item: Json) => item.playbookId))];
   const playbookId = recipe?.playbookId ?? playbook?.id ?? (playbookIds.length === 1 ? playbookIds[0] : "");
-  const playbookRecipe = managementConfiguration?.recipes?.find((item: Json) => item.playbookId === playbookId);
   value("recipe-playbook-id").value = playbookId; value("recipe-playbook-id").readOnly = Boolean(playbookId);
   value("recipe-id").value = recipe?.id ?? ""; value("recipe-id").readOnly = Boolean(recipe);
   value("recipe-display-name").value = recipe?.displayName ?? "";
-  value("recipe-adapter").value = recipe?.adapter ?? playbookRecipe?.adapter ?? playbook?.adapter ?? "ninfer";
+  const adapter = recipe?.adapter ?? (playbook?.connectionMode === "managed" ? "openai-managed" : "openai-compatible");
+  value("recipe-adapter").value = adapter; value("recipe-adapter").readOnly = true;
   value("recipe-model-id").value = recipe?.modelId ?? "";
   value("recipe-context-tokens").value = String(recipe?.contextTokens ?? 131_072);
-  (element("recipe-configuration") as HTMLTextAreaElement).value = JSON.stringify(recipe?.configuration ?? {}, null, 2);
+  const defaultConfiguration = playbook?.connectionMode === "managed"
+    ? { enginePath: playbook.rootPath, runtime: playbook.runtime, command: playbook.launchCommand, args: playbook.launchArguments, workingDirectory: playbook.workingDirectory ?? ".", healthPath: playbook.healthPath, readinessTimeoutMs: 120_000, ...(playbook.wslDistribution ? { wslDistribution: playbook.wslDistribution } : {}) }
+    : playbook ? { baseUrl: playbook.baseUrl, healthPath: playbook.healthPath, allowInsecureRemote: false } : {};
+  (element("recipe-configuration") as HTMLTextAreaElement).value = JSON.stringify(recipe?.configuration ?? defaultConfiguration, null, 2);
   showManagementEditor("recipe"); value("recipe-id").focus();
 }
 

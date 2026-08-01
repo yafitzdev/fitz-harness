@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NInferEngineAdapter } from "@fitz/engine-ninfer";
 import { FakeEngineAdapter } from "@fitz/engine-fake";
-import { OpenAICompatibleEngineAdapter } from "@fitz/engine-openai-compatible";
+import { ManagedOpenAIEngineAdapter, OpenAICompatibleEngineAdapter } from "@fitz/engine-openai-compatible";
 import { LlamaCppEngineAdapter } from "@fitz/engine-llama-cpp";
 import type { Recipe, Route } from "@fitz/protocol";
 import { SqliteStore } from "@fitz/storage";
@@ -67,7 +67,7 @@ function ninferOptions() {
   const playbook = createNInferPlaybook();
   const wslDistribution = process.env.FITZ_NINFER_WSL_DISTRIBUTION ?? (process.platform === "win32" ? "Ubuntu" : undefined);
   const adapter = new NInferEngineAdapter({ ...(wslDistribution ? { wslDistribution, wslUser: process.env.FITZ_NINFER_WSL_USER ?? "root" } : {}) });
-  return { adapters: [adapter, new LlamaCppEngineAdapter(), new OpenAICompatibleEngineAdapter()], initialRecipes: playbook.recipes, initialRoutes: playbook.routes };
+  return { adapters: [adapter, new ManagedOpenAIEngineAdapter(), new OpenAICompatibleEngineAdapter()], initialRecipes: playbook.recipes, initialRoutes: playbook.routes };
 }
 
 function reconcileNInferConfiguration(store: SqliteStore): void {
@@ -91,11 +91,13 @@ function reconcileNInferConfiguration(store: SqliteStore): void {
 
 function engineModeOptions(mode: string) {
   if (mode === "fake") {
+    const fakeAdapter = new FakeEngineAdapter({
+      loadDelayMs: parseNonNegativeInteger(process.env.FITZ_FAKE_LOAD_DELAY_MS ?? "0", "FITZ_FAKE_LOAD_DELAY_MS"),
+      tokenDelayMs: parseNonNegativeInteger(process.env.FITZ_FAKE_TOKEN_DELAY_MS ?? "0", "FITZ_FAKE_TOKEN_DELAY_MS"),
+    });
     return {
-      fakeAdapter: new FakeEngineAdapter({
-        loadDelayMs: parseNonNegativeInteger(process.env.FITZ_FAKE_LOAD_DELAY_MS ?? "0", "FITZ_FAKE_LOAD_DELAY_MS"),
-        tokenDelayMs: parseNonNegativeInteger(process.env.FITZ_FAKE_TOKEN_DELAY_MS ?? "0", "FITZ_FAKE_TOKEN_DELAY_MS"),
-      }),
+      fakeAdapter,
+      adapters: [fakeAdapter, new ManagedOpenAIEngineAdapter(), new OpenAICompatibleEngineAdapter()],
     };
   }
   if (mode === "ninfer") return ninferOptions();
@@ -105,7 +107,7 @@ function engineModeOptions(mode: string) {
       ...(process.env.FITZ_OPENAI_API_KEY_ENV ? { apiKeyEnv: process.env.FITZ_OPENAI_API_KEY_ENV } : {}),
       ...(process.env.FITZ_OPENAI_ALLOW_INSECURE_REMOTE === "true" ? { allowInsecureRemote: true } : {}),
     });
-    return singleEngineOptions(new OpenAICompatibleEngineAdapter(), recipe);
+    return singleEngineOptions([new OpenAICompatibleEngineAdapter(), new ManagedOpenAIEngineAdapter()], recipe);
   }
   if (mode === "llama-cpp") {
     const recipe = engineRecipe("llama-cpp", {
@@ -114,7 +116,7 @@ function engineModeOptions(mode: string) {
       contextTokens: parsePositiveInteger(process.env.FITZ_MODEL_CONTEXT_TOKENS ?? "32768", "FITZ_MODEL_CONTEXT_TOKENS"),
       ...(process.env.FITZ_LLAMA_CPP_GPU_LAYERS ? { gpuLayers: parseNonNegativeInteger(process.env.FITZ_LLAMA_CPP_GPU_LAYERS, "FITZ_LLAMA_CPP_GPU_LAYERS") } : {}),
     });
-    return singleEngineOptions(new LlamaCppEngineAdapter(), recipe);
+    return singleEngineOptions([new LlamaCppEngineAdapter(), new ManagedOpenAIEngineAdapter(), new OpenAICompatibleEngineAdapter()], recipe);
   }
   throw new Error(`Unsupported FITZ_ENGINE_MODE: ${mode}`);
 }
@@ -130,9 +132,9 @@ function engineRecipe(adapter: "openai-compatible" | "llama-cpp", configuration:
   };
 }
 
-function singleEngineOptions(adapter: NInferEngineAdapter | OpenAICompatibleEngineAdapter | LlamaCppEngineAdapter, recipe: Recipe) {
+function singleEngineOptions(adapters: Array<NInferEngineAdapter | OpenAICompatibleEngineAdapter | ManagedOpenAIEngineAdapter | LlamaCppEngineAdapter>, recipe: Recipe) {
   const route: Route = { id: "default", displayName: "Default", recipeId: recipe.id, enabled: true, isDefault: true };
-  return { adapters: [adapter], initialRecipes: [recipe], initialRoutes: [route] };
+  return { adapters, initialRecipes: [recipe], initialRoutes: [route] };
 }
 
 function parsePositiveInteger(value: string, name: string): number {

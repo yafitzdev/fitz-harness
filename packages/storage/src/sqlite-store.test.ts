@@ -1,4 +1,4 @@
-import type { PlaybookRecord, Recipe, Route } from "@fitz/protocol";
+import type { EngineRegistration, Recipe, Route } from "@fitz/protocol";
 import { describe, expect, it } from "vitest";
 import { SqliteStore } from "./sqlite-store.js";
 
@@ -35,13 +35,13 @@ describe("SqliteStore", () => {
       enabled: true,
       isDefault: true,
     };
-    const playbook: PlaybookRecord = {
-      id: "playbook-1", displayName: "Playbook 1", engineKind: "custom", adapter: "fake",
-      repositoryUrl: "https://github.com/example/engine.git", repositoryRef: "main", rootPath: "C:\\Fitz\\engines\\playbook-1",
-      status: "configured", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),
+    const engine: EngineRegistration = {
+      id: "engine-1", folderName: "engine-1", displayName: "Engine 1", connectionMode: "managed", runtime: "wsl",
+      baseUrl: "http://127.0.0.1:18080", healthPath: "/v1/models", launchCommand: "./serve", launchArguments: ["--port", "{port}"], workingDirectory: ".", wslDistribution: "Ubuntu",
+      createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),
     };
 
-    store.upsertPlaybook(playbook);
+    store.upsertEngine(engine);
     store.upsertRecipe(recipe);
     store.upsertRoute(route);
     store.setSetting("test", { enabled: true });
@@ -53,8 +53,8 @@ describe("SqliteStore", () => {
       data: { previousState: "UNLOADED", state: "PREPARING" },
     });
 
-    expect(store.listPlaybooks()).toEqual([playbook]);
-    expect(store.getPlaybook(playbook.id)).toEqual(playbook);
+    expect(store.listEngines()).toEqual([engine]);
+    expect(store.getEngine(engine.id)).toEqual(engine);
     expect(store.listRecipes()).toEqual([recipe]);
     expect(store.listRoutes()).toEqual([route]);
     expect(store.getSetting("test")).toEqual({ enabled: true });

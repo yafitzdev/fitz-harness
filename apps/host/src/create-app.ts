@@ -1,9 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { promisify } from "node:util";
 import Fastify, { type FastifyInstance } from "fastify";
 import { FakeEngineAdapter } from "@fitz/engine-fake";
 import {
@@ -26,8 +24,9 @@ import {
   type InferenceDelta,
   type ModelListResponse,
   type OpenAIErrorResponse,
-  type PlaybookEngineKind,
-  type PlaybookRecord,
+  type EngineConnectionMode,
+  type EngineRegistration,
+  type EngineRuntime,
   type Recipe,
   type Route,
   type AgentRunRequest,
@@ -43,8 +42,6 @@ import type { AgentRuntime } from "@fitz/agent-core";
 import { ContextManager } from "@fitz/context";
 import { TailscaleMonitor, TailscaleServeManager } from "@fitz/connectivity";
 import { classifyArtifact, normalizeMimeType } from "@fitz/media";
-
-const execFileAsync = promisify(execFile);
 
 export interface CreateHostOptions {
   store?: SqliteStore;
@@ -108,9 +105,11 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     options.initialRecipes ?? DEFAULT_RECIPES,
     options.initialRoutes ?? DEFAULT_ROUTES,
   );
-  const configuredEngineRoot = options.engineRoot ?? store.getSetting<string>("engineRoot") ?? join(homedir(), "Fitz", "engines");
+  const storedEngineRoot = store.getSetting<string>("engineRoot");
+  const legacyEngineRoot = join(homedir(), "Fitz", "engines");
+  const configuredEngineRoot = options.engineRoot ?? (!storedEngineRoot || resolve(storedEngineRoot) === resolve(legacyEngineRoot) ? join(homedir(), "engines") : storedEngineRoot);
   store.setSetting("engineRoot", configuredEngineRoot);
-  seedPlaybooks(store, configuredEngineRoot);
+  migrateLegacyEngineRegistry(store);
   const routes = new RouteResolver(store.listRoutes(), store.listRecipes());
   const events = new LifecycleEventBus(1_000, store.latestLifecycleSequence());
   const fakeAdapter = options.adapters ? options.fakeAdapter : (options.fakeAdapter ?? new FakeEngineAdapter());
@@ -322,8 +321,9 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         resources: { ...resourceSnapshot, policy: resources.policy },
         routes: routes.listRoutes(),
         recipes: routes.listRecipes(),
-        playbooks: store.listPlaybooks(),
+        engines: store.listEngines(),
         engineRoot: store.getSetting<string>("engineRoot") ?? configuredEngineRoot,
+        engineFolders: scanEngineFolders(store.getSetting<string>("engineRoot") ?? configuredEngineRoot, store.listEngines()),
         recoveredInterruptedRequests,
         recoveredAgentRuns,
       };
@@ -390,10 +390,8 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         const rootPath = requireString(body.rootPath, "rootPath");
         if (!isAbsolute(rootPath)) throw new TypeError("rootPath must be absolute");
         const resolvedRoot = resolve(rootPath);
-        if (store.listPlaybooks().some((playbook) => playbook.status === "installed" || playbook.status === "installing")) throw new TypeError("The engine folder cannot change while installed engines are registered");
-        mkdirSync(resolvedRoot, { recursive: true });
+        if (!existsSync(resolvedRoot) || !statSync(resolvedRoot).isDirectory()) throw new TypeError("rootPath must be an existing folder");
         store.setSetting("engineRoot", resolvedRoot);
-        for (const playbook of store.listPlaybooks()) store.upsertPlaybook({ ...playbook, rootPath: safeEnginePath(resolvedRoot, playbook.id), updatedAt: new Date().toISOString() });
         return { data: { rootPath: resolvedRoot } };
       } catch (error) {
         return reply.code(400).send({ error: errorMessage(error) });
@@ -402,70 +400,46 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   );
 
   app.put(
-    "/api/v1/management/playbooks/:playbookId",
+    "/api/v1/management/engines/:folderName",
     { preHandler: adminGuard(options.adminToken, authMode, principals) },
     async (request, reply) => {
       try {
-        const playbookId = parsePlaybookId((request.params as { playbookId: string }).playbookId);
+        const folderName = parseFolderName((request.params as { folderName: string }).folderName);
         const body = requireRecord(request.body);
-        const engineKind = parseEngineKind(body.engineKind);
-        const repositoryUrl = requireRepositoryUrl(body.repositoryUrl);
-        const repositoryRef = requireString(body.repositoryRef, "repositoryRef");
-        if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(repositoryRef) || repositoryRef.includes("..")) throw new TypeError("repositoryRef is invalid");
         const engineRoot = store.getSetting<string>("engineRoot") ?? configuredEngineRoot;
-        const rootPath = safeEnginePath(engineRoot, playbookId);
-        mkdirSync(rootPath, { recursive: true });
+        const rootPath = safeEnginePath(engineRoot, folderName);
+        if (!existsSync(rootPath) || !statSync(rootPath).isDirectory()) throw new TypeError("Engine folder does not exist beneath the configured root");
+        const connectionMode = parseConnectionMode(body.connectionMode);
+        const runtime = parseEngineRuntime(body.runtime);
+        const baseUrl = connectionMode === "external" ? requireBaseUrl(body.baseUrl) : "http://127.0.0.1";
+        const healthPath = requireString(body.healthPath, "healthPath");
+        if (!healthPath.startsWith("/") || healthPath.startsWith("//")) throw new TypeError("healthPath must be an absolute URL path");
+        const launchArguments = requireStringArray(body.launchArguments, "launchArguments");
+        const launchCommand = typeof body.launchCommand === "string" && body.launchCommand.trim() ? body.launchCommand.trim() : undefined;
+        if (connectionMode === "managed" && !launchCommand) throw new TypeError("launchCommand is required for a managed engine");
+        const workingDirectory = typeof body.workingDirectory === "string" && body.workingDirectory.trim() ? validateWorkingDirectory(rootPath, body.workingDirectory.trim()) : undefined;
+        const wslDistribution = typeof body.wslDistribution === "string" && body.wslDistribution.trim() ? body.wslDistribution.trim() : undefined;
         const now = new Date().toISOString();
-        const previous = store.getPlaybook(playbookId);
-        const playbook: PlaybookRecord = {
-          id: playbookId,
+        const previous = store.getEngine(folderName);
+        const engine: EngineRegistration = {
+          id: folderName,
+          folderName,
           displayName: requireString(body.displayName, "displayName"),
-          engineKind,
-          adapter: requireString(body.adapter, "adapter"),
-          repositoryUrl,
-          repositoryRef,
-          rootPath,
-          status: previous?.status ?? "configured",
+          connectionMode,
+          runtime,
+          baseUrl,
+          healthPath,
+          ...(launchCommand ? { launchCommand } : {}),
+          launchArguments,
+          ...(workingDirectory ? { workingDirectory } : {}),
+          ...(wslDistribution ? { wslDistribution } : {}),
           createdAt: previous?.createdAt ?? now,
           updatedAt: now,
         };
-        store.upsertPlaybook(playbook);
-        writePlaybookManifest(playbook);
-        return { data: playbook };
+        store.upsertEngine(engine);
+        return { data: { ...engine, rootPath } };
       } catch (error) {
         return reply.code(400).send({ error: errorMessage(error) });
-      }
-    },
-  );
-
-  app.post(
-    "/api/v1/management/playbooks/:playbookId/install",
-    { preHandler: adminGuard(options.adminToken, authMode, principals) },
-    async (request, reply) => {
-      const playbookId = parsePlaybookId((request.params as { playbookId: string }).playbookId);
-      const playbook = store.getPlaybook(playbookId);
-      if (!playbook) return reply.code(404).send({ error: "Playbook not found" });
-      const sourcePath = safeEngineChildPath(playbook.rootPath, "source");
-      if (existsSync(join(sourcePath, ".git"))) {
-        const installed = { ...playbook, status: "installed" as const, updatedAt: new Date().toISOString() };
-        store.upsertPlaybook(installed); writePlaybookManifest(installed); return { data: installed };
-      }
-      if (existsSync(sourcePath)) return reply.code(409).send({ error: "The engine source folder already exists but is not a Git checkout" });
-      mkdirSync(playbook.rootPath, { recursive: true });
-      const temporaryPath = safeEngineChildPath(playbook.rootPath, `.install-${randomUUID()}`);
-      const installing = { ...playbook, status: "installing" as const, updatedAt: new Date().toISOString() };
-      store.upsertPlaybook(installing); writePlaybookManifest(installing);
-      try {
-        await execFileAsync("git", ["clone", "--depth", "1", "--branch", playbook.repositoryRef, "--", playbook.repositoryUrl, temporaryPath], { timeout: 15 * 60_000, windowsHide: true });
-        renameSync(temporaryPath, sourcePath);
-        const installed = { ...playbook, status: "installed" as const, updatedAt: new Date().toISOString() };
-        store.upsertPlaybook(installed); writePlaybookManifest(installed);
-        return { data: installed };
-      } catch (error) {
-        if (existsSync(temporaryPath)) rmSync(temporaryPath, { recursive: true, force: true });
-        const failed = { ...playbook, status: "failed" as const, updatedAt: new Date().toISOString() };
-        store.upsertPlaybook(failed); writePlaybookManifest(failed);
-        return reply.code(503).send({ error: `Engine installation failed: ${errorMessage(error)}` });
       }
     },
   );
@@ -590,79 +564,66 @@ function seedDefaults(store: SqliteStore, recipes: Recipe[], routes: Route[]): v
   }
 }
 
-function seedPlaybooks(store: SqliteStore, engineRoot: string): void {
-  const knownRepositories: Record<string, { engineKind: PlaybookEngineKind; repositoryUrl: string; repositoryRef: string }> = {
-    ninfer: { engineKind: "ninfer", repositoryUrl: "https://github.com/Neroued/ninfer.git", repositoryRef: "master" },
-    "llama-cpp": { engineKind: "llama-cpp", repositoryUrl: "https://github.com/ggml-org/llama.cpp.git", repositoryRef: "master" },
-    vllm: { engineKind: "vllm", repositoryUrl: "https://github.com/vllm-project/vllm.git", repositoryRef: "main" },
-  };
-  const existing = new Set(store.listPlaybooks().map((playbook) => playbook.id));
-  const recipesByPlaybook = new Map<string, Recipe>();
-  for (const recipe of store.listRecipes()) if (!recipesByPlaybook.has(recipe.playbookId)) recipesByPlaybook.set(recipe.playbookId, recipe);
-  for (const [id, recipe] of recipesByPlaybook) {
-    if (existing.has(id)) continue;
-    const known = knownRepositories[id] ?? { engineKind: "custom" as const, repositoryUrl: "https://github.com/", repositoryRef: "main" };
-    const now = new Date().toISOString();
-    const playbook: PlaybookRecord = {
-      id,
-      displayName: id,
-      engineKind: known.engineKind,
-      adapter: recipe.adapter,
-      repositoryUrl: known.repositoryUrl,
-      repositoryRef: known.repositoryRef,
-      rootPath: safeEnginePath(engineRoot, id),
-      status: "configured",
-      createdAt: now,
-      updatedAt: now,
-    };
-    store.upsertPlaybook(playbook);
-  }
+function migrateLegacyEngineRegistry(store: SqliteStore): void {
+  if (store.getSetting<number>("engineRegistrySchema") === 2) return;
+  for (const engine of store.listEngines()) store.deleteEngine(engine.id);
+  store.setSetting("engineRegistrySchema", 2);
 }
 
-function parsePlaybookId(value: string): string {
-  if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(value)) throw new TypeError("playbookId must be a lowercase folder-safe identifier");
+function scanEngineFolders(engineRoot: string, engines: EngineRegistration[]): Array<Record<string, unknown>> {
+  if (!existsSync(engineRoot) || !statSync(engineRoot).isDirectory()) return [];
+  const byFolder = new Map(engines.map((engine) => [engine.folderName, engine]));
+  return readdirSync(engineRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map((entry) => {
+      const engine = byFolder.get(entry.name);
+      return { folderName: entry.name, rootPath: safeEnginePath(engineRoot, entry.name), registered: Boolean(engine), ...(engine ? { engine } : {}) };
+    });
+}
+
+function parseFolderName(value: string): string {
+  if (!value || value === "." || value === ".." || /[\\/]/.test(value)) throw new TypeError("folderName must name one direct child of the engine root");
   return value;
 }
 
-function parseEngineKind(value: unknown): PlaybookEngineKind {
-  if (value !== "ninfer" && value !== "llama-cpp" && value !== "vllm" && value !== "custom") throw new TypeError("engineKind is invalid");
+function parseConnectionMode(value: unknown): EngineConnectionMode {
+  if (value !== "managed" && value !== "external") throw new TypeError("connectionMode must be managed or external");
   return value;
 }
 
-function requireRepositoryUrl(value: unknown): string {
-  const repositoryUrl = requireString(value, "repositoryUrl");
-  const url = new URL(repositoryUrl);
-  if (url.protocol !== "https:") throw new TypeError("repositoryUrl must use https");
-  return url.toString();
+function parseEngineRuntime(value: unknown): EngineRuntime {
+  if (value !== "windows" && value !== "wsl") throw new TypeError("runtime must be windows or wsl");
+  return value;
 }
 
-function safeEnginePath(engineRoot: string, playbookId: string): string {
+function requireBaseUrl(value: unknown): string {
+  const baseUrl = requireString(value, "baseUrl");
+  const url = new URL(baseUrl);
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new TypeError("baseUrl must use http or https");
+  if (url.username || url.password) throw new TypeError("baseUrl must not contain credentials");
+  return url.toString().replace(/\/$/, "");
+}
+
+function requireStringArray(value: unknown, name: string): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) throw new TypeError(`${name} must be an array of strings`);
+  return value as string[];
+}
+
+function safeEnginePath(engineRoot: string, folderName: string): string {
   const root = resolve(engineRoot);
-  const target = resolve(root, playbookId);
+  const target = resolve(root, folderName);
   const child = relative(root, target);
   if (!child || child.startsWith("..") || isAbsolute(child)) throw new TypeError("Engine folder must be inside the configured engine root");
   return target;
 }
 
-function safeEngineChildPath(playbookRoot: string, childName: string): string {
-  const root = resolve(playbookRoot);
-  const target = resolve(root, childName);
+function validateWorkingDirectory(engineRoot: string, workingDirectory: string): string {
+  const root = resolve(engineRoot);
+  const target = resolve(root, workingDirectory);
   const child = relative(root, target);
-  if (!child || child.startsWith("..") || isAbsolute(child)) throw new TypeError("Engine content must stay inside its playbook folder");
-  return target;
-}
-
-function writePlaybookManifest(playbook: PlaybookRecord): void {
-  writeFileSync(join(playbook.rootPath, "fitz-engine.json"), `${JSON.stringify({
-    schemaVersion: 1,
-    id: playbook.id,
-    displayName: playbook.displayName,
-    engineKind: playbook.engineKind,
-    adapter: playbook.adapter,
-    repository: { url: playbook.repositoryUrl, ref: playbook.repositoryRef },
-    sourcePath: join(playbook.rootPath, "source"),
-    status: playbook.status,
-  }, null, 2)}\n`, "utf8");
+  if (child.startsWith("..") || isAbsolute(child)) throw new TypeError("workingDirectory must stay inside the engine folder");
+  return child || ".";
 }
 
 async function collectCompletion(
