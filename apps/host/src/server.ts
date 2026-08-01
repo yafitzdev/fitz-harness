@@ -67,7 +67,7 @@ function ninferOptions() {
   const playbook = createNInferPlaybook();
   const wslDistribution = process.env.FITZ_NINFER_WSL_DISTRIBUTION ?? (process.platform === "win32" ? "Ubuntu" : undefined);
   const adapter = new NInferEngineAdapter({ ...(wslDistribution ? { wslDistribution, wslUser: process.env.FITZ_NINFER_WSL_USER ?? "root" } : {}) });
-  return { adapters: [adapter], initialRecipes: playbook.recipes, initialRoutes: playbook.routes };
+  return { adapters: [adapter, new LlamaCppEngineAdapter(), new OpenAICompatibleEngineAdapter()], initialRecipes: playbook.recipes, initialRoutes: playbook.routes };
 }
 
 function reconcileNInferConfiguration(store: SqliteStore): void {

@@ -80,16 +80,29 @@
 
         <section id="playbook-page" class="management-page" aria-label="Playbook management" hidden>
           <header class="management-page-header">
-            <div class="management-actions"><button id="refresh-playbooks" class="icon-button" type="button" title="Refresh configuration" aria-label="Refresh configuration"><svg viewBox="0 0 20 20"><path d="M15.5 7A6 6 0 1 0 16 12"></path><path d="M15.5 3v4h-4"></path></svg></button><button id="create-management" class="primary-button compact-button" type="button">Add recipe</button></div>
+            <div class="management-actions"><button id="refresh-playbooks" class="icon-button" type="button" title="Refresh configuration" aria-label="Refresh configuration"><svg viewBox="0 0 20 20"><path d="M15.5 7A6 6 0 1 0 16 12"></path><path d="M15.5 3v4h-4"></path></svg></button><button id="create-management" class="primary-button compact-button" type="button">Add engine</button></div>
           </header>
           <div id="management-browser" class="management-page-content">
             <h1 id="management-title">Playbooks</h1>
-            <p id="management-description">Assign Fast, Default, and Smart directly on each recipe</p>
+            <p id="management-description">Manage inference engines, recipes, and routing in one place</p>
+            <div class="engine-root-bar"><div><small>Engine folder</small><code id="engine-root-path">Loading…</code></div><button id="choose-engine-root" class="quiet-button" type="button">Change</button></div>
             <label class="management-search"><svg viewBox="0 0 20 20"><circle cx="9" cy="9" r="5.5"></circle><path d="m13 13 4 4"></path></svg><input id="playbook-search" type="search" placeholder="Search playbooks" autocomplete="off"></label>
             <div id="playbook-list" class="playbook-list"></div>
           </div>
           <section id="management-editor" class="management-editor" hidden>
             <button id="close-management-editor" class="management-back" type="button"><svg viewBox="0 0 20 20"><path d="m12 5-5 5 5 5"></path></svg><span>Back</span></button>
+            <form id="engine-form" class="management-editor-form" hidden>
+              <div class="editor-heading"><small>Playbook onboarding</small><h1>Add engine</h1><p>Choose an engine. Fitz keeps every managed engine under the single engine folder.</p></div>
+              <fieldset class="engine-catalog"><legend>Engine</legend>
+                <label><input type="radio" name="engine-kind" value="ninfer" checked><span><strong>NiNfer</strong><small>High-performance NVIDIA inference</small></span></label>
+                <label><input type="radio" name="engine-kind" value="llama-cpp"><span><strong>llama.cpp</strong><small>Official GGUF runtime</small></span></label>
+                <label><input type="radio" name="engine-kind" value="vllm"><span><strong>vLLM</strong><small>Official high-throughput server</small></span></label>
+                <label><input type="radio" name="engine-kind" value="custom"><span><strong>Custom fork</strong><small>Any compatible Git repository</small></span></label>
+              </fieldset>
+              <div class="configuration-grid"><label>Playbook name<input id="engine-display-name" required></label><label>Folder name<input id="engine-id" required pattern="[a-z0-9][a-z0-9._-]{0,63}"></label><label class="wide-field">Git repository<input id="engine-repository" type="url" required></label><label>Git branch or tag<input id="engine-ref" required></label><label>Adapter<select id="engine-adapter"><option value="ninfer">NiNfer</option><option value="llama-cpp">llama.cpp</option><option value="openai-compatible">OpenAI-compatible</option></select></label></div>
+              <div class="engine-folder-preview"><small>Engine location</small><code id="engine-folder-preview"></code><span>Fitz creates this folder, clones the Git source into it, and writes its engine manifest here.</span></div>
+              <div class="editor-actions"><button class="quiet-button" type="button" data-close-management-editor>Cancel</button><button class="primary-button" type="submit">Add engine</button></div>
+            </form>
             <form id="recipe-form" class="management-editor-form" hidden>
               <div class="editor-heading"><small>Playbook configuration</small><h1 id="recipe-editor-title">Create recipe</h1><p>Configure the runtime definition used by a playbook.</p></div>
               <div class="configuration-grid"><label>Playbook ID<input id="recipe-playbook-id" required placeholder="my-playbook"></label><label>Recipe ID<input id="recipe-id" required placeholder="my-model"></label><label>Display name<input id="recipe-display-name" required placeholder="My Model"></label><label>Adapter<input id="recipe-adapter" required placeholder="llama-cpp"></label><label>Model ID<input id="recipe-model-id" required placeholder="model-file.gguf"></label><label>Context tokens<input id="recipe-context-tokens" type="number" min="1" required value="131072"></label></div>

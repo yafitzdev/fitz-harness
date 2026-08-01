@@ -1,4 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { isAbsolute, join, relative, resolve } from "node:path";
+import { promisify } from "node:util";
 import Fastify, { type FastifyInstance } from "fastify";
 import { FakeEngineAdapter } from "@fitz/engine-fake";
 import {
@@ -21,6 +26,8 @@ import {
   type InferenceDelta,
   type ModelListResponse,
   type OpenAIErrorResponse,
+  type PlaybookEngineKind,
+  type PlaybookRecord,
   type Recipe,
   type Route,
   type AgentRunRequest,
@@ -36,6 +43,8 @@ import type { AgentRuntime } from "@fitz/agent-core";
 import { ContextManager } from "@fitz/context";
 import { TailscaleMonitor, TailscaleServeManager } from "@fitz/connectivity";
 import { classifyArtifact, normalizeMimeType } from "@fitz/media";
+
+const execFileAsync = promisify(execFile);
 
 export interface CreateHostOptions {
   store?: SqliteStore;
@@ -54,6 +63,7 @@ export interface CreateHostOptions {
   contextManager?: ContextManager;
   tailscaleMonitor?: TailscaleMonitor;
   tailscaleServeManager?: TailscaleServeManager;
+  engineRoot?: string;
 }
 
 export interface HostRuntime {
@@ -98,6 +108,9 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     options.initialRecipes ?? DEFAULT_RECIPES,
     options.initialRoutes ?? DEFAULT_ROUTES,
   );
+  const configuredEngineRoot = options.engineRoot ?? store.getSetting<string>("engineRoot") ?? join(homedir(), "Fitz", "engines");
+  store.setSetting("engineRoot", configuredEngineRoot);
+  seedPlaybooks(store, configuredEngineRoot);
   const routes = new RouteResolver(store.listRoutes(), store.listRecipes());
   const events = new LifecycleEventBus(1_000, store.latestLifecycleSequence());
   const fakeAdapter = options.adapters ? options.fakeAdapter : (options.fakeAdapter ?? new FakeEngineAdapter());
@@ -309,6 +322,8 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         resources: { ...resourceSnapshot, policy: resources.policy },
         routes: routes.listRoutes(),
         recipes: routes.listRecipes(),
+        playbooks: store.listPlaybooks(),
+        engineRoot: store.getSetting<string>("engineRoot") ?? configuredEngineRoot,
         recoveredInterruptedRequests,
         recoveredAgentRuns,
       };
@@ -364,6 +379,95 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     "/api/v1/management/routes",
     { preHandler: adminGuard(options.adminToken, authMode, principals) },
     async () => ({ data: routes.listRoutes() }),
+  );
+
+  app.put(
+    "/api/v1/management/engine-root",
+    { preHandler: adminGuard(options.adminToken, authMode, principals) },
+    async (request, reply) => {
+      try {
+        const body = requireRecord(request.body);
+        const rootPath = requireString(body.rootPath, "rootPath");
+        if (!isAbsolute(rootPath)) throw new TypeError("rootPath must be absolute");
+        const resolvedRoot = resolve(rootPath);
+        if (store.listPlaybooks().some((playbook) => playbook.status === "installed" || playbook.status === "installing")) throw new TypeError("The engine folder cannot change while installed engines are registered");
+        mkdirSync(resolvedRoot, { recursive: true });
+        store.setSetting("engineRoot", resolvedRoot);
+        for (const playbook of store.listPlaybooks()) store.upsertPlaybook({ ...playbook, rootPath: safeEnginePath(resolvedRoot, playbook.id), updatedAt: new Date().toISOString() });
+        return { data: { rootPath: resolvedRoot } };
+      } catch (error) {
+        return reply.code(400).send({ error: errorMessage(error) });
+      }
+    },
+  );
+
+  app.put(
+    "/api/v1/management/playbooks/:playbookId",
+    { preHandler: adminGuard(options.adminToken, authMode, principals) },
+    async (request, reply) => {
+      try {
+        const playbookId = parsePlaybookId((request.params as { playbookId: string }).playbookId);
+        const body = requireRecord(request.body);
+        const engineKind = parseEngineKind(body.engineKind);
+        const repositoryUrl = requireRepositoryUrl(body.repositoryUrl);
+        const repositoryRef = requireString(body.repositoryRef, "repositoryRef");
+        if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(repositoryRef) || repositoryRef.includes("..")) throw new TypeError("repositoryRef is invalid");
+        const engineRoot = store.getSetting<string>("engineRoot") ?? configuredEngineRoot;
+        const rootPath = safeEnginePath(engineRoot, playbookId);
+        mkdirSync(rootPath, { recursive: true });
+        const now = new Date().toISOString();
+        const previous = store.getPlaybook(playbookId);
+        const playbook: PlaybookRecord = {
+          id: playbookId,
+          displayName: requireString(body.displayName, "displayName"),
+          engineKind,
+          adapter: requireString(body.adapter, "adapter"),
+          repositoryUrl,
+          repositoryRef,
+          rootPath,
+          status: previous?.status ?? "configured",
+          createdAt: previous?.createdAt ?? now,
+          updatedAt: now,
+        };
+        store.upsertPlaybook(playbook);
+        writePlaybookManifest(playbook);
+        return { data: playbook };
+      } catch (error) {
+        return reply.code(400).send({ error: errorMessage(error) });
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/management/playbooks/:playbookId/install",
+    { preHandler: adminGuard(options.adminToken, authMode, principals) },
+    async (request, reply) => {
+      const playbookId = parsePlaybookId((request.params as { playbookId: string }).playbookId);
+      const playbook = store.getPlaybook(playbookId);
+      if (!playbook) return reply.code(404).send({ error: "Playbook not found" });
+      const sourcePath = safeEngineChildPath(playbook.rootPath, "source");
+      if (existsSync(join(sourcePath, ".git"))) {
+        const installed = { ...playbook, status: "installed" as const, updatedAt: new Date().toISOString() };
+        store.upsertPlaybook(installed); writePlaybookManifest(installed); return { data: installed };
+      }
+      if (existsSync(sourcePath)) return reply.code(409).send({ error: "The engine source folder already exists but is not a Git checkout" });
+      mkdirSync(playbook.rootPath, { recursive: true });
+      const temporaryPath = safeEngineChildPath(playbook.rootPath, `.install-${randomUUID()}`);
+      const installing = { ...playbook, status: "installing" as const, updatedAt: new Date().toISOString() };
+      store.upsertPlaybook(installing); writePlaybookManifest(installing);
+      try {
+        await execFileAsync("git", ["clone", "--depth", "1", "--branch", playbook.repositoryRef, "--", playbook.repositoryUrl, temporaryPath], { timeout: 15 * 60_000, windowsHide: true });
+        renameSync(temporaryPath, sourcePath);
+        const installed = { ...playbook, status: "installed" as const, updatedAt: new Date().toISOString() };
+        store.upsertPlaybook(installed); writePlaybookManifest(installed);
+        return { data: installed };
+      } catch (error) {
+        if (existsSync(temporaryPath)) rmSync(temporaryPath, { recursive: true, force: true });
+        const failed = { ...playbook, status: "failed" as const, updatedAt: new Date().toISOString() };
+        store.upsertPlaybook(failed); writePlaybookManifest(failed);
+        return reply.code(503).send({ error: `Engine installation failed: ${errorMessage(error)}` });
+      }
+    },
   );
 
   app.put(
@@ -484,6 +588,81 @@ function seedDefaults(store: SqliteStore, recipes: Recipe[], routes: Route[]): v
   if (store.listRoutes().length === 0) {
     for (const route of routes) store.upsertRoute(route);
   }
+}
+
+function seedPlaybooks(store: SqliteStore, engineRoot: string): void {
+  const knownRepositories: Record<string, { engineKind: PlaybookEngineKind; repositoryUrl: string; repositoryRef: string }> = {
+    ninfer: { engineKind: "ninfer", repositoryUrl: "https://github.com/Neroued/ninfer.git", repositoryRef: "master" },
+    "llama-cpp": { engineKind: "llama-cpp", repositoryUrl: "https://github.com/ggml-org/llama.cpp.git", repositoryRef: "master" },
+    vllm: { engineKind: "vllm", repositoryUrl: "https://github.com/vllm-project/vllm.git", repositoryRef: "main" },
+  };
+  const existing = new Set(store.listPlaybooks().map((playbook) => playbook.id));
+  const recipesByPlaybook = new Map<string, Recipe>();
+  for (const recipe of store.listRecipes()) if (!recipesByPlaybook.has(recipe.playbookId)) recipesByPlaybook.set(recipe.playbookId, recipe);
+  for (const [id, recipe] of recipesByPlaybook) {
+    if (existing.has(id)) continue;
+    const known = knownRepositories[id] ?? { engineKind: "custom" as const, repositoryUrl: "https://github.com/", repositoryRef: "main" };
+    const now = new Date().toISOString();
+    const playbook: PlaybookRecord = {
+      id,
+      displayName: id,
+      engineKind: known.engineKind,
+      adapter: recipe.adapter,
+      repositoryUrl: known.repositoryUrl,
+      repositoryRef: known.repositoryRef,
+      rootPath: safeEnginePath(engineRoot, id),
+      status: "configured",
+      createdAt: now,
+      updatedAt: now,
+    };
+    store.upsertPlaybook(playbook);
+  }
+}
+
+function parsePlaybookId(value: string): string {
+  if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(value)) throw new TypeError("playbookId must be a lowercase folder-safe identifier");
+  return value;
+}
+
+function parseEngineKind(value: unknown): PlaybookEngineKind {
+  if (value !== "ninfer" && value !== "llama-cpp" && value !== "vllm" && value !== "custom") throw new TypeError("engineKind is invalid");
+  return value;
+}
+
+function requireRepositoryUrl(value: unknown): string {
+  const repositoryUrl = requireString(value, "repositoryUrl");
+  const url = new URL(repositoryUrl);
+  if (url.protocol !== "https:") throw new TypeError("repositoryUrl must use https");
+  return url.toString();
+}
+
+function safeEnginePath(engineRoot: string, playbookId: string): string {
+  const root = resolve(engineRoot);
+  const target = resolve(root, playbookId);
+  const child = relative(root, target);
+  if (!child || child.startsWith("..") || isAbsolute(child)) throw new TypeError("Engine folder must be inside the configured engine root");
+  return target;
+}
+
+function safeEngineChildPath(playbookRoot: string, childName: string): string {
+  const root = resolve(playbookRoot);
+  const target = resolve(root, childName);
+  const child = relative(root, target);
+  if (!child || child.startsWith("..") || isAbsolute(child)) throw new TypeError("Engine content must stay inside its playbook folder");
+  return target;
+}
+
+function writePlaybookManifest(playbook: PlaybookRecord): void {
+  writeFileSync(join(playbook.rootPath, "fitz-engine.json"), `${JSON.stringify({
+    schemaVersion: 1,
+    id: playbook.id,
+    displayName: playbook.displayName,
+    engineKind: playbook.engineKind,
+    adapter: playbook.adapter,
+    repository: { url: playbook.repositoryUrl, ref: playbook.repositoryRef },
+    sourcePath: join(playbook.rootPath, "source"),
+    status: playbook.status,
+  }, null, 2)}\n`, "utf8");
 }
 
 async function collectCompletion(

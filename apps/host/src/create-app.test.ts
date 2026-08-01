@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createHost } from "./create-app.js";
 import { SecurityService } from "@fitz/security";
 import { SqliteStore } from "@fitz/storage";
@@ -55,6 +59,37 @@ describe("Fitz host", () => {
     expect(response.statusCode).toBe(200);
     expect(fastRoutes).toEqual([expect.objectContaining({ recipeId: "fake-best" })]);
     await runtime.app.close();
+  });
+
+  it("onboards every engine beneath one configured root", async () => {
+    const engineRoot = await mkdtemp(join(tmpdir(), "fitz-engines-"));
+    const runtime = createHost({ engineRoot });
+    try {
+      const response = await runtime.app.inject({
+        method: "PUT",
+        url: "/api/v1/management/playbooks/llama-cpp",
+        payload: {
+          displayName: "llama.cpp",
+          engineKind: "llama-cpp",
+          adapter: "llama-cpp",
+          repositoryUrl: "https://github.com/ggml-org/llama.cpp.git",
+          repositoryRef: "master",
+        },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().data.rootPath).toBe(join(engineRoot, "llama-cpp"));
+      expect(JSON.parse(readFileSync(join(engineRoot, "llama-cpp", "fitz-engine.json"), "utf8"))).toMatchObject({ id: "llama-cpp", engineKind: "llama-cpp" });
+      mkdirSync(join(engineRoot, "llama-cpp", "source", ".git"), { recursive: true });
+      const installed = await runtime.app.inject({ method: "POST", url: "/api/v1/management/playbooks/llama-cpp/install" });
+      expect(installed.statusCode).toBe(200);
+      expect(installed.json().data.status).toBe("installed");
+      const status = await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" });
+      expect(status.json().engineRoot).toBe(engineRoot);
+      expect(status.json().playbooks).toContainEqual(expect.objectContaining({ id: "llama-cpp" }));
+    } finally {
+      await runtime.app.close();
+      rmSync(engineRoot, { recursive: true, force: true });
+    }
   });
 
   it("serves a non-streaming OpenAI-compatible completion and records lifecycle events", async () => {

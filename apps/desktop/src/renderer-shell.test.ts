@@ -41,6 +41,7 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('<dialog id="task-dialog"');
     expect(html).toContain('<dialog id="rename-dialog"');
     expect(html).toContain('id="management-editor"');
+    expect(html).toContain('id="engine-form" class="management-editor-form"');
     expect(html).toContain('id="recipe-form" class="management-editor-form"');
     expect(html).not.toContain('id="route-form"');
     expect(html).not.toContain('<dialog id="recipe-dialog"');
@@ -67,6 +68,9 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("renderManagementPage()");
     expect(renderer).toContain("FIXED_ROUTES");
     expect(renderer).toContain("assignFixedRoute(");
+    expect(renderer).not.toContain("now uses ${recipe.displayName}");
+    expect(renderer).toContain("openEngineEditor");
+    expect(renderer).toContain('/api/v1/management/playbooks/${encodeURIComponent(id)}');
     expect(renderer).toContain("showConversationWorkspace()");
   });
 

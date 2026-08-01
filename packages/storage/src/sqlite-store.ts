@@ -15,6 +15,7 @@ import type {
   InferenceLifecycleEvent,
   InferenceRequestRecord,
   QueueUpdatedEvent,
+  PlaybookRecord,
   Recipe,
   Route,
   UserQuota,
@@ -24,6 +25,15 @@ import { MIGRATIONS } from "./migrations.js";
 
 interface RecipeRow {
   recipe_json: string;
+}
+
+interface PlaybookRow {
+  id: string;
+  name: string;
+  adapter: string;
+  configuration_json: string;
+  created_at: string;
+  updated_at: string;
 }
 
 interface RouteRow {
@@ -121,6 +131,45 @@ export class SqliteStore {
         now,
         now,
       );
+  }
+
+  upsertPlaybook(playbook: PlaybookRecord): void {
+    this.#database.prepare(
+      `INSERT INTO playbooks (id, name, adapter, configuration_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         name = excluded.name,
+         adapter = excluded.adapter,
+         configuration_json = excluded.configuration_json,
+         updated_at = excluded.updated_at`,
+    ).run(
+      playbook.id,
+      playbook.displayName,
+      playbook.adapter,
+      JSON.stringify({
+        engineKind: playbook.engineKind,
+        repositoryUrl: playbook.repositoryUrl,
+        repositoryRef: playbook.repositoryRef,
+        rootPath: playbook.rootPath,
+        status: playbook.status,
+      }),
+      playbook.createdAt,
+      playbook.updatedAt,
+    );
+  }
+
+  getPlaybook(id: string): PlaybookRecord | undefined {
+    const row = this.#database.prepare(
+      "SELECT id, name, adapter, configuration_json, created_at, updated_at FROM playbooks WHERE id = ?",
+    ).get(id) as PlaybookRow | undefined;
+    return row ? mapPlaybook(row) : undefined;
+  }
+
+  listPlaybooks(): PlaybookRecord[] {
+    const rows = this.#database.prepare(
+      "SELECT id, name, adapter, configuration_json, created_at, updated_at FROM playbooks ORDER BY name",
+    ).all() as unknown as PlaybookRow[];
+    return rows.map(mapPlaybook);
   }
 
   upsertRoute(route: Route): void {
@@ -405,6 +454,7 @@ export class SqliteStore {
 }
 
 function mapUser(row: UserRow): UserRecord { return { id: row.id, displayName: row.display_name, role: row.role, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at }; }
+function mapPlaybook(row: PlaybookRow): PlaybookRecord { const value = JSON.parse(row.configuration_json) as Pick<PlaybookRecord, "engineKind" | "repositoryUrl" | "repositoryRef" | "rootPath" | "status">; return { id: row.id, displayName: row.name, adapter: row.adapter, ...value, createdAt: row.created_at, updatedAt: row.updated_at }; }
 function mapDevice(row: DeviceRow): DeviceRecord { return { id: row.id, userId: row.user_id, name: row.name, createdAt: row.created_at, ...(row.last_used_at ? { lastUsedAt: row.last_used_at } : {}), ...(row.revoked_at ? { revokedAt: row.revoked_at } : {}) }; }
 function mapAgentRun(row: AgentRunRow): AgentRunRecord { return { id: row.id, routeId: row.route_id, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at, lastSequence: row.last_sequence, ...(row.owner_user_id ? { ownerUserId: row.owner_user_id } : {}), ...(row.session_id ? { sessionId: row.session_id } : {}), ...(row.error ? { error: row.error } : {}) }; }
 function mapProject(row: ProjectRow): ProjectRecord { return { id: row.id, name: row.name, createdAt: row.created_at, updatedAt: row.updated_at, ...(row.owner_user_id ? { ownerUserId: row.owner_user_id } : {}), ...(row.root_path ? { rootPath: row.root_path } : {}) }; }

@@ -41,6 +41,22 @@ export interface Recipe {
   configuration: Readonly<Record<string, unknown>>;
 }
 
+export type PlaybookEngineKind = "ninfer" | "llama-cpp" | "vllm" | "custom";
+export type PlaybookInstallStatus = "configured" | "installing" | "installed" | "failed";
+
+export interface PlaybookRecord {
+  id: string;
+  displayName: string;
+  engineKind: PlaybookEngineKind;
+  adapter: string;
+  repositoryUrl: string;
+  repositoryRef: string;
+  rootPath: string;
+  status: PlaybookInstallStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Route {
   id: string;
   displayName: string;
