@@ -11,6 +11,7 @@
     "build": "tsc -b",
     "clean": "tsc -b --clean",
     "dev": "pnpm --filter @fitz/host dev",
+    "dev:ninfer": "node scripts/dev-ninfer.mjs",
     "start": "pnpm --filter @fitz/host start",
     "smoke": "pnpm build && node scripts/smoke-host.mjs",
     "test": "vitest run",

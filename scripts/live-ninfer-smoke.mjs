@@ -36,7 +36,7 @@ configuration.readinessTimeoutMs = 180_000;
 recipe.configuration = configuration;
 
 const port = await availablePort();
-const adapter = new NInferEngineAdapter({ pollIntervalMs: 500, stopTimeoutMs: 15_000 });
+const adapter = new NInferEngineAdapter({ pollIntervalMs: 500, stopTimeoutMs: 15_000, ...(process.platform === "win32" ? { wslDistribution: process.env.FITZ_NINFER_WSL_DISTRIBUTION ?? "Ubuntu", wslUser: process.env.FITZ_NINFER_WSL_USER ?? "root" } : {}) });
 const controller = new AbortController();
 const validation = await adapter.validateRecipe(recipe);
 if (!validation.valid) throw new Error(JSON.stringify(validation.issues));

@@ -18,3 +18,11 @@ pnpm dev
 ```
 
 The development host binds to `127.0.0.1` and uses a deterministic fake inference engine. It does not modify or launch the machine's existing NInfer services.
+
+To run the real NiNfer playbook instead, stop the fake host and start:
+
+```bash
+pnpm dev:ninfer
+```
+
+This uses a separate `data/fitz-ninfer.db` and exposes one `NiNfer · Qwen 3.6` playbook with two validated recipes: 35B A3B (`default-agent`) and 27B (`fast`). On Windows, Fitz launches and stops the engine inside the configured Ubuntu WSL distribution while the desktop continues to connect to `127.0.0.1:8787`.

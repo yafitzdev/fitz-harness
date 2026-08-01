@@ -1,7 +1,8 @@
 import { access } from "node:fs/promises";
 import { randomBytes, randomUUID } from "node:crypto";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Readable } from "node:stream";
+import { promisify } from "node:util";
 import type {
   EngineAdapter,
   EngineInstanceHandle,
@@ -32,6 +33,7 @@ export interface NInferInstanceHandle extends EngineInstanceHandle {
   process: ChildProcessWithoutNullStreams;
   logs: string[];
   readinessTimeoutMs: number;
+  guestProcess?: { pid?: number };
 }
 
 export interface NInferAdapterOptions {
@@ -40,7 +42,17 @@ export interface NInferAdapterOptions {
   pollIntervalMs?: number;
   stopTimeoutMs?: number;
   readinessTimeoutMs?: number;
+  wslDistribution?: string;
+  wslUser?: string;
 }
+
+export interface NInferProcessLaunch {
+  executable: string;
+  args: string[];
+  stdin?: string;
+}
+
+const execFileAsync = promisify(execFile);
 
 export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> {
   readonly id = "ninfer";
@@ -49,6 +61,8 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
   readonly #pollIntervalMs: number;
   readonly #stopTimeoutMs: number;
   readonly #readinessTimeoutMs: number;
+  readonly #wslDistribution: string | undefined;
+  readonly #wslUser: string;
 
   constructor(options: NInferAdapterOptions = {}) {
     this.#fetch = options.fetch ?? globalThis.fetch;
@@ -56,6 +70,8 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
     this.#pollIntervalMs = options.pollIntervalMs ?? 250;
     this.#stopTimeoutMs = options.stopTimeoutMs ?? 10_000;
     this.#readinessTimeoutMs = options.readinessTimeoutMs ?? 120_000;
+    this.#wslDistribution = options.wslDistribution;
+    this.#wslUser = options.wslUser ?? "root";
   }
 
   async validateRecipe(recipe: Recipe): Promise<ValidationReport> {
@@ -67,7 +83,7 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
         ["missing_artifact", config.artifact],
       ] as const) {
         try {
-          await access(path);
+          await this.#assertReadable(path);
         } catch {
           issues.push({ level: "error", code, message: `Path is not readable: ${path}` });
         }
@@ -122,16 +138,22 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
     if (signal.aborted) throw abortError();
     const config = readNInferConfiguration(recipe);
     const apiKey = randomBytes(32).toString("base64url");
-    const child = spawn(spec.executable, [...spec.args, "--api-key", apiKey], {
+    const launch = buildNInferProcessLaunch(spec, apiKey, this.#wslDistribution, this.#wslUser);
+    const guestProcess: { pid?: number } | undefined = this.#wslDistribution ? {} : undefined;
+    const child = spawn(launch.executable, launch.args, {
       ...(spec.cwd ? { cwd: spec.cwd } : {}),
       env: { ...process.env, ...spec.env },
       shell: false,
       windowsHide: true,
       stdio: "pipe",
     });
+    if (launch.stdin) child.stdin.end(launch.stdin);
     const logs: string[] = [];
     captureLines(child.stdout, logs, "stdout");
-    captureLines(child.stderr, logs, "stderr");
+    captureLines(child.stderr, logs, "stderr", (line) => {
+      const match = /^__FITZ_GUEST_PID=(\d+)$/.exec(line);
+      if (match && guestProcess) guestProcess.pid = Number.parseInt(match[1]!, 10);
+    });
     await waitForSpawn(child, signal);
     return {
       id: randomUUID(),
@@ -143,6 +165,7 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
       process: child,
       logs,
       readinessTimeoutMs: config.readinessTimeoutMs ?? this.#readinessTimeoutMs,
+      ...(guestProcess ? { guestProcess } : {}),
     };
   }
 
@@ -211,9 +234,14 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
 
   async stop(instance: NInferInstanceHandle, mode: StopMode): Promise<StopReport> {
     if (hasExited(instance.process)) return { stopped: true };
-    instance.process.kill(mode === "force" ? "SIGKILL" : "SIGTERM");
+    if (this.#wslDistribution && instance.guestProcess?.pid) {
+      await this.#signalGuest(instance.guestProcess.pid, mode === "force" ? "KILL" : "TERM");
+    } else {
+      instance.process.kill(mode === "force" ? "SIGKILL" : "SIGTERM");
+    }
     const exited = await waitForExit(instance.process, this.#stopTimeoutMs);
     if (!exited && mode !== "force") {
+      if (this.#wslDistribution && instance.guestProcess?.pid) await this.#signalGuest(instance.guestProcess.pid, "KILL");
       instance.process.kill("SIGKILL");
       await waitForExit(instance.process, Math.min(this.#stopTimeoutMs, 2_000));
     }
@@ -237,6 +265,29 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
       return { healthy: false, modelId: instance.modelId, detail: errorMessage(error) };
     }
   }
+
+  async #assertReadable(path: string): Promise<void> {
+    if (!this.#wslDistribution) { await access(path); return; }
+    await execFileAsync("wsl.exe", ["-d", this.#wslDistribution, "-u", this.#wslUser, "--", "test", "-r", path], { timeout: 10_000, windowsHide: true });
+  }
+
+  async #signalGuest(pid: number, signal: "TERM" | "KILL"): Promise<void> {
+    try {
+      await execFileAsync("wsl.exe", ["-d", this.#wslDistribution!, "-u", this.#wslUser, "--", "kill", `-${signal}`, String(pid)], { timeout: 10_000, windowsHide: true });
+    } catch {
+      // A process that exited between inspection and signaling is already stopped.
+    }
+  }
+}
+
+export function buildNInferProcessLaunch(spec: LaunchSpec, apiKey: string, wslDistribution?: string, wslUser = "root"): NInferProcessLaunch {
+  const engineArgs = [...spec.args, "--api-key", apiKey];
+  if (!wslDistribution) return { executable: spec.executable, args: engineArgs };
+  return {
+    executable: "wsl.exe",
+    args: ["-d", wslDistribution, "-u", wslUser, "--", "sh", "-s", "--", spec.executable, ...engineArgs],
+    stdin: 'printf "__FITZ_GUEST_PID=%s\\n" "$$" >&2\nexec "$@"\n',
+  };
 }
 
 export function buildCurrentNInferRecipe(
@@ -288,10 +339,11 @@ function authorization(apiKey: string): Record<string, string> {
   return { authorization: `Bearer ${apiKey}` };
 }
 
-function captureLines(stream: Readable, logs: string[], source: string): void {
+function captureLines(stream: Readable, logs: string[], source: string, onLine?: (line: string) => void): void {
   stream.setEncoding("utf8");
   stream.on("data", (chunk: string) => {
     for (const line of chunk.split(/\r?\n/).filter(Boolean)) {
+      onLine?.(line);
       logs.push(`${source}: ${line}`);
       if (logs.length > 500) logs.shift();
     }

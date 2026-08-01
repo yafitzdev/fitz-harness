@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { NInferEngineAdapter, buildCurrentNInferRecipe } from "@fitz/engine-ninfer";
+import { NInferEngineAdapter } from "@fitz/engine-ninfer";
 import { FakeEngineAdapter } from "@fitz/engine-fake";
 import { OpenAICompatibleEngineAdapter } from "@fitz/engine-openai-compatible";
 import { LlamaCppEngineAdapter } from "@fitz/engine-llama-cpp";
@@ -9,6 +9,7 @@ import type { Recipe, Route } from "@fitz/protocol";
 import { SqliteStore } from "@fitz/storage";
 import { createHost } from "./create-app.js";
 import { PiAgentRuntime } from "@fitz/agent-pi";
+import { createNInferPlaybook } from "./ninfer-playbook.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const defaultDataPath = resolve(moduleDirectory, "../../../data/fitz.db");
@@ -61,38 +62,10 @@ function parseNonNegativeInteger(value: string, name: string): number {
 function requiredEnvironment(name: string): string { const value = process.env[name]; if (!value) throw new Error(`${name} is required`); return value; }
 
 function ninferOptions() {
-  const recipes = [
-    buildCurrentNInferRecipe(
-      "qwen36-35b-a3b-mtp4-100k",
-      "qwen3.6-35b-a3b",
-      "/opt/ninfer/models/qwen3_6_35b_a3b.ninfer",
-      4,
-    ),
-    buildCurrentNInferRecipe(
-      "qwen36-27b-mtp3-100k",
-      "qwen3.6-27b",
-      "/opt/ninfer/models/qwen3_6_27b_nvfp4.ninfer",
-      3,
-    ),
-  ];
-  const routes: Route[] = [
-    {
-      id: "default-agent",
-      displayName: "Qwen 3.6 35B A3B",
-      description: "Best local agent route",
-      recipeId: recipes[0]!.id,
-      enabled: true,
-      isDefault: true,
-    },
-    {
-      id: "fast",
-      displayName: "Qwen 3.6 27B",
-      description: "Fast local route",
-      recipeId: recipes[1]!.id,
-      enabled: true,
-    },
-  ];
-  return { adapters: [new NInferEngineAdapter()], initialRecipes: recipes, initialRoutes: routes };
+  const playbook = createNInferPlaybook();
+  const wslDistribution = process.env.FITZ_NINFER_WSL_DISTRIBUTION ?? (process.platform === "win32" ? "Ubuntu" : undefined);
+  const adapter = new NInferEngineAdapter({ ...(wslDistribution ? { wslDistribution, wslUser: process.env.FITZ_NINFER_WSL_USER ?? "root" } : {}) });
+  return { adapters: [adapter], initialRecipes: playbook.recipes, initialRoutes: playbook.routes };
 }
 
 function engineModeOptions(mode: string) {

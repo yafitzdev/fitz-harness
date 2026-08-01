@@ -1,42 +1,16 @@
-import { NInferEngineAdapter, buildCurrentNInferRecipe } from "../packages/engine-ninfer/dist/index.js";
-import { createHost } from "../apps/host/dist/index.js";
+import { NInferEngineAdapter } from "../packages/engine-ninfer/dist/index.js";
+import { createHost, createNInferPlaybook } from "../apps/host/dist/index.js";
 
 if (process.env.FITZ_ALLOW_LIVE_NINFER !== "1") {
   throw new Error("Set FITZ_ALLOW_LIVE_NINFER=1 to run the live NInfer route-switch test");
 }
 
-const recipes = [
-  configuredRecipe(
-    "qwen36-35b-a3b-mtp4-100k",
-    "qwen3.6-35b-a3b",
-    "/opt/ninfer/models/qwen3_6_35b_a3b.ninfer",
-    4,
-  ),
-  configuredRecipe(
-    "qwen36-27b-mtp3-100k",
-    "qwen3.6-27b",
-    "/opt/ninfer/models/qwen3_6_27b_nvfp4.ninfer",
-    3,
-  ),
-];
-const routes = [
-  {
-    id: "default-agent",
-    displayName: "Qwen 3.6 35B A3B",
-    recipeId: recipes[0].id,
-    enabled: true,
-    isDefault: true,
-  },
-  {
-    id: "fast",
-    displayName: "Qwen 3.6 27B",
-    recipeId: recipes[1].id,
-    enabled: true,
-  },
-];
+const playbook = createNInferPlaybook();
+const recipes = playbook.recipes.map(configuredRecipe);
+const routes = playbook.routes;
 
 const runtime = createHost({
-  adapters: [new NInferEngineAdapter({ pollIntervalMs: 500, stopTimeoutMs: 15_000 })],
+  adapters: [new NInferEngineAdapter({ pollIntervalMs: 500, stopTimeoutMs: 15_000, ...(process.platform === "win32" ? { wslDistribution: process.env.FITZ_NINFER_WSL_DISTRIBUTION ?? "Ubuntu", wslUser: process.env.FITZ_NINFER_WSL_USER ?? "root" } : {}) })],
   initialRecipes: recipes,
   initialRoutes: routes,
 });
@@ -79,8 +53,8 @@ try {
   await runtime.app.close();
 }
 
-function configuredRecipe(id, modelId, artifact, draftTokens) {
-  const recipe = buildCurrentNInferRecipe(id, modelId, artifact, draftTokens);
+function configuredRecipe(source) {
+  const recipe = structuredClone(source);
   const configuration = { ...recipe.configuration, readinessTimeoutMs: 180_000 };
   delete configuration.requestLogJsonl;
   recipe.configuration = configuration;
