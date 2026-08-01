@@ -104,4 +104,27 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("maxTokens: Number(effort.value)");
     expect(renderer).toContain('api(`/api/v1/agent/runs/${currentRun}`, "DELETE")');
   });
+
+  it("makes the new-chat project, environment, and branch controls functional", () => {
+    for (const id of [
+      "new-chat-project-control",
+      "new-chat-environment-control",
+      "new-chat-environment-menu",
+      "new-chat-branch-control",
+      "new-chat-branch-menu",
+      "branch-search",
+      "create-branch-form",
+      "create-worktree-form",
+    ]) expect(html).toContain(`id="${id}"`);
+
+    expect(renderer).toContain('newChatProjectDetached = true');
+    expect(renderer).toContain("window.fitz.gitBranches(rootPath)");
+    expect(renderer).toContain("window.fitz.checkoutBranch(rootPath, branch)");
+    expect(renderer).toContain("window.fitz.createBranch(rootPath, branch)");
+    expect(renderer).toContain("window.fitz.createWorktree(project.rootPath, branch)");
+    expect(main).toContain('ipcMain.handle("fitz:git-branches"');
+    expect(main).toContain('ipcMain.handle("fitz:git-checkout-branch"');
+    expect(main).toContain('ipcMain.handle("fitz:git-create-branch"');
+    expect(main).toContain('ipcMain.handle("fitz:git-create-worktree"');
+  });
 });

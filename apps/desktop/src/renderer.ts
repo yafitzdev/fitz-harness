@@ -21,6 +21,9 @@ let sessionTokenEstimate = 0;
 let contextTokenLimit = 131_072;
 let managementConfiguration: Json | undefined;
 let newChatMode = false;
+let newChatProjectDetached = false;
+let currentBranch = "main";
+let availableBranches: string[] = [];
 let editingRecipe: Json | undefined;
 let renameTarget: { kind: "project" | "task"; id: string } | undefined;
 const pinnedProjects = storedSet("fitz-pinned-projects");
@@ -52,6 +55,20 @@ const workspace = query(".workspace");
 const prompt = element("prompt") as HTMLTextAreaElement;
 const newChatContext = element("new-chat-context");
 const newChatProject = element("new-chat-project");
+const newChatProjectControl = element("new-chat-project-control") as HTMLButtonElement;
+const newChatEnvironmentControl = element("new-chat-environment-control") as HTMLButtonElement;
+const newChatEnvironmentLabel = element("new-chat-environment-label");
+const newChatEnvironmentMenu = element("new-chat-environment-menu");
+const createWorktreeForm = element("create-worktree-form");
+const newWorktreeBranch = element("new-worktree-branch") as HTMLInputElement;
+const newChatBranchControl = element("new-chat-branch-control") as HTMLButtonElement;
+const newChatBranchLabel = element("new-chat-branch-label");
+const newChatBranchMenu = element("new-chat-branch-menu");
+const branchSearch = element("branch-search") as HTMLInputElement;
+const branchList = element("branch-list");
+const createBranchForm = element("create-branch-form");
+const newBranchName = element("new-branch-name") as HTMLInputElement;
+const showCreateBranch = element("show-create-branch") as HTMLButtonElement;
 const status = element("status");
 const sendButton = element("send") as HTMLButtonElement;
 const attachButton = element("attach") as HTMLButtonElement;
@@ -153,6 +170,18 @@ speed.addEventListener("change", applySpeedSelection);
 modelToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(modelMenu, modelToggle); });
 contextMeter.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(contextUsagePopover, contextMeter as HTMLButtonElement); });
 contextUsagePopover.addEventListener("click", (event) => event.stopPropagation());
+newChatProjectControl.addEventListener("click", (event) => { event.stopPropagation(); newChatProjectDetached = true; newChatProjectControl.hidden = true; showNewChatLanding(); });
+newChatEnvironmentControl.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(newChatEnvironmentMenu, newChatEnvironmentControl); });
+newChatBranchControl.addEventListener("click", (event) => { event.stopPropagation(); void openBranchMenu(); });
+newChatEnvironmentMenu.addEventListener("click", (event) => event.stopPropagation());
+newChatBranchMenu.addEventListener("click", (event) => event.stopPropagation());
+for (const choice of document.querySelectorAll<HTMLButtonElement>("[data-environment-choice]")) choice.addEventListener("click", () => void chooseEnvironment(choice.dataset.environmentChoice ?? ""));
+branchSearch.addEventListener("input", renderBranchList);
+showCreateBranch.addEventListener("click", () => { showCreateBranch.hidden = true; createBranchForm.hidden = false; newBranchName.focus(); });
+element("create-branch-submit").addEventListener("click", () => void createAndCheckoutBranch());
+newBranchName.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); void createAndCheckoutBranch(); } });
+element("create-worktree-submit").addEventListener("click", () => void createWorktree());
+newWorktreeBranch.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); void createWorktree(); } });
 for (const row of document.querySelectorAll<HTMLButtonElement>("[data-setting]")) row.addEventListener("click", (event) => { event.stopPropagation(); openSettingsSubmenu(row.dataset.setting as "model" | "effort" | "speed", row); });
 element("advanced-settings").addEventListener("click", () => showToast("Advanced recipe and routing controls are available in Playbooks"));
 taskMenuToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(taskMenu, taskMenuToggle); });
@@ -327,18 +356,22 @@ function openNewChat(): void {
   currentProject ??= projectRecords[0]?.id;
   if (!currentProject) return;
   newChatMode = true;
+  newChatProjectDetached = false;
   currentSession = undefined;
   sessionTokenEstimate = 0;
   expandedProjects.add(currentProject);
   saveSet("fitz-expanded-projects", expandedProjects);
   workspace.classList.add("new-chat-open");
   newChatProject.textContent = projectRecords.find((project) => project.id === currentProject)?.name ?? "Project";
+  newChatProjectControl.hidden = false;
+  newChatEnvironmentLabel.textContent = "Local";
   newChatContext.hidden = false;
   prompt.value = "";
   composerAttachments.replaceChildren();
   composerAttachments.hidden = true;
   renderProjectTree();
   showNewChatLanding();
+  void refreshBranchState();
   updateContextMeter();
   refreshComposerState();
   prompt.focus();
@@ -349,8 +382,9 @@ function showNewChatLanding(): void {
   const project = projectRecords.find((item) => item.id === currentProject);
   const landing = document.createElement("div"); landing.className = "new-chat-landing";
   const mark = document.createElement("div"); mark.className = "landing-mark"; mark.append(terminalCloudIcon());
-  const heading = document.createElement("h1"); heading.append("What should we build in ");
-  const projectName = document.createElement("span"); projectName.className = "landing-project-name"; projectName.textContent = project?.name ?? "this project"; heading.append(projectName, "?");
+  const heading = document.createElement("h1");
+  if (newChatProjectDetached) heading.textContent = "What should we build?";
+  else { heading.append("What should we build in "); const projectName = document.createElement("span"); projectName.className = "landing-project-name"; projectName.textContent = project?.name ?? "this project"; heading.append(projectName, "?"); }
   const suggestions = [
     ["Explore and understand code", '<path d="m4.2 7.4 8.7-4.1 2 4.1-8.8 4.2z"></path><path d="m11.1 4.2 2 4.1M8 10.7l2.5 5.8M6.2 11.6l-1.7 4.1M7.2 14h4.5"></path>'],
     ["Build a new feature, app, or tool", '<path d="m12.8 3.2 4 4-2.5 2.5-4-4z"></path><path d="m11.4 8.6-6.8 6.8M3.6 16.4l2.6-.7-1.9-1.9z"></path>'],
@@ -788,6 +822,74 @@ function closeManagementEditor(): void {
   recipeForm.hidden = true;
 }
 
+function activeProject(): Json | undefined { return projectRecords.find((project) => project.id === currentProject); }
+
+async function refreshBranchState(): Promise<void> {
+  const rootPath = activeProject()?.rootPath;
+  if (!rootPath) { currentBranch = "main"; availableBranches = [currentBranch]; newChatBranchLabel.textContent = currentBranch; renderBranchList(); return; }
+  try {
+    const state = await window.fitz.gitBranches(rootPath);
+    currentBranch = state.current || "main";
+    availableBranches = state.branches.length ? state.branches : [currentBranch];
+    newChatBranchLabel.textContent = currentBranch;
+    renderBranchList();
+  } catch {
+    currentBranch = "main"; availableBranches = [currentBranch]; newChatBranchLabel.textContent = currentBranch; renderBranchList();
+  }
+}
+
+async function openBranchMenu(): Promise<void> {
+  const opening = newChatBranchMenu.hidden;
+  closePopovers();
+  if (!opening) return;
+  newChatBranchMenu.hidden = false;
+  newChatBranchControl.setAttribute("aria-expanded", "true");
+  branchSearch.value = "";
+  showCreateBranch.hidden = false;
+  createBranchForm.hidden = true;
+  await refreshBranchState();
+  branchSearch.focus();
+}
+
+function renderBranchList(): void {
+  const query = branchSearch.value.trim().toLowerCase();
+  branchList.replaceChildren();
+  for (const branch of availableBranches.filter((value) => value.toLowerCase().includes(query))) {
+    const button = document.createElement("button"); button.type = "button"; button.classList.toggle("selected", branch === currentBranch);
+    button.append(svg('<circle cx="6" cy="4.5" r="1.5"></circle><circle cx="6" cy="15.5" r="1.5"></circle><circle cx="14" cy="7" r="1.5"></circle><path d="M6 6v8M7.5 12.5c4 0 6.5-1.5 6.5-4"></path>'), Object.assign(document.createElement("span"), { textContent: branch }));
+    button.addEventListener("click", () => void checkoutBranch(branch)); branchList.append(button);
+  }
+  if (!branchList.childElementCount) branchList.append(panelEmpty("No matching branches"));
+}
+
+async function checkoutBranch(branch: string): Promise<void> {
+  const rootPath = activeProject()?.rootPath; if (!rootPath || branch === currentBranch) { closePopovers(); return; }
+  try { const state = await window.fitz.checkoutBranch(rootPath, branch); currentBranch = state.current; availableBranches = state.branches; newChatBranchLabel.textContent = currentBranch; closePopovers(); }
+  catch (error) { showToast(errorMessage(error)); }
+}
+
+async function createAndCheckoutBranch(): Promise<void> {
+  const rootPath = activeProject()?.rootPath; const branch = newBranchName.value.trim(); if (!rootPath || !branch) return;
+  try { const state = await window.fitz.createBranch(rootPath, branch); currentBranch = state.current; availableBranches = state.branches; newChatBranchLabel.textContent = currentBranch; newBranchName.value = ""; closePopovers(); }
+  catch (error) { showToast(errorMessage(error)); }
+}
+
+async function chooseEnvironment(choice: string): Promise<void> {
+  if (choice === "local") { newChatEnvironmentLabel.textContent = "Local"; closePopovers(); return; }
+  if (choice === "worktree") { createWorktreeForm.hidden = false; newWorktreeBranch.focus(); return; }
+  if (choice === "usage") { closePopovers(); contextUsagePopover.hidden = false; contextMeter.setAttribute("aria-expanded", "true"); }
+}
+
+async function createWorktree(): Promise<void> {
+  const project = activeProject(); const branch = newWorktreeBranch.value.trim(); if (!project?.rootPath || !branch) return;
+  try {
+    const worktree = await window.fitz.createWorktree(project.rootPath, branch);
+    await api(`/api/v1/projects/${project.id}`, "PATCH", { rootPath: worktree.path });
+    project.rootPath = worktree.path; currentBranch = worktree.branch; availableBranches = [worktree.branch];
+    newChatEnvironmentLabel.textContent = "Worktree"; newChatBranchLabel.textContent = currentBranch; newWorktreeBranch.value = ""; closePopovers();
+  } catch (error) { showToast(errorMessage(error)); }
+}
+
 function updateModelControls(): void {
   routeState.textContent = model.selectedOptions[0]?.textContent ?? "—";
   const effortLabel = effort.selectedOptions[0]?.textContent ?? "Medium";
@@ -831,10 +933,14 @@ function closePopovers(): void {
   contextUsagePopover.hidden = true;
   taskMenu.hidden = true;
   sidebarContextMenu.hidden = true;
+  newChatEnvironmentMenu.hidden = true;
+  newChatBranchMenu.hidden = true;
   hideChatHover();
   modelToggle.setAttribute("aria-expanded", "false");
   contextMeter.setAttribute("aria-expanded", "false");
   taskMenuToggle.setAttribute("aria-expanded", "false");
+  newChatEnvironmentControl.setAttribute("aria-expanded", "false");
+  newChatBranchControl.setAttribute("aria-expanded", "false");
   for (const row of document.querySelectorAll(".setting-row")) row.classList.remove("active");
   for (const toggle of projects.querySelectorAll(".tree-menu-toggle")) toggle.setAttribute("aria-expanded", "false");
 }
