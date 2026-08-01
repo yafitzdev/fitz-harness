@@ -162,19 +162,28 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .message.user { display: flex; justify-content: flex-end; }
 .message.user .message-body { max-width: min(78%, 620px); padding: 11px 14px; border-radius: 15px 15px 4px 15px; background: var(--surface-raised); }
 .message.assistant { display: grid; grid-template-columns: 24px 1fr; gap: 10px; }
+.message.commentary { color: #dedfd9; line-height: 1.62; }
+.message.commentary .message-body { color: #dedfd9; }
 .assistant-mark { width: 24px; height: 24px; display: grid; place-items: center; margin-top: 1px; border: 1px solid var(--border); border-radius: 7px; color: var(--muted); }
 .assistant-mark svg { width: 13px; height: 13px; }
 .message-body { min-width: 0; white-space: pre-wrap; word-break: break-word; color: #dedfd9; }
 .message.system { padding: 10px 12px; border-left: 2px solid var(--red); background: rgba(232,124,120,.06); color: #efaaa6; }
 .run-activity { display: flex; align-items: center; gap: 10px; color: var(--muted); }
 .run-activity::before { content: ""; width: 14px; height: 14px; flex: 0 0 auto; border: 2px solid #50534f; border-top-color: #b6b9b3; border-radius: 50%; animation: spin 850ms linear infinite; }
+.agent-activity { min-width: 0; display: flex; align-items: center; gap: 10px; margin-bottom: 14px; color: #999d97; }
+.agent-activity-icon { width: 20px; height: 20px; flex: 0 0 auto; display: grid; place-items: center; color: #a4a8a1; }
+.agent-activity-icon svg { width: 17px; height: 17px; stroke-width: 1.45; }
+.agent-activity-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-activity.running .agent-activity-icon { animation: activity-pulse 1.25s ease-in-out infinite; }
+.agent-activity.failed { color: #d9908b; }
+.agent-activity.failed .agent-activity-icon { color: #d9908b; }
 .message-meta { margin-bottom: 5px; color: var(--subtle); font-size: 11px; text-transform: capitalize; }
 
 .composer-dock { position: absolute; z-index: 4; left: 50%; bottom: 12px; width: min(740px, calc(100% - 36px)); transform: translateX(-50%); }
 .composer-card { position: relative; overflow: visible; border: 1px solid #3d403d; border-radius: 22px; background: #303230; box-shadow: 0 12px 34px rgba(0,0,0,.24); transition: border-color 120ms ease, box-shadow 120ms ease; }
 .composer-card:focus-within { border-color: #555953; box-shadow: 0 12px 34px rgba(0,0,0,.3), 0 0 0 1px rgba(255,255,255,.03); }
 .composer-attachments { display: flex; gap: 9px; padding: 12px 13px 0; overflow-x: auto; }
-.new-chat-context { position: absolute; z-index: 2; left: 16px; right: 16px; bottom: calc(100% - 12px); height: 49px; display: flex; align-items: flex-start; gap: 5px; padding: 7px 11px 0; border: 1px solid #272927; border-bottom: 0; border-radius: 20px 20px 0 0; background: #202220; color: #ecece8; font-size: 12px; }
+.new-chat-context { position: absolute; z-index: 0; left: 16px; right: 16px; bottom: 100%; height: 49px; display: flex; align-items: center; gap: 5px; padding: 7px 11px; border: 1px solid #343734; border-bottom: 0; border-radius: 20px 20px 0 0; background: #202220; color: #ecece8; font-size: 12px; }
 .new-chat-context-item { min-width: 0; min-height: 30px; display: inline-flex; align-items: center; gap: 7px; padding: 5px 8px; border-radius: 16px; background: transparent; color: inherit; cursor: pointer; }
 .new-chat-context-item:hover, .new-chat-context-item[aria-expanded="true"] { background: rgba(255,255,255,.065); }
 .new-chat-context-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -251,6 +260,8 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .send-button .stop-icon { display: none; fill: currentColor; stroke: none; }
 .send-button.running .send-icon { display: none; }
 .send-button.running .stop-icon { display: block; }
+
+@keyframes activity-pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
 
 .context-panel { min-width: 0; margin: 14px 14px 14px 5px; padding: 14px; overflow-y: auto; border: 1px solid #3e413e; border-radius: 22px; background: #303230; box-shadow: 0 16px 42px rgba(0,0,0,.28); }
 .context-panel > header { height: 40px; display: flex; align-items: center; justify-content: space-between; padding: 0 2px 0 7px; color: var(--muted); font-size: 14px; }

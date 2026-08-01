@@ -5,8 +5,8 @@ import type { Model } from "@earendil-works/pi-ai/compat";
 type PiEvent =
   | { type: "message_update"; assistantMessageEvent: { type: string; delta?: string } }
   | { type: "message_end"; message: { role?: string; stopReason?: string; errorMessage?: string } }
-  | { type: "tool_execution_start"; toolCallId: string; toolName: string }
-  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result: unknown };
+  | { type: "tool_execution_start"; toolCallId: string; toolName: string; args?: unknown }
+  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result: unknown; isError?: boolean };
 export interface PiSession { subscribe(listener: (event: PiEvent) => void): () => void; prompt(text: string): Promise<void>; abort(): Promise<void>; dispose(): void }
 export type PiSessionFactory = (options: {
   cwd: string;
@@ -101,7 +101,7 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
   });
   return result.session as PiSession;
 }
-function translateEvent(event: PiEvent): AgentRuntimeEvent | undefined { if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta" && event.assistantMessageEvent.delta) return { type: "assistant.delta", text: event.assistantMessageEvent.delta }; if (event.type === "tool_execution_start") return { type: "tool.started", toolCallId: event.toolCallId, toolName: event.toolName }; if (event.type === "tool_execution_end") return { type: "tool.completed", toolCallId: event.toolCallId, toolName: event.toolName, result: event.result }; return undefined; }
+function translateEvent(event: PiEvent): AgentRuntimeEvent | undefined { if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta" && event.assistantMessageEvent.delta) return { type: "assistant.delta", text: event.assistantMessageEvent.delta }; if (event.type === "tool_execution_start") return { type: "tool.started", toolCallId: event.toolCallId, toolName: event.toolName, ...(event.args !== undefined ? { input: event.args } : {}) }; if (event.type === "tool_execution_end") return { type: "tool.completed", toolCallId: event.toolCallId, toolName: event.toolName, result: event.result, ...(event.isError !== undefined ? { isError: event.isError } : {}) }; return undefined; }
 function piFailure(event: PiEvent): Error | undefined { return event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason === "error" ? new Error(event.message.errorMessage ?? "Pi model request failed") : undefined; }
 function formatPrompt(request: AgentRunRequest): string { return request.messages.map((message) => `${message.role.toUpperCase()}: ${message.content}`).join("\n\n"); }
 function abortError(): Error { const error = new Error("Pi agent run was cancelled"); error.name = "AbortError"; return error; }

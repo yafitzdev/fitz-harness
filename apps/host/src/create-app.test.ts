@@ -290,9 +290,18 @@ describe("Fitz host", () => {
   });
 
   it("routes native runs through a configured agent runtime", async () => {
-    const runtime = createHost({ agentRuntime: { id: "test-agent", run: () => { const events = (async function* () { yield { type: "assistant.delta" as const, text: "agent output" }; yield { type: "tool.started" as const, toolCallId: "tool-1", toolName: "read" }; yield { type: "tool.completed" as const, toolCallId: "tool-1", toolName: "read", result: "ok" }; })(); return Object.assign(events, { cancel: () => undefined }); } } });
-    const created = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", messages: [{ role: "user", content: "use agent" }] } }); const runId = created.json().data.id; await new Promise((resolve) => setTimeout(resolve, 5)); const replay = await runtime.app.inject({ method: "GET", url: `/api/v1/agent/runs/${runId}/events` });
-    expect(replay.json().events.map((event: { type: string }) => event.type)).toEqual(["run.created", "run.started", "assistant.delta", "tool.started", "tool.completed", "run.completed"]); await runtime.app.close();
+    const runtime = createHost({ agentRuntime: { id: "test-agent", run: () => { const events = (async function* () { yield { type: "assistant.delta" as const, text: "I will inspect it." }; yield { type: "tool.started" as const, toolCallId: "tool-1", toolName: "read", input: { path: "README.md" } }; yield { type: "tool.completed" as const, toolCallId: "tool-1", toolName: "read", result: "ok", isError: false }; yield { type: "assistant.delta" as const, text: "Inspection complete." }; })(); return Object.assign(events, { cancel: () => undefined }); } } });
+    const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Agent" } });
+    const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "Activity" } });
+    const created = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", sessionId: session.json().data.id, messages: [{ role: "user", content: "use agent" }] } }); const runId = created.json().data.id;
+    for (let attempt = 0; attempt < 50 && runtime.agentRuns.get(runId)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+    const replay = await runtime.app.inject({ method: "GET", url: `/api/v1/agent/runs/${runId}/events` });
+    expect(replay.json().events.map((event: { type: string }) => event.type)).toEqual(["run.created", "run.started", "assistant.delta", "tool.started", "tool.completed", "assistant.delta", "run.completed"]);
+    expect(replay.json().events.find((event: { type: string }) => event.type === "tool.started").data.input).toEqual({ path: "README.md" });
+    expect(runtime.store.transcriptAfter(session.json().data.id, 0).map((entry) => [entry.kind, entry.content.phase ?? entry.content.toolName])).toEqual([
+      ["message", undefined], ["message", "commentary"], ["tool-call", "read"], ["tool-result", "read"], ["message", "final"],
+    ]);
+    await runtime.app.close();
   });
 
   it("creates projects and sessions and records a canonical run transcript", async () => {

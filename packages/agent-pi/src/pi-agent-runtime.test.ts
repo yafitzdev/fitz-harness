@@ -43,7 +43,7 @@ describe("PiAgentRuntime", () => {
       expect(requests[0].tools.map((tool: any) => tool.function?.name ?? tool.name)).toEqual(expect.arrayContaining(["read", "bash", "edit", "write", "grep", "find", "ls"]));
       expect(requests[1].messages.some((message: any) => message.role === "tool" && JSON.stringify(message.content).includes("PI_TOOL_OK"))).toBe(true);
       expect(events).toEqual(expect.arrayContaining([
-        expect.objectContaining({ type: "tool.started", toolName: "read" }),
+        expect.objectContaining({ type: "tool.started", toolName: "read", input: { path: "probe.txt" } }),
         expect.objectContaining({ type: "tool.completed", toolName: "read" }),
         expect.objectContaining({ type: "assistant.delta", text: "Pi read PI_TOOL_OK" }),
       ]));

@@ -127,6 +127,17 @@ describe("desktop renderer shell", () => {
     expect(main).toContain('ipcMain.handle("fitz:git-checkout-branch"');
     expect(main).toContain('ipcMain.handle("fitz:git-create-branch"');
     expect(main).toContain('ipcMain.handle("fitz:git-create-worktree"');
+    expect(styles).toContain("bottom: 100%");
+    expect(styles).not.toContain("bottom: calc(100% - 12px)");
+  });
+
+  it("renders durable Codex-style agent activity with tool-specific symbols", () => {
+    expect(renderer).toContain("appendToolActivity(toolName, input, toolCallId");
+    expect(renderer).toContain("markAssistantAsCommentary");
+    expect(renderer).toContain("Context automatically compacted");
+    expect(renderer).toContain('toolName === "edit" || toolName === "write"');
+    expect(styles).toContain(".agent-activity-icon");
+    expect(styles).toContain(".message.commentary");
   });
 
   it("shows an interactive project metadata card on hover", () => {

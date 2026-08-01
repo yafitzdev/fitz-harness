@@ -350,8 +350,26 @@ async function selectSession(id: string, rerender = true, projectId?: string): P
     const transcript = await api(`/api/v1/sessions/${id}/transcript`);
     messages.replaceChildren();
     sessionTokenEstimate = 0;
+    const transcriptTools = new Map<string, { row: HTMLElement; toolName: string; input: unknown }>();
     for (const entry of transcript.data ?? []) {
-      if (entry.kind === "message") { const text = entry.content?.text ?? ""; sessionTokenEstimate += estimateTokens(text); appendMessage(entry.role ?? "system", text); }
+      if (entry.kind === "message") {
+        const text = entry.content?.text ?? ""; sessionTokenEstimate += estimateTokens(text);
+        if (entry.role === "assistant" && entry.content?.phase === "commentary") appendCommentary(text);
+        else appendMessage(entry.role ?? "system", text);
+      }
+      if (entry.kind === "tool-call") {
+        const toolCallId = String(entry.content?.toolCallId ?? entry.id);
+        const toolName = String(entry.content?.toolName ?? "tool");
+        const input = entry.content?.input;
+        transcriptTools.set(toolCallId, { row: appendToolActivity(toolName, input, toolCallId, true), toolName, input });
+      }
+      if (entry.kind === "tool-result") {
+        const toolCallId = String(entry.content?.toolCallId ?? entry.id);
+        const existing = transcriptTools.get(toolCallId);
+        if (existing) completeToolActivity(existing.row, existing.toolName, existing.input, Boolean(entry.content?.isError));
+        else completeToolActivity(appendToolActivity(String(entry.content?.toolName ?? "tool"), undefined, toolCallId, true), String(entry.content?.toolName ?? "tool"), undefined, Boolean(entry.content?.isError));
+      }
+      if (entry.kind === "compaction") appendContextActivity();
     }
     updateContextMeter();
     if (!messages.childElementCount) showLanding(true);
@@ -1018,6 +1036,7 @@ async function sendPrompt(): Promise<void> {
       messages: [{ role: "user", content }],
     });
     const runId = String(response.data.id);
+    if (response.context?.compacted) appendContextActivity();
     currentRun = runId;
     lastSequence = 0;
     engineState.textContent = "QUEUED";
@@ -1047,6 +1066,7 @@ async function cancelRun(): Promise<void> {
 
 async function followRun(runId: string, activity: HTMLElement, runStartedAt: number): Promise<void> {
   let assistant: HTMLElement | undefined;
+  const toolActivities = new Map<string, { row: HTMLElement; toolName: string; input: unknown }>();
   let done = false;
   let reconnectAttempt = 0;
   let nextEnginePoll = 0;
@@ -1071,14 +1091,20 @@ async function followRun(runId: string, activity: HTMLElement, runStartedAt: num
       }
       if (event.type === "tool.started") {
         const toolName = String(event.data?.toolName ?? "tool");
+        const toolCallId = String(event.data?.toolCallId ?? `${toolName}-${event.sequence}`);
+        const input = event.data?.input;
+        activity.remove();
+        if (assistant) { markAssistantAsCommentary(assistant); assistant = undefined; }
+        toolActivities.set(toolCallId, { row: appendToolActivity(toolName, input, toolCallId, true), toolName, input });
         setStatus(`Running ${toolName}`, "active");
         engineState.textContent = toolName.toUpperCase();
-        if (!assistant) setRunActivity(activity, `Running ${toolName}`, runStartedAt);
       }
       if (event.type === "tool.completed") {
+        const toolCallId = String(event.data?.toolCallId ?? "");
+        const existing = toolActivities.get(toolCallId);
+        if (existing) completeToolActivity(existing.row, existing.toolName, existing.input, Boolean(event.data?.isError));
         setStatus("Working", "active");
         engineState.textContent = "WORKING";
-        if (!assistant) setRunActivity(activity, "Thinking", runStartedAt);
       }
       if (["run.completed", "run.failed", "run.cancelled", "run.interrupted"].includes(event.type)) {
         done = true;
@@ -1207,6 +1233,51 @@ function appendMessage(role: string, text: string): HTMLElement {
   const content = document.createElement("div"); content.className = "message-body"; content.textContent = text; article.append(content); messages.append(article); messages.scrollTop = messages.scrollHeight; return content;
 }
 
+function appendCommentary(text: string): HTMLElement {
+  const content = appendMessage("commentary", text);
+  return content;
+}
+
+function markAssistantAsCommentary(content: HTMLElement): void {
+  const article = content.closest<HTMLElement>(".message.assistant");
+  if (!article) return;
+  article.classList.remove("assistant");
+  article.classList.add("commentary");
+  article.querySelector(".assistant-mark")?.remove();
+}
+
+function appendToolActivity(toolName: string, input: unknown, toolCallId: string, running: boolean): HTMLElement {
+  if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
+  const row = document.createElement("div"); row.className = `message agent-activity${running ? " running" : ""}`; row.dataset.toolCallId = toolCallId; row.dataset.toolName = toolName;
+  const icon = document.createElement("span"); icon.className = "agent-activity-icon"; icon.append(activityIcon(toolName));
+  const label = document.createElement("span"); label.className = "agent-activity-label"; label.textContent = describeToolActivity(toolName, input, running); label.title = label.textContent;
+  row.append(icon, label); messages.append(row); messages.scrollTop = messages.scrollHeight; return row;
+}
+
+function completeToolActivity(row: HTMLElement, toolName: string, input: unknown, isError: boolean): void {
+  row.classList.remove("running"); row.classList.toggle("failed", isError);
+  const label = row.querySelector<HTMLElement>(".agent-activity-label");
+  if (label) { label.textContent = isError ? `${describeToolActivity(toolName, input, false)} (failed)` : describeToolActivity(toolName, input, false); label.title = label.textContent; }
+}
+
+function appendContextActivity(): HTMLElement {
+  const row = document.createElement("div"); row.className = "message agent-activity";
+  const icon = document.createElement("span"); icon.className = "agent-activity-icon"; icon.append(contextActivityIcon());
+  const label = document.createElement("span"); label.className = "agent-activity-label"; label.textContent = "Context automatically compacted";
+  row.append(icon, label); messages.append(row); return row;
+}
+
+function describeToolActivity(toolName: string, input: unknown, running: boolean): string {
+  const value = input && typeof input === "object" ? input as Json : {};
+  const target = String(value.path ?? value.file_path ?? value.filePath ?? value.command ?? value.cmd ?? value.pattern ?? value.query ?? "").trim();
+  const verb = running
+    ? ({ bash: "Running", edit: "Editing", write: "Writing", read: "Reading", grep: "Searching", find: "Finding", ls: "Listing" } as Json)[toolName] ?? "Running"
+    : ({ bash: "Ran", edit: "Edited", write: "Wrote", read: "Read", grep: "Searched", find: "Found", ls: "Listed" } as Json)[toolName] ?? "Ran";
+  return target ? `${verb} ${target}` : `${verb} ${friendlyToolName(toolName)}`;
+}
+
+function friendlyToolName(toolName: string): string { return toolName.replaceAll("_", " "); }
+
 function appendRunActivity(text: string): HTMLElement { const value = document.createElement("div"); value.className = "message run-activity"; value.textContent = text; messages.append(value); messages.scrollTop = messages.scrollHeight; return value; }
 
 function setRunActivity(activity: HTMLElement, label: string, startedAt: number): void {
@@ -1326,6 +1397,12 @@ function svg(path: string, viewBox = "0 0 20 20"): SVGElement { const value = do
 function folderIcon(): SVGElement { return svg('<path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path><path d="M3.5 6.5V4h5l1.5 2"></path>'); }
 function chatIcon(): SVGElement { return svg('<path d="M4 4.5h12v9H9l-3.5 2.5v-2.5H4z"></path>'); }
 function sparkIcon(): SVGElement { return svg('<path d="M10 2.8c.5 3.7 2.4 5.8 6.2 7.2-3.8 1.4-5.7 3.5-6.2 7.2-.5-3.7-2.4-5.8-6.2-7.2C7.6 8.6 9.5 6.5 10 2.8Z"></path>'); }
+function activityIcon(toolName: string): SVGElement {
+  if (toolName === "edit" || toolName === "write") return svg('<path d="m4.2 14.8.7-3.2 7.8-7.8a1.45 1.45 0 0 1 2.05 2.05L7 13.65z"></path><path d="m11.7 4.8 2.05 2.05"></path>');
+  if (["bash", "grep", "find", "ls", "read"].includes(toolName)) return svg('<rect x="2.8" y="3.2" width="14.4" height="13.6" rx="2.3"></rect><path d="m6 7 2.2 2L6 11M10.4 12h3.1"></path>');
+  return svg('<path d="M10 2.8c.45 3.5 2.2 5.45 5.8 7.2-3.6 1.75-5.35 3.7-5.8 7.2-.45-3.5-2.2-5.45-5.8-7.2C7.8 8.25 9.55 6.3 10 2.8Z"></path>');
+}
+function contextActivityIcon(): SVGElement { return svg('<path d="M4 3.5h8l3 3v10H4z"></path><path d="M12 3.5v3h3M6.5 10h6M6.5 13h4"></path><path d="m2.5 12-1.2 1.2L2.5 14.4"></path>'); }
 function terminalCloudIcon(): SVGElement { return svg('<path d="M6.2 16.4c-2 0-3.7-1.6-3.7-3.6 0-1.2.6-2.3 1.5-3-.4-1.8.5-3.6 2.1-4.4.7-1.7 2.4-2.8 4.2-2.8 1.5 0 2.9.7 3.8 1.9 1.8-.1 3.3 1.3 3.4 3.1 1 .7 1.7 1.9 1.7 3.2 0 1.5-.8 2.8-2.1 3.5-.5 1.8-2.1 3-4 3-.8 0-1.6-.2-2.2-.7-.7.6-1.6.9-2.5.9-.8 0-1.6-.3-2.2-.7z"></path><path d="m6.8 8 1.8 2-1.8 2M10.7 12.3h2.7"></path>'); }
 function element(id: string): HTMLElement { const value = document.getElementById(id); if (!value) throw new Error(`Missing #${id}`); return value; }
 function query(selector: string): HTMLElement { const value = document.querySelector<HTMLElement>(selector); if (!value) throw new Error(`Missing ${selector}`); return value; }
