@@ -100,6 +100,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const security = options.security ?? (authMode === "required" ? new SecurityService(store, options.authPepper ?? "") : undefined);
   const recoveredInterruptedRequests = store.recoverInterruptedRequests();
   const recoveredAgentRuns = store.recoverInterruptedAgentRuns();
+  const recoveredToolApprovals = store.recoverInterruptedToolApprovals();
   seedDefaults(
     store,
     options.initialRecipes ?? DEFAULT_RECIPES,
@@ -164,7 +165,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       engine: lifecycle.snapshot(),
       queueDepth: scheduler.queueDepth,
       resources: { ...resourceSnapshot, policy: resources.policy },
-      recovery: { interruptedRequests: recoveredInterruptedRequests, interruptedAgentRuns: recoveredAgentRuns },
+      recovery: { interruptedRequests: recoveredInterruptedRequests, interruptedAgentRuns: recoveredAgentRuns, interruptedToolApprovals: recoveredToolApprovals },
     };
   });
 
@@ -343,6 +344,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         engineFolders: scanEngineFolders(store.getSetting<string>("engineRoot") ?? configuredEngineRoot, store.listEngines()),
         recoveredInterruptedRequests,
         recoveredAgentRuns,
+        recoveredToolApprovals,
       };
     },
   );
@@ -790,7 +792,7 @@ function parseRecipe(value: unknown, recipeId: string): Recipe {
 
 function nonNegativeInteger(value: unknown, name: string): number { if (!Number.isInteger(value) || (value as number) < 0) throw new TypeError(`${name} must be a non-negative integer`); return value as number; }
 
-function parseAgentRunRequest(value: unknown): AgentRunRequest { const parsed = parseChatCompletionRequest(value); const source = requireRecord(value); return { model: parsed.model, messages: parsed.messages, ...(parsed.max_tokens !== undefined ? { maxTokens: parsed.max_tokens } : {}), ...(parsed.temperature !== undefined ? { temperature: parsed.temperature } : {}), ...(typeof source.sessionId === "string" ? { sessionId: source.sessionId } : {}) }; }
+function parseAgentRunRequest(value: unknown): AgentRunRequest { const parsed = parseChatCompletionRequest(value); const source = requireRecord(value); const accessMode = source.accessMode === "ask" || source.accessMode === "read-only" ? source.accessMode : "full"; return { model: parsed.model, messages: parsed.messages, ...(parsed.max_tokens !== undefined ? { maxTokens: parsed.max_tokens } : {}), ...(parsed.temperature !== undefined ? { temperature: parsed.temperature } : {}), ...(typeof source.sessionId === "string" ? { sessionId: source.sessionId } : {}), accessMode }; }
 function canAccessRun(principal: AuthenticatedPrincipal | undefined, ownerUserId: string | undefined): boolean { return !principal || principal.user.role === "administrator" || principal.user.id === ownerUserId; }
 function canAccessOwner(principal: AuthenticatedPrincipal | undefined, ownerUserId: string | undefined): boolean { return !principal || principal.user.role === "administrator" || principal.user.id === ownerUserId; }
 function isTerminalRun(status: string | undefined): boolean { return status === "completed" || status === "failed" || status === "cancelled" || status === "interrupted"; }

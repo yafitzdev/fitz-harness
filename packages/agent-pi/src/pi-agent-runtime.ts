@@ -1,6 +1,8 @@
 import type { AgentRuntime, AgentRuntimeEvent, AgentRuntimeRun } from "@fitz/agent-core";
-import type { AgentRunRequest } from "@fitz/protocol";
+import type { AgentRunRequest, ToolAccessMode } from "@fitz/protocol";
 import type { Model } from "@earendil-works/pi-ai/compat";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 type PiEvent =
   | { type: "message_update"; assistantMessageEvent: { type: string; delta?: string } }
@@ -8,6 +10,10 @@ type PiEvent =
   | { type: "tool_execution_start"; toolCallId: string; toolName: string; args?: unknown }
   | { type: "tool_execution_end"; toolCallId: string; toolName: string; result: unknown; isError?: boolean };
 export interface PiSession { subscribe(listener: (event: PiEvent) => void): () => void; prompt(text: string): Promise<void>; abort(): Promise<void>; dispose(): void }
+export interface PiToolCall { toolCallId: string; toolName: string; input: unknown }
+export interface PiToolApprovalResult { allowed: boolean; reason?: string }
+export interface ToolApprovalHandle { approvalId: string; decision: Promise<"approved" | "denied"> }
+export type ToolApprovalRequester = (request: PiToolCall & { sessionId: string }, signal: AbortSignal) => ToolApprovalHandle;
 export type PiSessionFactory = (options: {
   cwd: string;
   tools: readonly string[];
@@ -15,6 +21,7 @@ export type PiSessionFactory = (options: {
   baseUrl: string;
   contextWindow: number;
   maxTokens: number;
+  approveTool: (request: PiToolCall) => Promise<PiToolApprovalResult>;
 }) => Promise<PiSession>;
 export interface PiAgentRuntimeOptions {
   cwd?: string | ((request: AgentRunRequest) => string);
@@ -22,9 +29,11 @@ export interface PiAgentRuntimeOptions {
   baseUrl?: string;
   contextWindow?: number;
   createSession?: PiSessionFactory;
+  requestToolApproval?: ToolApprovalRequester;
 }
 
 const CODING_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"] as const;
+const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 
 export class PiAgentRuntime implements AgentRuntime {
   readonly id = "pi";
@@ -33,12 +42,14 @@ export class PiAgentRuntime implements AgentRuntime {
   readonly #baseUrl: string;
   readonly #contextWindow: number;
   readonly #createSession: PiSessionFactory;
+  readonly #requestToolApproval: ToolApprovalRequester | undefined;
   constructor(options: PiAgentRuntimeOptions = {}) {
     this.#cwd = options.cwd ?? process.cwd();
     this.#tools = options.tools ?? CODING_TOOLS;
     this.#baseUrl = (options.baseUrl ?? "http://127.0.0.1:8787/v1").replace(/\/$/, "");
     this.#contextWindow = options.contextWindow ?? 100_000;
     this.#createSession = options.createSession ?? createSdkSession;
+    this.#requestToolApproval = options.requestToolApproval;
   }
   run(request: AgentRunRequest, signal?: AbortSignal): AgentRuntimeRun {
     const channel = new EventChannel(); let session: PiSession | undefined; const controller = new AbortController();
@@ -50,6 +61,7 @@ export class PiAgentRuntime implements AgentRuntime {
       baseUrl: this.#baseUrl,
       contextWindow: this.#contextWindow,
       maxTokens: request.maxTokens ?? 16_384,
+      approveTool: (toolCall) => this.#approveTool(request.accessMode ?? "full", request.sessionId, toolCall, controller.signal, channel),
     }); if (controller.signal.aborted) { await session.abort(); throw abortError(); }
       let sawAssistant = false;
       const unsubscribe = session.subscribe((event) => {
@@ -64,6 +76,17 @@ export class PiAgentRuntime implements AgentRuntime {
         channel.close();
       } finally { unsubscribe(); session.dispose(); }
     } catch (error) { channel.fail(error); } })(); return Object.assign(channel, { cancel });
+  }
+
+  async #approveTool(mode: ToolAccessMode, sessionId: string | undefined, toolCall: PiToolCall, signal: AbortSignal, channel: EventChannel): Promise<PiToolApprovalResult> {
+    if (mode === "full" || READ_ONLY_TOOLS.has(toolCall.toolName)) return { allowed: true };
+    if (mode === "read-only") return { allowed: false, reason: `${toolCall.toolName} is blocked in Read only mode` };
+    if (!sessionId || !this.#requestToolApproval) return { allowed: false, reason: "This tool requires approval, but no approval service is available" };
+    const handle = this.#requestToolApproval({ ...toolCall, sessionId }, signal);
+    channel.push({ type: "tool.approval.requested", approvalId: handle.approvalId, toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, input: toolCall.input });
+    const decision = await handle.decision;
+    channel.push({ type: "tool.approval.resolved", approvalId: handle.approvalId, toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, decision });
+    return decision === "approved" ? { allowed: true } : { allowed: false, reason: `The user denied ${toolCall.toolName}` };
   }
 }
 
@@ -91,12 +114,32 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
       supportsStrictMode: true,
     },
   };
+  const resourceLoader = new sdk.DefaultResourceLoader({
+    cwd: options.cwd,
+    agentDir: join(tmpdir(), "fitz-pi-agent"),
+    noExtensions: true,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    extensionFactories: [{
+      name: "fitz-tool-approval",
+      hidden: true,
+      factory: (pi) => {
+        pi.on("tool_call", async (event) => {
+          const decision = await options.approveTool({ toolCallId: event.toolCallId, toolName: event.toolName, input: event.input });
+          return decision.allowed ? undefined : { block: true, reason: decision.reason ?? "Tool execution denied" };
+        });
+      },
+    }],
+  });
+  await resourceLoader.reload();
   const result = await sdk.createAgentSession({
     cwd: options.cwd,
     tools: [...options.tools],
     model,
     thinkingLevel: "off",
     modelRuntime,
+    resourceLoader,
     sessionManager: sdk.SessionManager.inMemory(options.cwd),
   });
   return result.session as PiSession;

@@ -211,6 +211,18 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .agent-activity.running .agent-activity-icon { animation: activity-pulse 1.25s ease-in-out infinite; }
 .agent-activity.failed { color: #d9908b; }
 .agent-activity.failed .agent-activity-icon { color: #d9908b; }
+.tool-approval { width: min(620px, 100%); display: grid; gap: 10px; margin: 4px 0 14px; padding: 13px 14px; border: 1px solid var(--codex-border-heavy); border-radius: var(--codex-radius-xl); background: rgba(255,255,255,.035); color: var(--text); }
+.tool-approval-heading { display: flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 550; }
+.tool-approval-heading svg { width: 18px; height: 18px; color: var(--codex-text-secondary); }
+.tool-approval-request { max-height: 180px; margin: 0; overflow: auto; color: var(--codex-text-secondary); font: 12px/1.5 Consolas, "Cascadia Mono", monospace; white-space: pre-wrap; word-break: break-word; }
+.tool-approval-actions { display: flex; justify-content: flex-end; gap: 7px; }
+.tool-approval-actions button { min-height: 31px; padding: 6px 12px; border-radius: var(--codex-radius-md); background: rgba(255,255,255,.07); color: var(--text); cursor: pointer; font-size: 12px; }
+.tool-approval-actions button:hover { background: rgba(255,255,255,.12); }
+.tool-approval-actions .approve-tool { background: #e8e9e5; color: #20211f; }
+.tool-approval-actions .approve-tool:hover { background: #fff; }
+.tool-approval.resolved { grid-template-columns: 1fr auto; align-items: center; padding-block: 10px; color: var(--codex-text-secondary); }
+.tool-approval.resolved .tool-approval-request, .tool-approval.resolved .tool-approval-actions { display: none; }
+.tool-approval-status { color: var(--codex-text-tertiary); font-size: 12px; }
 .message-meta { margin-bottom: 5px; color: var(--subtle); font-size: 11px; text-transform: capitalize; }
 
 .composer-dock { position: absolute; z-index: 4; left: 50%; bottom: 12px; width: min(768px, calc(100% - 36px)); transform: translateX(-50%); }
@@ -259,8 +271,19 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 #prompt:disabled { cursor: not-allowed; }
 .composer-toolbar { position: relative; z-index: 1; min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 10px 8px; }
 .composer-tools, .composer-controls { display: flex; align-items: center; gap: 5px; min-width: 0; }
-.access-label { display: inline-flex; align-items: center; gap: 5px; color: var(--orange); font-size: 12px; }
+.access-mode-wrap { position: relative; }
+.access-label { min-height: 30px; display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; border-radius: var(--codex-radius-md); background: transparent; color: var(--orange); cursor: pointer; font-size: 12px; }
+.access-label:hover, .access-label[aria-expanded="true"] { background: var(--surface-hover); }
+.access-label:disabled { opacity: .55; cursor: default; }
 .access-label svg { width: 15px; height: 15px; }
+.access-mode-menu { left: 0; bottom: 38px; width: 290px; }
+.access-mode-menu > button { width: 100%; min-height: 54px; display: flex; align-items: center; gap: 11px; padding: 8px 10px; border-radius: var(--codex-radius-md); background: transparent; color: var(--text); cursor: pointer; text-align: left; }
+.access-mode-menu > button:hover, .access-mode-menu > button.selected { background: rgba(255,255,255,.07); }
+.access-mode-menu > button > svg { width: 18px; height: 18px; flex: 0 0 auto; color: var(--codex-text-secondary); }
+.access-mode-menu > button.selected > svg { color: var(--text); }
+.access-mode-menu > button > span { min-width: 0; display: grid; gap: 2px; }
+.access-mode-menu strong { font-size: 13px; font-weight: 550; }
+.access-mode-menu small { color: var(--codex-text-tertiary); font-size: 11px; }
 .context-usage-wrap { position: relative; display: flex; align-items: center; }
 .context-meter { --context-used: 0%; width: 18px; height: 18px; flex: 0 0 auto; padding: 0; border-radius: 50%; background: conic-gradient(#9a9d98 var(--context-used), #555854 0); cursor: pointer; -webkit-mask: radial-gradient(circle, transparent 44%, #000 47%); mask: radial-gradient(circle, transparent 44%, #000 47%); }
 .context-meter:hover { background: conic-gradient(#d1d3cd var(--context-used), #696c67 0); }

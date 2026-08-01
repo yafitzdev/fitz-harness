@@ -11,5 +11,8 @@ numbers are allocated transactionally and can be paged with `after`.
 Tool policy can be assigned to a role or a specific user. User policy overrides role policy, and a
 missing rule resolves to `ask`. Approval requests become immediately approved or denied for an
 explicit policy; otherwise they remain pending until the session owner or an administrator records
-a decision. Pi tools remain disabled until the execution bridge can block on this approval service,
-so no tool can run ahead of a pending decision in the current build.
+a decision. Native Pi runs also carry a desktop-selected access mode: `full` runs the configured
+coding tools automatically, `ask` allows inspection tools and blocks commands or file mutations on
+the durable approval service, and `read-only` allows inspection while rejecting commands and
+mutations. The Pi SDK's awaited pre-execution hook guarantees that a pending or denied tool cannot
+run ahead of its decision. Cancelling the run also cancels its pending approval.

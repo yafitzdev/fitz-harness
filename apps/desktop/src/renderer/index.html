@@ -145,7 +145,16 @@
                 <button id="attach" class="icon-button" type="button" title="Attach a file" aria-label="Attach a file" disabled>
                   <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"></path></svg>
                 </button>
-                <span class="access-label"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.8 16 5v4.4c0 3.8-2.4 6.3-6 7.8-3.6-1.5-6-4-6-7.8V5z"></path><path d="M10 7v3.2M10 13h.01"></path></svg>Full access</span>
+                <div class="access-mode-wrap">
+                  <button id="access-mode-toggle" class="access-label" type="button" aria-label="Tool access mode" aria-expanded="false">
+                    <svg id="access-mode-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.8 16 5v4.4c0 3.8-2.4 6.3-6 7.8-3.6-1.5-6-4-6-7.8V5z"></path><path d="M10 7v3.2M10 13h.01"></path></svg><span id="access-mode-label">Full access</span>
+                  </button>
+                  <div id="access-mode-menu" class="popover access-mode-menu" hidden>
+                    <button type="button" data-access-mode="full"><svg viewBox="0 0 20 20"><path d="M10 2.8 16 5v4.4c0 3.8-2.4 6.3-6 7.8-3.6-1.5-6-4-6-7.8V5z"></path><path d="M10 7v3.2M10 13h.01"></path></svg><span><strong>Full access</strong><small>Run all tools automatically</small></span></button>
+                    <button type="button" data-access-mode="ask"><svg viewBox="0 0 20 20"><path d="M10 2.8 16 5v4.4c0 3.8-2.4 6.3-6 7.8-3.6-1.5-6-4-6-7.8V5z"></path><path d="M8.4 8.1a1.8 1.8 0 1 1 2.5 1.7c-.8.4-.9.8-.9 1.3M10 13.7h.01"></path></svg><span><strong>Ask first</strong><small>Approve commands and edits inline</small></span></button>
+                    <button type="button" data-access-mode="read-only"><svg viewBox="0 0 20 20"><rect x="4.2" y="8.5" width="11.6" height="8" rx="2"></rect><path d="M6.8 8.5V6.3a3.2 3.2 0 0 1 6.4 0v2.2"></path></svg><span><strong>Read only</strong><small>Allow inspection, block changes</small></span></button>
+                  </div>
+                </div>
               </div>
               <div class="composer-controls">
                 <div class="context-usage-wrap">

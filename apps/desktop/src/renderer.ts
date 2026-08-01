@@ -2,6 +2,7 @@ import { reconnectDelay } from "@fitz/connectivity/reconnect";
 
 type Json = Record<string, any>;
 type FixedRouteId = "fast" | "default" | "smart";
+type AccessMode = "full" | "ask" | "read-only";
 
 const FIXED_ROUTES: readonly { id: FixedRouteId; label: string; icon: string }[] = [
   { id: "fast", label: "Fast", icon: '<path class="route-icon-outline" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path><path class="route-icon-filled" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path>' },
@@ -28,6 +29,7 @@ let hoveredProjectId: string | undefined;
 let projectHoverHideTimer: ReturnType<typeof setTimeout> | undefined;
 let removeProjectTarget: string | undefined;
 let editingRecipe: Json | undefined;
+let accessMode: AccessMode = storedAccessMode();
 let renameTarget: { kind: "project" | "task"; id: string } | undefined;
 const pinnedProjects = storedSet("fitz-pinned-projects");
 const pinnedSessions = storedSet("fitz-pinned-sessions");
@@ -53,6 +55,10 @@ const contextMeter = element("context-meter");
 const contextUsagePopover = element("context-usage-popover");
 const contextPercent = element("context-percent");
 const contextTokens = element("context-tokens");
+const accessModeToggle = element("access-mode-toggle") as HTMLButtonElement;
+const accessModeMenu = element("access-mode-menu");
+const accessModeLabel = element("access-mode-label");
+const accessModeIcon = element("access-mode-icon") as unknown as SVGElement;
 const form = element("composer") as HTMLFormElement;
 const workspace = query(".workspace");
 const prompt = element("prompt") as HTMLTextAreaElement;
@@ -134,6 +140,7 @@ const removeProjectName = element("remove-project-name");
 const toast = element("toast");
 
 restoreSidebarWidth();
+renderAccessMode();
 void initialize();
 
 form.addEventListener("submit", (event) => {
@@ -183,6 +190,9 @@ speed.addEventListener("change", applySpeedSelection);
 modelToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(modelMenu, modelToggle); });
 contextMeter.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(contextUsagePopover, contextMeter as HTMLButtonElement); });
 contextUsagePopover.addEventListener("click", (event) => event.stopPropagation());
+accessModeToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(accessModeMenu, accessModeToggle); });
+accessModeMenu.addEventListener("click", (event) => event.stopPropagation());
+for (const choice of document.querySelectorAll<HTMLButtonElement>("[data-access-mode]")) choice.addEventListener("click", () => setAccessMode(choice.dataset.accessMode as AccessMode));
 newChatProjectControl.addEventListener("click", (event) => { event.stopPropagation(); newChatProjectDetached = true; newChatProjectControl.hidden = true; showNewChatLanding(); });
 newChatEnvironmentControl.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(newChatEnvironmentMenu, newChatEnvironmentControl); });
 newChatBranchControl.addEventListener("click", (event) => { event.stopPropagation(); void openBranchMenu(); });
@@ -371,6 +381,8 @@ async function selectSession(id: string, rerender = true, projectId?: string): P
       }
       if (entry.kind === "compaction") appendContextActivity();
     }
+    const pendingApprovals = await api(`/api/v1/sessions/${id}/tool-approvals?status=pending`);
+    for (const approval of pendingApprovals.data ?? []) appendToolApproval(approval);
     updateContextMeter();
     if (!messages.childElementCount) showLanding(true);
     await loadArtifacts();
@@ -985,6 +997,7 @@ function closePopovers(): void {
   modelMenu.hidden = true;
   settingsSubmenu.hidden = true;
   contextUsagePopover.hidden = true;
+  accessModeMenu.hidden = true;
   taskMenu.hidden = true;
   sidebarContextMenu.hidden = true;
   newChatEnvironmentMenu.hidden = true;
@@ -993,6 +1006,7 @@ function closePopovers(): void {
   hideChatHover();
   modelToggle.setAttribute("aria-expanded", "false");
   contextMeter.setAttribute("aria-expanded", "false");
+  accessModeToggle.setAttribute("aria-expanded", "false");
   taskMenuToggle.setAttribute("aria-expanded", "false");
   newChatEnvironmentControl.setAttribute("aria-expanded", "false");
   newChatBranchControl.setAttribute("aria-expanded", "false");
@@ -1033,6 +1047,7 @@ async function sendPrompt(): Promise<void> {
       model: model.value,
       maxTokens: Number(effort.value),
       sessionId: currentSession,
+      accessMode,
       messages: [{ role: "user", content }],
     });
     const runId = String(response.data.id);
@@ -1067,6 +1082,7 @@ async function cancelRun(): Promise<void> {
 async function followRun(runId: string, activity: HTMLElement, runStartedAt: number): Promise<void> {
   let assistant: HTMLElement | undefined;
   const toolActivities = new Map<string, { row: HTMLElement; toolName: string; input: unknown }>();
+  const approvalActivities = new Map<string, HTMLElement>();
   let done = false;
   let reconnectAttempt = 0;
   let nextEnginePoll = 0;
@@ -1088,6 +1104,22 @@ async function followRun(runId: string, activity: HTMLElement, runStartedAt: num
         if (!assistant) { activity.remove(); assistant = appendMessage("assistant", ""); }
         const delta = event.data.text ?? ""; assistant.textContent += delta; sessionTokenEstimate += estimateTokens(delta); updateContextMeter();
         messages.scrollTop = messages.scrollHeight;
+      }
+      if (event.type === "tool.approval.requested") {
+        const approvalId = String(event.data?.approvalId ?? "");
+        activity.remove();
+        if (assistant) { markAssistantAsCommentary(assistant); assistant = undefined; }
+        approvalActivities.set(approvalId, appendToolApproval({ id: approvalId, toolName: String(event.data?.toolName ?? "tool"), request: event.data?.input ?? {}, status: "pending" }));
+        setStatus("Waiting for approval", "active");
+        engineState.textContent = "WAITING";
+      }
+      if (event.type === "tool.approval.resolved") {
+        const approvalId = String(event.data?.approvalId ?? "");
+        const decision = event.data?.decision === "approved" ? "approved" : "denied";
+        const approval = approvalActivities.get(approvalId) ?? messages.querySelector<HTMLElement>(`[data-approval-id="${CSS.escape(approvalId)}"]`);
+        if (approval) resolveToolApprovalCard(approval, decision);
+        setStatus("Working", "active");
+        engineState.textContent = "WORKING";
       }
       if (event.type === "tool.started") {
         const toolName = String(event.data?.toolName ?? "tool");
@@ -1296,6 +1328,33 @@ function appendContextActivity(): HTMLElement {
   row.append(icon, label); messages.append(row); return row;
 }
 
+function appendToolApproval(approval: Json): HTMLElement {
+  const row = document.createElement("section"); row.className = "message tool-approval"; row.dataset.approvalId = String(approval.id ?? "");
+  const heading = document.createElement("div"); heading.className = "tool-approval-heading";
+  heading.append(activityIcon(String(approval.toolName ?? "tool")), Object.assign(document.createElement("span"), { textContent: `Allow ${String(approval.toolName ?? "tool")}?` }));
+  const request = document.createElement("pre"); request.className = "tool-approval-request"; request.textContent = formatToolPayload(approval.request, "No arguments");
+  const actions = document.createElement("div"); actions.className = "tool-approval-actions";
+  const deny = document.createElement("button"); deny.type = "button"; deny.textContent = "Deny";
+  const approve = document.createElement("button"); approve.type = "button"; approve.className = "approve-tool"; approve.textContent = "Approve";
+  deny.addEventListener("click", () => void decideToolApproval(row, "denied")); approve.addEventListener("click", () => void decideToolApproval(row, "approved"));
+  const statusText = document.createElement("span"); statusText.className = "tool-approval-status";
+  actions.append(deny, approve); row.append(heading, request, actions, statusText); messages.append(row); messages.scrollTop = messages.scrollHeight;
+  if (approval.status === "approved" || approval.status === "denied") resolveToolApprovalCard(row, approval.status);
+  return row;
+}
+
+async function decideToolApproval(row: HTMLElement, decision: "approved" | "denied"): Promise<void> {
+  const approvalId = row.dataset.approvalId; if (!approvalId) return;
+  for (const button of row.querySelectorAll<HTMLButtonElement>("button")) button.disabled = true;
+  const statusText = row.querySelector<HTMLElement>(".tool-approval-status"); if (statusText) statusText.textContent = decision === "approved" ? "Approving…" : "Denying…";
+  try { const response = await api(`/api/v1/tool-approvals/${approvalId}/decision`, "POST", { decision }); resolveToolApprovalCard(row, response.data?.status === "approved" ? "approved" : "denied"); }
+  catch (error) { for (const button of row.querySelectorAll<HTMLButtonElement>("button")) button.disabled = false; if (statusText) statusText.textContent = ""; showToast(errorMessage(error)); }
+}
+
+function resolveToolApprovalCard(row: HTMLElement, decision: "approved" | "denied"): void {
+  row.classList.add("resolved"); const statusText = row.querySelector<HTMLElement>(".tool-approval-status"); if (statusText) statusText.textContent = decision === "approved" ? "Approved" : "Denied";
+}
+
 function describeToolActivity(toolName: string, input: unknown, running: boolean): string {
   const value = input && typeof input === "object" ? input as Json : {};
   const target = String(value.path ?? value.file_path ?? value.filePath ?? value.command ?? value.cmd ?? value.pattern ?? value.query ?? "").trim();
@@ -1313,6 +1372,18 @@ function setRunActivity(activity: HTMLElement, label: string, startedAt: number)
   activity.textContent = `${label}… ${formatElapsed(Date.now() - startedAt)}`;
 }
 
+function setAccessMode(mode: AccessMode): void { accessMode = mode; localStorage.setItem("fitz-access-mode", mode); renderAccessMode(); closePopovers(); }
+
+function renderAccessMode(): void {
+  const values: Record<AccessMode, { label: string; icon: string }> = {
+    full: { label: "Full access", icon: '<path d="M10 2.8 16 5v4.4c0 3.8-2.4 6.3-6 7.8-3.6-1.5-6-4-6-7.8V5z"></path><path d="M10 7v3.2M10 13h.01"></path>' },
+    ask: { label: "Ask first", icon: '<path d="M10 2.8 16 5v4.4c0 3.8-2.4 6.3-6 7.8-3.6-1.5-6-4-6-7.8V5z"></path><path d="M8.4 8.1a1.8 1.8 0 1 1 2.5 1.7c-.8.4-.9.8-.9 1.3M10 13.7h.01"></path>' },
+    "read-only": { label: "Read only", icon: '<rect x="4.2" y="8.5" width="11.6" height="8" rx="2"></rect><path d="M6.8 8.5V6.3a3.2 3.2 0 0 1 6.4 0v2.2"></path>' },
+  };
+  accessModeLabel.textContent = values[accessMode].label; accessModeIcon.innerHTML = values[accessMode].icon; accessModeToggle.dataset.mode = accessMode;
+  for (const choice of accessModeMenu.querySelectorAll<HTMLButtonElement>("[data-access-mode]")) choice.classList.toggle("selected", choice.dataset.accessMode === accessMode);
+}
+
 function refreshComposerState(): void {
   const ready = Boolean((currentSession || (newChatMode && currentProject)) && model.value);
   prompt.disabled = !ready || Boolean(currentRun);
@@ -1320,6 +1391,7 @@ function refreshComposerState(): void {
   effort.disabled = Boolean(currentRun);
   speed.disabled = model.options.length === 0 || Boolean(currentRun);
   modelToggle.disabled = model.options.length === 0 || Boolean(currentRun);
+  accessModeToggle.disabled = Boolean(currentRun);
   attachButton.disabled = !currentSession || Boolean(currentRun);
   addArtifactButton.disabled = !currentSession;
   sendButton.classList.toggle("running", Boolean(currentRun));
@@ -1412,6 +1484,7 @@ function treeItem(label: string, className: string, icon: SVGElement, action: ()
 }
 
 function storedSet(key: string): Set<string> { try { const value = JSON.parse(localStorage.getItem(key) ?? "[]"); return new Set(Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []); } catch { return new Set(); } }
+function storedAccessMode(): AccessMode { const value = localStorage.getItem("fitz-access-mode"); return value === "ask" || value === "read-only" ? value : "full"; }
 function saveSet(key: string, values: Set<string>): void { localStorage.setItem(key, JSON.stringify([...values])); }
 
 async function api(path: string, method = "GET", body?: unknown): Promise<Json> {

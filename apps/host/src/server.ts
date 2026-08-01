@@ -10,6 +10,7 @@ import { SqliteStore } from "@fitz/storage";
 import { createHost } from "./create-app.js";
 import { PiAgentRuntime } from "@fitz/agent-pi";
 import { createNInferPlaybook, NINFER_PLAYBOOK_ID } from "./ninfer-playbook.js";
+import { createToolApprovalRequester } from "./tool-approval-gate.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const defaultDataPath = resolve(moduleDirectory, "../../../data/fitz.db");
@@ -45,6 +46,7 @@ const runtime = createHost({
         const project = session ? store.getProject(session.projectId) : undefined;
         return project?.rootPath ?? process.cwd();
       },
+      requestToolApproval: createToolApprovalRequester(store),
     }),
   } : {}),
 });

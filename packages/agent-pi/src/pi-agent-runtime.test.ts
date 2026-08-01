@@ -24,6 +24,41 @@ describe("PiAgentRuntime", () => {
     await expect(consume()).rejects.toThrow("without an assistant response");
   });
 
+  it("pauses risky tools in Ask first mode and emits the durable approval lifecycle", async () => {
+    let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+    const runtime = new PiAgentRuntime({
+      requestToolApproval: (request) => ({ approvalId: "approval-1", decision: Promise.resolve(request.toolName === "bash" ? "approved" : "denied") }),
+      createSession: async (options) => ({
+        subscribe: (next) => { listener = next; return () => undefined; },
+        prompt: async () => {
+          const decision = await options.approveTool({ toolCallId: "bash-1", toolName: "bash", input: { command: "git status" } });
+          expect(decision.allowed).toBe(true);
+          listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "done" } });
+        },
+        abort: async () => undefined,
+        dispose: () => undefined,
+      }),
+    });
+    const events = [];
+    for await (const event of runtime.run({ model: "fast", sessionId: "session-1", accessMode: "ask", messages: [{ role: "user", content: "check" }] })) events.push(event);
+    expect(events).toEqual([
+      { type: "tool.approval.requested", approvalId: "approval-1", toolCallId: "bash-1", toolName: "bash", input: { command: "git status" } },
+      { type: "tool.approval.resolved", approvalId: "approval-1", toolCallId: "bash-1", toolName: "bash", decision: "approved" },
+      { type: "assistant.delta", text: "done" },
+    ]);
+  });
+
+  it("allows inspection but blocks commands in Read only mode", async () => {
+    let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+    const runtime = new PiAgentRuntime({ createSession: async (options) => ({ subscribe: (next) => { listener = next; return () => undefined; }, prompt: async () => {
+      expect(await options.approveTool({ toolCallId: "read-1", toolName: "read", input: { path: "README.md" } })).toEqual({ allowed: true });
+      expect(await options.approveTool({ toolCallId: "bash-1", toolName: "bash", input: { command: "pwd" } })).toEqual({ allowed: false, reason: "bash is blocked in Read only mode" });
+      listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "blocked" } });
+    }, abort: async () => undefined, dispose: () => undefined }) });
+    const events = []; for await (const event of runtime.run({ model: "fast", accessMode: "read-only", messages: [{ role: "user", content: "inspect" }] })) events.push(event);
+    expect(events).toEqual([{ type: "assistant.delta", text: "blocked" }]);
+  });
+
   it("runs the real Pi loop against the selected Fitz route and executes coding tools", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "fitz-pi-"));
     await writeFile(join(cwd, "probe.txt"), "PI_TOOL_OK", "utf8");
@@ -51,6 +86,33 @@ describe("PiAgentRuntime", () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await rm(cwd, { recursive: true, force: true });
     }
+  }, 30_000);
+
+  it("blocks a denied command before the real Pi SDK executes it", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "fitz-pi-denied-")); const requests: any[] = [];
+    const server = createServer(async (request, response) => {
+      let body = ""; for await (const chunk of request) body += chunk; requests.push(JSON.parse(body));
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      if (requests.length === 1) {
+        sse(response, { choices: [{ index: 0, delta: { role: "assistant", tool_calls: [{ index: 0, id: "call-bash", type: "function", function: { name: "bash", arguments: '{"command":"echo SHOULD_NOT_EXIST > denied.txt"}' } }] }, finish_reason: null }] });
+        sse(response, { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 10, completion_tokens: 5 } });
+      } else {
+        sse(response, { choices: [{ index: 0, delta: { role: "assistant", content: "Command denied" }, finish_reason: null }] });
+        sse(response, { choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 15, completion_tokens: 4 } });
+      }
+      response.end("data: [DONE]\n\n");
+    });
+    server.listen(0, "127.0.0.1"); await once(server, "listening"); const address = server.address(); if (!address || typeof address === "string") throw new Error("Expected server address");
+    try {
+      const runtime = new PiAgentRuntime({ cwd, baseUrl: `http://127.0.0.1:${address.port}/v1`, requestToolApproval: () => ({ approvalId: "denied-1", decision: Promise.resolve("denied") }) });
+      const events = []; for await (const event of runtime.run({ model: "fast", sessionId: "session-1", accessMode: "ask", messages: [{ role: "user", content: "write a marker" }], maxTokens: 128 })) events.push(event);
+      await expect(import("node:fs/promises").then(({ access }) => access(join(cwd, "denied.txt")))).rejects.toThrow();
+      expect(events).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "tool.approval.requested", approvalId: "denied-1", toolName: "bash" }),
+        expect.objectContaining({ type: "tool.approval.resolved", decision: "denied" }),
+        expect.objectContaining({ type: "assistant.delta", text: "Command denied" }),
+      ]));
+    } finally { await new Promise<void>((resolve) => server.close(() => resolve())); await rm(cwd, { recursive: true, force: true }); }
   }, 30_000);
 });
 

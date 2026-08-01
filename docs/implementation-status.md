@@ -28,7 +28,8 @@
 - Fitz-owned agent runtime boundary and an opt-in Pi SDK 0.83.0 adapter using in-memory Pi sessions,
   restricted tool allowlists, event translation, cancellation, and native-run integration.
 - Owner-scoped projects and sessions, ordered canonical transcripts, native run/session binding,
-  user-over-role tool policies, secure-default approval requests, durable decisions, and audit events.
+  user-over-role tool policies, secure-default approval requests, durable decisions, audit events,
+  Pi pre-execution blocking, desktop Full access/Ask first/Read only selection, and inline approval UI.
 - Fitz-owned token estimation and context budgeting, canonical-session reconstruction, injectable
   summarization, deterministic initial compaction, recent-message preservation, and durable
   compaction transcript records.
