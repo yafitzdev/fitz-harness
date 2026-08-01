@@ -10,6 +10,9 @@ let currentRun: string | undefined;
 let lastSequence = 0;
 let pendingTaskAfterProject = false;
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
+let sessionTokenEstimate = 0;
+let contextTokenLimit = 131_072;
+let managementConfiguration: Json | undefined;
 let renameTarget: { kind: "project" | "task"; id: string } | undefined;
 const pinnedProjects = storedSet("fitz-pinned-projects");
 const pinnedSessions = storedSet("fitz-pinned-sessions");
@@ -24,7 +27,14 @@ const speed = element("speed") as HTMLSelectElement;
 const modelToggle = element("model-toggle") as HTMLButtonElement;
 const modelMenu = element("model-menu");
 const modelSummary = element("model-summary");
+const modelValue = element("model-value");
+const effortValue = element("effort-value");
+const speedValue = element("speed-value");
+const settingsSubmenu = element("settings-submenu");
 const contextMeter = element("context-meter");
+const contextUsagePopover = element("context-usage-popover");
+const contextPercent = element("context-percent");
+const contextTokens = element("context-tokens");
 const form = element("composer") as HTMLFormElement;
 const prompt = element("prompt") as HTMLTextAreaElement;
 const status = element("status");
@@ -63,6 +73,8 @@ const renameForm = element("rename-form") as HTMLFormElement;
 const renameTaskName = element("rename-task-name") as HTMLInputElement;
 const renameHeading = element("rename-heading");
 const renameLabel = element("rename-label");
+const playbookDialog = element("playbook-dialog") as HTMLDialogElement;
+const playbookList = element("playbook-list");
 const toast = element("toast");
 
 restoreSidebarWidth();
@@ -90,6 +102,7 @@ document.addEventListener("keydown", (event) => {
 
 element("new-project").addEventListener("click", () => openProjectDialog());
 element("new-session").addEventListener("click", () => openTaskDialog());
+element("manage-playbooks").addEventListener("click", () => void openPlaybookDialog());
 element("sidebar-menu").addEventListener("click", toggleSidebar);
 element("sidebar-restore").addEventListener("click", toggleSidebar);
 for (const menuButton of document.querySelectorAll<HTMLButtonElement>("[data-app-menu]")) menuButton.addEventListener("click", () => { const rect = menuButton.getBoundingClientRect(); void window.fitz.showMenu(menuButton.dataset.appMenu ?? "", Math.round(rect.left), Math.round(rect.bottom)); });
@@ -99,15 +112,19 @@ sidebarResizer.addEventListener("pointerdown", beginSidebarResize);
 sidebarResizer.addEventListener("keydown", resizeSidebarWithKeyboard);
 connectionStatus.addEventListener("click", () => void initialize());
 contextToggle.addEventListener("click", () => setContextPanel(contextPanel.hasAttribute("hidden")));
-element("context-close").addEventListener("click", () => setContextPanel(false));
+element("context-add").addEventListener("click", chooseArtifact);
 attachButton.addEventListener("click", chooseArtifact);
 addArtifactButton.addEventListener("click", chooseArtifact);
 artifactFile.addEventListener("change", () => void uploadArtifact());
 chooseProjectFolder.addEventListener("click", () => void selectProjectFolder());
 model.addEventListener("change", updateModelControls);
 effort.addEventListener("change", updateModelControls);
-speed.addEventListener("change", () => { const route = speed.value === "fast" ? "fast" : "default-agent"; if ([...model.options].some((option) => option.value === route)) model.value = route; updateModelControls(); });
+speed.addEventListener("change", applySpeedSelection);
 modelToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(modelMenu, modelToggle); });
+contextMeter.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(contextUsagePopover, contextMeter as HTMLButtonElement); });
+contextUsagePopover.addEventListener("click", (event) => event.stopPropagation());
+for (const row of document.querySelectorAll<HTMLButtonElement>("[data-setting]")) row.addEventListener("click", (event) => { event.stopPropagation(); openSettingsSubmenu(row.dataset.setting as "model" | "effort" | "speed", row); });
+element("advanced-settings").addEventListener("click", () => showToast("Advanced recipe controls are available in Playbooks & recipes"));
 taskMenuToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(taskMenu, taskMenuToggle); });
 modelMenu.addEventListener("click", (event) => event.stopPropagation());
 taskMenu.addEventListener("click", (event) => event.stopPropagation());
@@ -142,6 +159,7 @@ async function initialize(): Promise<void> {
     setConnection("127.0.0.1:8787", "active");
     setStatus(health.engine?.state ?? "Ready", "idle");
     await loadProjects();
+    void loadManagementConfiguration(false);
   } catch (error) {
     setConnection("Click to retry", "error");
     setStatus("Offline", "error");
@@ -169,7 +187,7 @@ async function loadProjects(preferredProject?: string, preferredSession?: string
 
   renderProjectTree();
   if (currentSession) await selectSession(currentSession, false);
-  else { showLanding(); await loadArtifacts(); }
+  else { sessionTokenEstimate = 0; updateContextMeter(); showLanding(); await loadArtifacts(); }
 }
 
 function renderProjectTree(): void {
@@ -214,7 +232,7 @@ async function selectProject(id: string): Promise<void> {
   currentSession = projectSessions[0]?.id;
   renderProjectTree();
   if (currentSession) await selectSession(currentSession, false);
-  else { showLanding(); await loadArtifacts(); }
+  else { sessionTokenEstimate = 0; updateContextMeter(); showLanding(); await loadArtifacts(); }
   refreshComposerState();
 }
 
@@ -228,9 +246,11 @@ async function selectSession(id: string, rerender = true): Promise<void> {
   try {
     const transcript = await api(`/api/v1/sessions/${id}/transcript`);
     messages.replaceChildren();
+    sessionTokenEstimate = 0;
     for (const entry of transcript.data ?? []) {
-      if (entry.kind === "message") appendMessage(entry.role ?? "system", entry.content?.text ?? "");
+      if (entry.kind === "message") { const text = entry.content?.text ?? ""; sessionTokenEstimate += estimateTokens(text); appendMessage(entry.role ?? "system", text); }
     }
+    updateContextMeter();
     if (!messages.childElementCount) showLanding(true);
     await loadArtifacts();
   } catch (error) {
@@ -442,11 +462,78 @@ async function continueInNewChat(session: Json): Promise<void> {
   catch (error) { showToast(errorMessage(error)); }
 }
 
+async function openPlaybookDialog(): Promise<void> {
+  playbookList.replaceChildren(panelEmpty("Loading playbooks and recipes…"));
+  playbookDialog.showModal();
+  await loadManagementConfiguration(true);
+}
+
+async function loadManagementConfiguration(renderDialog: boolean): Promise<void> {
+  try {
+    managementConfiguration = await api("/api/v1/management/status");
+    syncContextLimit();
+    updateContextMeter();
+    if (renderDialog) renderPlaybooks(managementConfiguration);
+  } catch (error) {
+    if (renderDialog) playbookList.replaceChildren(panelEmpty(`Management data is unavailable: ${errorMessage(error)}`));
+  }
+}
+
+function syncContextLimit(): void {
+  const route = managementConfiguration?.routes?.find((item: Json) => item.id === model.value);
+  const recipe = managementConfiguration?.recipes?.find((item: Json) => item.id === route?.recipeId);
+  if (Number.isFinite(recipe?.contextTokens) && recipe.contextTokens > 0) contextTokenLimit = recipe.contextTokens;
+}
+
+function renderPlaybooks(configuration: Json): void {
+  playbookList.replaceChildren();
+  const recipes = configuration.recipes ?? [];
+  const routes = configuration.routes ?? [];
+  const groups = new Map<string, Json[]>();
+  for (const recipe of recipes) { const values = groups.get(recipe.playbookId) ?? []; values.push(recipe); groups.set(recipe.playbookId, values); }
+  if (!groups.size) { playbookList.append(panelEmpty("No playbooks are configured")); return; }
+  for (const [playbookId, playbookRecipes] of groups) {
+    const card = document.createElement("section"); card.className = "playbook-card";
+    const heading = document.createElement("h3"); heading.textContent = playbookId; card.append(heading);
+    for (const recipe of playbookRecipes) {
+      const recipeCard = document.createElement("div"); recipeCard.className = "recipe-card";
+      const name = document.createElement("span"); name.textContent = recipe.displayName;
+      const context = document.createElement("code"); context.textContent = `${formatTokenCount(recipe.contextTokens)} ctx`;
+      const detail = document.createElement("small"); const attachedRoutes = routes.filter((route: Json) => route.recipeId === recipe.id).map((route: Json) => route.displayName).join(", "); detail.textContent = `${recipe.adapter} · ${recipe.modelId}${attachedRoutes ? ` · Routes: ${attachedRoutes}` : ""}`;
+      recipeCard.append(name, context, detail); card.append(recipeCard);
+    }
+    playbookList.append(card);
+  }
+}
+
 function updateModelControls(): void {
   routeState.textContent = model.selectedOptions[0]?.textContent ?? "—";
   const effortLabel = effort.selectedOptions[0]?.textContent ?? "Medium";
   modelSummary.textContent = `${model.selectedOptions[0]?.textContent ?? "Model"} · ${effortLabel}`;
+  modelValue.textContent = model.selectedOptions[0]?.textContent ?? "Model";
+  effortValue.textContent = effortLabel;
   speed.value = model.value === "fast" ? "fast" : "standard";
+  speedValue.textContent = speed.selectedOptions[0]?.textContent ?? "Standard";
+  syncContextLimit();
+  updateContextMeter();
+}
+
+function applySpeedSelection(): void { const route = speed.value === "fast" ? "fast" : "default-agent"; if ([...model.options].some((option) => option.value === route)) model.value = route; updateModelControls(); }
+
+function openSettingsSubmenu(kind: "model" | "effort" | "speed", row: HTMLButtonElement): void {
+  const select = kind === "model" ? model : kind === "effort" ? effort : speed;
+  settingsSubmenu.replaceChildren();
+  for (const option of [...select.options]) {
+    const button = document.createElement("button"); button.type = "button"; button.classList.toggle("selected", option.value === select.value);
+    const label = document.createElement("span"); label.textContent = option.textContent; button.append(label);
+    if (kind === "effort" && option.value === "65536") { const note = document.createElement("small"); note.textContent = "Consumes resources faster"; label.append(note); }
+    button.addEventListener("click", (event) => { event.stopPropagation(); select.value = option.value; if (kind === "speed") applySpeedSelection(); else updateModelControls(); closePopovers(); }); settingsSubmenu.append(button);
+  }
+  for (const item of document.querySelectorAll(".setting-row")) item.classList.toggle("active", item === row);
+  settingsSubmenu.style.top = `${Math.max(-8, row.offsetTop - 8)}px`;
+  settingsSubmenu.hidden = false;
+  const bounds = settingsSubmenu.getBoundingClientRect();
+  if (bounds.bottom > window.innerHeight - 16) settingsSubmenu.style.top = `${Number.parseFloat(settingsSubmenu.style.top) - (bounds.bottom - window.innerHeight + 16)}px`;
 }
 
 function togglePopover(popover: HTMLElement, toggle: HTMLButtonElement): void {
@@ -458,10 +545,14 @@ function togglePopover(popover: HTMLElement, toggle: HTMLButtonElement): void {
 
 function closePopovers(): void {
   modelMenu.hidden = true;
+  settingsSubmenu.hidden = true;
+  contextUsagePopover.hidden = true;
   taskMenu.hidden = true;
   sidebarContextMenu.hidden = true;
   modelToggle.setAttribute("aria-expanded", "false");
+  contextMeter.setAttribute("aria-expanded", "false");
   taskMenuToggle.setAttribute("aria-expanded", "false");
+  for (const row of document.querySelectorAll(".setting-row")) row.classList.remove("active");
   for (const toggle of projects.querySelectorAll(".tree-menu-toggle")) toggle.setAttribute("aria-expanded", "false");
 }
 
@@ -474,6 +565,8 @@ async function sendPrompt(): Promise<void> {
   resizePrompt();
   if (messages.querySelector(".landing")) messages.replaceChildren();
   appendMessage("user", content);
+  sessionTokenEstimate += estimateTokens(content);
+  updateContextMeter();
   setStatus("Queued", "loading");
   try {
     const response = await api("/api/v1/agent/runs", "POST", {
@@ -529,7 +622,7 @@ async function followRun(runId: string): Promise<void> {
       if (event.type === "run.started") { setStatus("Working", "active"); engineState.textContent = "WORKING"; }
       if (event.type === "assistant.delta") {
         assistant ??= appendMessage("assistant", "");
-        assistant.textContent += event.data.text ?? "";
+        const delta = event.data.text ?? ""; assistant.textContent += delta; sessionTokenEstimate += estimateTokens(delta); updateContextMeter();
         messages.scrollTop = messages.scrollHeight;
       }
       if (["run.completed", "run.failed", "run.cancelled", "run.interrupted"].includes(event.type)) {
@@ -674,7 +767,7 @@ function setContextPanel(open: boolean): void {
 
 function toggleSidebar(): void { shell.classList.toggle("sidebar-collapsed"); closePopovers(); }
 function resizePrompt(): void { prompt.style.height = "auto"; prompt.style.height = `${Math.min(prompt.scrollHeight, 180)}px`; }
-function updateContextMeter(): void { const used = Math.min(95, 7 + prompt.value.length / 120); contextMeter.style.setProperty("--context-used", `${used}%`); contextMeter.setAttribute("aria-label", `Context window approximately ${Math.round(used)}% used`); }
+function updateContextMeter(): void { const usedTokens = sessionTokenEstimate + estimateTokens(prompt.value); const used = Math.min(100, (usedTokens / contextTokenLimit) * 100); contextMeter.style.setProperty("--context-used", `${used}%`); contextPercent.textContent = `${Math.round(used)}% full`; contextTokens.textContent = `≈${formatTokenCount(usedTokens)} / ${formatTokenCount(contextTokenLimit)} tokens used`; contextMeter.setAttribute("aria-label", `Context window ${Math.round(used)}% full, approximately ${formatTokenCount(usedTokens)} of ${formatTokenCount(contextTokenLimit)} tokens used`); }
 
 function beginSidebarResize(event: PointerEvent): void {
   event.preventDefault(); sidebarResizer.classList.add("dragging"); sidebarResizer.setPointerCapture(event.pointerId);
@@ -722,4 +815,6 @@ function delay(milliseconds: number): Promise<void> { return new Promise((resolv
 function bytesToBase64(bytes: Uint8Array): string { let binary = ""; for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000)); return btoa(binary); }
 function base64Bytes(value: string): Uint8Array { const binary = atob(value); return Uint8Array.from(binary, (character) => character.charCodeAt(0)); }
 function formatBytes(value: number): string { return value < 1024 ? `${value} B` : `${(value / 1024).toFixed(1)} KB`; }
+function estimateTokens(value: string): number { return value ? Math.max(1, Math.ceil(value.length / 4)) : 0; }
+function formatTokenCount(value: number): string { return value >= 1000 ? `${Math.round(value / 1000)}k` : String(Math.round(value)); }
 class HttpError extends Error { constructor(message: string, readonly status: number) { super(message); } }

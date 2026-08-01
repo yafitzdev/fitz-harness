@@ -30,6 +30,10 @@
           <span>New chat</span>
           <kbd>Ctrl N</kbd>
         </button>
+        <button id="manage-playbooks" class="nav-action" type="button">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4.5h5.5A2.5 2.5 0 0 1 12 7v9H6.5A2.5 2.5 0 0 0 4 18.5z"></path><path d="M16 4.5h-4A2.5 2.5 0 0 0 9.5 7v9H13.5a2.5 2.5 0 0 1 2.5 2.5z"></path></svg>
+          <span>Playbooks &amp; recipes</span>
+        </button>
 
         <div class="sidebar-section">
           <div class="section-heading">
@@ -88,13 +92,22 @@
                 <span class="access-label"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.8 16 5v4.4c0 3.8-2.4 6.3-6 7.8-3.6-1.5-6-4-6-7.8V5z"></path><path d="M10 7v3.2M10 13h.01"></path></svg>Full access</span>
               </div>
               <div class="composer-controls">
-                <span id="context-meter" class="context-meter" title="Context window usage" aria-label="Context window usage"></span>
+                <div class="context-usage-wrap">
+                  <button id="context-meter" class="context-meter" type="button" title="Context window usage" aria-label="Context window usage"></button>
+                  <div id="context-usage-popover" class="popover context-usage-popover" hidden><span>Context window:</span><strong id="context-percent">0% full</strong><b id="context-tokens">0 / 128k tokens used</b></div>
+                </div>
                 <div class="model-picker">
                   <button id="model-toggle" class="model-toggle" type="button" aria-label="Model settings" aria-expanded="false" disabled><span id="model-summary">Model</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"></path></svg></button>
                   <div id="model-menu" class="popover model-menu" hidden>
-                    <label><span>Model</span><select id="model" aria-label="Model route" disabled></select></label>
-                    <label><span>Effort</span><select id="effort" aria-label="Effort"><option value="1024">Low</option><option value="4096" selected>Medium</option><option value="8192">High</option></select></label>
-                    <label><span>Speed</span><select id="speed" aria-label="Speed"><option value="standard">Standard</option><option value="fast">Fast</option></select></label>
+                    <button class="setting-row" type="button" data-setting="model"><span>Model</span><span><span id="model-value">Model</span><svg viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"></path></svg></span></button>
+                    <button class="setting-row" type="button" data-setting="effort"><span>Effort</span><span><span id="effort-value">Medium</span><svg viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"></path></svg></span></button>
+                    <button class="setting-row" type="button" data-setting="speed"><span>Speed</span><span><span id="speed-value">Standard</span><svg viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"></path></svg></span></button>
+                    <div class="settings-divider"></div>
+                    <button id="advanced-settings" class="advanced-row" type="button"><span>Advanced</span><svg viewBox="0 0 20 20"><path d="m6 12 4-4 4 4"></path></svg></button>
+                    <div id="settings-submenu" class="popover settings-submenu" hidden></div>
+                    <select id="model" aria-label="Model route" hidden disabled></select>
+                    <select id="effort" aria-label="Effort" hidden><option value="1024">Light</option><option value="4096" selected>Medium</option><option value="8192">High</option><option value="16384">Extra High</option><option value="32768">Max</option><option value="65536">Ultra</option></select>
+                    <select id="speed" aria-label="Speed" hidden><option value="standard">Standard</option><option value="fast">Fast</option></select>
                   </div>
                 </div>
                 <span id="status" class="run-status visually-hidden" data-state="loading">Connecting</span>
@@ -111,8 +124,8 @@
       <aside id="context-panel" class="context-panel" aria-label="Environment panel" hidden>
         <header>
           <strong>Environment</strong>
-          <button id="context-close" class="icon-button" type="button" title="Close panel" aria-label="Close environment panel">
-            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"></path></svg>
+          <button id="context-add" class="icon-button" type="button" title="Attach artifact" aria-label="Attach artifact">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"></path></svg>
           </button>
         </header>
         <section class="environment-list">
@@ -163,6 +176,14 @@
         <label><span id="rename-label">Task title</span><input id="rename-task-name" autocomplete="off" required maxlength="120"></label>
         <div class="modal-actions"><button class="quiet-button" type="button" data-close-dialog="rename-dialog">Cancel</button><button id="rename-submit" class="primary-button" type="submit">Rename</button></div>
       </form>
+    </dialog>
+
+    <dialog id="playbook-dialog" class="modal playbook-modal">
+      <div class="playbook-dialog-body">
+        <div class="modal-heading"><div><small>Inference configuration</small><h2>Playbooks &amp; recipes</h2></div><button class="icon-button" type="button" data-close-dialog="playbook-dialog" aria-label="Close"><svg viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15"></path></svg></button></div>
+        <p class="form-help">Playbooks group engine recipes. Routes keep chats on stable names while recipes define the underlying model runtime.</p>
+        <div id="playbook-list" class="playbook-list"></div>
+      </div>
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>

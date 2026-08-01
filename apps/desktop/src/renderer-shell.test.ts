@@ -12,15 +12,18 @@ describe("desktop renderer shell", () => {
       "sidebar-restore",
       "sidebar-resizer",
       "new-session",
+      "manage-playbooks",
       "new-project",
       "connection-status",
       "context-toggle",
-      "context-close",
+      "context-add",
       "attach",
       "send",
       "add-artifact",
       "choose-project-folder",
       "model-toggle",
+      "context-meter",
+      "advanced-settings",
       "task-menu-toggle",
       "rename-task",
       "archive-task",
@@ -47,6 +50,7 @@ describe("desktop renderer shell", () => {
     expect(main).toContain("frame: false");
     expect(main).toContain('ipcMain.handle("fitz:show-menu"');
     expect(main).toContain('ipcMain.handle("fitz:window-action"');
+    expect(main).not.toContain("window.getBounds()");
   });
 
   it("exposes working keyboard, retry, attachment, and cancellation paths", () => {
@@ -60,6 +64,9 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("beginSidebarResize");
     expect(renderer).toContain('openSidebarMenu("project"');
     expect(renderer).toContain('openSidebarMenu("task"');
+    expect(renderer).toContain('openSettingsSubmenu(row.dataset.setting');
+    expect(renderer).toContain('api("/api/v1/management/status")');
+    expect(renderer).toContain("sessionTokenEstimate += estimateTokens");
     expect(renderer).toContain('api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" })');
     expect(renderer).toContain("maxTokens: Number(effort.value)");
     expect(renderer).toContain('api(`/api/v1/agent/runs/${currentRun}`, "DELETE")');
