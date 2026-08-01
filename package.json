@@ -10,8 +10,9 @@
   "scripts": {
     "build": "tsc -b",
     "clean": "tsc -b --clean",
-    "dev": "pnpm --filter @fitz/host dev",
+    "dev": "node scripts/dev-ninfer.mjs",
     "dev:ninfer": "node scripts/dev-ninfer.mjs",
+    "dev:fake": "node scripts/dev-fake.mjs",
     "start": "pnpm --filter @fitz/host start",
     "smoke": "pnpm build && node scripts/smoke-host.mjs",
     "test": "vitest run",

@@ -16,7 +16,7 @@ const defaultDataPath = resolve(moduleDirectory, "../../../data/fitz.db");
 const databasePath = process.env.FITZ_DATABASE_PATH ?? defaultDataPath;
 const host = process.env.FITZ_HOST ?? "127.0.0.1";
 const port = parsePort(process.env.FITZ_PORT ?? "8787");
-const engineMode = process.env.FITZ_ENGINE_MODE ?? "fake";
+const engineMode = process.env.FITZ_ENGINE_MODE ?? "ninfer";
 const reserveVramMiB = parseNonNegativeInteger(
   process.env.FITZ_RESERVE_VRAM_MIB ?? "2048",
   "FITZ_RESERVE_VRAM_MIB",
