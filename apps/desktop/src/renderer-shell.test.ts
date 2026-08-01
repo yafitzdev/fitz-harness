@@ -78,7 +78,7 @@ describe("desktop renderer shell", () => {
     expect(renderer).not.toContain("${folder.rootPath}");
     expect(styles).toContain(".recipe-route-toggle { align-self: center; display: flex; align-items: center; gap: 1px; margin-right: 12px; padding: 2px; border: 0;");
     expect(renderer).toContain('class="route-icon-cut"');
-    expect(renderer).toContain('class="route-icon-filled" cx="10" cy="10" r="2.25"');
+    expect(renderer).toContain('class="route-icon-filled" fill-rule="evenodd"');
     expect(html).not.toContain("NiNfer");
     expect(html).not.toContain("llama.cpp");
     expect(html).not.toContain("vLLM");
