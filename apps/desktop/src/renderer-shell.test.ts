@@ -133,10 +133,19 @@ describe("desktop renderer shell", () => {
 
   it("renders durable Codex-style agent activity with tool-specific symbols", () => {
     expect(renderer).toContain("appendToolActivity(toolName, input, toolCallId");
+    expect(renderer).toContain('summary.type = "button"');
+    expect(renderer).toContain('toolActivityDetail("Input", input');
+    expect(renderer).toContain('toolActivityDetail("Result"');
+    expect(renderer).toContain('summary.setAttribute("aria-expanded", String(open))');
+    expect(renderer).toContain("entry.content?.result");
+    expect(renderer).toContain("event.data?.result");
+    expect(renderer).toContain("formatToolPayload");
     expect(renderer).toContain("markAssistantAsCommentary");
     expect(renderer).toContain("Context automatically compacted");
     expect(renderer).toContain('toolName === "edit" || toolName === "write"');
     expect(styles).toContain(".agent-activity-icon");
+    expect(styles).toContain(".agent-activity-details");
+    expect(styles).toContain(".agent-activity.open .agent-activity-chevron");
     expect(styles).toContain(".message.commentary");
   });
 

@@ -366,8 +366,8 @@ async function selectSession(id: string, rerender = true, projectId?: string): P
       if (entry.kind === "tool-result") {
         const toolCallId = String(entry.content?.toolCallId ?? entry.id);
         const existing = transcriptTools.get(toolCallId);
-        if (existing) completeToolActivity(existing.row, existing.toolName, existing.input, Boolean(entry.content?.isError));
-        else completeToolActivity(appendToolActivity(String(entry.content?.toolName ?? "tool"), undefined, toolCallId, true), String(entry.content?.toolName ?? "tool"), undefined, Boolean(entry.content?.isError));
+        if (existing) completeToolActivity(existing.row, existing.toolName, existing.input, entry.content?.result, Boolean(entry.content?.isError));
+        else completeToolActivity(appendToolActivity(String(entry.content?.toolName ?? "tool"), undefined, toolCallId, true), String(entry.content?.toolName ?? "tool"), undefined, entry.content?.result, Boolean(entry.content?.isError));
       }
       if (entry.kind === "compaction") appendContextActivity();
     }
@@ -1102,7 +1102,7 @@ async function followRun(runId: string, activity: HTMLElement, runStartedAt: num
       if (event.type === "tool.completed") {
         const toolCallId = String(event.data?.toolCallId ?? "");
         const existing = toolActivities.get(toolCallId);
-        if (existing) completeToolActivity(existing.row, existing.toolName, existing.input, Boolean(event.data?.isError));
+        if (existing) completeToolActivity(existing.row, existing.toolName, existing.input, event.data?.result, Boolean(event.data?.isError));
         setStatus("Working", "active");
         engineState.textContent = "WORKING";
       }
@@ -1249,15 +1249,44 @@ function markAssistantAsCommentary(content: HTMLElement): void {
 function appendToolActivity(toolName: string, input: unknown, toolCallId: string, running: boolean): HTMLElement {
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   const row = document.createElement("div"); row.className = `message agent-activity${running ? " running" : ""}`; row.dataset.toolCallId = toolCallId; row.dataset.toolName = toolName;
+  const summary = document.createElement("button"); summary.type = "button"; summary.className = "agent-activity-summary"; summary.setAttribute("aria-expanded", "false");
   const icon = document.createElement("span"); icon.className = "agent-activity-icon"; icon.append(activityIcon(toolName));
   const label = document.createElement("span"); label.className = "agent-activity-label"; label.textContent = describeToolActivity(toolName, input, running); label.title = label.textContent;
-  row.append(icon, label); messages.append(row); messages.scrollTop = messages.scrollHeight; return row;
+  const chevron = document.createElement("span"); chevron.className = "agent-activity-chevron"; chevron.append(svg('<path d="m7 9.5 3 3 3-3"></path>'));
+  summary.append(icon, label, chevron);
+  const details = document.createElement("div"); details.className = "agent-activity-details";
+  if (input !== undefined) details.append(toolActivityDetail("Input", input, "tool-activity-input"));
+  details.append(toolActivityDetail("Result", running ? undefined : null, "tool-activity-result"));
+  details.hidden = true;
+  summary.addEventListener("click", () => { const open = details.hasAttribute("hidden"); details.hidden = !open; row.classList.toggle("open", open); summary.setAttribute("aria-expanded", String(open)); });
+  row.append(summary, details); messages.append(row); messages.scrollTop = messages.scrollHeight; return row;
 }
 
-function completeToolActivity(row: HTMLElement, toolName: string, input: unknown, isError: boolean): void {
+function completeToolActivity(row: HTMLElement, toolName: string, input: unknown, result: unknown, isError: boolean): void {
   row.classList.remove("running"); row.classList.toggle("failed", isError);
   const label = row.querySelector<HTMLElement>(".agent-activity-label");
   if (label) { label.textContent = isError ? `${describeToolActivity(toolName, input, false)} (failed)` : describeToolActivity(toolName, input, false); label.title = label.textContent; }
+  const resultValue = row.querySelector<HTMLElement>(".tool-activity-result .tool-activity-value");
+  if (resultValue) resultValue.textContent = formatToolPayload(result, "No result returned");
+}
+
+function toolActivityDetail(label: string, value: unknown, className: string): HTMLElement {
+  const section = document.createElement("section"); section.className = `tool-activity-detail ${className}`;
+  const heading = document.createElement("span"); heading.className = "tool-activity-detail-label"; heading.textContent = label;
+  const content = document.createElement("pre"); content.className = "tool-activity-value"; content.textContent = formatToolPayload(value, "Waiting for result…");
+  section.append(heading, content); return section;
+}
+
+function formatToolPayload(value: unknown, emptyLabel: string): string {
+  if (value === undefined || value === null) return emptyLabel;
+  const raw = typeof value === "string" ? value : safeStringify(value);
+  const maximumCharacters = 50_000;
+  return raw.length > maximumCharacters ? `${raw.slice(0, maximumCharacters)}\n… ${raw.length - maximumCharacters} more characters` : raw;
+}
+
+function safeStringify(value: unknown): string {
+  try { return JSON.stringify(value, null, 2) ?? String(value); }
+  catch { return String(value); }
 }
 
 function appendContextActivity(): HTMLElement {

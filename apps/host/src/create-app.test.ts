@@ -298,9 +298,12 @@ describe("Fitz host", () => {
     const replay = await runtime.app.inject({ method: "GET", url: `/api/v1/agent/runs/${runId}/events` });
     expect(replay.json().events.map((event: { type: string }) => event.type)).toEqual(["run.created", "run.started", "assistant.delta", "tool.started", "tool.completed", "assistant.delta", "run.completed"]);
     expect(replay.json().events.find((event: { type: string }) => event.type === "tool.started").data.input).toEqual({ path: "README.md" });
-    expect(runtime.store.transcriptAfter(session.json().data.id, 0).map((entry) => [entry.kind, entry.content.phase ?? entry.content.toolName])).toEqual([
+    const transcript = runtime.store.transcriptAfter(session.json().data.id, 0);
+    expect(transcript.map((entry) => [entry.kind, entry.content.phase ?? entry.content.toolName])).toEqual([
       ["message", undefined], ["message", "commentary"], ["tool-call", "read"], ["tool-result", "read"], ["message", "final"],
     ]);
+    expect(transcript.find((entry) => entry.kind === "tool-call")?.content.input).toEqual({ path: "README.md" });
+    expect(transcript.find((entry) => entry.kind === "tool-result")?.content.result).toBe("ok");
     await runtime.app.close();
   });
 
