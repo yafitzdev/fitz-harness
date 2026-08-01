@@ -32,7 +32,7 @@
         </button>
         <button id="manage-playbooks" class="nav-action" type="button">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4.5h5.5A2.5 2.5 0 0 1 12 7v9H6.5A2.5 2.5 0 0 0 4 18.5z"></path><path d="M16 4.5h-4A2.5 2.5 0 0 0 9.5 7v9H13.5a2.5 2.5 0 0 1 2.5 2.5z"></path></svg>
-          <span>Playbooks &amp; recipes</span>
+          <span>Playbooks</span>
         </button>
 
         <div class="sidebar-section">
@@ -77,6 +77,23 @@
             </button>
           </div>
         </header>
+
+        <section id="playbook-page" class="management-page" aria-label="Playbook management" hidden>
+          <header class="management-page-header">
+            <nav class="management-page-tabs" aria-label="Playbook management views">
+              <button type="button" data-management-view="playbooks" aria-selected="true">Playbooks</button>
+              <button type="button" data-management-view="recipes" aria-selected="false">Recipes</button>
+              <button type="button" data-management-view="routes" aria-selected="false">Routes</button>
+            </nav>
+            <button id="refresh-playbooks" class="icon-button" type="button" title="Refresh configuration" aria-label="Refresh configuration"><svg viewBox="0 0 20 20"><path d="M15.5 7A6 6 0 1 0 16 12"></path><path d="M15.5 3v4h-4"></path></svg></button>
+          </header>
+          <div class="management-page-content">
+            <h1 id="management-title">Playbooks</h1>
+            <p id="management-description">Group model runtimes into reusable inference configurations</p>
+            <label class="management-search"><svg viewBox="0 0 20 20"><circle cx="9" cy="9" r="5.5"></circle><path d="m13 13 4 4"></path></svg><input id="playbook-search" type="search" placeholder="Search playbooks" autocomplete="off"></label>
+            <div id="playbook-list" class="playbook-list"></div>
+          </div>
+        </section>
 
         <section id="messages" class="messages" aria-live="polite"></section>
 
@@ -176,14 +193,6 @@
         <label><span id="rename-label">Task title</span><input id="rename-task-name" autocomplete="off" required maxlength="120"></label>
         <div class="modal-actions"><button class="quiet-button" type="button" data-close-dialog="rename-dialog">Cancel</button><button id="rename-submit" class="primary-button" type="submit">Rename</button></div>
       </form>
-    </dialog>
-
-    <dialog id="playbook-dialog" class="modal playbook-modal">
-      <div class="playbook-dialog-body">
-        <div class="modal-heading"><div><small>Inference configuration</small><h2>Playbooks &amp; recipes</h2></div><button class="icon-button" type="button" data-close-dialog="playbook-dialog" aria-label="Close"><svg viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15"></path></svg></button></div>
-        <p class="form-help">Playbooks group engine recipes. Routes keep chats on stable names while recipes define the underlying model runtime.</p>
-        <div id="playbook-list" class="playbook-list"></div>
-      </div>
     </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>

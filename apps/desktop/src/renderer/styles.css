@@ -54,6 +54,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .icon-button:disabled { opacity: .3; cursor: not-allowed; }
 .nav-action { width: 100%; display: flex; align-items: center; gap: 9px; padding: 8px 9px; color: var(--text); background: transparent; border-radius: 7px; cursor: pointer; text-align: left; }
 .nav-action:hover { background: rgba(255,255,255,.055); }
+.nav-action.active { background: rgba(255,255,255,.1); color: white; }
 .nav-action kbd { margin-left: auto; color: var(--subtle); font: 11px inherit; opacity: 0; }
 .nav-action:hover kbd { opacity: 1; }
 .sidebar-section { margin-top: 20px; min-height: 0; overflow: auto; }
@@ -218,16 +219,35 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .form-help { margin: -7px 0 0; color: var(--muted); font-size: 12px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 2px; }
 .toast { position: fixed; z-index: 20; right: 18px; bottom: 18px; max-width: 360px; padding: 10px 13px; border: 1px solid var(--border); border-radius: 9px; background: #2a2c2a; box-shadow: 0 12px 35px rgba(0,0,0,.35); }
-.playbook-modal { width: min(720px, calc(100% - 32px)); }
-.playbook-dialog-body { display: grid; gap: 16px; padding: 22px; }
-.playbook-list { max-height: min(520px, 65vh); display: grid; gap: 12px; overflow-y: auto; }
-.playbook-card { padding: 14px; border: 1px solid #424541; border-radius: 13px; background: #232523; }
+.management-page { position: absolute; z-index: 8; inset: 0; overflow-y: auto; background: var(--bg); }
+.management-page-header { height: 50px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid var(--border-soft); }
+.management-page-tabs { display: flex; align-items: center; gap: 4px; }
+.management-page-tabs button { padding: 6px 10px; border-radius: 9px; background: transparent; color: var(--muted); cursor: pointer; }
+.management-page-tabs button:hover { color: var(--text); }
+.management-page-tabs button[aria-selected="true"] { background: #2c2e2c; color: var(--text); }
+.management-page-content { width: min(820px, calc(100% - 48px)); margin: 44px auto 80px; }
+.management-page-content h1 { margin: 0; font-size: 28px; font-weight: 560; letter-spacing: -.03em; }
+.management-page-content > p { margin: 5px 0 24px; color: var(--muted); font-size: 15px; }
+.management-search { height: 40px; display: flex; align-items: center; gap: 9px; margin-bottom: 28px; padding: 0 13px; border: 1px solid #4b4e4a; border-radius: 20px; background: #303230; color: var(--muted); }
+.management-search:focus-within { border-color: #6b6e69; }
+.management-search svg { flex: 0 0 auto; }
+.management-search input { width: 100%; border: 0; outline: 0; background: transparent; color: var(--text); }
+.management-search input::placeholder { color: #9b9e98; }
+.playbook-list { display: grid; gap: 12px; }
+.playbook-card { padding: 4px 0 18px; border-bottom: 1px solid var(--border-soft); }
 .playbook-card h3 { margin: 0 0 10px; font-size: 15px; }
-.recipe-card { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 4px 14px; padding: 10px; border-radius: 9px; background: #2d2f2d; }
+.recipe-card { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 4px 14px; padding: 11px 12px; border-radius: 10px; background: #242624; }
+.recipe-card:hover { background: #292b29; }
 .recipe-card + .recipe-card { margin-top: 7px; }
 .recipe-card span, .recipe-card small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recipe-card small { color: var(--muted); }
 .recipe-card code { color: #b8bbb5; font: 11px/1.4 "Cascadia Mono", Consolas, monospace; }
+.management-list-row { min-height: 67px; display: grid; grid-template-columns: 38px minmax(0,1fr) auto; align-items: center; gap: 12px; padding: 8px 4px; border-bottom: 1px solid var(--border-soft); }
+.management-list-row > div { min-width: 0; display: grid; }
+.management-list-row strong { font-weight: 560; }
+.management-list-row small, .management-list-row > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
+.management-row-icon { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid #3c403c; border-radius: 10px; background: #232523; color: #8eb6ff; }
+.management-row-icon.route-icon { color: #7fd2a1; }
 
 @media (max-width: 980px) {
   .app-shell.context-open { grid-template-columns: 220px minmax(0, 1fr); }

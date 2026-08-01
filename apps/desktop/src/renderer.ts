@@ -13,12 +13,15 @@ let toastTimer: ReturnType<typeof setTimeout> | undefined;
 let sessionTokenEstimate = 0;
 let contextTokenLimit = 131_072;
 let managementConfiguration: Json | undefined;
+let managementView: "playbooks" | "recipes" | "routes" = "playbooks";
 let renameTarget: { kind: "project" | "task"; id: string } | undefined;
 const pinnedProjects = storedSet("fitz-pinned-projects");
 const pinnedSessions = storedSet("fitz-pinned-sessions");
 const unreadSessions = storedSet("fitz-unread-sessions");
 
 const shell = query(".app-shell");
+const workspaceHeader = query(".workspace-header");
+const composerDock = query(".composer-dock");
 const projects = element("projects");
 const messages = element("messages");
 const model = element("model") as HTMLSelectElement;
@@ -73,8 +76,11 @@ const renameForm = element("rename-form") as HTMLFormElement;
 const renameTaskName = element("rename-task-name") as HTMLInputElement;
 const renameHeading = element("rename-heading");
 const renameLabel = element("rename-label");
-const playbookDialog = element("playbook-dialog") as HTMLDialogElement;
+const playbookPage = element("playbook-page");
 const playbookList = element("playbook-list");
+const playbookSearch = element("playbook-search") as HTMLInputElement;
+const managementTitle = element("management-title");
+const managementDescription = element("management-description");
 const toast = element("toast");
 
 restoreSidebarWidth();
@@ -102,7 +108,10 @@ document.addEventListener("keydown", (event) => {
 
 element("new-project").addEventListener("click", () => openProjectDialog());
 element("new-session").addEventListener("click", () => openTaskDialog());
-element("manage-playbooks").addEventListener("click", () => void openPlaybookDialog());
+element("manage-playbooks").addEventListener("click", () => void openPlaybookPage());
+element("refresh-playbooks").addEventListener("click", () => void loadManagementConfiguration(true));
+playbookSearch.addEventListener("input", renderManagementPage);
+for (const tab of document.querySelectorAll<HTMLButtonElement>("[data-management-view]")) tab.addEventListener("click", () => { managementView = tab.dataset.managementView as typeof managementView; playbookSearch.value = ""; renderManagementPage(); });
 element("sidebar-menu").addEventListener("click", toggleSidebar);
 element("sidebar-restore").addEventListener("click", toggleSidebar);
 for (const menuButton of document.querySelectorAll<HTMLButtonElement>("[data-app-menu]")) menuButton.addEventListener("click", () => { const rect = menuButton.getBoundingClientRect(); void window.fitz.showMenu(menuButton.dataset.appMenu ?? "", Math.round(rect.left), Math.round(rect.bottom)); });
@@ -227,6 +236,7 @@ function renderProjectTree(): void {
 }
 
 async function selectProject(id: string): Promise<void> {
+  showConversationWorkspace();
   currentProject = id;
   const projectSessions = sessionsByProject.get(id) ?? [];
   currentSession = projectSessions[0]?.id;
@@ -237,6 +247,7 @@ async function selectProject(id: string): Promise<void> {
 }
 
 async function selectSession(id: string, rerender = true): Promise<void> {
+  showConversationWorkspace();
   currentSession = id;
   if (unreadSessions.delete(id)) saveSet("fitz-unread-sessions", unreadSessions);
   lastSequence = 0;
@@ -262,6 +273,7 @@ async function selectSession(id: string, rerender = true): Promise<void> {
 }
 
 function openProjectDialog(afterCreateTask = false): void {
+  showConversationWorkspace();
   pendingTaskAfterProject = afterCreateTask;
   projectForm.reset();
   projectRootPath.value = "";
@@ -272,6 +284,7 @@ function openProjectDialog(afterCreateTask = false): void {
 }
 
 function openTaskDialog(): void {
+  showConversationWorkspace();
   if (projectRecords.length === 0) { openProjectDialog(true); return; }
   taskForm.reset();
   taskProject.replaceChildren();
@@ -462,20 +475,27 @@ async function continueInNewChat(session: Json): Promise<void> {
   catch (error) { showToast(errorMessage(error)); }
 }
 
-async function openPlaybookDialog(): Promise<void> {
-  playbookList.replaceChildren(panelEmpty("Loading playbooks and recipes…"));
-  playbookDialog.showModal();
+async function openPlaybookPage(): Promise<void> {
+  closePopovers();
+  setContextPanel(false);
+  playbookPage.hidden = false;
+  setConversationInert(true);
+  element("manage-playbooks").classList.add("active");
+  playbookList.replaceChildren(panelEmpty("Loading playbooks…"));
   await loadManagementConfiguration(true);
 }
 
-async function loadManagementConfiguration(renderDialog: boolean): Promise<void> {
+function showConversationWorkspace(): void { playbookPage.hidden = true; setConversationInert(false); element("manage-playbooks").classList.remove("active"); }
+function setConversationInert(inert: boolean): void { for (const area of [workspaceHeader, messages, composerDock]) { area.toggleAttribute("inert", inert); area.setAttribute("aria-hidden", String(inert)); } }
+
+async function loadManagementConfiguration(renderPage: boolean): Promise<void> {
   try {
     managementConfiguration = await api("/api/v1/management/status");
     syncContextLimit();
     updateContextMeter();
-    if (renderDialog) renderPlaybooks(managementConfiguration);
+    if (renderPage) renderManagementPage();
   } catch (error) {
-    if (renderDialog) playbookList.replaceChildren(panelEmpty(`Management data is unavailable: ${errorMessage(error)}`));
+    if (renderPage) playbookList.replaceChildren(panelEmpty(`Management data is unavailable: ${errorMessage(error)}`));
   }
 }
 
@@ -485,12 +505,25 @@ function syncContextLimit(): void {
   if (Number.isFinite(recipe?.contextTokens) && recipe.contextTokens > 0) contextTokenLimit = recipe.contextTokens;
 }
 
-function renderPlaybooks(configuration: Json): void {
+function renderManagementPage(): void {
+  const configuration = managementConfiguration;
   playbookList.replaceChildren();
+  for (const tab of document.querySelectorAll<HTMLButtonElement>("[data-management-view]")) tab.setAttribute("aria-selected", String(tab.dataset.managementView === managementView));
+  const copy = managementView === "playbooks"
+    ? ["Playbooks", "Group model runtimes into reusable inference configurations", "Search playbooks"]
+    : managementView === "recipes"
+      ? ["Recipes", "Inspect the model runtime definitions available to playbooks", "Search recipes"]
+      : ["Routes", "Map stable chat-facing names to configured recipes", "Search routes"];
+  managementTitle.textContent = copy[0]!; managementDescription.textContent = copy[1]!; playbookSearch.placeholder = copy[2]!;
+  if (!configuration) { playbookList.append(panelEmpty("Management data is unavailable")); return; }
   const recipes = configuration.recipes ?? [];
   const routes = configuration.routes ?? [];
+  const query = playbookSearch.value.trim().toLowerCase();
+  const matches = (...values: unknown[]) => !query || values.some((value) => String(value ?? "").toLowerCase().includes(query));
+  if (managementView === "recipes") { renderRecipeList(recipes.filter((recipe: Json) => matches(recipe.id, recipe.displayName, recipe.adapter, recipe.modelId, recipe.playbookId)), routes); return; }
+  if (managementView === "routes") { renderRouteList(routes.filter((route: Json) => matches(route.id, route.displayName, route.recipeId))); return; }
   const groups = new Map<string, Json[]>();
-  for (const recipe of recipes) { const values = groups.get(recipe.playbookId) ?? []; values.push(recipe); groups.set(recipe.playbookId, values); }
+  for (const recipe of recipes) { if (!matches(recipe.playbookId, recipe.displayName, recipe.adapter, recipe.modelId)) continue; const values = groups.get(recipe.playbookId) ?? []; values.push(recipe); groups.set(recipe.playbookId, values); }
   if (!groups.size) { playbookList.append(panelEmpty("No playbooks are configured")); return; }
   for (const [playbookId, playbookRecipes] of groups) {
     const card = document.createElement("section"); card.className = "playbook-card";
@@ -503,6 +536,26 @@ function renderPlaybooks(configuration: Json): void {
       recipeCard.append(name, context, detail); card.append(recipeCard);
     }
     playbookList.append(card);
+  }
+}
+
+function renderRecipeList(recipes: Json[], routes: Json[]): void {
+  if (!recipes.length) { playbookList.append(panelEmpty("No recipes match this search")); return; }
+  for (const recipe of recipes) {
+    const card = document.createElement("article"); card.className = "management-list-row";
+    const icon = document.createElement("span"); icon.className = "management-row-icon"; icon.append(sparkIcon());
+    const content = document.createElement("div"); const name = document.createElement("strong"); name.textContent = recipe.displayName; const detail = document.createElement("small"); detail.textContent = `${recipe.playbookId} · ${recipe.adapter} · ${recipe.modelId}`; content.append(name, detail);
+    const meta = document.createElement("span"); const routeNames = routes.filter((route: Json) => route.recipeId === recipe.id).map((route: Json) => route.displayName).join(", "); meta.textContent = `${formatTokenCount(recipe.contextTokens)} context${routeNames ? ` · ${routeNames}` : ""}`; card.append(icon, content, meta); playbookList.append(card);
+  }
+}
+
+function renderRouteList(routes: Json[]): void {
+  if (!routes.length) { playbookList.append(panelEmpty("No routes match this search")); return; }
+  for (const route of routes) {
+    const card = document.createElement("article"); card.className = "management-list-row";
+    const icon = document.createElement("span"); icon.className = "management-row-icon route-icon"; icon.append(svg('<path d="M4 5h5l2 3h5M4 15h5l2-3h5"></path><path d="m14 6 2-1-2-1M14 14l2 1-2 1"></path>'));
+    const content = document.createElement("div"); const name = document.createElement("strong"); name.textContent = route.displayName; const detail = document.createElement("small"); detail.textContent = route.description || route.id; content.append(name, detail);
+    const meta = document.createElement("span"); meta.textContent = `${route.enabled ? "Enabled" : "Disabled"} · ${route.recipeId}`; card.append(icon, content, meta); playbookList.append(card);
   }
 }
 

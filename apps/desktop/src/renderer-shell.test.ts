@@ -53,6 +53,17 @@ describe("desktop renderer shell", () => {
     expect(main).not.toContain("window.getBounds()");
   });
 
+  it("opens Playbooks as a first-class searchable workspace page", () => {
+    expect(html).toContain('id="playbook-page"');
+    expect(html).toContain('data-management-view="playbooks"');
+    expect(html).toContain('data-management-view="recipes"');
+    expect(html).toContain('data-management-view="routes"');
+    expect(html).toContain('id="playbook-search"');
+    expect(renderer).toContain("openPlaybookPage()");
+    expect(renderer).toContain("renderManagementPage()");
+    expect(renderer).toContain("showConversationWorkspace()");
+  });
+
   it("exposes working keyboard, retry, attachment, and cancellation paths", () => {
     expect(renderer).toContain('event.key === "Enter"');
     expect(renderer).toContain('connectionStatus.addEventListener("click"');
