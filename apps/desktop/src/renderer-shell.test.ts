@@ -140,6 +140,17 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".message.commentary");
   });
 
+  it("uses the measured Codex desktop design tokens", () => {
+    expect(styles).toContain("--codex-gray-900: #181818");
+    expect(styles).toContain("--codex-gray-800: #212121");
+    expect(styles).toContain("--codex-gray-700: #303030");
+    expect(styles).toContain("--codex-radius-3xl: 20px");
+    expect(styles).toContain("--codex-control-size: 28px");
+    expect(styles).toContain("--sidebar-width: 275px");
+    expect(styles).toContain("width: min(768px, calc(100% - 36px))");
+    expect(styles).toContain("max-width: min(77%, 620px)");
+  });
+
   it("shows an interactive project metadata card on hover", () => {
     expect(html).toContain('id="project-hover-card"');
     expect(html).toContain('id="hover-project-pin"');
