@@ -348,13 +348,14 @@ function showNewChatLanding(): void {
   messages.replaceChildren();
   const project = projectRecords.find((item) => item.id === currentProject);
   const landing = document.createElement("div"); landing.className = "new-chat-landing";
-  const mark = document.createElement("div"); mark.className = "landing-mark"; mark.append(sparkIcon());
-  const heading = document.createElement("h1"); heading.textContent = `What should we build in ${project?.name ?? "this project"}?`;
+  const mark = document.createElement("div"); mark.className = "landing-mark"; mark.append(terminalCloudIcon());
+  const heading = document.createElement("h1"); heading.append("What should we build in ");
+  const projectName = document.createElement("span"); projectName.className = "landing-project-name"; projectName.textContent = project?.name ?? "this project"; heading.append(projectName, "?");
   const suggestions = [
-    ["Explore and understand code", '<path d="M4 15 7 5l4 3 5-4-3 11-4-3z"></path>'],
-    ["Build a new feature, app, or tool", '<path d="m5 15 5-10 5 10M7 11h6"></path>'],
-    ["Review code and suggest changes", '<path d="M15 6a6 6 0 1 0 1 7"></path><path d="m13 3 3 3-3 3"></path>'],
-    ["Fix issues and failures", '<path d="M7 7 5 4M13 7l2-3M6 10h8v5H6z"></path><path d="M3 11h3M14 11h3"></path>'],
+    ["Explore and understand code", '<path d="m4.2 7.4 8.7-4.1 2 4.1-8.8 4.2z"></path><path d="m11.1 4.2 2 4.1M8 10.7l2.5 5.8M6.2 11.6l-1.7 4.1M7.2 14h4.5"></path>'],
+    ["Build a new feature, app, or tool", '<path d="m12.8 3.2 4 4-2.5 2.5-4-4z"></path><path d="m11.4 8.6-6.8 6.8M3.6 16.4l2.6-.7-1.9-1.9z"></path>'],
+    ["Review code and suggest changes", '<path d="M15.7 7.2A6 6 0 0 0 5 5.4L3.6 7"></path><path d="M3.6 3.8V7h3.2M4.3 12.8A6 6 0 0 0 15 14.6l1.4-1.6"></path><path d="M16.4 16.2V13h-3.2"></path>'],
+    ["Fix issues and failures", '<path d="M7 7.2 5.2 4.5M13 7.2l1.8-2.7M6.1 9.1h7.8v6.2H6.1z"></path><path d="M3.5 10.5h2.6M13.9 10.5h2.6M3.8 14.7l2.3-1M16.2 14.7l-2.3-1M8.2 6V4.8h3.6V6M10 9.1v6.2"></path>'],
   ];
   const grid = document.createElement("div"); grid.className = "starter-grid";
   for (const [label, iconPath] of suggestions) {
@@ -1120,6 +1121,7 @@ function svg(path: string): SVGElement { const value = document.createElementNS(
 function folderIcon(): SVGElement { return svg('<path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path><path d="M3.5 6.5V4h5l1.5 2"></path>'); }
 function chatIcon(): SVGElement { return svg('<path d="M4 4.5h12v9H9l-3.5 2.5v-2.5H4z"></path>'); }
 function sparkIcon(): SVGElement { return svg('<path d="M10 2.8c.5 3.7 2.4 5.8 6.2 7.2-3.8 1.4-5.7 3.5-6.2 7.2-.5-3.7-2.4-5.8-6.2-7.2C7.6 8.6 9.5 6.5 10 2.8Z"></path>'); }
+function terminalCloudIcon(): SVGElement { return svg('<path d="M6.2 16.4c-2 0-3.7-1.6-3.7-3.6 0-1.2.6-2.3 1.5-3-.4-1.8.5-3.6 2.1-4.4.7-1.7 2.4-2.8 4.2-2.8 1.5 0 2.9.7 3.8 1.9 1.8-.1 3.3 1.3 3.4 3.1 1 .7 1.7 1.9 1.7 3.2 0 1.5-.8 2.8-2.1 3.5-.5 1.8-2.1 3-4 3-.8 0-1.6-.2-2.2-.7-.7.6-1.6.9-2.5.9-.8 0-1.6-.3-2.2-.7z"></path><path d="m6.8 8 1.8 2-1.8 2M10.7 12.3h2.7"></path>'); }
 function element(id: string): HTMLElement { const value = document.getElementById(id); if (!value) throw new Error(`Missing #${id}`); return value; }
 function query(selector: string): HTMLElement { const value = document.querySelector<HTMLElement>(selector); if (!value) throw new Error(`Missing ${selector}`); return value; }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
