@@ -80,12 +80,7 @@
 
         <section id="playbook-page" class="management-page" aria-label="Playbook management" hidden>
           <header class="management-page-header">
-            <nav class="management-page-tabs" aria-label="Playbook management views">
-              <button type="button" data-management-view="playbooks" aria-selected="true">Playbooks</button>
-              <button type="button" data-management-view="recipes" aria-selected="false">Recipes</button>
-              <button type="button" data-management-view="routes" aria-selected="false">Routes</button>
-            </nav>
-            <div class="management-actions"><button id="refresh-playbooks" class="icon-button" type="button" title="Refresh configuration" aria-label="Refresh configuration"><svg viewBox="0 0 20 20"><path d="M15.5 7A6 6 0 1 0 16 12"></path><path d="M15.5 3v4h-4"></path></svg></button><button id="create-management" class="primary-button compact-button" type="button">Create</button></div>
+            <div class="management-actions"><button id="refresh-playbooks" class="icon-button" type="button" title="Refresh configuration" aria-label="Refresh configuration"><svg viewBox="0 0 20 20"><path d="M15.5 7A6 6 0 1 0 16 12"></path><path d="M15.5 3v4h-4"></path></svg></button><button id="create-management" class="primary-button compact-button" type="button">Add recipe</button></div>
           </header>
           <div id="management-browser" class="management-page-content">
             <h1 id="management-title">Playbooks</h1>
@@ -102,7 +97,7 @@
               <div class="editor-actions"><button class="quiet-button" type="button" data-close-management-editor>Cancel</button><button class="primary-button" type="submit">Save recipe</button></div>
             </form>
             <form id="route-form" class="management-editor-form" hidden>
-              <div class="editor-heading"><small>Chat-facing model route</small><h1 id="route-editor-title">Create route</h1><p>Map a stable consumer name to a configured recipe.</p></div>
+              <div class="editor-heading"><small>Playbook routing</small><h1 id="route-editor-title">Create route</h1><p>Map a stable chat-facing name to one recipe in this playbook.</p></div>
               <div class="configuration-grid"><label>Route ID<input id="route-id" required placeholder="default-agent"></label><label>Display name<input id="route-display-name" required placeholder="Default Agent"></label><label>Recipe<select id="route-recipe-id" required></select></label><label class="check-label"><input id="route-enabled" type="checkbox" checked> Enabled</label></div>
               <label>Description<input id="route-description" placeholder="Balanced default route"></label>
               <div class="editor-actions"><button class="quiet-button" type="button" data-close-management-editor>Cancel</button><button class="primary-button" type="submit">Save route</button></div>

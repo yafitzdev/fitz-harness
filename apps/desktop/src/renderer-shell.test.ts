@@ -61,12 +61,12 @@ describe("desktop renderer shell", () => {
 
   it("opens Playbooks as a first-class searchable workspace page", () => {
     expect(html).toContain('id="playbook-page"');
-    expect(html).toContain('data-management-view="playbooks"');
-    expect(html).toContain('data-management-view="recipes"');
-    expect(html).toContain('data-management-view="routes"');
+    expect(html).not.toContain('data-management-view=');
     expect(html).toContain('id="playbook-search"');
     expect(renderer).toContain("openPlaybookPage()");
     expect(renderer).toContain("renderManagementPage()");
+    expect(renderer).toContain("renderPlaybookRoutes(");
+    expect(renderer).toContain("updateRouteRecipe(");
     expect(renderer).toContain("showConversationWorkspace()");
   });
 

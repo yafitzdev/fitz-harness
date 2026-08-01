@@ -1,7 +1,7 @@
 import { buildCurrentNInferRecipe } from "@fitz/engine-ninfer";
 import type { Recipe, Route } from "@fitz/protocol";
 
-export const NINFER_PLAYBOOK_ID = "ninfer-qwen36";
+export const NINFER_PLAYBOOK_ID = "ninfer";
 
 export interface NInferPlaybook {
   id: string;
@@ -44,7 +44,7 @@ export function createNInferPlaybook(): NInferPlaybook {
       enabled: true,
     },
   ];
-  return { id: NINFER_PLAYBOOK_ID, displayName: "NiNfer · Qwen 3.6", recipes, routes };
+  return { id: NINFER_PLAYBOOK_ID, displayName: "ninfer", recipes, routes };
 }
 
 function recipe(id: string, displayName: string, modelId: string, artifact: string, draftTokens: number): Recipe {

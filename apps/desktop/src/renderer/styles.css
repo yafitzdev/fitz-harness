@@ -241,11 +241,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .modal-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 2px; }
 .toast { position: fixed; z-index: 20; right: 18px; bottom: 18px; max-width: 360px; padding: 10px 13px; border: 1px solid var(--border); border-radius: 9px; background: #2a2c2a; box-shadow: 0 12px 35px rgba(0,0,0,.35); }
 .management-page { position: absolute; z-index: 8; inset: 0; overflow-y: auto; background: var(--bg); }
-.management-page-header { height: 50px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid var(--border-soft); }
-.management-page-tabs { display: flex; align-items: center; gap: 4px; }
-.management-page-tabs button { padding: 6px 10px; border-radius: 9px; background: transparent; color: var(--muted); cursor: pointer; }
-.management-page-tabs button:hover { color: var(--text); }
-.management-page-tabs button[aria-selected="true"] { background: #2c2e2c; color: var(--text); }
+.management-page-header { height: 50px; display: flex; align-items: center; justify-content: flex-end; padding: 0 12px; border-bottom: 1px solid var(--border-soft); }
 .management-actions { display: flex; align-items: center; gap: 7px; }
 .compact-button { padding: 7px 14px; border-radius: 9px; }
 .management-page-content { width: min(820px, calc(100% - 48px)); margin: 44px auto 80px; }
@@ -265,6 +261,17 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .recipe-card span, .recipe-card small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recipe-card small { color: var(--muted); }
 .recipe-card code { color: #b8bbb5; font: 11px/1.4 "Cascadia Mono", Consolas, monospace; }
+.playbook-routing { display: grid; gap: 7px; margin-top: 18px; padding-top: 15px; border-top: 1px solid var(--border-soft); }
+.playbook-routing > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+.playbook-routing h4 { margin: 0; font-size: 13px; font-weight: 560; color: #c6c9c3; }
+.routing-empty { margin: 3px 0; color: var(--muted); font-size: 12px; }
+.route-assignment { min-height: 52px; display: grid; grid-template-columns: minmax(150px,1fr) minmax(220px,1.4fr) auto; align-items: center; gap: 10px; padding: 7px 9px; border-radius: 9px; background: #1f211f; }
+.route-assignment > div { min-width: 0; display: grid; gap: 2px; }
+.route-assignment strong, .route-assignment small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.route-assignment strong { font-size: 13px; font-weight: 540; }
+.route-assignment small { color: var(--muted); font-size: 11px; }
+.route-assignment select { min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; outline: 0; background: #2b2d2b; color: var(--text); }
+.route-assignment select:focus { border-color: #626660; }
 .management-list-row { width: 100%; min-height: 67px; display: grid; grid-template-columns: 38px minmax(0,1fr) auto; align-items: center; gap: 12px; padding: 8px 4px; border-bottom: 1px solid var(--border-soft); background: transparent; color: var(--text); cursor: pointer; text-align: left; }
 .management-list-row:hover { background: rgba(255,255,255,.025); }
 .management-list-row > div { min-width: 0; display: grid; }
@@ -303,5 +310,6 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
   .messages { padding-inline: 18px; }
   .workspace-title #task-title { display: none; }
   .starter-grid, .configuration-grid { grid-template-columns: 1fr 1fr; }
+  .route-assignment { grid-template-columns: 1fr; }
   .mode-pill, .run-status, .composer-hint { display: none; }
 }

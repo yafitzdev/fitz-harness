@@ -6,7 +6,7 @@ describe("production NiNfer playbook", () => {
   it("contains exactly two validated recipes and stable best/fast routes", () => {
     const playbook = createNInferPlaybook();
 
-    expect(playbook).toMatchObject({ id: NINFER_PLAYBOOK_ID, displayName: "NiNfer · Qwen 3.6" });
+    expect(playbook).toMatchObject({ id: "ninfer", displayName: "ninfer" });
     expect(new Set(playbook.recipes.map((recipe) => recipe.playbookId))).toEqual(new Set([NINFER_PLAYBOOK_ID]));
     expect(playbook.recipes).toHaveLength(2);
     expect(playbook.recipes.every((recipe) => validateNInferConfiguration(recipe).length === 0)).toBe(true);

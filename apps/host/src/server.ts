@@ -9,7 +9,7 @@ import type { Recipe, Route } from "@fitz/protocol";
 import { SqliteStore } from "@fitz/storage";
 import { createHost } from "./create-app.js";
 import { PiAgentRuntime } from "@fitz/agent-pi";
-import { createNInferPlaybook } from "./ninfer-playbook.js";
+import { createNInferPlaybook, NINFER_PLAYBOOK_ID } from "./ninfer-playbook.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const defaultDataPath = resolve(moduleDirectory, "../../../data/fitz.db");
@@ -25,8 +25,10 @@ const authMode = process.env.FITZ_AUTH_MODE === "required" ? "required" : "disab
 
 mkdirSync(dirname(databasePath), { recursive: true });
 const engineOptions = engineModeOptions(engineMode);
+const store = new SqliteStore(databasePath);
+if (engineMode === "ninfer") migrateLegacyNInferPlaybook(store);
 const runtime = createHost({
-  store: new SqliteStore(databasePath),
+  store,
   logger: true,
   resourcePolicy: { reserveVramMiB },
   authMode,
@@ -66,6 +68,12 @@ function ninferOptions() {
   const wslDistribution = process.env.FITZ_NINFER_WSL_DISTRIBUTION ?? (process.platform === "win32" ? "Ubuntu" : undefined);
   const adapter = new NInferEngineAdapter({ ...(wslDistribution ? { wslDistribution, wslUser: process.env.FITZ_NINFER_WSL_USER ?? "root" } : {}) });
   return { adapters: [adapter], initialRecipes: playbook.recipes, initialRoutes: playbook.routes };
+}
+
+function migrateLegacyNInferPlaybook(store: SqliteStore): void {
+  for (const recipe of store.listRecipes()) {
+    if (recipe.playbookId === "ninfer-qwen36") store.upsertRecipe({ ...recipe, playbookId: NINFER_PLAYBOOK_ID });
+  }
 }
 
 function engineModeOptions(mode: string) {

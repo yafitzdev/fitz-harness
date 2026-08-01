@@ -13,10 +13,10 @@ let toastTimer: ReturnType<typeof setTimeout> | undefined;
 let sessionTokenEstimate = 0;
 let contextTokenLimit = 131_072;
 let managementConfiguration: Json | undefined;
-let managementView: "playbooks" | "recipes" | "routes" = "playbooks";
 let newChatMode = false;
 let editingRecipe: Json | undefined;
 let editingRoute: Json | undefined;
+let editingRoutePlaybook: string | undefined;
 let renameTarget: { kind: "project" | "task"; id: string } | undefined;
 const pinnedProjects = storedSet("fitz-pinned-projects");
 const pinnedSessions = storedSet("fitz-pinned-sessions");
@@ -126,11 +126,10 @@ element("new-project").addEventListener("click", () => openProjectDialog());
 element("new-session").addEventListener("click", openNewChat);
 element("manage-playbooks").addEventListener("click", () => void openPlaybookPage());
 element("refresh-playbooks").addEventListener("click", () => void loadManagementConfiguration(true));
-createManagement.addEventListener("click", () => managementView === "routes" ? openRouteEditor() : openRecipeEditor());
+createManagement.addEventListener("click", () => openRecipeEditor());
 element("close-management-editor").addEventListener("click", closeManagementEditor);
 for (const button of document.querySelectorAll<HTMLButtonElement>("[data-close-management-editor]")) button.addEventListener("click", closeManagementEditor);
 playbookSearch.addEventListener("input", renderManagementPage);
-for (const tab of document.querySelectorAll<HTMLButtonElement>("[data-management-view]")) tab.addEventListener("click", () => { closeManagementEditor(); managementView = tab.dataset.managementView as typeof managementView; playbookSearch.value = ""; renderManagementPage(); });
 element("sidebar-menu").addEventListener("click", toggleSidebar);
 element("sidebar-restore").addEventListener("click", toggleSidebar);
 for (const menuButton of document.querySelectorAll<HTMLButtonElement>("[data-app-menu]")) menuButton.addEventListener("click", () => { const rect = menuButton.getBoundingClientRect(); void window.fitz.showMenu(menuButton.dataset.appMenu ?? "", Math.round(rect.left), Math.round(rect.bottom)); });
@@ -152,7 +151,7 @@ modelToggle.addEventListener("click", (event) => { event.stopPropagation(); togg
 contextMeter.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(contextUsagePopover, contextMeter as HTMLButtonElement); });
 contextUsagePopover.addEventListener("click", (event) => event.stopPropagation());
 for (const row of document.querySelectorAll<HTMLButtonElement>("[data-setting]")) row.addEventListener("click", (event) => { event.stopPropagation(); openSettingsSubmenu(row.dataset.setting as "model" | "effort" | "speed", row); });
-element("advanced-settings").addEventListener("click", () => showToast("Advanced recipe controls are available in Playbooks & recipes"));
+element("advanced-settings").addEventListener("click", () => showToast("Advanced recipe and routing controls are available in Playbooks"));
 taskMenuToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(taskMenu, taskMenuToggle); });
 modelMenu.addEventListener("click", (event) => event.stopPropagation());
 taskMenu.addEventListener("click", (event) => event.stopPropagation());
@@ -597,22 +596,22 @@ function syncContextLimit(): void {
 function renderManagementPage(): void {
   const configuration = managementConfiguration;
   playbookList.replaceChildren();
-  for (const tab of document.querySelectorAll<HTMLButtonElement>("[data-management-view]")) tab.setAttribute("aria-selected", String(tab.dataset.managementView === managementView));
-  const copy = managementView === "playbooks"
-    ? ["Playbooks", "Group model runtimes into reusable inference configurations", "Search playbooks"]
-    : managementView === "recipes"
-      ? ["Recipes", "Inspect the model runtime definitions available to playbooks", "Search recipes"]
-      : ["Routes", "Map stable chat-facing names to configured recipes", "Search routes"];
-  managementTitle.textContent = copy[0]!; managementDescription.textContent = copy[1]!; playbookSearch.placeholder = copy[2]!;
+  managementTitle.textContent = "Playbooks";
+  managementDescription.textContent = "Configure each engine, its recipes, and routing in one place";
+  playbookSearch.placeholder = "Search playbooks";
   if (!configuration) { playbookList.append(panelEmpty("Management data is unavailable")); return; }
   const recipes = configuration.recipes ?? [];
   const routes = configuration.routes ?? [];
   const query = playbookSearch.value.trim().toLowerCase();
   const matches = (...values: unknown[]) => !query || values.some((value) => String(value ?? "").toLowerCase().includes(query));
-  if (managementView === "recipes") { renderRecipeList(recipes.filter((recipe: Json) => matches(recipe.id, recipe.displayName, recipe.adapter, recipe.modelId, recipe.playbookId)), routes); return; }
-  if (managementView === "routes") { renderRouteList(routes.filter((route: Json) => matches(route.id, route.displayName, route.recipeId))); return; }
   const groups = new Map<string, Json[]>();
-  for (const recipe of recipes) { if (!matches(recipe.playbookId, recipe.displayName, recipe.adapter, recipe.modelId)) continue; const values = groups.get(recipe.playbookId) ?? []; values.push(recipe); groups.set(recipe.playbookId, values); }
+  for (const recipe of recipes) {
+    const recipeRoutes = routes.filter((route: Json) => route.recipeId === recipe.id);
+    if (!matches(recipe.playbookId, recipe.displayName, recipe.adapter, recipe.modelId, ...recipeRoutes.map((route: Json) => route.displayName))) continue;
+    const values = groups.get(recipe.playbookId) ?? [];
+    values.push(recipe);
+    groups.set(recipe.playbookId, values);
+  }
   if (!groups.size) { playbookList.append(panelEmpty("No playbooks are configured")); return; }
   for (const [playbookId, playbookRecipes] of groups) {
     const card = document.createElement("section"); card.className = "playbook-card";
@@ -624,43 +623,73 @@ function renderManagementPage(): void {
       const detail = document.createElement("small"); const attachedRoutes = routes.filter((route: Json) => route.recipeId === recipe.id).map((route: Json) => route.displayName).join(", "); detail.textContent = `${recipe.adapter} · ${recipe.modelId}${attachedRoutes ? ` · Routes: ${attachedRoutes}` : ""}`;
       recipeCard.append(name, context, detail); card.append(recipeCard);
     }
+    renderPlaybookRoutes(card, playbookId, playbookRecipes, routes);
     playbookList.append(card);
   }
 }
 
-function renderRecipeList(recipes: Json[], routes: Json[]): void {
-  if (!recipes.length) { playbookList.append(panelEmpty("No recipes match this search")); return; }
-  for (const recipe of recipes) {
-    const card = document.createElement("button"); card.type = "button"; card.className = "management-list-row"; card.addEventListener("click", () => openRecipeEditor(recipe));
-    const icon = document.createElement("span"); icon.className = "management-row-icon"; icon.append(sparkIcon());
-    const content = document.createElement("div"); const name = document.createElement("strong"); name.textContent = recipe.displayName; const detail = document.createElement("small"); detail.textContent = `${recipe.playbookId} · ${recipe.adapter} · ${recipe.modelId}`; content.append(name, detail);
-    const meta = document.createElement("span"); const routeNames = routes.filter((route: Json) => route.recipeId === recipe.id).map((route: Json) => route.displayName).join(", "); meta.textContent = `${formatTokenCount(recipe.contextTokens)} context${routeNames ? ` · ${routeNames}` : ""}`; card.append(icon, content, meta); playbookList.append(card);
+function renderPlaybookRoutes(card: HTMLElement, playbookId: string, recipes: Json[], routes: Json[]): void {
+  const recipeIds = new Set(recipes.map((recipe) => recipe.id));
+  const playbookRoutes = routes.filter((route: Json) => recipeIds.has(route.recipeId));
+  const section = document.createElement("section"); section.className = "playbook-routing";
+  const header = document.createElement("header");
+  const title = document.createElement("h4"); title.textContent = "Routing";
+  const add = document.createElement("button"); add.type = "button"; add.className = "quiet-button compact-button"; add.textContent = "Add route"; add.addEventListener("click", () => openRouteEditor(undefined, playbookId));
+  header.append(title, add); section.append(header);
+  if (!playbookRoutes.length) {
+    const empty = document.createElement("p"); empty.className = "routing-empty"; empty.textContent = "No routes point to this playbook."; section.append(empty);
   }
+  for (const route of playbookRoutes) {
+    const row = document.createElement("div"); row.className = "route-assignment";
+    const identity = document.createElement("div");
+    const name = document.createElement("strong"); name.textContent = route.displayName;
+    const detail = document.createElement("small"); detail.textContent = `${route.id}${route.isDefault ? " · Default" : ""}${route.enabled ? "" : " · Disabled"}`;
+    identity.append(name, detail);
+    const select = document.createElement("select"); select.setAttribute("aria-label", `${route.displayName} recipe`);
+    for (const recipe of recipes) select.add(new Option(recipe.displayName, recipe.id, false, recipe.id === route.recipeId));
+    select.addEventListener("change", () => void updateRouteRecipe(route, select));
+    const edit = document.createElement("button"); edit.type = "button"; edit.className = "quiet-button compact-button"; edit.textContent = "Edit"; edit.addEventListener("click", () => openRouteEditor(route, playbookId));
+    row.append(identity, select, edit); section.append(row);
+  }
+  card.append(section);
 }
 
-function renderRouteList(routes: Json[]): void {
-  if (!routes.length) { playbookList.append(panelEmpty("No routes match this search")); return; }
-  for (const route of routes) {
-    const card = document.createElement("button"); card.type = "button"; card.className = "management-list-row"; card.addEventListener("click", () => openRouteEditor(route));
-    const icon = document.createElement("span"); icon.className = "management-row-icon route-icon"; icon.append(svg('<path d="M4 5h5l2 3h5M4 15h5l2-3h5"></path><path d="m14 6 2-1-2-1M14 14l2 1-2 1"></path>'));
-    const content = document.createElement("div"); const name = document.createElement("strong"); name.textContent = route.displayName; const detail = document.createElement("small"); detail.textContent = route.description || route.id; content.append(name, detail);
-    const meta = document.createElement("span"); meta.textContent = `${route.enabled ? "Enabled" : "Disabled"} · ${route.recipeId}`; card.append(icon, content, meta); playbookList.append(card);
+async function updateRouteRecipe(route: Json, select: HTMLSelectElement): Promise<void> {
+  const previousRecipeId = route.recipeId;
+  select.disabled = true;
+  try {
+    await api(`/api/v1/management/routes/${encodeURIComponent(route.id)}`, "PUT", {
+      displayName: route.displayName,
+      description: route.description ?? "",
+      recipeId: select.value,
+      enabled: route.enabled,
+      ...(typeof route.isDefault === "boolean" ? { isDefault: route.isDefault } : {}),
+    });
+    await loadManagementConfiguration(true);
+    showToast(`${route.displayName} route updated`);
+  } catch (error) {
+    select.value = previousRecipeId;
+    select.disabled = false;
+    showToast(errorMessage(error));
   }
 }
 
 function openRecipeEditor(recipe?: Json): void {
   editingRecipe = recipe;
   recipeForm.reset();
-  element("recipe-editor-title").textContent = recipe ? "Edit recipe" : managementView === "playbooks" ? "Create playbook recipe" : "Create recipe";
+  element("recipe-editor-title").textContent = recipe ? "Edit recipe" : "Create recipe";
   const value = (id: string) => element(id) as HTMLInputElement;
-  value("recipe-playbook-id").value = recipe?.playbookId ?? "";
+  const playbookIds = [...new Set((managementConfiguration?.recipes ?? []).map((item: Json) => item.playbookId))];
+  const playbookId = recipe?.playbookId ?? (playbookIds.length === 1 ? playbookIds[0] : "");
+  const playbookRecipe = managementConfiguration?.recipes?.find((item: Json) => item.playbookId === playbookId);
+  value("recipe-playbook-id").value = playbookId;
   value("recipe-id").value = recipe?.id ?? ""; value("recipe-id").readOnly = Boolean(recipe);
   value("recipe-display-name").value = recipe?.displayName ?? "";
-  value("recipe-adapter").value = recipe?.adapter ?? "fake";
+  value("recipe-adapter").value = recipe?.adapter ?? playbookRecipe?.adapter ?? "ninfer";
   value("recipe-model-id").value = recipe?.modelId ?? "";
   value("recipe-context-tokens").value = String(recipe?.contextTokens ?? 131_072);
   (element("recipe-configuration") as HTMLTextAreaElement).value = JSON.stringify(recipe?.configuration ?? {}, null, 2);
-  showManagementEditor("recipe"); value("recipe-playbook-id").focus();
+  showManagementEditor("recipe"); (recipe ? value("recipe-playbook-id") : value("recipe-id")).focus();
 }
 
 async function saveRecipe(): Promise<void> {
@@ -681,15 +710,18 @@ async function saveRecipe(): Promise<void> {
   } catch (error) { showToast(errorMessage(error)); } finally { setFormBusy(recipeForm, false); }
 }
 
-function openRouteEditor(route?: Json): void {
+function openRouteEditor(route?: Json, playbookId?: string): void {
   editingRoute = route;
+  editingRoutePlaybook = playbookId ?? managementConfiguration?.recipes?.find((recipe: Json) => recipe.id === route?.recipeId)?.playbookId;
   routeForm.reset(); element("route-editor-title").textContent = route ? "Edit route" : "Create route";
   const value = (id: string) => element(id) as HTMLInputElement;
   value("route-id").value = route?.id ?? ""; value("route-id").readOnly = Boolean(route);
   value("route-display-name").value = route?.displayName ?? ""; value("route-description").value = route?.description ?? "";
   (element("route-enabled") as HTMLInputElement).checked = route?.enabled ?? true;
   const recipeSelect = element("route-recipe-id") as HTMLSelectElement; recipeSelect.replaceChildren();
-  for (const recipe of managementConfiguration?.recipes ?? []) recipeSelect.add(new Option(recipe.displayName, recipe.id, false, recipe.id === route?.recipeId));
+  for (const recipe of managementConfiguration?.recipes ?? []) {
+    if (!editingRoutePlaybook || recipe.playbookId === editingRoutePlaybook) recipeSelect.add(new Option(recipe.displayName, recipe.id, false, recipe.id === route?.recipeId));
+  }
   showManagementEditor("route"); value("route-id").focus();
 }
 
@@ -712,6 +744,7 @@ function showManagementEditor(kind: "recipe" | "route"): void {
 }
 
 function closeManagementEditor(): void {
+  editingRoutePlaybook = undefined;
   managementEditor.hidden = true;
   managementBrowser.hidden = false;
   recipeForm.hidden = true;

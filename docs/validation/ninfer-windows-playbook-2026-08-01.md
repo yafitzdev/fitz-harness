@@ -1,6 +1,6 @@
 # NiNfer Windows playbook validation — 2026-08-01
 
-The production NiNfer configuration is defined as one `ninfer-qwen36` playbook with two recipes:
+The production NiNfer configuration is defined as one `ninfer` playbook with two recipes:
 
 | Recipe | Route | Artifact | Speculation |
 | --- | --- | --- | --- |
