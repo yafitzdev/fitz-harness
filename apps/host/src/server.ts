@@ -26,7 +26,7 @@ const authMode = process.env.FITZ_AUTH_MODE === "required" ? "required" : "disab
 mkdirSync(dirname(databasePath), { recursive: true });
 const engineOptions = engineModeOptions(engineMode);
 const store = new SqliteStore(databasePath);
-if (engineMode === "ninfer") migrateLegacyNInferPlaybook(store);
+if (engineMode === "ninfer") reconcileNInferConfiguration(store);
 const runtime = createHost({
   store,
   logger: true,
@@ -70,9 +70,22 @@ function ninferOptions() {
   return { adapters: [adapter], initialRecipes: playbook.recipes, initialRoutes: playbook.routes };
 }
 
-function migrateLegacyNInferPlaybook(store: SqliteStore): void {
+function reconcileNInferConfiguration(store: SqliteStore): void {
   for (const recipe of store.listRecipes()) {
     if (recipe.playbookId === "ninfer-qwen36") store.upsertRecipe({ ...recipe, playbookId: NINFER_PLAYBOOK_ID });
+  }
+  const templates = createNInferPlaybook().routes;
+  const existingRoutes = store.listRoutes();
+  const existingById = new Map(existingRoutes.map((route) => [route.id, route]));
+  const legacyDefault = existingById.get("default-agent");
+  const recipeIds = new Set([...store.listRecipes(), ...createNInferPlaybook().recipes].map((recipe) => recipe.id));
+  for (const route of existingRoutes) {
+    if (!templates.some((template) => template.id === route.id)) store.deleteRoute(route.id);
+  }
+  for (const template of templates) {
+    const existing = existingById.get(template.id) ?? (template.id === "default" ? legacyDefault : undefined);
+    const recipeId = existing && recipeIds.has(existing.recipeId) ? existing.recipeId : template.recipeId;
+    store.upsertRoute({ ...template, recipeId });
   }
 }
 
@@ -118,7 +131,7 @@ function engineRecipe(adapter: "openai-compatible" | "llama-cpp", configuration:
 }
 
 function singleEngineOptions(adapter: NInferEngineAdapter | OpenAICompatibleEngineAdapter | LlamaCppEngineAdapter, recipe: Recipe) {
-  const route: Route = { id: "default-agent", displayName: recipe.displayName, recipeId: recipe.id, enabled: true, isDefault: true };
+  const route: Route = { id: "default", displayName: "Default", recipeId: recipe.id, enabled: true, isDefault: true };
   return { adapters: [adapter], initialRecipes: [recipe], initialRoutes: [route] };
 }
 

@@ -150,6 +150,10 @@ export class SqliteStore {
       );
   }
 
+  deleteRoute(routeId: string): void {
+    this.#database.prepare("DELETE FROM routes WHERE id = ?").run(routeId);
+  }
+
   listRecipes(): Recipe[] {
     const rows = this.#database
       .prepare("SELECT recipe_json FROM recipes ORDER BY id")

@@ -22,7 +22,7 @@ try {
 
   const bestStartedAt = Date.now();
   const bestResponse = await collect(
-    runtime.scheduler.enqueue("default-agent", request("route-switch-35b")),
+    runtime.scheduler.enqueue("smart", request("route-switch-35b")),
   );
   const bestDurationMs = Date.now() - bestStartedAt;
 

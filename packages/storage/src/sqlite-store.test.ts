@@ -84,6 +84,14 @@ describe("SqliteStore", () => {
     store.close();
   });
 
+  it("deletes obsolete routes", () => {
+    const store = SqliteStore.memory();
+    store.upsertRoute({ id: "obsolete", displayName: "Obsolete", recipeId: "recipe-1", enabled: true });
+    store.deleteRoute("obsolete");
+    expect(store.listRoutes()).toEqual([]);
+    store.close();
+  });
+
   it("persists users, grants, quotas, devices, and audit records", () => {
     const store = SqliteStore.memory(); const now = new Date(0).toISOString();
     store.createUser({ id: "user-1", displayName: "Admin", role: "administrator", status: "active", createdAt: now, updatedAt: now });

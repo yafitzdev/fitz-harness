@@ -53,7 +53,7 @@ try {
     instance,
     {
       id: "live-ninfer-smoke",
-      routeId: "default-agent",
+      routeId: "default",
       messages: [{ role: "user", content: "Reply with exactly: FITZ_LIVE_OK" }],
       maxTokens: 32,
       temperature: 0,

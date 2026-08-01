@@ -42,7 +42,7 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('<dialog id="rename-dialog"');
     expect(html).toContain('id="management-editor"');
     expect(html).toContain('id="recipe-form" class="management-editor-form"');
-    expect(html).toContain('id="route-form" class="management-editor-form"');
+    expect(html).not.toContain('id="route-form"');
     expect(html).not.toContain('<dialog id="recipe-dialog"');
     expect(html).not.toContain('<dialog id="route-dialog"');
     expect(renderer).not.toContain("window.prompt(");
@@ -65,8 +65,8 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('id="playbook-search"');
     expect(renderer).toContain("openPlaybookPage()");
     expect(renderer).toContain("renderManagementPage()");
-    expect(renderer).toContain("renderPlaybookRoutes(");
-    expect(renderer).toContain("updateRouteRecipe(");
+    expect(renderer).toContain("FIXED_ROUTES");
+    expect(renderer).toContain("assignFixedRoute(");
     expect(renderer).toContain("showConversationWorkspace()");
   });
 

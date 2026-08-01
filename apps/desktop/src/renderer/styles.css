@@ -255,30 +255,21 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .playbook-list { display: grid; gap: 12px; }
 .playbook-card { padding: 4px 0 18px; border-bottom: 1px solid var(--border-soft); }
 .playbook-card h3 { margin: 0 0 10px; font-size: 15px; }
-.recipe-card { width: 100%; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 4px 14px; padding: 11px 12px; border-radius: 10px; background: #242624; color: var(--text); cursor: pointer; text-align: left; }
-.recipe-card:hover { background: #292b29; }
+.recipe-card { width: 100%; min-height: 66px; display: grid; grid-template-columns: minmax(0,1fr) auto; overflow: hidden; border-radius: 10px; background: #242624; color: var(--text); }
 .recipe-card + .recipe-card { margin-top: 7px; }
-.recipe-card span, .recipe-card small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.recipe-card small { color: var(--muted); }
-.recipe-card code { color: #b8bbb5; font: 11px/1.4 "Cascadia Mono", Consolas, monospace; }
-.playbook-routing { display: grid; gap: 7px; margin-top: 18px; padding-top: 15px; border-top: 1px solid var(--border-soft); }
-.playbook-routing > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
-.playbook-routing h4 { margin: 0; font-size: 13px; font-weight: 560; color: #c6c9c3; }
-.routing-empty { margin: 3px 0; color: var(--muted); font-size: 12px; }
-.route-assignment { min-height: 52px; display: grid; grid-template-columns: minmax(150px,1fr) minmax(220px,1.4fr) auto; align-items: center; gap: 10px; padding: 7px 9px; border-radius: 9px; background: #1f211f; }
-.route-assignment > div { min-width: 0; display: grid; gap: 2px; }
-.route-assignment strong, .route-assignment small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.route-assignment strong { font-size: 13px; font-weight: 540; }
-.route-assignment small { color: var(--muted); font-size: 11px; }
-.route-assignment select { min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; outline: 0; background: #2b2d2b; color: var(--text); }
-.route-assignment select:focus { border-color: #626660; }
-.management-list-row { width: 100%; min-height: 67px; display: grid; grid-template-columns: 38px minmax(0,1fr) auto; align-items: center; gap: 12px; padding: 8px 4px; border-bottom: 1px solid var(--border-soft); background: transparent; color: var(--text); cursor: pointer; text-align: left; }
-.management-list-row:hover { background: rgba(255,255,255,.025); }
-.management-list-row > div { min-width: 0; display: grid; }
-.management-list-row strong { font-weight: 560; }
-.management-list-row small, .management-list-row > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
-.management-row-icon { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid #3c403c; border-radius: 10px; background: #232523; color: #8eb6ff; }
-.management-row-icon.route-icon { color: #7fd2a1; }
+.recipe-card-details { min-width: 0; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 4px 14px; padding: 11px 12px; background: transparent; color: var(--text); cursor: pointer; text-align: left; }
+.recipe-card-details:hover { background: #292b29; }
+.recipe-card-details span, .recipe-card-details small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recipe-card-details small { color: var(--muted); }
+.recipe-card-details code { color: #b8bbb5; font: 11px/1.4 "Cascadia Mono", Consolas, monospace; }
+.recipe-route-toggle { align-self: center; display: flex; align-items: center; gap: 1px; margin-right: 12px; padding: 2px; border: 1px solid #3d403c; border-radius: 11px; background: #1c1e1c; }
+.route-symbol { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 9px; background: transparent; color: #777b74; cursor: pointer; }
+.route-symbol:hover { border-color: #494c48; background: #303230; color: #d5d7d2; }
+.route-symbol.active { border-color: currentColor; background: #303230; }
+.route-symbol.route-fast.active { color: #f0ae4f; }
+.route-symbol.route-default.active { color: #80afff; }
+.route-symbol.route-smart.active { color: #c591ff; }
+.route-symbol svg { width: 17px; height: 17px; }
 .management-editor { width: min(820px, calc(100% - 48px)); margin: 28px auto 80px; }
 .management-back { display: inline-flex; align-items: center; gap: 5px; margin: 0 0 24px -8px; padding: 7px 8px; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
 .management-back:hover { background: rgba(255,255,255,.05); color: var(--text); }
@@ -310,6 +301,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
   .messages { padding-inline: 18px; }
   .workspace-title #task-title { display: none; }
   .starter-grid, .configuration-grid { grid-template-columns: 1fr 1fr; }
-  .route-assignment { grid-template-columns: 1fr; }
+  .recipe-card { grid-template-columns: 1fr; }
+  .recipe-route-toggle { justify-self: end; margin: 0 10px 9px; }
   .mode-pill, .run-status, .composer-hint { display: none; }
 }

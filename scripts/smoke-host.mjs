@@ -10,7 +10,7 @@ try {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      model: "default-agent",
+      model: "default",
       stream: false,
       messages: [{ role: "user", content: "compiled smoke test" }],
     }),
@@ -36,7 +36,7 @@ try {
   if (
     result.health !== "ok" ||
     result.initialEngineState !== "UNLOADED" ||
-    !result.models.includes("default-agent") ||
+    !result.models.includes("default") ||
     !result.completion.includes("compiled smoke test")
   ) {
     throw new Error(`Unexpected smoke result: ${JSON.stringify(result)}`);

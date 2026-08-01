@@ -12,8 +12,9 @@ describe("Fitz host", () => {
     expect(health.statusCode).toBe(200);
     expect(health.json().engine.state).toBe("UNLOADED");
     expect(models.json().data.map((model: { id: string }) => model.id)).toEqual([
-      "default-agent",
+      "default",
       "fast",
+      "smart",
     ]);
     expect(models.body).not.toContain("fake-best");
     await runtime.app.close();
@@ -42,13 +43,27 @@ describe("Fitz host", () => {
     await runtime.app.close();
   });
 
+  it("moves a fixed route assignment to one recipe", async () => {
+    const runtime = createHost();
+    const response = await runtime.app.inject({
+      method: "PUT",
+      url: "/api/v1/management/routes/fast",
+      payload: { displayName: "Fast", description: "Lowest-latency route", recipeId: "fake-best", enabled: true, isDefault: false },
+    });
+    const status = await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" });
+    const fastRoutes = status.json().routes.filter((route: { id: string }) => route.id === "fast");
+    expect(response.statusCode).toBe(200);
+    expect(fastRoutes).toEqual([expect.objectContaining({ recipeId: "fake-best" })]);
+    await runtime.app.close();
+  });
+
   it("serves a non-streaming OpenAI-compatible completion and records lifecycle events", async () => {
     const runtime = createHost();
     const response = await runtime.app.inject({
       method: "POST",
       url: "/v1/chat/completions",
       payload: {
-        model: "default-agent",
+        model: "default",
         stream: false,
         messages: [{ role: "user", content: "hello Fitz" }],
       },
@@ -58,7 +73,7 @@ describe("Fitz host", () => {
     expect(response.json().object).toBe("chat.completion");
     expect(response.json().choices[0].message.content).toContain("hello Fitz");
     expect(runtime.store.listInferenceRequests()).toEqual([
-      expect.objectContaining({ status: "completed", routeId: "default-agent" }),
+      expect.objectContaining({ status: "completed", routeId: "default" }),
     ]);
 
     const events = await runtime.app.inject({ method: "GET", url: "/api/v1/events?after=0" });
@@ -151,7 +166,7 @@ describe("Fitz host", () => {
       method: "POST",
       url: "/v1/chat/completions",
       payload: {
-        model: "default-agent",
+        model: "default",
         stream: false,
         messages: [{ role: "user", content: "should not load" }],
       },
@@ -209,7 +224,7 @@ describe("Fitz host", () => {
     const runtime = createHost({ store, security, authMode: "required" });
     const denied = await runtime.app.inject({ method: "GET", url: "/v1/models" });
     const models = await runtime.app.inject({ method: "GET", url: "/v1/models", headers: { authorization: `Bearer ${token}` } });
-    const forbidden = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", headers: { authorization: `Bearer ${token}` }, payload: { model: "default-agent", stream: false, messages: [{ role: "user", content: "hello" }] } });
+    const forbidden = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", headers: { authorization: `Bearer ${token}` }, payload: { model: "default", stream: false, messages: [{ role: "user", content: "hello" }] } });
     expect(denied.statusCode).toBe(401); expect(models.json().data.map((model: { id: string }) => model.id)).toEqual(["fast"]); expect(forbidden.statusCode).toBe(403); await runtime.app.close();
   });
 

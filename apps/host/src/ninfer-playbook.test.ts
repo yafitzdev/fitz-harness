@@ -3,7 +3,7 @@ import { readNInferConfiguration, validateNInferConfiguration } from "@fitz/engi
 import { createNInferPlaybook, NINFER_PLAYBOOK_ID } from "./ninfer-playbook.js";
 
 describe("production NiNfer playbook", () => {
-  it("contains exactly two validated recipes and stable best/fast routes", () => {
+  it("contains exactly two validated recipes and the fixed fast/default/smart routes", () => {
     const playbook = createNInferPlaybook();
 
     expect(playbook).toMatchObject({ id: "ninfer", displayName: "ninfer" });
@@ -12,8 +12,9 @@ describe("production NiNfer playbook", () => {
     expect(playbook.recipes.every((recipe) => validateNInferConfiguration(recipe).length === 0)).toBe(true);
     expect(playbook.recipes.map((recipe) => readNInferConfiguration(recipe).draftTokens)).toEqual([4, 3]);
     expect(playbook.routes).toEqual([
-      expect.objectContaining({ id: "default-agent", recipeId: playbook.recipes[0]!.id, isDefault: true }),
       expect.objectContaining({ id: "fast", recipeId: playbook.recipes[1]!.id }),
+      expect.objectContaining({ id: "default", recipeId: playbook.recipes[0]!.id, isDefault: true }),
+      expect.objectContaining({ id: "smart", recipeId: playbook.recipes[0]!.id }),
     ]);
   });
 });

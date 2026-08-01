@@ -29,18 +29,25 @@ export function createNInferPlaybook(): NInferPlaybook {
   ];
   const routes: Route[] = [
     {
-      id: "default-agent",
-      displayName: "Qwen 3.6 35B A3B",
-      description: "Best local NiNfer agent route",
+      id: "fast",
+      displayName: "Fast",
+      description: "Lowest-latency route",
+      recipeId: recipes[1]!.id,
+      enabled: true,
+    },
+    {
+      id: "default",
+      displayName: "Default",
+      description: "Primary route",
       recipeId: recipes[0]!.id,
       enabled: true,
       isDefault: true,
     },
     {
-      id: "fast",
-      displayName: "Qwen 3.6 27B",
-      description: "Fast local NiNfer route",
-      recipeId: recipes[1]!.id,
+      id: "smart",
+      displayName: "Smart",
+      description: "Highest-capability route",
+      recipeId: recipes[0]!.id,
       enabled: true,
     },
   ];

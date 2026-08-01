@@ -84,7 +84,7 @@
           </header>
           <div id="management-browser" class="management-page-content">
             <h1 id="management-title">Playbooks</h1>
-            <p id="management-description">Group model runtimes into reusable inference configurations</p>
+            <p id="management-description">Assign Fast, Default, and Smart directly on each recipe</p>
             <label class="management-search"><svg viewBox="0 0 20 20"><circle cx="9" cy="9" r="5.5"></circle><path d="m13 13 4 4"></path></svg><input id="playbook-search" type="search" placeholder="Search playbooks" autocomplete="off"></label>
             <div id="playbook-list" class="playbook-list"></div>
           </div>
@@ -95,12 +95,6 @@
               <div class="configuration-grid"><label>Playbook ID<input id="recipe-playbook-id" required placeholder="my-playbook"></label><label>Recipe ID<input id="recipe-id" required placeholder="my-model"></label><label>Display name<input id="recipe-display-name" required placeholder="My Model"></label><label>Adapter<input id="recipe-adapter" required placeholder="llama-cpp"></label><label>Model ID<input id="recipe-model-id" required placeholder="model-file.gguf"></label><label>Context tokens<input id="recipe-context-tokens" type="number" min="1" required value="131072"></label></div>
               <label>Configuration JSON<textarea id="recipe-configuration" rows="7" spellcheck="false">{}</textarea></label>
               <div class="editor-actions"><button class="quiet-button" type="button" data-close-management-editor>Cancel</button><button class="primary-button" type="submit">Save recipe</button></div>
-            </form>
-            <form id="route-form" class="management-editor-form" hidden>
-              <div class="editor-heading"><small>Playbook routing</small><h1 id="route-editor-title">Create route</h1><p>Map a stable chat-facing name to one recipe in this playbook.</p></div>
-              <div class="configuration-grid"><label>Route ID<input id="route-id" required placeholder="default-agent"></label><label>Display name<input id="route-display-name" required placeholder="Default Agent"></label><label>Recipe<select id="route-recipe-id" required></select></label><label class="check-label"><input id="route-enabled" type="checkbox" checked> Enabled</label></div>
-              <label>Description<input id="route-description" placeholder="Balanced default route"></label>
-              <div class="editor-actions"><button class="quiet-button" type="button" data-close-management-editor>Cancel</button><button class="primary-button" type="submit">Save route</button></div>
             </form>
           </section>
         </section>

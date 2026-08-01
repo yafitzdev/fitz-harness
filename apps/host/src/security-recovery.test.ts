@@ -17,7 +17,7 @@ describe("host security and recovery boundaries", () => {
     expect(accepted.statusCode).toBe(202);
     const rateDenied = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", headers, payload: { model: "fast", maxTokens: 2, messages: [{ role: "user", content: "again" }] } });
     expect(rateDenied.statusCode).toBe(429);
-    const routeDenied = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", headers, payload: { model: "default-agent", maxTokens: 2, messages: [{ role: "user", content: "route" }] } });
+    const routeDenied = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", headers, payload: { model: "default", maxTokens: 2, messages: [{ role: "user", content: "route" }] } });
     expect(routeDenied.statusCode).toBe(403);
     await runtime.app.close();
   });
