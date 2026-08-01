@@ -295,9 +295,10 @@ export function buildCurrentNInferRecipe(
   modelId: string,
   artifact: string,
   draftTokens: number,
+  executable = "/opt/ninfer/build/apps/ninfer-serve",
 ): Recipe {
   const configuration: NInferRecipeConfiguration = {
-    executable: "/opt/ninfer/build/apps/ninfer-serve",
+    executable,
     artifact,
     maxContext: 100_000,
     kvDtype: "int8",

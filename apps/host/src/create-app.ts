@@ -107,7 +107,14 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   );
   const storedEngineRoot = store.getSetting<string>("engineRoot");
   const legacyEngineRoot = join(homedir(), "Fitz", "engines");
-  const configuredEngineRoot = options.engineRoot ?? (!storedEngineRoot || resolve(storedEngineRoot) === resolve(legacyEngineRoot) ? join(homedir(), "engines") : storedEngineRoot);
+  const previousEngineRoot = join(homedir(), "engines");
+  const configuredEngineRoot = options.engineRoot ?? (
+    !storedEngineRoot
+      || resolve(storedEngineRoot) === resolve(legacyEngineRoot)
+      || resolve(storedEngineRoot) === resolve(previousEngineRoot)
+      ? join(homedir(), "llm", "engines")
+      : storedEngineRoot
+  );
   store.setSetting("engineRoot", configuredEngineRoot);
   migrateLegacyEngineRegistry(store);
   const routes = new RouteResolver(store.listRoutes(), store.listRecipes());
