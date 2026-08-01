@@ -24,6 +24,8 @@ let newChatMode = false;
 let newChatProjectDetached = false;
 let currentBranch = "main";
 let availableBranches: string[] = [];
+let hoveredProjectId: string | undefined;
+let projectHoverHideTimer: ReturnType<typeof setTimeout> | undefined;
 let editingRecipe: Json | undefined;
 let renameTarget: { kind: "project" | "task"; id: string } | undefined;
 const pinnedProjects = storedSet("fitz-pinned-projects");
@@ -118,6 +120,13 @@ const chatHoverCard = element("chat-hover-card");
 const hoverChatTitle = element("hover-chat-title");
 const hoverChatAge = element("hover-chat-age");
 const hoverProjectName = element("hover-project-name");
+const projectHoverCard = element("project-hover-card");
+const hoverProjectTitle = element("hover-project-title");
+const hoverProjectTaskCount = element("hover-project-task-count");
+const hoverProjectPath = element("hover-project-path") as HTMLButtonElement;
+const hoverProjectPathLabel = element("hover-project-path-label");
+const hoverProjectPin = element("hover-project-pin") as HTMLButtonElement;
+const hoverProjectEdit = element("hover-project-edit") as HTMLButtonElement;
 const toast = element("toast");
 
 restoreSidebarWidth();
@@ -188,6 +197,12 @@ taskMenuToggle.addEventListener("click", (event) => { event.stopPropagation(); t
 modelMenu.addEventListener("click", (event) => event.stopPropagation());
 taskMenu.addEventListener("click", (event) => event.stopPropagation());
 sidebarContextMenu.addEventListener("click", (event) => event.stopPropagation());
+projectHoverCard.addEventListener("mouseenter", cancelProjectHoverHide);
+projectHoverCard.addEventListener("mouseleave", scheduleProjectHoverHide);
+projectHoverCard.addEventListener("click", (event) => event.stopPropagation());
+hoverProjectPin.addEventListener("click", () => { if (hoveredProjectId) toggleStored(pinnedProjects, hoveredProjectId, "fitz-pinned-projects"); });
+hoverProjectPath.addEventListener("click", () => { const path = projectRecords.find((project) => project.id === hoveredProjectId)?.rootPath; if (path) void openProjectPath(path); });
+hoverProjectEdit.addEventListener("click", () => { if (hoveredProjectId) openProjectRenameDialog(hoveredProjectId); });
 element("rename-task").addEventListener("click", openRenameDialog);
 element("archive-task").addEventListener("click", () => void archiveCurrentTask());
 renameForm.addEventListener("submit", (event) => { event.preventDefault(); void renameCurrentTask(); });
@@ -276,6 +291,10 @@ function renderProjectTree(): void {
     const projectButton = projectItem.querySelector(".project-row") as HTMLButtonElement;
     projectButton.classList.toggle("active", project.id === currentProject && !currentSession && !newChatMode);
     projectButton.setAttribute("aria-expanded", String(expandedProjects.has(project.id)));
+    projectItem.addEventListener("mouseenter", () => showProjectHover(project, projectItem));
+    projectItem.addEventListener("mouseleave", scheduleProjectHoverHide);
+    projectButton.addEventListener("focus", () => showProjectHover(project, projectItem));
+    projectButton.addEventListener("blur", scheduleProjectHoverHide);
     group.append(projectItem);
     const children = document.createElement("div"); children.className = "project-children"; const childrenInner = document.createElement("div"); childrenInner.className = "project-children-inner"; children.append(childrenInner); group.append(children);
     const projectSessions = [...(sessionsByProject.get(project.id) ?? [])].sort((left, right) => Number(pinnedSessions.has(right.id)) - Number(pinnedSessions.has(left.id)));
@@ -935,6 +954,7 @@ function closePopovers(): void {
   sidebarContextMenu.hidden = true;
   newChatEnvironmentMenu.hidden = true;
   newChatBranchMenu.hidden = true;
+  hideProjectHover();
   hideChatHover();
   modelToggle.setAttribute("aria-expanded", "false");
   contextMeter.setAttribute("aria-expanded", "false");
@@ -1163,6 +1183,7 @@ function updateTitles(): void {
 }
 
 function showChatHover(session: Json, project: Json, anchor: HTMLElement): void {
+  hideProjectHover();
   const updated = new Date(session.updatedAt ?? session.createdAt ?? Date.now()).getTime();
   const ageMilliseconds = Math.max(0, Date.now() - updated);
   const days = Math.floor(ageMilliseconds / 86_400_000);
@@ -1177,6 +1198,28 @@ function showChatHover(session: Json, project: Json, anchor: HTMLElement): void 
 }
 
 function hideChatHover(): void { chatHoverCard.hidden = true; }
+
+function showProjectHover(project: Json, anchor: HTMLElement): void {
+  cancelProjectHoverHide(); hideChatHover(); hoveredProjectId = project.id;
+  const taskCount = (sessionsByProject.get(project.id) ?? []).length;
+  hoverProjectTitle.textContent = project.name;
+  hoverProjectTaskCount.textContent = `${taskCount} ${taskCount === 1 ? "task" : "tasks"}`;
+  hoverProjectPathLabel.textContent = project.rootPath || "No source folder";
+  hoverProjectPath.disabled = !project.rootPath;
+  const pinned = pinnedProjects.has(project.id);
+  hoverProjectPin.setAttribute("aria-pressed", String(pinned));
+  hoverProjectPin.setAttribute("aria-label", pinned ? "Unpin project" : "Pin project");
+  hoverProjectPin.title = pinned ? "Unpin project" : "Pin project";
+  const bounds = anchor.getBoundingClientRect();
+  projectHoverCard.hidden = false;
+  const cardBounds = projectHoverCard.getBoundingClientRect();
+  projectHoverCard.style.left = `${Math.max(8, Math.min(window.innerWidth - cardBounds.width - 8, bounds.right + 10))}px`;
+  projectHoverCard.style.top = `${Math.max(52, Math.min(window.innerHeight - cardBounds.height - 8, bounds.top))}px`;
+}
+
+function cancelProjectHoverHide(): void { if (projectHoverHideTimer) clearTimeout(projectHoverHideTimer); projectHoverHideTimer = undefined; }
+function scheduleProjectHoverHide(): void { cancelProjectHoverHide(); projectHoverHideTimer = setTimeout(hideProjectHover, 120); }
+function hideProjectHover(): void { cancelProjectHoverHide(); projectHoverCard.hidden = true; hoveredProjectId = undefined; }
 
 function setContextPanel(open: boolean): void {
   contextPanel.hidden = !open;

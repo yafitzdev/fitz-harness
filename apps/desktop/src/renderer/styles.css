@@ -116,6 +116,19 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .chat-hover-card time { flex: 0 0 auto; color: var(--muted); font-size: 12px; }
 .chat-hover-card p { display: flex; align-items: center; gap: 9px; margin: 7px 0 0; color: #d2d4cf; font-size: 13px; }
 .chat-hover-card svg { width: 16px; height: 16px; color: var(--muted); }
+.project-hover-card { position: fixed; z-index: 39; width: min(420px, calc(100vw - 24px)); overflow: hidden; border: 1px solid #464a46; border-radius: 16px; background: #303230; box-shadow: 0 18px 48px rgba(0,0,0,.38); }
+.project-hover-card header, .project-hover-detail, .project-hover-action { min-height: 45px; display: flex; align-items: center; gap: 10px; padding: 0 14px; }
+.project-hover-card header { justify-content: space-between; }
+.project-hover-card header > span { min-width: 0; display: flex; align-items: center; gap: 10px; }
+.project-hover-card strong, .project-hover-card span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-hover-card svg { flex: 0 0 auto; width: 18px; height: 18px; color: #c8cbc5; }
+.project-hover-card header button { flex: 0 0 auto; width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
+.project-hover-card header button:hover, .project-hover-card header button[aria-pressed="true"] { background: rgba(255,255,255,.07); color: var(--text); }
+.project-hover-detail { border-bottom: 1px solid #484b48; color: var(--text); }
+.project-hover-action { width: 100%; border-bottom: 1px solid #484b48; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.project-hover-action:last-child { border-bottom: 0; }
+.project-hover-action:hover:not(:disabled) { background: rgba(255,255,255,.065); }
+.project-hover-action:disabled { color: var(--subtle); cursor: default; }
 .header-actions { display: flex; align-items: center; gap: 6px; }
 .quiet-button { padding: 7px 10px; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer; }
 

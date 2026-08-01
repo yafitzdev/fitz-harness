@@ -127,4 +127,14 @@ describe("desktop renderer shell", () => {
     expect(main).toContain('ipcMain.handle("fitz:git-create-branch"');
     expect(main).toContain('ipcMain.handle("fitz:git-create-worktree"');
   });
+
+  it("shows an interactive project metadata card on hover", () => {
+    expect(html).toContain('id="project-hover-card"');
+    expect(html).toContain('id="hover-project-pin"');
+    expect(html).toContain('id="hover-project-path"');
+    expect(html).toContain('id="hover-project-edit"');
+    expect(renderer).toContain("showProjectHover(project, projectItem)");
+    expect(renderer).toContain("sessionsByProject.get(project.id)");
+    expect(renderer).toContain("openProjectRenameDialog(hoveredProjectId)");
+  });
 });
