@@ -88,9 +88,10 @@ const playbookList = element("playbook-list");
 const playbookSearch = element("playbook-search") as HTMLInputElement;
 const managementTitle = element("management-title");
 const managementDescription = element("management-description");
-const recipeDialog = element("recipe-dialog") as HTMLDialogElement;
+const managementBrowser = element("management-browser");
+const managementEditor = element("management-editor");
+const createManagement = element("create-management") as HTMLButtonElement;
 const recipeForm = element("recipe-form") as HTMLFormElement;
-const routeDialog = element("route-dialog") as HTMLDialogElement;
 const routeForm = element("route-form") as HTMLFormElement;
 const chatHoverCard = element("chat-hover-card");
 const hoverChatTitle = element("hover-chat-title");
@@ -118,16 +119,18 @@ document.addEventListener("keydown", (event) => {
   if (event.ctrlKey && event.key.toLowerCase() === "b") { event.preventDefault(); toggleSidebar(); }
   if (event.ctrlKey && event.altKey && event.key.toLowerCase() === "r") { event.preventDefault(); openRenameDialog(); }
   if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "a") { event.preventDefault(); void archiveCurrentTask(); }
-  if (event.key === "Escape") closePopovers();
+  if (event.key === "Escape") { if (!managementEditor.hidden) closeManagementEditor(); else closePopovers(); }
 });
 
 element("new-project").addEventListener("click", () => openProjectDialog());
 element("new-session").addEventListener("click", openNewChat);
 element("manage-playbooks").addEventListener("click", () => void openPlaybookPage());
 element("refresh-playbooks").addEventListener("click", () => void loadManagementConfiguration(true));
-element("create-management").addEventListener("click", () => managementView === "routes" ? openRouteDialog() : openRecipeDialog());
+createManagement.addEventListener("click", () => managementView === "routes" ? openRouteEditor() : openRecipeEditor());
+element("close-management-editor").addEventListener("click", closeManagementEditor);
+for (const button of document.querySelectorAll<HTMLButtonElement>("[data-close-management-editor]")) button.addEventListener("click", closeManagementEditor);
 playbookSearch.addEventListener("input", renderManagementPage);
-for (const tab of document.querySelectorAll<HTMLButtonElement>("[data-management-view]")) tab.addEventListener("click", () => { managementView = tab.dataset.managementView as typeof managementView; playbookSearch.value = ""; renderManagementPage(); });
+for (const tab of document.querySelectorAll<HTMLButtonElement>("[data-management-view]")) tab.addEventListener("click", () => { closeManagementEditor(); managementView = tab.dataset.managementView as typeof managementView; playbookSearch.value = ""; renderManagementPage(); });
 element("sidebar-menu").addEventListener("click", toggleSidebar);
 element("sidebar-restore").addEventListener("click", toggleSidebar);
 for (const menuButton of document.querySelectorAll<HTMLButtonElement>("[data-app-menu]")) menuButton.addEventListener("click", () => { const rect = menuButton.getBoundingClientRect(); void window.fitz.showMenu(menuButton.dataset.appMenu ?? "", Math.round(rect.left), Math.round(rect.bottom)); });
@@ -564,13 +567,14 @@ async function openPlaybookPage(): Promise<void> {
   closePopovers();
   setContextPanel(false);
   playbookPage.hidden = false;
+  closeManagementEditor();
   setConversationInert(true);
   element("manage-playbooks").classList.add("active");
   playbookList.replaceChildren(panelEmpty("Loading playbooks…"));
   await loadManagementConfiguration(true);
 }
 
-function showConversationWorkspace(): void { playbookPage.hidden = true; setConversationInert(false); element("manage-playbooks").classList.remove("active"); }
+function showConversationWorkspace(): void { playbookPage.hidden = true; closeManagementEditor(); setConversationInert(false); element("manage-playbooks").classList.remove("active"); }
 function setConversationInert(inert: boolean): void { for (const area of [workspaceHeader, messages, composerDock]) { area.toggleAttribute("inert", inert); area.setAttribute("aria-hidden", String(inert)); } }
 
 async function loadManagementConfiguration(renderPage: boolean): Promise<void> {
@@ -614,7 +618,7 @@ function renderManagementPage(): void {
     const card = document.createElement("section"); card.className = "playbook-card";
     const heading = document.createElement("h3"); heading.textContent = playbookId; card.append(heading);
     for (const recipe of playbookRecipes) {
-      const recipeCard = document.createElement("button"); recipeCard.type = "button"; recipeCard.className = "recipe-card"; recipeCard.addEventListener("click", () => openRecipeDialog(recipe));
+      const recipeCard = document.createElement("button"); recipeCard.type = "button"; recipeCard.className = "recipe-card"; recipeCard.addEventListener("click", () => openRecipeEditor(recipe));
       const name = document.createElement("span"); name.textContent = recipe.displayName;
       const context = document.createElement("code"); context.textContent = `${formatTokenCount(recipe.contextTokens)} ctx`;
       const detail = document.createElement("small"); const attachedRoutes = routes.filter((route: Json) => route.recipeId === recipe.id).map((route: Json) => route.displayName).join(", "); detail.textContent = `${recipe.adapter} · ${recipe.modelId}${attachedRoutes ? ` · Routes: ${attachedRoutes}` : ""}`;
@@ -627,7 +631,7 @@ function renderManagementPage(): void {
 function renderRecipeList(recipes: Json[], routes: Json[]): void {
   if (!recipes.length) { playbookList.append(panelEmpty("No recipes match this search")); return; }
   for (const recipe of recipes) {
-    const card = document.createElement("button"); card.type = "button"; card.className = "management-list-row"; card.addEventListener("click", () => openRecipeDialog(recipe));
+    const card = document.createElement("button"); card.type = "button"; card.className = "management-list-row"; card.addEventListener("click", () => openRecipeEditor(recipe));
     const icon = document.createElement("span"); icon.className = "management-row-icon"; icon.append(sparkIcon());
     const content = document.createElement("div"); const name = document.createElement("strong"); name.textContent = recipe.displayName; const detail = document.createElement("small"); detail.textContent = `${recipe.playbookId} · ${recipe.adapter} · ${recipe.modelId}`; content.append(name, detail);
     const meta = document.createElement("span"); const routeNames = routes.filter((route: Json) => route.recipeId === recipe.id).map((route: Json) => route.displayName).join(", "); meta.textContent = `${formatTokenCount(recipe.contextTokens)} context${routeNames ? ` · ${routeNames}` : ""}`; card.append(icon, content, meta); playbookList.append(card);
@@ -637,17 +641,17 @@ function renderRecipeList(recipes: Json[], routes: Json[]): void {
 function renderRouteList(routes: Json[]): void {
   if (!routes.length) { playbookList.append(panelEmpty("No routes match this search")); return; }
   for (const route of routes) {
-    const card = document.createElement("button"); card.type = "button"; card.className = "management-list-row"; card.addEventListener("click", () => openRouteDialog(route));
+    const card = document.createElement("button"); card.type = "button"; card.className = "management-list-row"; card.addEventListener("click", () => openRouteEditor(route));
     const icon = document.createElement("span"); icon.className = "management-row-icon route-icon"; icon.append(svg('<path d="M4 5h5l2 3h5M4 15h5l2-3h5"></path><path d="m14 6 2-1-2-1M14 14l2 1-2 1"></path>'));
     const content = document.createElement("div"); const name = document.createElement("strong"); name.textContent = route.displayName; const detail = document.createElement("small"); detail.textContent = route.description || route.id; content.append(name, detail);
     const meta = document.createElement("span"); meta.textContent = `${route.enabled ? "Enabled" : "Disabled"} · ${route.recipeId}`; card.append(icon, content, meta); playbookList.append(card);
   }
 }
 
-function openRecipeDialog(recipe?: Json): void {
+function openRecipeEditor(recipe?: Json): void {
   editingRecipe = recipe;
   recipeForm.reset();
-  element("recipe-dialog-title").textContent = recipe ? "Edit recipe" : managementView === "playbooks" ? "Create playbook recipe" : "Create recipe";
+  element("recipe-editor-title").textContent = recipe ? "Edit recipe" : managementView === "playbooks" ? "Create playbook recipe" : "Create recipe";
   const value = (id: string) => element(id) as HTMLInputElement;
   value("recipe-playbook-id").value = recipe?.playbookId ?? "";
   value("recipe-id").value = recipe?.id ?? ""; value("recipe-id").readOnly = Boolean(recipe);
@@ -656,7 +660,7 @@ function openRecipeDialog(recipe?: Json): void {
   value("recipe-model-id").value = recipe?.modelId ?? "";
   value("recipe-context-tokens").value = String(recipe?.contextTokens ?? 131_072);
   (element("recipe-configuration") as HTMLTextAreaElement).value = JSON.stringify(recipe?.configuration ?? {}, null, 2);
-  recipeDialog.showModal(); value("recipe-playbook-id").focus();
+  showManagementEditor("recipe"); value("recipe-playbook-id").focus();
 }
 
 async function saveRecipe(): Promise<void> {
@@ -673,20 +677,20 @@ async function saveRecipe(): Promise<void> {
       capabilities: editingRecipe?.capabilities ?? { chatCompletions: true, streaming: true, toolCalls: false, responseFormat: false, minP: false, maxConcurrentGenerations: 1 },
       lifecycle: editingRecipe?.lifecycle ?? { loadPolicy: "onDemand", evictionPolicy: "idle-ttl", idleTtlSeconds: 300, minimumResidencySeconds: 0 },
     });
-    recipeDialog.close(); await loadManagementConfiguration(true); showToast("Recipe saved");
+    closeManagementEditor(); await loadManagementConfiguration(true); showToast("Recipe saved");
   } catch (error) { showToast(errorMessage(error)); } finally { setFormBusy(recipeForm, false); }
 }
 
-function openRouteDialog(route?: Json): void {
+function openRouteEditor(route?: Json): void {
   editingRoute = route;
-  routeForm.reset(); element("route-dialog-title").textContent = route ? "Edit route" : "Create route";
+  routeForm.reset(); element("route-editor-title").textContent = route ? "Edit route" : "Create route";
   const value = (id: string) => element(id) as HTMLInputElement;
   value("route-id").value = route?.id ?? ""; value("route-id").readOnly = Boolean(route);
   value("route-display-name").value = route?.displayName ?? ""; value("route-description").value = route?.description ?? "";
   (element("route-enabled") as HTMLInputElement).checked = route?.enabled ?? true;
   const recipeSelect = element("route-recipe-id") as HTMLSelectElement; recipeSelect.replaceChildren();
   for (const recipe of managementConfiguration?.recipes ?? []) recipeSelect.add(new Option(recipe.displayName, recipe.id, false, recipe.id === route?.recipeId));
-  routeDialog.showModal(); value("route-id").focus();
+  showManagementEditor("route"); value("route-id").focus();
 }
 
 async function saveRoute(): Promise<void> {
@@ -694,8 +698,25 @@ async function saveRoute(): Promise<void> {
   setFormBusy(routeForm, true);
   try {
     await api(`/api/v1/management/routes/${encodeURIComponent(id)}`, "PUT", { displayName: value("route-display-name"), description: value("route-description"), recipeId: (element("route-recipe-id") as HTMLSelectElement).value, enabled: (element("route-enabled") as HTMLInputElement).checked, ...(typeof editingRoute?.isDefault === "boolean" ? { isDefault: editingRoute.isDefault } : {}) });
-    routeDialog.close(); await loadManagementConfiguration(true); showToast("Route saved");
+    closeManagementEditor(); await loadManagementConfiguration(true); showToast("Route saved");
   } catch (error) { showToast(errorMessage(error)); } finally { setFormBusy(routeForm, false); }
+}
+
+function showManagementEditor(kind: "recipe" | "route"): void {
+  managementBrowser.hidden = true;
+  managementEditor.hidden = false;
+  recipeForm.hidden = kind !== "recipe";
+  routeForm.hidden = kind !== "route";
+  createManagement.hidden = true;
+  playbookPage.scrollTop = 0;
+}
+
+function closeManagementEditor(): void {
+  managementEditor.hidden = true;
+  managementBrowser.hidden = false;
+  recipeForm.hidden = true;
+  routeForm.hidden = true;
+  createManagement.hidden = false;
 }
 
 function updateModelControls(): void {
