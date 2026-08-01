@@ -15,7 +15,8 @@ No Codex bundle or extracted asset is committed to Fitz. The repo contains only 
 ## Dark theme
 
 - Base surface: `#181818`
-- Elevated surfaces: `#212121`, `#282828`, and `#303030`
+- Elevated surfaces: `#212121`, `#282828`, and a measured composer/menu result of `#323232`
+- Sidebar and title-bar surface in the supplied Codex screenshot: `#1a2225`
 - Ink: `#ffffff`
 - Secondary ink: 70% white
 - Tertiary ink: 50% white
@@ -43,7 +44,7 @@ No Codex bundle or extracted asset is committed to Fitz. The repo contains only 
 
 ## Component behavior
 
-- The composer is a translucent control surface with a half-pixel heavy ring and a restrained medium shadow.
+- The composer uses `rgba(54, 54, 54, 0.88)` over `#181818`, resolving to the measured `#323232` while retaining visible backdrop translucency. It has a 24px backdrop blur, half-pixel heavy ring, and restrained medium shadow.
 - Menus and hover cards use elevated translucent surfaces, a half-pixel ring, and backdrop blur.
 - The project/location/branch utility rail is a separate surface above the composer; it does not occupy or cover the input area.
 - Activity rows use 20px icon slots and muted 70% ink. Command, edit, generic-tool, and context-compaction rows have distinct SVG symbols.

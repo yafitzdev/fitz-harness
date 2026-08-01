@@ -144,11 +144,14 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("--codex-gray-900: #181818");
     expect(styles).toContain("--codex-gray-800: #212121");
     expect(styles).toContain("--codex-gray-700: #303030");
+    expect(styles).toContain("--codex-control: rgba(54,54,54,.88)");
+    expect(styles).toContain("--sidebar: #1a2225");
     expect(styles).toContain("--codex-radius-3xl: 20px");
     expect(styles).toContain("--codex-control-size: 28px");
     expect(styles).toContain("--sidebar-width: 275px");
     expect(styles).toContain("width: min(768px, calc(100% - 36px))");
     expect(styles).toContain("max-width: min(77%, 620px)");
+    expect(styles).toContain("backdrop-filter: blur(24px) saturate(120%)");
   });
 
   it("shows an interactive project metadata card on hover", () => {
