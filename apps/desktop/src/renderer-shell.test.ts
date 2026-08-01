@@ -144,14 +144,17 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("--codex-gray-900: #181818");
     expect(styles).toContain("--codex-gray-800: #212121");
     expect(styles).toContain("--codex-gray-700: #303030");
-    expect(styles).toContain("--codex-control: rgba(54,54,54,.88)");
+    expect(styles).toContain("--codex-control: rgba(51,51,51,.96)");
     expect(styles).toContain("--sidebar: #1a2225");
-    expect(styles).toContain("--codex-radius-3xl: 20px");
+    expect(styles).toContain("--codex-radius-3xl: 25px");
     expect(styles).toContain("--codex-control-size: 28px");
     expect(styles).toContain("--sidebar-width: 275px");
     expect(styles).toContain("width: min(768px, calc(100% - 36px))");
     expect(styles).toContain("max-width: min(77%, 620px)");
-    expect(styles).toContain("backdrop-filter: blur(24px) saturate(120%)");
+    expect(styles).toContain("backdrop-filter: blur(16px)");
+    expect(styles).toContain("--codex-elevation-prominent:");
+    expect(renderer).toContain("Math.max(240, Math.min(520, value))");
+    expect(html).toContain('d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"');
   });
 
   it("shows an interactive project metadata card on hover", () => {

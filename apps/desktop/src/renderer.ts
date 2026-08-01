@@ -1364,7 +1364,7 @@ function beginSidebarResize(event: PointerEvent): void {
 }
 
 function resizeSidebarWithKeyboard(event: KeyboardEvent): void { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); setSidebarWidth(sidebarWidth() + (event.key === "ArrowRight" ? 12 : -12)); localStorage.setItem("fitz-sidebar-width", String(sidebarWidth())); }
-function setSidebarWidth(value: number): void { shell.style.setProperty("--sidebar-width", `${Math.max(190, Math.min(420, value))}px`); sidebarResizer.setAttribute("aria-valuenow", String(Math.round(sidebarWidth()))); }
+function setSidebarWidth(value: number): void { shell.style.setProperty("--sidebar-width", `${Math.max(240, Math.min(520, value))}px`); sidebarResizer.setAttribute("aria-valuenow", String(Math.round(sidebarWidth()))); }
 function sidebarWidth(): number { return Number.parseFloat(getComputedStyle(shell).getPropertyValue("--sidebar-width")) || 254; }
 function restoreSidebarWidth(): void { const saved = Number(localStorage.getItem("fitz-sidebar-width")); if (Number.isFinite(saved) && saved > 0) setSidebarWidth(saved); }
 function setStatus(text: string, state: string): void { status.textContent = text; status.dataset.state = state; }
