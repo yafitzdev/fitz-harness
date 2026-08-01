@@ -255,21 +255,21 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .playbook-list { display: grid; gap: 12px; }
 .playbook-card { padding: 4px 0 18px; border-bottom: 1px solid var(--border-soft); }
 .playbook-card h3 { margin: 0 0 10px; font-size: 15px; }
-.recipe-card { width: 100%; min-height: 66px; display: grid; grid-template-columns: minmax(0,1fr) auto; overflow: hidden; border-radius: 10px; background: #242624; color: var(--text); }
+.recipe-card { width: 100%; min-height: 66px; display: grid; grid-template-columns: minmax(0,1fr) auto; overflow: hidden; border-radius: 10px; background: #242624; color: var(--text); transition: background-color 120ms ease; }
 .recipe-card + .recipe-card { margin-top: 7px; }
+.recipe-card:hover, .recipe-card:focus-within { background: #292b29; }
 .recipe-card-details { min-width: 0; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 4px 14px; padding: 11px 12px; background: transparent; color: var(--text); cursor: pointer; text-align: left; }
-.recipe-card-details:hover { background: #292b29; }
 .recipe-card-details span, .recipe-card-details small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recipe-card-details small { color: var(--muted); }
 .recipe-card-details code { color: #b8bbb5; font: 11px/1.4 "Cascadia Mono", Consolas, monospace; }
 .recipe-route-toggle { align-self: center; display: flex; align-items: center; gap: 1px; margin-right: 12px; padding: 2px; border: 1px solid #3d403c; border-radius: 11px; background: #1c1e1c; }
-.route-symbol { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 9px; background: transparent; color: #777b74; cursor: pointer; }
-.route-symbol:hover { border-color: #494c48; background: #303230; color: #d5d7d2; }
-.route-symbol.active { border-color: currentColor; background: #303230; }
-.route-symbol.route-fast.active { color: #f0ae4f; }
-.route-symbol.route-default.active { color: #80afff; }
-.route-symbol.route-smart.active { color: #c591ff; }
-.route-symbol svg { width: 17px; height: 17px; }
+.route-symbol { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 9px; background: transparent; color: #777b74; cursor: pointer; transition: background-color 100ms ease, color 100ms ease; }
+.route-symbol:hover { background: #303230; color: #d5d7d2; }
+.route-symbol.active { background: #303230; color: #ebece8; }
+.route-symbol svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.45; stroke-linecap: round; stroke-linejoin: round; }
+.route-symbol .route-icon-filled { display: none; fill: currentColor; stroke: none; }
+.route-symbol.active .route-icon-outline { display: none; }
+.route-symbol.active .route-icon-filled { display: block; }
 .management-editor { width: min(820px, calc(100% - 48px)); margin: 28px auto 80px; }
 .management-back { display: inline-flex; align-items: center; gap: 5px; margin: 0 0 24px -8px; padding: 7px 8px; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
 .management-back:hover { background: rgba(255,255,255,.05); color: var(--text); }

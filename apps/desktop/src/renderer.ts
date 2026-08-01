@@ -4,9 +4,9 @@ type Json = Record<string, any>;
 type FixedRouteId = "fast" | "default" | "smart";
 
 const FIXED_ROUTES: readonly { id: FixedRouteId; label: string; icon: string }[] = [
-  { id: "fast", label: "Fast", icon: '<path d="m11 2-6.5 9h5L9 18l6.5-9h-5z"></path>' },
-  { id: "default", label: "Default", icon: '<circle cx="10" cy="10" r="6"></circle><circle cx="10" cy="10" r="2"></circle>' },
-  { id: "smart", label: "Smart", icon: '<path d="M8 3a3 3 0 0 0-3 3v.3A3 3 0 0 0 3 9a3 3 0 0 0 2 2.8V14a3 3 0 0 0 3 3M12 3a3 3 0 0 1 3 3v.3A3 3 0 0 1 17 9a3 3 0 0 1-2 2.8V14a3 3 0 0 1-3 3M8 3v14M12 3v14M5 8h3M12 8h3M5 12h3M12 12h3"></path>' },
+  { id: "fast", label: "Fast", icon: '<path class="route-icon-outline" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path><path class="route-icon-filled" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path>' },
+  { id: "default", label: "Default", icon: '<g class="route-icon-outline"><circle cx="10" cy="10" r="6"></circle><circle cx="10" cy="10" r="1.6"></circle></g><circle class="route-icon-filled" cx="10" cy="10" r="6"></circle>' },
+  { id: "smart", label: "Smart", icon: '<g class="route-icon-outline"><path d="M8.75 2.75A3.25 3.25 0 0 0 4.3 5.7 3.2 3.2 0 0 0 3 8.3a3.5 3.5 0 0 0 2.1 3.2V14a3.25 3.25 0 0 0 3.65 3.2M11.25 2.75a3.25 3.25 0 0 1 4.45 2.95A3.2 3.2 0 0 1 17 8.3a3.5 3.5 0 0 1-2.1 3.2V14a3.25 3.25 0 0 1-3.65 3.2M8.75 2.75V17.2M11.25 2.75V17.2M5.1 8h3.65M11.25 8h3.65M5.1 12h3.65M11.25 12h3.65"></path></g><path class="route-icon-filled" d="M8.75 2.5A3.5 3.5 0 0 0 4.1 5.7 3.4 3.4 0 0 0 3 8.2c0 1.5.75 2.8 2 3.6V14a3.5 3.5 0 0 0 3.75 3.5v-15Zm2.5 0v15A3.5 3.5 0 0 0 15 14v-2.2a4 4 0 0 0 2-3.6 3.4 3.4 0 0 0-1.1-2.5 3.5 3.5 0 0 0-4.65-3.2Z"></path>' },
 ];
 
 let projectRecords: Json[] = [];
