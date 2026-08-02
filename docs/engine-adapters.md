@@ -9,10 +9,10 @@ Fitz supports four engine modes through `FITZ_ENGINE_MODE`:
 
 ## Engine repository folder
 
-The Playbooks workspace discovers immediate child folders beneath one configurable root. On Windows the default is `C:\Users\<user>\engines` (`%USERPROFILE%\engines`). Every child is an independent engine repository:
+The Playbooks workspace discovers immediate child folders beneath one configurable root. On Windows the default is `C:\Users\<user>\llm\engines`. Every child is an independent engine repository:
 
 ```text
-C:\Users\<user>\engines\
+C:\Users\<user>\llm\engines\
   engine-one\       # untouched Git checkout
   engine-two\       # untouched Git checkout
   private-fork\     # untouched Git checkout
@@ -27,7 +27,7 @@ An engine can use either connection mode:
 - **Managed**: Fitz launches and stops a configured command on Windows or WSL. Arguments can contain `{host}`, `{port}`, `{model}`, and `{context}` placeholders. The working directory must remain inside the engine repository.
 - **External**: Fitz connects to an already-running OpenAI-compatible server URL.
 
-Recipes belong to their registered engine. Switching a Fast, Default, or Smart route lets the lifecycle manager stop the previous managed engine and load the selected recipe on demand.
+Recipes belong to their registered engine. Model artifacts live separately beneath `C:\Users\<user>\llm\models`. Fast, Default, and Smart are assigned only from Connections; switching a connection route lets the lifecycle manager stop the previous managed engine and load the selected recipe on demand.
 
 ## Generic OpenAI-compatible server
 

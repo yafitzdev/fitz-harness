@@ -17,6 +17,8 @@ pnpm check
 pnpm dev
 ```
 
-The development host binds to `127.0.0.1`. `pnpm dev` (also available as `pnpm dev:ninfer`) starts the real NiNfer configuration with `data/fitz-ninfer.db` and exposes one `ninfer` playbook with two validated recipes. Routing is limited to the global `fast`, `default`, and `smart` assignments. On Windows, Fitz launches and stops the engine inside the configured Ubuntu WSL distribution while the desktop continues to connect to `127.0.0.1:8787`.
+The development host binds to `127.0.0.1`. `pnpm dev` (also available as `pnpm dev:ninfer`) starts the real NiNfer configuration and exposes the configured recipes through the Fast, Default, and Smart connection routes. On Windows, Fitz launches and stops the engine inside the configured Ubuntu WSL distribution while the desktop continues to connect to `127.0.0.1:8787`.
+
+Production installs bundle Electron, the host, Node, Pi, and npm. Mutable database, Pi package, log, and cache state lives beneath `%LOCALAPPDATA%\Fitz Codex`; clean engine repositories and model files live beneath `%USERPROFILE%\llm`. Tailscale remains an independently installed Windows service.
 
 Use `pnpm dev:fake` only when deterministic fake inference is explicitly needed for UI development.

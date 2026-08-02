@@ -115,6 +115,19 @@ describe("desktop renderer shell", () => {
     expect(main).not.toContain('apiKey: connection.apiKey, models');
   });
 
+  it("provides an inline Pi package and skills workspace", () => {
+    expect(html).toContain('id="manage-plugins"');
+    expect(html).toContain('id="plugins-page"');
+    expect(html).toContain('id="plugins-tab"');
+    expect(html).toContain('id="skills-tab"');
+    expect(html).toContain('id="plugin-catalog"');
+    expect(renderer).toContain('/api/v1/management/pi/catalog');
+    expect(renderer).toContain('/api/v1/management/pi/packages/install');
+    expect(renderer).toContain('Pi packages can run code with the same access as Fitz');
+    expect(main).toContain('ensureBundledLocalHost');
+    expect(main).toContain('join(process.resourcesPath, "host")');
+  });
+
   it("opens Playbooks as a first-class searchable workspace page", () => {
     expect(html).toContain('id="playbook-page"');
     expect(html).not.toContain('data-management-view=');

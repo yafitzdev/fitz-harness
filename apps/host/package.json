@@ -11,20 +11,22 @@
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.83.0",
     "@fitz/agent-core": "workspace:*",
     "@fitz/agent-pi": "workspace:*",
-    "@fitz/context": "workspace:*",
     "@fitz/connectivity": "workspace:*",
-    "@fitz/media": "workspace:*",
+    "@fitz/context": "workspace:*",
     "@fitz/engine-fake": "workspace:*",
+    "@fitz/engine-llama-cpp": "workspace:*",
     "@fitz/engine-ninfer": "workspace:*",
     "@fitz/engine-openai-compatible": "workspace:*",
-    "@fitz/engine-llama-cpp": "workspace:*",
     "@fitz/inference-core": "workspace:*",
+    "@fitz/media": "workspace:*",
     "@fitz/observability": "workspace:*",
     "@fitz/protocol": "workspace:*",
     "@fitz/security": "workspace:*",
     "@fitz/storage": "workspace:*",
-    "fastify": "^5.11.0"
+    "fastify": "^5.11.0",
+    "npm": "11.10.0"
   }
 }

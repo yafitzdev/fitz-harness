@@ -11,5 +11,10 @@ through the Fitz OpenAI gateway to the selected engine. Pi tool lifecycle events
 native run protocol. Cancellation propagates to `AgentSession.abort()`, and the session is disposed
 after completion or failure.
 
+Pi configuration and user-installed packages persist beneath `%LOCALAPPDATA%\Fitz Codex\pi` on
+Windows. The Plugins workspace searches the public npm `pi-package` catalog and lets administrators
+install, update, enable, disable, or remove extensions and skills. Extension tools join the normal
+tool allowlist and remain subject to Fitz Full access, Ask first, and Read only enforcement.
+
 `FITZ_AGENT_CWD` can force a fixed working folder, and `FITZ_AGENT_BASE_URL` can override the local
 gateway URL. Normal desktop use needs neither override.

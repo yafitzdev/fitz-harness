@@ -1,5 +1,5 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from "electron";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
@@ -105,10 +105,25 @@ if (process.env.FITZ_DESKTOP_SMOKE === "1") {
   }
   app.quit();
 } else {
+  await ensureBundledLocalHost();
   createWindow();
   if (app.isPackaged) void autoUpdater.checkForUpdates().catch(() => undefined);
 }
 app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); }); app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
+async function ensureBundledLocalHost(): Promise<void> {
+  if (!app.isPackaged || !isLoopbackHost(hostUrl)) return;
+  try { const response = await fetch(new URL("/health", hostUrl), { signal: AbortSignal.timeout(800) }); if (response.ok) return; } catch {}
+  const hostRoot = join(process.resourcesPath, "host");
+  const executable = join(hostRoot, "runtime", "node.exe");
+  const server = join(hostRoot, "dist", "server.js");
+  if (!existsSync(executable) || !existsSync(server)) return;
+  const child = spawn(executable, [server], { cwd: hostRoot, detached: true, windowsHide: true, stdio: "ignore", env: { ...process.env, FITZ_HOST: "127.0.0.1", FITZ_PORT: String(new URL(hostUrl).port || 8787) } });
+  child.unref();
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    try { const response = await fetch(new URL("/health", hostUrl), { signal: AbortSignal.timeout(500) }); if (response.ok) return; } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+}
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function commandLineValue(name: string): string | undefined { const prefix = `--${name}=`; return process.argv.find((value) => value.startsWith(prefix))?.slice(prefix.length); }
 function isLoopbackHost(value: URL): boolean { const name = value.hostname.replace(/^\[|\]$/g, "").toLowerCase(); return name === "127.0.0.1" || name === "::1" || name === "localhost"; }

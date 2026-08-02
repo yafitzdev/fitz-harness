@@ -9,6 +9,9 @@ type ConnectionModelView = ConsumerConnectionSummary["models"][number] & { displ
 type HostedConnectionView = Omit<ConsumerConnectionSummary, "models"> & { hosted: true; availableModels: ConnectionModelView[] };
 type SavedConnectionView = Omit<ConsumerConnectionSummary, "models"> & { hosted: false; availableModels: ConnectionModelView[]; source: ConsumerConnectionSummary };
 type ConnectionView = HostedConnectionView | SavedConnectionView;
+type PiCatalogPackage = { name: string; description: string; version: string; publisher: string; keywords: string[]; types: string[] };
+type InstalledPiPackage = { source: string; displayName: string; version?: string; description?: string; enabled: boolean; resources: Record<string, number> };
+type PiSkillSummary = { name: string; description: string; source: string; enabled: boolean; filePath: string };
 
 const FIXED_ROUTES: readonly { id: FixedRouteId; label: string; icon: string }[] = [
   { id: "fast", label: "Fast", icon: '<path class="route-icon-outline" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path><path class="route-icon-filled" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path>' },
@@ -35,6 +38,11 @@ let administrationUsers: Json[] = [];
 let administrationPolicies: Json[] = [];
 let diagnosticBundle: Json | undefined;
 let consumerConnectionRecords: ConsumerConnectionSummary[] = [];
+let installedPiPackages: InstalledPiPackage[] = [];
+let piCatalogPackages: PiCatalogPackage[] = [];
+let installedPiSkills: PiSkillSummary[] = [];
+let piCatalogTotal = 0;
+let pluginSearchTimer: ReturnType<typeof setTimeout> | undefined;
 let selectedConnectionId = LOCAL_CONNECTION_ID;
 let pendingRemoteAction: "enable" | "disable" | undefined;
 let pendingStartupAction: "install" | "remove" | undefined;
@@ -151,6 +159,18 @@ const renameLabel = element("rename-label");
 const playbookPage = element("playbook-page");
 const connectionsPage = element("connections-page");
 const connectionsButton = element("manage-connections") as HTMLButtonElement;
+const pluginsPage = element("plugins-page");
+const pluginsButton = element("manage-plugins") as HTMLButtonElement;
+const pluginsView = element("plugins-view");
+const skillsView = element("skills-view");
+const pluginsTab = element("plugins-tab") as HTMLButtonElement;
+const skillsTab = element("skills-tab") as HTMLButtonElement;
+const pluginSearch = element("plugin-search") as HTMLInputElement;
+const skillSearch = element("skill-search") as HTMLInputElement;
+const installedPlugins = element("installed-plugins");
+const pluginCatalog = element("plugin-catalog");
+const installedSkills = element("installed-skills");
+const loadMorePlugins = element("load-more-plugins") as HTMLButtonElement;
 const connectionForm = element("connection-form") as HTMLFormElement;
 const consumerConnectionId = element("consumer-connection-id") as HTMLInputElement;
 const consumerConnectionName = element("consumer-connection-name") as HTMLInputElement;
@@ -262,7 +282,14 @@ element("new-project").addEventListener("click", () => openProjectDialog());
 element("new-session").addEventListener("click", openNewChat);
 element("manage-playbooks").addEventListener("click", () => void openPlaybookPage());
 connectionsButton.addEventListener("click", () => void openConnectionsPage());
+pluginsButton.addEventListener("click", () => void openPluginsPage());
 administrationButton.addEventListener("click", () => void openAdministrationPage());
+element("refresh-plugins").addEventListener("click", () => void loadPiPackages(false));
+pluginsTab.addEventListener("click", () => setPluginView("plugins"));
+skillsTab.addEventListener("click", () => setPluginView("skills"));
+pluginSearch.addEventListener("input", () => { if (pluginSearchTimer) clearTimeout(pluginSearchTimer); pluginSearchTimer = setTimeout(() => void loadPiPackages(false), 250); });
+skillSearch.addEventListener("input", renderPiSkills);
+loadMorePlugins.addEventListener("click", () => void loadPiCatalog(true));
 element("refresh-administration").addEventListener("click", () => void loadAdministration());
 element("refresh-playbooks").addEventListener("click", () => void loadManagementConfiguration(true));
 element("refresh-connections").addEventListener("click", () => void syncAndLoadConsumerConnections(true));
@@ -824,27 +851,141 @@ async function openPlaybookPage(): Promise<void> {
   closePopovers();
   setContextPanel(false);
   administrationPage.hidden = true;
+  pluginsPage.hidden = true;
   connectionsPage.hidden = true;
   playbookPage.hidden = false;
   closeManagementEditor();
   setConversationInert(true);
   element("manage-playbooks").classList.add("active");
   connectionsButton.classList.remove("active");
+  pluginsButton.classList.remove("active");
   administrationButton.classList.remove("active");
   playbookList.replaceChildren(panelEmpty("Loading playbooks…"));
   await loadManagementConfiguration(true);
 }
 
-async function openConnectionsPage(): Promise<void> { if (!pairingPage.hidden) return; closePopovers(); setContextPanel(false); pairingPage.hidden = true; administrationPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = false; closeManagementEditor(); closeConnectionEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); administrationButton.classList.remove("active"); connectionsButton.classList.add("active"); await syncAndLoadConsumerConnections(false); }
-async function openAdministrationPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); setContextPanel(false); pairingPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = true; administrationPage.hidden = false; closeManagementEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); connectionsButton.classList.remove("active"); administrationButton.classList.add("active"); adminUsers.replaceChildren(panelEmpty("Loading users…")); await loadAdministration(); }
-function showPairingPage(message: string): void { closePopovers(); setContextPanel(false); administrationPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = true; pairingPage.hidden = false; closeManagementEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); connectionsButton.classList.remove("active"); administrationButton.classList.remove("active"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
-function showConversationWorkspace(): void { pairingPage.hidden = true; administrationPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = true; closeManagementEditor(); setConversationInert(false); element("manage-playbooks").classList.remove("active"); connectionsButton.classList.remove("active"); administrationButton.classList.remove("active"); }
+async function openConnectionsPage(): Promise<void> { if (!pairingPage.hidden) return; closePopovers(); setContextPanel(false); pairingPage.hidden = true; administrationPage.hidden = true; pluginsPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = false; closeManagementEditor(); closeConnectionEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); administrationButton.classList.remove("active"); pluginsButton.classList.remove("active"); connectionsButton.classList.add("active"); await syncAndLoadConsumerConnections(false); }
+async function openPluginsPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); setContextPanel(false); pairingPage.hidden = true; administrationPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = true; pluginsPage.hidden = false; closeManagementEditor(); closeConnectionEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); connectionsButton.classList.remove("active"); administrationButton.classList.remove("active"); pluginsButton.classList.add("active"); installedPlugins.replaceChildren(panelEmpty("Loading plugins…")); await loadPiPackages(false); }
+async function openAdministrationPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); setContextPanel(false); pairingPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = true; pluginsPage.hidden = true; administrationPage.hidden = false; closeManagementEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); connectionsButton.classList.remove("active"); pluginsButton.classList.remove("active"); administrationButton.classList.add("active"); adminUsers.replaceChildren(panelEmpty("Loading users…")); await loadAdministration(); }
+function showPairingPage(message: string): void { closePopovers(); setContextPanel(false); administrationPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = true; pluginsPage.hidden = true; pairingPage.hidden = false; closeManagementEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); connectionsButton.classList.remove("active"); pluginsButton.classList.remove("active"); administrationButton.classList.remove("active"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
+function showConversationWorkspace(): void { pairingPage.hidden = true; administrationPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = true; pluginsPage.hidden = true; closeManagementEditor(); setConversationInert(false); element("manage-playbooks").classList.remove("active"); connectionsButton.classList.remove("active"); pluginsButton.classList.remove("active"); administrationButton.classList.remove("active"); }
 function setConversationInert(inert: boolean): void { for (const area of [workspaceHeader, messages, composerDock]) { area.toggleAttribute("inert", inert); area.setAttribute("aria-hidden", String(inert)); } }
 
 function applyNavigation(): void {
   element("manage-playbooks").hidden = false;
   connectionsButton.hidden = false;
+  pluginsButton.hidden = !administrator;
   administrationButton.hidden = !administrator;
+}
+
+function setPluginView(view: "plugins" | "skills"): void {
+  const showPlugins = view === "plugins";
+  pluginsView.hidden = !showPlugins;
+  skillsView.hidden = showPlugins;
+  pluginsTab.classList.toggle("active", showPlugins);
+  skillsTab.classList.toggle("active", !showPlugins);
+  if (!showPlugins) renderPiSkills();
+}
+
+async function loadPiPackages(appendCatalog: boolean): Promise<void> {
+  try {
+    if (!appendCatalog) {
+      const [packages, skills] = await Promise.all([
+        api("/api/v1/management/pi/packages"),
+        api("/api/v1/management/pi/skills"),
+      ]);
+      installedPiPackages = packages.data ?? [];
+      installedPiSkills = skills.data ?? [];
+      renderInstalledPiPackages();
+      renderPiSkills();
+    }
+    await loadPiCatalog(appendCatalog);
+  } catch (error) {
+    installedPlugins.replaceChildren(panelEmpty(errorMessage(error)));
+    pluginCatalog.replaceChildren();
+    showToast(errorMessage(error));
+  }
+}
+
+async function loadPiCatalog(append: boolean): Promise<void> {
+  const offset = append ? piCatalogPackages.length : 0;
+  const query = encodeURIComponent(pluginSearch.value.trim());
+  const response = await api(`/api/v1/management/pi/catalog?query=${query}&offset=${offset}&limit=30`);
+  piCatalogTotal = response.data?.total ?? 0;
+  piCatalogPackages = append ? [...piCatalogPackages, ...(response.data?.packages ?? [])] : (response.data?.packages ?? []);
+  renderPiCatalog();
+}
+
+function renderInstalledPiPackages(): void {
+  installedPlugins.replaceChildren();
+  if (!installedPiPackages.length) { installedPlugins.append(panelEmpty("No plugins installed")); return; }
+  for (const entry of installedPiPackages) {
+    const card = piPackageCard(entry.displayName, entry.description ?? entry.source, entry.version);
+    const counts = Object.entries(entry.resources).filter(([, count]) => count > 0).map(([kind, count]) => `${count} ${kind}`);
+    if (counts.length) card.querySelector(".plugin-meta")?.append(document.createTextNode(` · ${counts.join(" · ")}`));
+    const actions = card.querySelector(".plugin-actions") as HTMLElement;
+    actions.append(pluginAction(entry.enabled ? "Disable" : "Enable", () => mutatePiPackage("PUT", "/api/v1/management/pi/packages/enabled", { source: entry.source, enabled: !entry.enabled })), pluginAction("Update", () => mutatePiPackage("POST", "/api/v1/management/pi/packages/update", { source: entry.source })), pluginAction("Remove", () => mutatePiPackage("DELETE", "/api/v1/management/pi/packages", { source: entry.source }), true));
+    installedPlugins.append(card);
+  }
+}
+
+function renderPiCatalog(): void {
+  pluginCatalog.replaceChildren();
+  const installed = new Set(installedPiPackages.map((entry) => entry.source.replace(/^npm:/, "")));
+  if (!piCatalogPackages.length) { pluginCatalog.append(panelEmpty("No matching Pi packages")); }
+  for (const entry of piCatalogPackages) {
+    const card = piPackageCard(entry.name, entry.description, entry.version);
+    const actions = card.querySelector(".plugin-actions") as HTMLElement;
+    if (installed.has(entry.name)) { const mark = document.createElement("span"); mark.className = "plugin-installed-mark"; mark.textContent = "✓ Installed"; actions.append(mark); }
+    else actions.append(pluginInstallAction(entry.name));
+    pluginCatalog.append(card);
+  }
+  loadMorePlugins.hidden = piCatalogPackages.length >= piCatalogTotal;
+}
+
+function renderPiSkills(): void {
+  installedSkills.replaceChildren();
+  const query = skillSearch.value.trim().toLowerCase();
+  const visible = installedPiSkills.filter((skill) => !query || `${skill.name} ${skill.description} ${skill.source}`.toLowerCase().includes(query));
+  if (!visible.length) { installedSkills.append(panelEmpty("No matching skills")); return; }
+  for (const skill of visible) {
+    const card = piPackageCard(skill.name, skill.description || skill.source);
+    card.classList.add("skill-card");
+    const actions = card.querySelector(".plugin-actions") as HTMLElement;
+    const mark = document.createElement("span"); mark.className = "plugin-installed-mark"; mark.textContent = skill.enabled ? "✓" : "Disabled"; actions.append(mark);
+    installedSkills.append(card);
+  }
+}
+
+function piPackageCard(name: string, description: string, version?: string): HTMLElement {
+  const card = document.createElement("article"); card.className = "plugin-card";
+  const icon = document.createElement("span"); icon.className = "plugin-icon"; icon.append(sparkIcon());
+  const copy = document.createElement("div"); copy.className = "plugin-copy";
+  const heading = document.createElement("strong"); heading.textContent = name;
+  const meta = document.createElement("span"); meta.className = "plugin-meta"; meta.textContent = `${description}${version ? ` · ${version}` : ""}`;
+  copy.append(heading, meta); const actions = document.createElement("div"); actions.className = "plugin-actions"; card.append(icon, copy, actions); return card;
+}
+
+function pluginAction(label: string, action: () => Promise<void>, danger = false): HTMLButtonElement {
+  const button = document.createElement("button"); button.type = "button"; button.className = danger ? "plugin-action danger" : "plugin-action"; button.textContent = label;
+  button.addEventListener("click", async () => { button.disabled = true; const old = button.textContent; button.textContent = "Working…"; try { await action(); } finally { button.disabled = false; button.textContent = old; } }); return button;
+}
+
+function pluginInstallAction(name: string): HTMLButtonElement {
+  const button = document.createElement("button"); button.type = "button"; button.className = "plugin-action"; button.textContent = "Install"; button.title = "Pi packages can run code with the same access as Fitz";
+  button.addEventListener("click", async () => {
+    if (button.dataset.confirm !== "true") { button.dataset.confirm = "true"; button.textContent = "Install?"; return; }
+    button.disabled = true; button.textContent = "Installing…";
+    try { await mutatePiPackage("POST", "/api/v1/management/pi/packages/install", { source: `npm:${name}` }); }
+    finally { button.disabled = false; button.dataset.confirm = "false"; button.textContent = "Install"; }
+  });
+  button.addEventListener("mouseleave", () => { if (!button.disabled) { button.dataset.confirm = "false"; button.textContent = "Install"; } });
+  return button;
+}
+
+async function mutatePiPackage(method: string, path: string, body: unknown): Promise<void> {
+  try { await api(path, method, body); await loadPiPackages(false); showToast("Plugin configuration updated"); }
+  catch (error) { showToast(errorMessage(error)); }
 }
 
 async function syncAndLoadConsumerConnections(reportFailure: boolean): Promise<void> {

@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NInferEngineAdapter } from "@fitz/engine-ninfer";
@@ -13,10 +13,14 @@ import { PiAgentRuntime } from "@fitz/agent-pi";
 import { createNInferPlaybook, NINFER_PLAYBOOK_ID } from "./ninfer-playbook.js";
 import { createToolApprovalRequester } from "./tool-approval-gate.js";
 import { WindowsStartupManager } from "@fitz/connectivity";
+import { PiPackageService } from "./pi-packages.js";
+import { resolveRuntimePaths } from "./runtime-paths.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
-const defaultDataPath = resolve(moduleDirectory, "../../../data/fitz.db");
-const databasePath = process.env.FITZ_DATABASE_PATH ?? defaultDataPath;
+const runtimePaths = resolveRuntimePaths();
+const bundledNpmCli = resolve(moduleDirectory, "../node_modules/npm/bin/npm-cli.js");
+const npmCliPath = process.env.FITZ_NPM_CLI_PATH ?? (existsSync(bundledNpmCli) ? bundledNpmCli : undefined);
+const databasePath = runtimePaths.databasePath;
 const host = process.env.FITZ_HOST ?? "127.0.0.1";
 const port = parsePort(process.env.FITZ_PORT ?? "8787");
 const engineMode = process.env.FITZ_ENGINE_MODE ?? "ninfer";
@@ -30,6 +34,7 @@ const agentBaseUrl = process.env.FITZ_AGENT_BASE_URL ?? `http://127.0.0.1:${port
 const internalAgentToken = agentRuntimeMode === "pi" && !process.env.FITZ_AGENT_BASE_URL ? randomBytes(32).toString("base64url") : undefined;
 
 mkdirSync(dirname(databasePath), { recursive: true });
+for (const directory of [runtimePaths.piAgentDir, runtimePaths.logsDir, runtimePaths.cacheDir, runtimePaths.engineRoot, runtimePaths.modelRoot]) mkdirSync(directory, { recursive: true });
 const engineOptions = engineModeOptions(engineMode);
 const store = new SqliteStore(databasePath);
 const authPepper = authMode === "required" ? resolveAuthPepper(store) : undefined;
@@ -42,6 +47,12 @@ const runtime = createHost({
   ...(internalAgentToken ? { internalAgentToken } : {}),
   localPort: port,
   startupManager: new WindowsStartupManager(resolve(moduleDirectory, "../start-host.ps1")),
+  engineRoot: runtimePaths.engineRoot,
+  piPackages: new PiPackageService({
+    agentDir: runtimePaths.piAgentDir,
+    cwd: process.cwd(),
+    ...(npmCliPath ? { npmCommand: [process.execPath, npmCliPath] } : {}),
+  }),
   ...(authPepper ? { authPepper } : {}),
   ...engineOptions,
   ...(process.env.FITZ_ADMIN_TOKEN ? { adminToken: process.env.FITZ_ADMIN_TOKEN } : {}),
@@ -56,6 +67,7 @@ const runtime = createHost({
         return project?.rootPath ?? process.cwd();
       },
       requestToolApproval: createToolApprovalRequester(store),
+      agentDir: runtimePaths.piAgentDir,
     }),
   } : {}),
 });

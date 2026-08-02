@@ -1,8 +1,6 @@
 import type { AgentRuntime, AgentRuntimeEvent, AgentRuntimeRun } from "@fitz/agent-core";
 import type { AgentRunRequest, ToolAccessMode } from "@fitz/protocol";
 import type { Model } from "@earendil-works/pi-ai/compat";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 type PiEvent =
   | { type: "message_update"; assistantMessageEvent: { type: string; delta?: string } }
@@ -16,12 +14,13 @@ export interface ToolApprovalHandle { approvalId: string; decision: Promise<"app
 export type ToolApprovalRequester = (request: PiToolCall & { sessionId: string }, signal: AbortSignal) => ToolApprovalHandle;
 export type PiSessionFactory = (options: {
   cwd: string;
-  tools: readonly string[];
+  tools?: readonly string[];
   routeId: string;
   baseUrl: string;
   apiKey: string;
   contextWindow: number;
   maxTokens: number;
+  agentDir: string;
   approveTool: (request: PiToolCall) => Promise<PiToolApprovalResult>;
 }) => Promise<PiSession>;
 export interface PiAgentRuntimeOptions {
@@ -32,6 +31,7 @@ export interface PiAgentRuntimeOptions {
   contextWindow?: number;
   createSession?: PiSessionFactory;
   requestToolApproval?: ToolApprovalRequester;
+  agentDir?: string;
 }
 
 const CODING_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"] as const;
@@ -40,12 +40,13 @@ const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 export class PiAgentRuntime implements AgentRuntime {
   readonly id = "pi";
   readonly #cwd: string | ((request: AgentRunRequest) => string);
-  readonly #tools: readonly string[];
+  readonly #tools: readonly string[] | undefined;
   readonly #baseUrl: string;
   readonly #apiKey: string;
   readonly #contextWindow: number;
   readonly #createSession: PiSessionFactory;
   readonly #requestToolApproval: ToolApprovalRequester | undefined;
+  readonly #agentDir: string;
   constructor(options: PiAgentRuntimeOptions = {}) {
     this.#cwd = options.cwd ?? process.cwd();
     this.#tools = options.tools ?? CODING_TOOLS;
@@ -54,18 +55,20 @@ export class PiAgentRuntime implements AgentRuntime {
     this.#contextWindow = options.contextWindow ?? 100_000;
     this.#createSession = options.createSession ?? createSdkSession;
     this.#requestToolApproval = options.requestToolApproval;
+    this.#agentDir = options.agentDir ?? process.env.FITZ_PI_AGENT_DIR ?? `${process.cwd()}/.fitz-pi`;
   }
   run(request: AgentRunRequest, signal?: AbortSignal): AgentRuntimeRun {
     const channel = new EventChannel(); let session: PiSession | undefined; const controller = new AbortController();
     const cancel = () => { controller.abort(); void session?.abort(); }; if (signal) { if (signal.aborted) cancel(); else signal.addEventListener("abort", cancel, { once: true }); }
     void (async () => { try { session = await this.#createSession({
       cwd: typeof this.#cwd === "function" ? this.#cwd(request) : this.#cwd,
-      tools: this.#tools,
+      ...(this.#tools ? { tools: this.#tools } : {}),
       routeId: request.model,
       baseUrl: this.#baseUrl,
       apiKey: this.#apiKey,
       contextWindow: this.#contextWindow,
       maxTokens: request.maxTokens ?? 16_384,
+      agentDir: this.#agentDir,
       approveTool: (toolCall) => this.#approveTool(request.accessMode ?? "full", request.sessionId, toolCall, controller.signal, channel),
     }); if (controller.signal.aborted) { await session.abort(); throw abortError(); }
       let sawAssistant = false;
@@ -121,11 +124,7 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
   };
   const resourceLoader = new sdk.DefaultResourceLoader({
     cwd: options.cwd,
-    agentDir: join(tmpdir(), "fitz-pi-agent"),
-    noExtensions: true,
-    noSkills: true,
-    noPromptTemplates: true,
-    noThemes: true,
+    agentDir: options.agentDir,
     extensionFactories: [{
       name: "fitz-tool-approval",
       hidden: true,
@@ -138,9 +137,11 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
     }],
   });
   await resourceLoader.reload();
+  const extensionTools = resourceLoader.getExtensions().extensions.flatMap((extension) => [...extension.tools.keys()]);
+  const enabledTools = [...new Set([...(options.tools ?? CODING_TOOLS), ...extensionTools])];
   const result = await sdk.createAgentSession({
     cwd: options.cwd,
-    tools: [...options.tools],
+    tools: enabledTools,
     model,
     thinkingLevel: "off",
     modelRuntime,
