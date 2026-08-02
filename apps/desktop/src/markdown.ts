@@ -16,6 +16,14 @@ function renderBlocks(target: HTMLElement, lines: string[]): void {
     const line = lines[index] ?? "";
     if (!line.trim()) { index += 1; continue; }
 
+    // Raw HTML in Markdown is intentionally not executed in the desktop renderer.
+    // Skip the block instead of exposing its tags as document text; users can still
+    // inspect the exact source with the Inspector's source toggle.
+    if (/^\s*</.test(line)) {
+      while (index < lines.length && (lines[index] ?? "").trim()) index += 1;
+      continue;
+    }
+
     const fence = line.match(/^\s*```([^`]*)$/);
     if (fence) {
       const code: string[] = []; index += 1;
@@ -83,33 +91,54 @@ function appendInline(target: HTMLElement, source: string): void {
   const pattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|~~[^~\n]+~~|\[[^\]\n]+\]\([^)\s]+(?:\s+"[^"]*")?\)|\*[^*\n]+\*|_[^_\n]+_)/g;
   let cursor = 0;
   for (const match of source.matchAll(pattern)) {
-    const start = match.index ?? 0; if (start > cursor) target.append(document.createTextNode(source.slice(cursor, start)));
+    const start = match.index ?? 0; if (start > cursor) appendPlainText(target, source.slice(cursor, start));
     const token = match[0];
-    if (token.startsWith("`")) { const code = document.createElement("code"); code.textContent = token.slice(1, -1); target.append(code); }
+    if (token.startsWith("`")) { const value = token.slice(1, -1); const code = document.createElement("code"); code.textContent = value; const reference = resourceTarget(value); if (reference) { const link = resourceLink("", reference); link.classList.add("inline-code-resource"); link.append(code); target.append(link); } else target.append(code); }
     else if (token.startsWith("**") || token.startsWith("__")) { const strong = document.createElement("strong"); appendInline(strong, token.slice(2, -2)); target.append(strong); }
     else if (token.startsWith("~~")) { const strike = document.createElement("del"); appendInline(strike, token.slice(2, -2)); target.append(strike); }
     else if (token.startsWith("[")) appendLink(target, token);
     else { const emphasis = document.createElement("em"); appendInline(emphasis, token.slice(1, -1)); target.append(emphasis); }
     cursor = start + token.length;
   }
-  if (cursor < source.length) target.append(document.createTextNode(source.slice(cursor)));
+  if (cursor < source.length) appendPlainText(target, source.slice(cursor));
 }
 
 function appendLink(target: HTMLElement, token: string): void {
   const match = token.match(/^\[([^\]]+)]\(([^)\s]+)(?:\s+"([^"]*)")?\)$/); if (!match) { target.append(document.createTextNode(token)); return; }
-  const href = safeExternalUrl(match[2]!); if (!href) { target.append(document.createTextNode(match[1]!)); return; }
-  const link = document.createElement("a"); link.href = href; link.textContent = match[1]!; if (match[3]) link.title = match[3];
-  link.addEventListener("click", (event) => { event.preventDefault(); void window.fitz.openExternal(href); }); target.append(link);
+  const reference = resourceTarget(match[2]!); if (!reference) { target.append(document.createTextNode(match[1]!)); return; }
+  const link = resourceLink(match[1]!, reference); if (match[3]) link.title = match[3]; target.append(link);
 }
 
-function safeExternalUrl(value: string): string | undefined {
-  try { const url = new URL(value); return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : undefined; }
-  catch { return undefined; }
+function appendPlainText(target: HTMLElement, source: string): void {
+  const pattern = /(https?:\/\/[^\s<]+|[A-Za-z]:[\\/](?:[^<>:"|?*\r\n]+[\\/])*[^<>:"|?*\r\n]+\.[A-Za-z0-9]{1,12}(?::\d+(?::\d+)?)?|(?:\.{0,2}[\\/])?(?:[\w@().-]+[\\/])+[\w@().-]+\.[A-Za-z0-9]{1,12}(?:(?::\d+(?::\d+)?)|(?:#L\d+(?:C\d+)?))?)/g;
+  let cursor = 0;
+  for (const match of source.matchAll(pattern)) {
+    const start = match.index ?? 0;
+    if (start > cursor) target.append(document.createTextNode(source.slice(cursor, start)));
+    let reference = match[0];
+    const punctuation = reference.match(/[),.;!?]+$/)?.[0] ?? "";
+    if (punctuation && reference.startsWith("http")) reference = reference.slice(0, -punctuation.length);
+    target.append(resourceLink(reference, reference));
+    if (punctuation) target.append(document.createTextNode(punctuation));
+    cursor = start + match[0].length;
+  }
+  if (cursor < source.length) target.append(document.createTextNode(source.slice(cursor)));
+}
+
+function resourceTarget(value: string): string | undefined {
+  if (/^https?:\/\//i.test(value) || /^file:\/\//i.test(value)) return value;
+  return /[\\/]/.test(value) || /\.[A-Za-z0-9]{1,12}(?:(?::\d+)|(?:#L\d+))?$/i.test(value) ? value : undefined;
+}
+
+function resourceLink(label: string, reference: string): HTMLAnchorElement {
+  const link = document.createElement("a"); link.href = "#"; link.className = "resource-link"; link.textContent = label; link.dataset.resource = reference;
+  link.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); window.dispatchEvent(new CustomEvent("fitz:open-resource", { detail: { reference } })); });
+  return link;
 }
 
 function isBlockStart(lines: string[], index: number): boolean {
   const line = lines[index] ?? "";
-  return /^\s*```/.test(line) || /^(#{1,6})\s+/.test(line) || /^\s*(?:[-+*]|\d+[.)])\s+/.test(line) || /^\s*>\s?/.test(line) || /^\s*(?:---+|___+|\*\*\*+)\s*$/.test(line) || looksLikeTable(lines, index);
+  return /^\s*</.test(line) || /^\s*```/.test(line) || /^(#{1,6})\s+/.test(line) || /^\s*(?:[-+*]|\d+[.)])\s+/.test(line) || /^\s*>\s?/.test(line) || /^\s*(?:---+|___+|\*\*\*+)\s*$/.test(line) || looksLikeTable(lines, index);
 }
 
 function looksLikeTable(lines: string[], index: number): boolean {

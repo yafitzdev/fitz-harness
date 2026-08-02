@@ -266,7 +266,8 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('if (role === "assistant" || role === "commentary") setMarkdown(content, text); else content.textContent = text');
     expect(markdown).toContain("target.replaceChildren()");
     expect(markdown).not.toContain("innerHTML");
-    expect(markdown).toContain('url.protocol === "https:" || url.protocol === "http:"');
+    expect(markdown).toContain('window.dispatchEvent(new CustomEvent("fitz:open-resource"');
+    expect(markdown).toContain('link.className = "resource-link"');
     expect(markdown).toContain('container.className = "markdown-code"');
     expect(markdown).toContain('copy.textContent = "Copy"');
     expect(markdown).toContain('document.createElement("table")');
@@ -365,11 +366,19 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".queue-cancel");
   });
 
-  it("keeps the deferred Environment surface out of the current UI", () => {
+  it("replaces the deferred Environment surface with a resource Inspector", () => {
     expect(html).toContain('id="context-toggle" class="icon-button" type="button" title="Toggle environment panel" aria-label="Toggle environment panel" aria-expanded="false" hidden');
-    expect(html).toContain('id="context-panel" class="context-panel" aria-label="Environment panel" hidden');
+    expect(html).toContain('id="context-panel" class="inspector-panel" aria-label="Inspector" hidden');
+    for (const id of ["inspector-title", "inspector-location", "inspector-render-toggle", "inspector-open", "inspector-close"]) expect(html).toContain(`id="${id}"`);
     expect(renderer).not.toContain('item("Toggle environment"');
-    expect(renderer).toContain("contextPanel.hidden = true");
+    expect(renderer).toContain('window.addEventListener("fitz:open-resource"');
+    expect(renderer).toContain("window.fitz.previewResource({ projectRoot, reference })");
+    expect(renderer).toContain("renderResourcePreview(inspectedPreview)");
+    expect(renderer).toContain('frame.setAttribute("sandbox", "")');
+    expect(styles).toContain(".inspector-panel");
+    expect(styles).toContain(".workspace.inspector-open .messages");
+    expect(preload).toContain('ipcRenderer.invoke("fitz:preview-resource", input)');
+    expect(main).toContain('ipcMain.handle("fitz:preview-resource"');
   });
 
   it("pairs a desktop without exposing its durable bearer credential to the renderer", () => {

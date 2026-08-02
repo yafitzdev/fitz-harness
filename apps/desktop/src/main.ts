@@ -6,6 +6,7 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { isAllowedExternalUrl, validateHostUrl, validateRequestPath } from "./security.js";
+import { readProjectResource } from "./resource-preview.js";
 import electronUpdater from "electron-updater";
 
 const { autoUpdater } = electronUpdater;
@@ -76,6 +77,10 @@ ipcMain.handle("fitz:pair-device", async (_event, input: unknown) => { if (!isRe
 ipcMain.handle("fitz:open-external", async (_event, url: unknown) => { if (typeof url !== "string" || !isAllowedExternalUrl(url)) throw new Error("External URL is not allowed"); await shell.openExternal(url); });
 ipcMain.handle("fitz:choose-folder", async () => { const result = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] }); return result.canceled ? undefined : result.filePaths[0]; });
 ipcMain.handle("fitz:open-path", async (_event, path: unknown) => { if (typeof path !== "string" || !isAbsolute(path)) throw new Error("A valid absolute path is required"); const error = await shell.openPath(path); if (error) throw new Error(error); });
+ipcMain.handle("fitz:preview-resource", async (_event, input: unknown) => {
+  if (!isRecord(input)) throw new TypeError("Preview request must be an object");
+  return readProjectResource(requireLocalPath(input.projectRoot), requireBoundedText(input.reference, "File reference", 4_096));
+});
 ipcMain.handle("fitz:copy-text", (_event, value: unknown) => { if (typeof value !== "string") throw new Error("Clipboard text must be a string"); clipboard.writeText(value); });
 ipcMain.handle("fitz:save-diagnostics", async (event, content: unknown) => { if (typeof content !== "string" || content.length > 10_000_000) throw new Error("Diagnostic export must be a bounded JSON string"); const window = BrowserWindow.fromWebContents(event.sender); const stamp = new Date().toISOString().replaceAll(":", "-").replace(".000Z", "Z"); const options = { title: "Export Fitz diagnostics", defaultPath: `fitz-diagnostics-${stamp}.json`, filters: [{ name: "JSON", extensions: ["json"] }] }; const result = window ? await dialog.showSaveDialog(window, options) : await dialog.showSaveDialog(options); if (result.canceled || !result.filePath) return undefined; writeFileSync(result.filePath, content, { encoding: "utf8", flag: "w" }); return result.filePath; });
 ipcMain.handle("fitz:git-branches", async (_event, path: unknown) => gitBranchState(requireLocalPath(path)));

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src data:; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-src data:">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; media-src data: https: http:; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-src data: https: http:">
     <title>Fitz Codex</title>
     <link rel="stylesheet" href="styles.css">
   </head>
@@ -284,33 +284,21 @@
             </div>
           </form>
         </div>
-        <aside id="context-panel" class="context-panel" aria-label="Environment panel" hidden>
-          <header>
-            <strong>Environment</strong>
-            <button id="context-add" class="icon-button" type="button" title="Attach artifact" aria-label="Attach artifact">
-              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"></path></svg>
-            </button>
+        <aside id="context-panel" class="inspector-panel" aria-label="Inspector" hidden>
+          <header class="inspector-header">
+            <span id="inspector-icon" class="inspector-icon" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M5 2.8h6l4 4v10.4H5z"></path><path d="M11 2.8v4h4"></path></svg></span>
+            <div class="inspector-heading"><strong id="inspector-title">Inspector</strong><small id="inspector-location"></small></div>
+            <button id="inspector-render-toggle" class="icon-button" type="button" title="View source" aria-label="View source" aria-pressed="false" hidden><svg viewBox="0 0 20 20"><path d="m7 5-5 5 5 5M13 5l5 5-5 5M11.5 3 8.5 17"></path></svg></button>
+            <button id="inspector-open" class="icon-button" type="button" title="Open outside Fitz" aria-label="Open outside Fitz" hidden><svg viewBox="0 0 20 20"><path d="M11 4h5v5M9 11l7-7"></path><path d="M14 11v4a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h4"></path></svg></button>
+            <button id="inspector-close" class="icon-button" type="button" title="Close inspector" aria-label="Close inspector"><svg viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15"></path></svg></button>
           </header>
-          <section class="environment-list">
-            <div class="environment-row"><span>Engine</span><strong id="engine-state">Unknown</strong></div>
-            <div class="environment-row"><span>Connection</span><strong>Local</strong></div>
-            <div class="environment-row"><span>Route</span><strong id="route-state">—</strong></div>
-          </section>
-          <section class="panel-section queue-section">
-            <div class="section-heading"><span>Requests</span><small id="queue-count">0</small></div>
-            <div id="request-queue" class="request-queue" aria-live="polite"></div>
-          </section>
-          <section class="panel-section">
-            <div class="section-heading">
-              <span>Artifacts</span>
-              <button id="add-artifact" class="icon-button" type="button" title="Attach artifact" aria-label="Attach artifact" disabled>
-                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7.2 10.8 4.9-4.9a2.1 2.1 0 0 1 3 3l-6.2 6.2a3.5 3.5 0 0 1-5-5l6-6"></path></svg>
-              </button>
-            </div>
-            <nav id="artifacts" class="artifact-list" aria-label="Artifacts"></nav>
-            <div id="artifact-preview" class="artifact-preview"></div>
-          </section>
+          <div id="artifact-preview" class="inspector-content"><div class="inspector-empty">Select a file or link in the conversation to inspect it here.</div></div>
         </aside>
+        <div hidden aria-hidden="true">
+          <button id="context-add" type="button"></button><button id="add-artifact" type="button"></button>
+          <span id="engine-state"></span><span id="route-state"></span><span id="queue-count"></span>
+          <div id="request-queue"></div><nav id="artifacts"></nav>
+        </div>
       </main>
     </div>
 

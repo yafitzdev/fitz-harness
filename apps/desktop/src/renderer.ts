@@ -1,5 +1,5 @@
 import { reconnectDelay } from "@fitz/connectivity/reconnect";
-import type { ConsumerConnectionSummary, DesktopUpdateStatus } from "./preload.js";
+import type { ConsumerConnectionSummary, DesktopUpdateStatus, ResourcePreview } from "./preload.js";
 import { appendMarkdown, setMarkdown } from "./markdown.js";
 
 type Json = Record<string, any>;
@@ -57,6 +57,10 @@ let removeProjectTarget: string | undefined;
 let editingRecipe: Json | undefined;
 let accessMode: AccessMode = storedAccessMode();
 let activeCustomSelect: HTMLSelectElement | undefined;
+let inspectedResource: { kind: "file"; path: string } | { kind: "url"; url: string } | undefined;
+let inspectionVersion = 0;
+let inspectedPreview: ResourcePreview | undefined;
+let inspectorSourceMode = false;
 let renameTarget: { kind: "project" | "task"; id: string } | undefined;
 const pinnedProjects = storedSet("fitz-pinned-projects");
 const pinnedSessions = storedSet("fitz-pinned-sessions");
@@ -122,6 +126,12 @@ const engineState = element("engine-state");
 const routeState = element("route-state");
 const contextPanel = element("context-panel") as HTMLElement;
 const contextToggle = element("context-toggle") as HTMLButtonElement;
+const inspectorTitle = element("inspector-title");
+const inspectorLocation = element("inspector-location");
+const inspectorOpen = element("inspector-open") as HTMLButtonElement;
+const inspectorClose = element("inspector-close") as HTMLButtonElement;
+const inspectorRenderToggle = element("inspector-render-toggle") as HTMLButtonElement;
+const inspectorIcon = element("inspector-icon");
 const artifacts = element("artifacts");
 const requestQueue = element("request-queue");
 const queueCount = element("queue-count");
@@ -306,6 +316,13 @@ sidebarResizer.addEventListener("pointerdown", beginSidebarResize);
 sidebarResizer.addEventListener("keydown", resizeSidebarWithKeyboard);
 connectionStatus.addEventListener("click", () => void initialize());
 contextToggle.addEventListener("click", () => setContextPanel(contextPanel.hasAttribute("hidden")));
+inspectorClose.addEventListener("click", () => setContextPanel(false));
+inspectorOpen.addEventListener("click", () => void openInspectedResourceExternally());
+inspectorRenderToggle.addEventListener("click", () => { if (!inspectedPreview) return; inspectorSourceMode = !inspectorSourceMode; inspectorRenderToggle.setAttribute("aria-pressed", String(inspectorSourceMode)); inspectorRenderToggle.title = inspectorSourceMode ? "View rendered" : "View source"; inspectorRenderToggle.setAttribute("aria-label", inspectorRenderToggle.title); renderResourcePreview(inspectedPreview); });
+window.addEventListener("fitz:open-resource", (event) => {
+  const reference = (event as CustomEvent<{ reference?: string }>).detail?.reference;
+  if (reference) void inspectResource(reference);
+});
 element("context-add").addEventListener("click", chooseArtifact);
 attachButton.addEventListener("click", chooseArtifact);
 addArtifactButton.addEventListener("click", chooseArtifact);
@@ -2230,7 +2247,7 @@ async function loadArtifacts(): Promise<void> {
   artifacts.replaceChildren();
   composerAttachments.replaceChildren();
   composerAttachments.hidden = true;
-  artifactPreview.replaceChildren(panelEmpty("Select an artifact to preview it"));
+  if (contextPanel.hidden) artifactPreview.replaceChildren(inspectorEmpty("Select a file or link in the conversation to inspect it here."));
   if (!currentSession) { artifacts.append(panelEmpty("Artifacts appear with a task")); return; }
   const response = await api(`/api/v1/sessions/${currentSession}/artifacts`);
   if (!(response.data ?? []).length) artifacts.append(panelEmpty("No artifacts yet"));
@@ -2302,25 +2319,92 @@ async function uploadArtifact(): Promise<void> {
 async function previewArtifact(artifact: Json, selected: HTMLButtonElement): Promise<void> {
   for (const item of artifacts.querySelectorAll(".artifact-item")) item.classList.remove("active");
   selected.classList.add("active");
-  artifactPreview.replaceChildren(panelEmpty("Loading preview…"));
+  setInspectorHeading(String(artifact.name ?? "Artifact"), `${formatBytes(Number(artifact.byteSize ?? 0))} · Attachment`, "file");
+  inspectedResource = undefined; inspectedPreview = undefined; inspectorOpen.hidden = true; inspectorRenderToggle.hidden = true; setContextPanel(true);
+  artifactPreview.replaceChildren(inspectorEmpty("Loading preview…"));
   try {
     const response = await window.fitz.request({ path: `/api/v1/artifacts/${artifact.id}/content`, responseType: "base64" });
     if (response.status >= 400) throw new HttpError("Artifact could not be loaded", response.status);
     artifactPreview.replaceChildren();
     if (artifact.kind === "text" || artifact.kind === "code") {
-      const pre = document.createElement("pre"); pre.textContent = new TextDecoder().decode(base64Bytes(response.body)); artifactPreview.append(pre); return;
+      const source = new TextDecoder().decode(base64Bytes(response.body));
+      if (/\.(?:md|markdown)$/i.test(String(artifact.name ?? ""))) { const markdown = document.createElement("article"); markdown.className = "inspector-markdown message-body"; setMarkdown(markdown, source); artifactPreview.append(markdown); }
+      else if (/\.html?$/i.test(String(artifact.name ?? ""))) artifactPreview.append(htmlPreviewFrame(source, String(artifact.name ?? "HTML preview")));
+      else { const pre = document.createElement("pre"); pre.className = "inspector-source"; const code = document.createElement("code"); code.textContent = source; pre.append(code); artifactPreview.append(pre); }
+      return;
     }
     if (["image", "audio", "video"].includes(artifact.kind)) {
       const node = document.createElement(artifact.kind === "image" ? "img" : artifact.kind) as HTMLImageElement | HTMLMediaElement;
+      node.className = "inspector-media";
       node.setAttribute("src", `data:${artifact.mimeType};base64,${response.body}`);
       if (node instanceof HTMLMediaElement) node.controls = true;
       artifactPreview.append(node); return;
     }
     if (artifact.kind === "pdf") {
-      const frame = document.createElement("iframe"); frame.setAttribute("sandbox", ""); frame.title = artifact.name; frame.src = `data:application/pdf;base64,${response.body}`; artifactPreview.append(frame); return;
+      const frame = document.createElement("iframe"); frame.className = "inspector-frame"; frame.setAttribute("sandbox", ""); frame.title = artifact.name; frame.src = `data:application/pdf;base64,${response.body}`; artifactPreview.append(frame); return;
     }
-    artifactPreview.append(panelEmpty("Preview unavailable for this file type"));
-  } catch (error) { artifactPreview.replaceChildren(panelEmpty(errorMessage(error))); }
+    artifactPreview.append(inspectorEmpty("Preview unavailable for this file type"));
+  } catch (error) { artifactPreview.replaceChildren(inspectorError(errorMessage(error))); }
+}
+
+async function inspectResource(reference: string): Promise<void> {
+  const version = ++inspectionVersion;
+  inspectedPreview = undefined; inspectorRenderToggle.hidden = true;
+  setContextPanel(true);
+  artifactPreview.replaceChildren(inspectorEmpty("Loading preview…"));
+  if (/^https?:\/\//i.test(reference)) {
+    try {
+      const url = new URL(reference);
+      inspectedResource = { kind: "url", url: url.toString() };
+      inspectedPreview = undefined; inspectorRenderToggle.hidden = true;
+      setInspectorHeading(url.hostname, url.toString(), "url");
+      inspectorOpen.hidden = false;
+      const frame = document.createElement("iframe"); frame.className = "inspector-frame"; frame.title = url.toString(); frame.src = url.toString(); frame.setAttribute("sandbox", "allow-scripts allow-forms allow-popups-to-escape-sandbox"); frame.referrerPolicy = "no-referrer";
+      artifactPreview.replaceChildren(frame);
+    } catch { artifactPreview.replaceChildren(inspectorError("This URL is not valid.")); }
+    return;
+  }
+  const projectRoot = String(activeProject()?.rootPath ?? "");
+  if (!projectRoot) { setInspectorHeading("File unavailable", reference, "file"); artifactPreview.replaceChildren(inspectorError("Select a project before opening a local file.")); return; }
+  setInspectorHeading(reference.split(/[\\/]/).pop() ?? reference, reference, "file");
+  inspectorOpen.hidden = true;
+  try {
+    const preview = await window.fitz.previewResource({ projectRoot, reference });
+    if (version !== inspectionVersion) return;
+    inspectedResource = { kind: "file", path: preview.path };
+    inspectedPreview = preview; inspectorSourceMode = false; inspectorRenderToggle.setAttribute("aria-pressed", "false"); inspectorRenderToggle.title = "View source"; inspectorRenderToggle.setAttribute("aria-label", "View source"); inspectorRenderToggle.hidden = preview.kind !== "markdown" && preview.kind !== "html";
+    setInspectorHeading(preview.name, `${preview.path}${preview.line ? ` · line ${preview.line}` : ""}`, preview.kind);
+    inspectorOpen.hidden = false;
+    renderResourcePreview(preview);
+  } catch (error) {
+    if (version !== inspectionVersion) return;
+    inspectedResource = undefined; inspectedPreview = undefined; inspectorOpen.hidden = true; inspectorRenderToggle.hidden = true; artifactPreview.replaceChildren(inspectorError(errorMessage(error)));
+  }
+}
+
+function renderResourcePreview(preview: ResourcePreview): void {
+  artifactPreview.replaceChildren();
+  if (preview.kind === "markdown" && !inspectorSourceMode) {
+    const markdown = document.createElement("article"); markdown.className = "inspector-markdown message-body"; setMarkdown(markdown, preview.content); artifactPreview.append(markdown); return;
+  }
+  if (preview.kind === "html" && !inspectorSourceMode) { artifactPreview.append(htmlPreviewFrame(preview.content, preview.name)); return; }
+  const pre = document.createElement("pre"); pre.className = "inspector-source"; const code = document.createElement("code"); code.textContent = preview.content; pre.append(code); artifactPreview.append(pre);
+  if (preview.line) requestAnimationFrame(() => { const lineHeight = Number.parseFloat(getComputedStyle(pre).lineHeight) || 19; artifactPreview.scrollTop = Math.max(0, (preview.line! - 3) * lineHeight); });
+}
+
+function htmlPreviewFrame(source: string, title: string): HTMLIFrameElement {
+  const frame = document.createElement("iframe"); frame.className = "inspector-frame"; frame.title = title; frame.setAttribute("sandbox", ""); frame.srcdoc = source; return frame;
+}
+
+function setInspectorHeading(title: string, location: string, kind: "file" | "url" | ResourcePreview["kind"]): void {
+  inspectorTitle.textContent = title; inspectorLocation.textContent = location;
+  inspectorIcon.replaceChildren(kind === "url" ? svg('<circle cx="10" cy="10" r="7"></circle><path d="M3 10h14M10 3a11 11 0 0 1 0 14M10 3a11 11 0 0 0 0 14"></path>') : svg('<path d="M5 2.8h6l4 4v10.4H5z"></path><path d="M11 2.8v4h4"></path>'));
+}
+
+async function openInspectedResourceExternally(): Promise<void> {
+  if (!inspectedResource) return;
+  try { if (inspectedResource.kind === "url") await window.fitz.openExternal(inspectedResource.url); else await window.fitz.openPath(inspectedResource.path); }
+  catch (error) { showToast(errorMessage(error)); }
 }
 
 function showLanding(hasTask = false): void {
@@ -2371,6 +2455,8 @@ function appendToolActivity(toolName: string, input: unknown, toolCallId: string
   const summary = document.createElement("button"); summary.type = "button"; summary.className = "agent-activity-summary"; summary.setAttribute("aria-expanded", "false");
   const icon = document.createElement("span"); icon.className = "agent-activity-icon"; icon.append(activityIcon(toolName));
   const label = document.createElement("span"); label.className = "agent-activity-label"; label.textContent = describeToolActivity(toolName, input, running); label.title = label.textContent;
+  const resource = toolResourceReference(toolName, input);
+  if (resource) { label.classList.add("resource-link"); label.tabIndex = 0; label.setAttribute("role", "link"); label.addEventListener("click", (event) => { event.stopPropagation(); void inspectResource(resource); }); label.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); void inspectResource(resource); } }); }
   const chevron = document.createElement("span"); chevron.className = "agent-activity-chevron"; chevron.append(svg('<path d="m8 5.5 4.5 4.5L8 14.5"></path>'));
   summary.append(icon, label, chevron);
   const details = document.createElement("div"); details.className = "agent-activity-details";
@@ -2487,6 +2573,12 @@ function describeToolActivity(toolName: string, input: unknown, running: boolean
   return target ? `${verb} ${target}` : `${verb} ${friendlyToolName(toolName)}`;
 }
 
+function toolResourceReference(toolName: string, input: unknown): string | undefined {
+  if (!["edit", "write", "read"].includes(toolName) || !input || typeof input !== "object") return undefined;
+  const value = input as Json; const path = value.path ?? value.file_path ?? value.filePath;
+  return typeof path === "string" && path.trim() ? path.trim() : undefined;
+}
+
 function friendlyToolName(toolName: string): string { return toolName.replaceAll("_", " "); }
 
 function appendRunActivity(text: string): HTMLElement { const value = document.createElement("div"); value.className = "message run-activity"; value.textContent = text; messages.append(value); messages.scrollTop = messages.scrollHeight; return value; }
@@ -2573,10 +2665,11 @@ function scheduleProjectHoverHide(): void { cancelProjectHoverHide(); projectHov
 function hideProjectHover(): void { cancelProjectHoverHide(); projectHoverCard.hidden = true; hoveredProjectId = undefined; }
 
 function setContextPanel(open: boolean): void {
-  void open;
-  contextPanel.hidden = true;
-  shell.classList.remove("context-open");
-  contextToggle.setAttribute("aria-expanded", "false");
+  contextPanel.hidden = !open;
+  workspace.classList.toggle("inspector-open", open);
+  shell.classList.toggle("context-open", open);
+  contextToggle.setAttribute("aria-expanded", String(open));
+  if (!open) inspectionVersion += 1;
 }
 
 function toggleSidebar(): void { shell.classList.toggle("sidebar-collapsed"); closePopovers(); }
@@ -2609,6 +2702,8 @@ function setConnection(text: string, state: string): void { connectionDetail.tex
 function setFormBusy(formElement: HTMLFormElement, busy: boolean): void { for (const control of formElement.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>("input,button,select")) control.disabled = busy; }
 function showToast(text: string): void { if (toastTimer) clearTimeout(toastTimer); toast.textContent = text; toast.hidden = false; toastTimer = setTimeout(() => { toast.hidden = true; }, 3_200); }
 function panelEmpty(text: string): HTMLElement { const value = document.createElement("div"); value.className = "panel-empty"; value.textContent = text; return value; }
+function inspectorEmpty(text: string): HTMLElement { const value = document.createElement("div"); value.className = "inspector-empty"; value.textContent = text; return value; }
+function inspectorError(text: string): HTMLElement { const value = document.createElement("div"); value.className = "inspector-error"; value.textContent = text; return value; }
 function loadingMessage(text: string): HTMLElement { const value = document.createElement("div"); value.className = "panel-empty"; value.textContent = text; return value; }
 function treeItem(label: string, className: string, icon: SVGElement | undefined, action: () => void, menu: (toggle: HTMLButtonElement, event: MouseEvent) => void, quickAction?: () => void): HTMLElement {
   const item = document.createElement("div"); item.className = "tree-item";
