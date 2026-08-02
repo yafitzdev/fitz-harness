@@ -193,4 +193,15 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("formatElapsed(Date.now() - startedAt)");
     expect(renderer).toContain('api("/api/v1/management/status")');
   });
+
+  it("shows and controls the serialized native-agent request queue", () => {
+    expect(html).toContain('id="request-queue"');
+    expect(html).toContain('id="queue-count"');
+    expect(renderer).toContain('api("/api/v1/agent/queue")');
+    expect(renderer).toContain('event.type === "run.queue.updated"');
+    expect(renderer).toContain('cancelQueuedRun(String(item.runId), cancel)');
+    expect(renderer).toContain('setTimeout(scheduleQueueRefresh, 1_000)');
+    expect(styles).toContain(".queue-item");
+    expect(styles).toContain(".queue-cancel");
+  });
 });

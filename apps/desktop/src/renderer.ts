@@ -18,6 +18,7 @@ let currentRun: string | undefined;
 let lastSequence = 0;
 let pendingTaskAfterProject = false;
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
+let queueRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let sessionTokenEstimate = 0;
 let contextTokenLimit = 131_072;
 let managementConfiguration: Json | undefined;
@@ -90,6 +91,8 @@ const routeState = element("route-state");
 const contextPanel = element("context-panel") as HTMLElement;
 const contextToggle = element("context-toggle") as HTMLButtonElement;
 const artifacts = element("artifacts");
+const requestQueue = element("request-queue");
+const queueCount = element("queue-count");
 const artifactPreview = element("artifact-preview");
 const artifactFile = element("artifact-file") as HTMLInputElement;
 const composerAttachments = element("composer-attachments");
@@ -1084,6 +1087,7 @@ async function followRun(runId: string, activity: HTMLElement, runStartedAt: num
   const toolActivities = new Map<string, { row: HTMLElement; toolName: string; input: unknown }>();
   const approvalActivities = new Map<string, HTMLElement>();
   let done = false;
+  let queued = true;
   let reconnectAttempt = 0;
   let nextEnginePoll = 0;
   while (!done && currentRun === runId) {
@@ -1099,7 +1103,12 @@ async function followRun(runId: string, activity: HTMLElement, runStartedAt: num
     }
     for (const event of replay.events ?? []) {
       lastSequence = event.sequence;
-      if (event.type === "run.started") { setStatus("Working", "active"); engineState.textContent = "WORKING"; setRunActivity(activity, "Loading model", runStartedAt); }
+      if (event.type === "run.queue.updated") {
+        queued = event.data?.status === "queued";
+        if (queued) { const position = Math.max(1, Number(event.data?.position ?? 1)); setStatus(`Queued ${position}`, "loading"); engineState.textContent = "QUEUED"; setRunActivity(activity, position === 1 ? "Queued · next" : `Queued · ${position - 1} ahead`, runStartedAt); }
+        if (!contextPanel.hidden) void loadAgentQueue();
+      }
+      if (event.type === "run.started") { queued = false; setStatus("Working", "active"); engineState.textContent = "WORKING"; setRunActivity(activity, "Loading model", runStartedAt); }
       if (event.type === "assistant.delta") {
         if (!assistant) { activity.remove(); assistant = appendMessage("assistant", ""); }
         const delta = event.data.text ?? ""; assistant.textContent += delta; sessionTokenEstimate += estimateTokens(delta); updateContextMeter();
@@ -1148,7 +1157,7 @@ async function followRun(runId: string, activity: HTMLElement, runStartedAt: num
         if (success && !assistant) appendMessage("system", "The model completed without returning a response.");
       }
     }
-    if (!done && !assistant && Date.now() >= nextEnginePoll) {
+    if (!done && !queued && !assistant && Date.now() >= nextEnginePoll) {
       nextEnginePoll = Date.now() + 1_000;
       try {
         const management = await api("/api/v1/management/status");
@@ -1187,6 +1196,35 @@ async function loadArtifacts(): Promise<void> {
     chipPreview.append(chipName, chipSize); chipPreview.addEventListener("click", () => { setContextPanel(true); void previewArtifact(artifact, value); }); remove.addEventListener("click", () => void removeArtifact(artifact)); chip.append(chipPreview, remove); composerAttachments.append(chip);
   }
   composerAttachments.hidden = composerAttachments.childElementCount === 0;
+}
+
+async function loadAgentQueue(): Promise<void> {
+  try {
+    const response = await api("/api/v1/agent/queue"); const items = response.data ?? [];
+    requestQueue.replaceChildren(); queueCount.textContent = String(items.length);
+    if (!items.length) { requestQueue.append(panelEmpty("No active requests")); return; }
+    for (const item of items) {
+      const row = document.createElement("div"); row.className = `queue-item ${item.status}`;
+      const state = document.createElement("span"); state.className = "queue-state"; if (item.status === "queued") state.textContent = String(item.position);
+      const copy = document.createElement("span"); copy.className = "queue-copy";
+      const title = document.createElement("strong"); title.textContent = item.sessionTitle ?? `${item.routeId} task`;
+      const detail = document.createElement("small"); detail.textContent = item.status === "running" ? `${item.projectName ?? "Agent"} · Running` : `${item.projectName ?? "Agent"} · Position ${item.position}`;
+      const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "queue-cancel"; cancel.title = item.status === "running" ? "Stop request" : "Remove from queue"; cancel.setAttribute("aria-label", cancel.title); cancel.append(svg('<path d="m5 5 10 10M15 5 5 15"></path>'));
+      cancel.addEventListener("click", () => void cancelQueuedRun(String(item.runId), cancel)); copy.append(title, detail); row.append(state, copy, cancel); requestQueue.append(row);
+    }
+  } catch { requestQueue.replaceChildren(panelEmpty("Queue unavailable")); queueCount.textContent = "—"; }
+}
+
+async function cancelQueuedRun(runId: string, button: HTMLButtonElement): Promise<void> {
+  button.disabled = true;
+  try { await api(`/api/v1/agent/runs/${runId}`, "DELETE"); await loadAgentQueue(); }
+  catch (error) { button.disabled = false; showToast(errorMessage(error)); }
+}
+
+function scheduleQueueRefresh(): void {
+  if (queueRefreshTimer) clearTimeout(queueRefreshTimer); queueRefreshTimer = undefined;
+  if (contextPanel.hidden) return;
+  void loadAgentQueue().finally(() => { if (!contextPanel.hidden) queueRefreshTimer = setTimeout(scheduleQueueRefresh, 1_000); });
 }
 
 async function removeArtifact(artifact: Json): Promise<void> {
@@ -1451,6 +1489,7 @@ function setContextPanel(open: boolean): void {
   contextPanel.hidden = !open;
   shell.classList.toggle("context-open", open);
   contextToggle.setAttribute("aria-expanded", String(open));
+  scheduleQueueRefresh();
 }
 
 function toggleSidebar(): void { shell.classList.toggle("sidebar-collapsed"); closePopovers(); }

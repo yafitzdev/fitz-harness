@@ -296,7 +296,7 @@ describe("Fitz host", () => {
     const created = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", sessionId: session.json().data.id, messages: [{ role: "user", content: "use agent" }] } }); const runId = created.json().data.id;
     for (let attempt = 0; attempt < 50 && runtime.agentRuns.get(runId)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
     const replay = await runtime.app.inject({ method: "GET", url: `/api/v1/agent/runs/${runId}/events` });
-    expect(replay.json().events.map((event: { type: string }) => event.type)).toEqual(["run.created", "run.started", "assistant.delta", "tool.started", "tool.completed", "assistant.delta", "run.completed"]);
+    expect(replay.json().events.map((event: { type: string }) => event.type)).toEqual(["run.created", "run.queue.updated", "run.queue.updated", "run.started", "assistant.delta", "tool.started", "tool.completed", "assistant.delta", "run.completed"]);
     expect(replay.json().events.find((event: { type: string }) => event.type === "tool.started").data.input).toEqual({ path: "README.md" });
     const transcript = runtime.store.transcriptAfter(session.json().data.id, 0);
     expect(transcript.map((entry) => [entry.kind, entry.content.phase ?? entry.content.toolName])).toEqual([
@@ -305,6 +305,28 @@ describe("Fitz host", () => {
     expect(transcript.find((entry) => entry.kind === "tool-call")?.content.input).toEqual({ path: "README.md" });
     expect(transcript.find((entry) => entry.kind === "tool-result")?.content.result).toBe("ok");
     await runtime.app.close();
+  });
+
+  it("serializes whole native agent tasks and exposes cancellable queue positions", async () => {
+    const releases = new Map<string, () => void>(); const started: string[] = [];
+    const runtime = createHost({ agentRuntime: { id: "queued-agent", run: (request) => {
+      const label = request.messages.at(-1)?.content ?? "unknown"; started.push(label); let release = () => undefined; const gate = new Promise<void>((resolve) => { release = resolve; }); releases.set(label, release);
+      const events = (async function* () { await gate; yield { type: "assistant.delta" as const, text: `done ${label}` }; })(); return Object.assign(events, { cancel: release });
+    } } });
+    const first = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", messages: [{ role: "user", content: "first" }] } });
+    const second = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "smart", messages: [{ role: "user", content: "second" }] } });
+    expect(started).toEqual(["first"]);
+    const initial = await runtime.app.inject({ method: "GET", url: "/api/v1/agent/queue" });
+    expect(initial.json().data).toEqual([
+      expect.objectContaining({ runId: first.json().data.id, status: "running", position: 0, depth: 2 }),
+      expect.objectContaining({ runId: second.json().data.id, status: "queued", position: 1, depth: 2 }),
+    ]);
+    const cancelled = await runtime.app.inject({ method: "DELETE", url: `/api/v1/agent/runs/${second.json().data.id}` }); expect(cancelled.statusCode).toBe(202); expect(runtime.agentRuns.get(second.json().data.id)?.status).toBe("cancelled"); expect(started).toEqual(["first"]);
+    const third = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", messages: [{ role: "user", content: "third" }] } });
+    expect((await runtime.app.inject({ method: "GET", url: "/api/v1/agent/queue" })).json().data.at(-1)).toEqual(expect.objectContaining({ runId: third.json().data.id, status: "queued", position: 1 }));
+    releases.get("first")?.(); for (let attempt = 0; attempt < 50 && !started.includes("third"); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5)); expect(started).toEqual(["first", "third"]);
+    expect((await runtime.app.inject({ method: "GET", url: "/api/v1/agent/queue" })).json().data).toEqual([expect.objectContaining({ runId: third.json().data.id, status: "running", position: 0, depth: 1 })]);
+    releases.get("third")?.(); for (let attempt = 0; attempt < 50 && runtime.agentRuns.get(third.json().data.id)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5)); await runtime.app.close();
   });
 
   it("creates projects and sessions and records a canonical run transcript", async () => {

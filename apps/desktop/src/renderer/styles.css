@@ -327,6 +327,19 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .environment-row + .environment-row { border-top: 0; }
 .environment-row strong { overflow: hidden; text-overflow: ellipsis; color: #c9cbc6; font-size: 12px; font-weight: 550; }
 .panel-section { margin: 12px 7px 0; border-top: 1px solid #4a4d49; padding-top: 14px; }
+.section-heading small { color: var(--codex-text-tertiary); font-size: 11px; }
+.request-queue { display: grid; gap: 3px; }
+.queue-item { min-width: 0; display: grid; grid-template-columns: 18px minmax(0,1fr) auto; align-items: center; gap: 8px; padding: 8px 5px; border-radius: var(--codex-radius-md); color: var(--codex-text-secondary); }
+.queue-item:hover { background: var(--surface-hover); }
+.queue-state { width: 16px; height: 16px; display: grid; place-items: center; color: var(--codex-text-tertiary); font-size: 10px; }
+.queue-item.running .queue-state { border: 2px solid #555854; border-top-color: #c8cac5; border-radius: 50%; animation: spin 850ms linear infinite; }
+.queue-copy { min-width: 0; display: grid; gap: 2px; }
+.queue-copy strong, .queue-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queue-copy strong { color: var(--text); font-size: 12px; font-weight: 500; }
+.queue-copy small { color: var(--codex-text-tertiary); font-size: 10px; }
+.queue-cancel { width: 25px; height: 25px; display: grid; place-items: center; border-radius: 50%; background: transparent; color: var(--codex-text-tertiary); cursor: pointer; }
+.queue-cancel:hover { background: rgba(255,255,255,.08); color: var(--text); }
+.queue-cancel svg { width: 14px; height: 14px; }
 .artifact-list { display: grid; gap: 4px; }
 .artifact-item { width: 100%; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; padding: 8px; border-radius: 7px; background: transparent; color: #c7c9c4; text-align: left; cursor: pointer; }
 .artifact-item:hover, .artifact-item.active { background: var(--surface-hover); }
