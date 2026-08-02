@@ -44,7 +44,6 @@ import { TailscaleMonitor, TailscaleServeManager, WindowsStartupManager } from "
 import { classifyArtifact, normalizeMimeType } from "@fitz/media";
 import { OpenAICompatibleClient, OpenAICompatibleEngineAdapter, supportsChatCompletions } from "@fitz/engine-openai-compatible";
 
-type RuntimeMode = "host" | "consume";
 interface ConsumerModelRegistration { modelId: string; routeId: string; recipeId: string }
 interface ConsumerConnectionRegistration {
   id: string;
@@ -57,6 +56,8 @@ interface ConsumerConnectionRegistration {
 }
 
 const CONSUMER_ROUTE_PREFIX = "consumer--";
+const PUBLIC_ROUTE_IDS = new Set(["fast", "default", "smart"]);
+const LOCAL_CONNECTION_ID = "hosted--local";
 
 export interface CreateHostOptions {
   store?: SqliteStore;
@@ -159,14 +160,19 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const unsubscribeMetrics = events.subscribe((event) => metrics.observeLifecycleEvent(event));
   const requestStarts = new WeakMap<object, number>();
   const principals = new WeakMap<object, AuthenticatedPrincipal>();
-  const currentMode = (): RuntimeMode => store.getSetting<RuntimeMode>("runtimeMode") === "consume" ? "consume" : "host";
   const consumerConnections = (): ConsumerConnectionRegistration[] => store.getSetting<ConsumerConnectionRegistration[]>("consumerConnections") ?? [];
-  const routeMatchesMode = (route: Route): boolean => currentMode() === "consume" ? route.id.startsWith(CONSUMER_ROUTE_PREFIX) : !route.id.startsWith(CONSUMER_ROUTE_PREFIX);
-  const activeRoutes = (): Route[] => routes.listRoutes().filter(routeMatchesMode);
-  const resolveActiveRoute = (routeId: string) => {
-    const resolved = routes.resolve(routeId);
-    if (!routeMatchesMode(resolved.route)) throw new RouteNotFoundError(routeId);
-    return resolved;
+  const activeRoutes = (): Route[] => routes.listRoutes();
+  const publicRoutes = (): Route[] => activeRoutes().filter((route) => PUBLIC_ROUTE_IDS.has(route.id));
+  const resolveActiveRoute = (routeId: string) => routes.resolve(routeId);
+  const resolveSessionRouteId = (session: SessionRecord | undefined, requestedRouteId: string): string => {
+    if (!session || !PUBLIC_ROUTE_IDS.has(requestedRouteId)) return requestedRouteId;
+    if (!session.connectionId || session.connectionId === LOCAL_CONNECTION_ID) return requestedRouteId;
+    const scopedRouteId = consumerConnectionRouteId(session.connectionId, requestedRouteId);
+    if (activeRoutes().some((route) => route.id === scopedRouteId)) return scopedRouteId;
+    const legacyRoute = activeRoutes().find((route) => route.id === `${CONSUMER_ROUTE_PREFIX}${requestedRouteId}`);
+    const connection = consumerConnections().find((candidate) => candidate.id === session.connectionId);
+    if (legacyRoute && connection?.models.some((model) => model.recipeId === legacyRoute.recipeId)) return legacyRoute.id;
+    return scopedRouteId;
   };
 
   app.addHook("onRequest", async (request, reply) => {
@@ -204,14 +210,14 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     if (store.listUsers().length > 0) return reply.code(409).send({ error: "The host has already been initialized" });
     const administrator = security.createUser(`${hostname()} Administrator`, "administrator");
     const issued = security.issueDevice(administrator.id, `${hostname()} Desktop`);
-    security.setRouteGrants(administrator.id, activeRoutes().map((route) => route.id));
+    security.setRouteGrants(administrator.id, publicRoutes().map((route) => route.id));
     security.audit("security.bootstrapped", administrator.id, "user", administrator.id);
     return reply.code(201).send({ data: { user: administrator, device: issued.device, token: issued.token } });
   });
 
   app.get("/v1/models", async (request): Promise<ModelListResponse> => ({
     object: "list",
-    data: activeRoutes().filter((route) => {
+    data: publicRoutes().filter((route) => {
       const principal = principals.get(request);
       return !principal || security?.authorizeRoute(principal, route.id);
     }).map((route) => ({
@@ -325,15 +331,17 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     };
   });
   app.get("/api/v1/connectivity/status", async () => ({ tailscale: await tailscale.status() }));
-  app.post("/api/v1/pairing/redeem", async (request, reply) => { try { const body = requireRecord(request.body); const access = securityRequired(security); const redeemed = access.redeemPairingCode(requireString(body.code, "code"), requireString(body.displayName, "displayName"), requireString(body.deviceName, "deviceName")); access.setRouteGrants(redeemed.user.id, activeRoutes().map((route) => route.id)); return reply.code(201).send({ data: redeemed }); } catch (error) { return reply.code(error instanceof SecurityPolicyError ? 403 : 400).send({ error: errorMessage(error) }); } });
+  app.post("/api/v1/pairing/redeem", async (request, reply) => { try { const body = requireRecord(request.body); const access = securityRequired(security); const redeemed = access.redeemPairingCode(requireString(body.code, "code"), requireString(body.displayName, "displayName"), requireString(body.deviceName, "deviceName")); access.setRouteGrants(redeemed.user.id, publicRoutes().map((route) => route.id)); return reply.code(201).send({ data: redeemed }); } catch (error) { return reply.code(error instanceof SecurityPolicyError ? 403 : 400).send({ error: errorMessage(error) }); } });
 
   app.post("/api/v1/agent/runs", async (request, reply) => {
     try {
       const body = parseAgentRunRequest(request.body); const principal = principals.get(request);
-      if (body.sessionId) { const session = store.getSession(body.sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); }
+      const session = body.sessionId ? store.getSession(body.sessionId) : undefined;
+      if (body.sessionId) { if (!session) return reply.code(404).send({ error: "Session not found" }); if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); }
       if (principal && !security?.authorizeRoute(principal, body.model)) return reply.code(403).send({ error: "Route access denied" });
       if (principal) { const promptChars = body.messages.reduce((total, message) => total + message.content.length, 0); security?.enforceQuota(principal, promptChars, body.maxTokens ?? principal.quota.maxOutputTokens, agentRuns.queue().length); }
-      const resolved = resolveActiveRoute(body.model); const prepared = await context.prepare(body, resolved.recipe.contextTokens); const run = agentRuns.start(prepared.request, principal?.user.id, body.messages); security?.audit("agent-run.created", principal?.user.id, "agent-run", run.id, { routeId: run.routeId, compacted: prepared.compacted });
+      const executionRouteId = resolveSessionRouteId(session, body.model);
+      const resolved = resolveActiveRoute(executionRouteId); const prepared = await context.prepare({ ...body, model: executionRouteId }, resolved.recipe.contextTokens); const run = agentRuns.start(prepared.request, principal?.user.id, body.messages); security?.audit("agent-run.created", principal?.user.id, "agent-run", run.id, { routeId: run.routeId, connectionId: session?.connectionId, publicRouteId: body.model, compacted: prepared.compacted });
       return reply.code(202).send({ protocolVersion: PROTOCOL_VERSION, data: run, queue: agentRuns.queue(principal?.user.role === "administrator" ? undefined : principal?.user.id).find((item) => item.runId === run.id), context: { compacted: prepared.compacted, estimatedInputTokens: prepared.estimatedInputTokens, budgetTokens: prepared.budgetTokens } });
     } catch (error) { return reply.code(error instanceof SecurityPolicyError ? 429 : error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) }); }
   });
@@ -357,11 +365,11 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   app.patch("/api/v1/projects/:projectId", async (request, reply) => { try { const project = store.getProject((request.params as { projectId: string }).projectId); if (!project) return reply.code(404).send({ error: "Project not found" }); if (!canAccessOwner(principals.get(request), project.ownerUserId)) return reply.code(403).send({ error: "Project access denied" }); const body = requireRecord(request.body); const updated = { ...project, ...(typeof body.name === "string" ? { name: requireString(body.name, "name") } : {}), ...(typeof body.rootPath === "string" ? { rootPath: body.rootPath } : {}), updatedAt: new Date().toISOString() }; store.updateProject(updated); return { data: updated }; } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
   app.delete("/api/v1/projects/:projectId", async (request, reply) => { const project = store.getProject((request.params as { projectId: string }).projectId); if (!project) return reply.code(404).send({ error: "Project not found" }); const principal = principals.get(request); if (!canAccessOwner(principal, project.ownerUserId)) return reply.code(403).send({ error: "Project access denied" }); store.deleteProject(project.id); security?.audit("project.deleted", principal?.user.id, "project", project.id, { name: project.name }); return reply.code(204).send(); });
   app.get("/api/v1/projects/:projectId/sessions", async (request, reply) => { const project = store.getProject((request.params as { projectId: string }).projectId); if (!project) return reply.code(404).send({ error: "Project not found" }); const principal = principals.get(request); if (!canAccessOwner(principal, project.ownerUserId)) return reply.code(403).send({ error: "Project access denied" }); return { data: store.listSessions(project.id, principal?.user.role === "administrator" ? undefined : principal?.user.id) }; });
-  app.post("/api/v1/projects/:projectId/sessions", async (request, reply) => { try { const project = store.getProject((request.params as { projectId: string }).projectId); if (!project) return reply.code(404).send({ error: "Project not found" }); const principal = principals.get(request); if (!canAccessOwner(principal, project.ownerUserId)) return reply.code(403).send({ error: "Project access denied" }); const body = requireRecord(request.body); const now = new Date().toISOString(); const session = { id: randomUUID(), projectId: project.id, title: requireString(body.title, "title"), status: "active" as const, createdAt: now, updatedAt: now, ...(principal ? { ownerUserId: principal.user.id } : {}) }; store.createSession(session); security?.audit("session.created", principal?.user.id, "session", session.id, { projectId: project.id }); return reply.code(201).send({ data: session }); } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
+  app.post("/api/v1/projects/:projectId/sessions", async (request, reply) => { try { const project = store.getProject((request.params as { projectId: string }).projectId); if (!project) return reply.code(404).send({ error: "Project not found" }); const principal = principals.get(request); if (!canAccessOwner(principal, project.ownerUserId)) return reply.code(403).send({ error: "Project access denied" }); const body = requireRecord(request.body); const now = new Date().toISOString(); const routeId = requirePublicRouteId(body.routeId); const connectionId = typeof body.connectionId === "string" && body.connectionId.trim() ? body.connectionId.trim() : LOCAL_CONNECTION_ID; const session: SessionRecord = { id: randomUUID(), projectId: project.id, title: requireString(body.title, "title"), status: "active" as const, connectionId, routeId, createdAt: now, updatedAt: now, ...(principal ? { ownerUserId: principal.user.id } : {}) }; store.createSession(session); security?.audit("session.created", principal?.user.id, "session", session.id, { projectId: project.id, connectionId, routeId }); return reply.code(201).send({ data: session }); } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
   app.get("/api/v1/sessions/:sessionId", async (request, reply) => { const session = store.getSession((request.params as { sessionId: string }).sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); if (!canAccessOwner(principals.get(request), session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); return { data: session }; });
-  app.patch("/api/v1/sessions/:sessionId", async (request, reply) => { try { const session = store.getSession((request.params as { sessionId: string }).sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); if (!canAccessOwner(principals.get(request), session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); const body = requireRecord(request.body); const updated: SessionRecord = { ...session, ...(typeof body.title === "string" ? { title: requireString(body.title, "title") } : {}), ...(body.status === "active" || body.status === "archived" ? { status: body.status } : {}), updatedAt: new Date().toISOString() }; store.updateSession(updated); return { data: updated }; } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
+  app.patch("/api/v1/sessions/:sessionId", async (request, reply) => { try { const session = store.getSession((request.params as { sessionId: string }).sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); if (!canAccessOwner(principals.get(request), session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); const body = requireRecord(request.body); const updated: SessionRecord = { ...session, ...(typeof body.title === "string" ? { title: requireString(body.title, "title") } : {}), ...(body.status === "active" || body.status === "archived" ? { status: body.status } : {}), ...(typeof body.connectionId === "string" && body.connectionId.trim() ? { connectionId: body.connectionId.trim() } : {}), ...(body.routeId !== undefined ? { routeId: requirePublicRouteId(body.routeId) } : {}), updatedAt: new Date().toISOString() }; store.updateSession(updated); return { data: updated }; } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
   app.get("/api/v1/sessions/:sessionId/transcript", async (request, reply) => { const session = store.getSession((request.params as { sessionId: string }).sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); if (!canAccessOwner(principals.get(request), session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); const query = request.query as { after?: string; limit?: string }; return { data: store.transcriptAfter(session.id, toNonNegativeInteger(query.after, 0), Math.min(toNonNegativeInteger(query.limit, 1000), 1000)) }; });
-  app.post("/api/v1/sessions/:sessionId/compact", async (request, reply) => { try { const session = store.getSession((request.params as { sessionId: string }).sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); const principal = principals.get(request); if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); const body = isRecord(request.body) ? request.body : {}; const routeId = typeof body.model === "string" ? requireString(body.model, "model") : activeRoutes()[0]?.id ?? "default"; const resolved = resolveActiveRoute(routeId); const result = await context.compactSession(session.id, resolved.recipe.contextTokens); security?.audit("session.compacted", principal?.user.id, "session", session.id, { routeId, throughSequence: result.entry.content.throughSequence }); return { data: result }; } catch (error) { return reply.code(error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) }); } });
+  app.post("/api/v1/sessions/:sessionId/compact", async (request, reply) => { try { const session = store.getSession((request.params as { sessionId: string }).sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); const principal = principals.get(request); if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); const body = isRecord(request.body) ? request.body : {}; const publicRouteId = typeof body.model === "string" ? requireString(body.model, "model") : session.routeId ?? "default"; const routeId = resolveSessionRouteId(session, publicRouteId); const resolved = resolveActiveRoute(routeId); const result = await context.compactSession(session.id, resolved.recipe.contextTokens); security?.audit("session.compacted", principal?.user.id, "session", session.id, { routeId, throughSequence: result.entry.content.throughSequence }); return { data: result }; } catch (error) { return reply.code(error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) }); } });
   app.get("/api/v1/sessions/:sessionId/artifacts", async (request, reply) => { const session = store.getSession((request.params as { sessionId: string }).sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); if (!canAccessOwner(principals.get(request), session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); return { data: store.listArtifacts(session.id) }; });
   app.post("/api/v1/sessions/:sessionId/artifacts", async (request, reply) => { try { const session = store.getSession((request.params as { sessionId: string }).sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); const principal = principals.get(request); if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); const body = requireRecord(request.body); const name = requireString(body.name, "name"); const mimeType = normalizeMimeType(requireString(body.mimeType, "mimeType")); const content = decodeBase64(body.contentBase64); if (content.byteLength > 1_500_000) throw new TypeError("Artifact exceeds the 1500000 byte limit"); const artifact = { id: randomUUID(), sessionId: session.id, name, mimeType, kind: classifyArtifact(mimeType, name), byteSize: content.byteLength, sha256: createHash("sha256").update(content).digest("hex"), createdAt: new Date().toISOString(), metadata: isRecord(body.metadata) ? body.metadata : {}, ...(principal ? { createdByUserId: principal.user.id } : {}) }; store.createArtifact(artifact, content); security?.audit("artifact.created", principal?.user.id, "artifact", artifact.id, { sessionId: session.id, mimeType, byteSize: artifact.byteSize }); return reply.code(201).send({ data: artifact }); } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
   app.get("/api/v1/artifacts/:artifactId/content", async (request, reply) => { const artifact = store.getArtifact((request.params as { artifactId: string }).artifactId); if (!artifact) return reply.code(404).send({ error: "Artifact not found" }); const session = store.getSession(artifact.sessionId); if (!session || !canAccessOwner(principals.get(request), session.ownerUserId)) return reply.code(403).send({ error: "Artifact access denied" }); const content = store.getArtifactContent(artifact.id); if (!content) return reply.code(404).send({ error: "Artifact content not found" }); return reply.header("x-content-type-options", "nosniff").header("content-security-policy", "sandbox; default-src 'none'").header("content-disposition", `attachment; filename="${safeFilename(artifact.name)}"`).type(artifact.mimeType).send(Buffer.from(content)); });
@@ -389,23 +397,6 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         recoveredAgentRuns,
         recoveredToolApprovals,
       };
-    },
-  );
-
-  app.get("/api/v1/runtime-mode", async () => ({ data: { mode: currentMode() } }));
-  app.put(
-    "/api/v1/runtime-mode",
-    { preHandler: adminGuard(options.adminToken, authMode, principals) },
-    async (request, reply) => {
-      try {
-        const body = requireRecord(request.body);
-        if (body.mode !== "host" && body.mode !== "consume") throw new TypeError("mode must be host or consume");
-        store.setSetting("runtimeMode", body.mode);
-        security?.audit("runtime-mode.changed", principals.get(request)?.user.id, "runtime", "mode", { mode: body.mode });
-        return { data: { mode: currentMode() } };
-      } catch (error) {
-        return reply.code(400).send({ error: errorMessage(error) });
-      }
     },
   );
 
@@ -837,6 +828,16 @@ function consumerCredentialEnvironment(connectionId: string): string {
 function consumerModelRegistration(connectionId: string, modelId: string): ConsumerModelRegistration {
   const suffix = createHash("sha256").update(modelId).digest("hex").slice(0, 16);
   return { modelId, routeId: `${CONSUMER_ROUTE_PREFIX}${connectionId}--${suffix}`, recipeId: `consumer-recipe--${connectionId}--${suffix}` };
+}
+
+function consumerConnectionRouteId(connectionId: string, routeId: string): string {
+  return `${CONSUMER_ROUTE_PREFIX}${connectionId}--route--${routeId}`;
+}
+
+function requirePublicRouteId(value: unknown): "fast" | "default" | "smart" {
+  if (value === undefined) return "default";
+  if (value !== "fast" && value !== "default" && value !== "smart") throw new TypeError("routeId must be fast, default, or smart");
+  return value;
 }
 
 function removeConsumerRegistration(connection: ConsumerConnectionRegistration, store: SqliteStore, routes: RouteResolver, removeAssignments = true): void {

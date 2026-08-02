@@ -28,20 +28,19 @@ describe("Fitz host", () => {
     await runtime.app.close();
   });
 
-  it("uses a hosted recipe directly from a consumer route without loopback", async () => {
+  it("keeps internal connection routes out of the public model contract", async () => {
     const runtime = createHost();
     try {
       const assigned = await runtime.app.inject({ method: "PUT", url: "/api/v1/management/routes/consumer--default", payload: { displayName: "Default", recipeId: "fake-best", enabled: true, isDefault: true } });
       expect(assigned.statusCode, assigned.body).toBe(200);
-      await runtime.app.inject({ method: "PUT", url: "/api/v1/runtime-mode", payload: { mode: "consume" } });
-      expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data).toEqual([expect.objectContaining({ id: "consumer--default" })]);
+      expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((item: { id: string }) => item.id)).toEqual(["default", "fast", "smart"]);
       const completion = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "consumer--default", stream: false, messages: [{ role: "user", content: "hosted locally" }] } });
       expect(completion.statusCode, completion.body).toBe(200);
       expect(completion.json().choices[0].message.content).toContain("Fake response from fake-best-v1");
     } finally { await runtime.app.close(); }
   });
 
-  it("discovers an external API and exposes only the active runtime mode", async () => {
+  it("discovers an external API and resolves a session's connection-scoped route", async () => {
     const upstream = createServer((request, response) => {
       if (request.url === "/v1/models") { response.writeHead(200, { "content-type": "application/json" }); response.end('{"data":[{"id":"upstream-model"},{"id":"explicit-chat-model","endpoints":["chat"]},{"id":"embed-v4.0"},{"id":"rerank-v3.5"},{"id":"cohere-transcribe-03-2026"},{"id":"provider-embedding","endpoints":["embed"]}]}'); return; }
       if (request.url === "/v1/chat/completions") { response.writeHead(200, { "content-type": "text/event-stream" }); response.end('data: {"choices":[{"delta":{"content":"upstream ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'); return; }
@@ -57,24 +56,23 @@ describe("Fitz host", () => {
       expect(consumerModel).toEqual(expect.objectContaining({ id: "upstream-model", routeId: expect.any(String), recipeId: expect.any(String) }));
       expect(saved.json().data.models.map((model: { id: string }) => model.id)).toEqual(["upstream-model", "explicit-chat-model"]);
       expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((item: { id: string }) => item.id).sort()).toEqual(["default", "fast", "smart"]);
-      await runtime.app.inject({ method: "PUT", url: "/api/v1/runtime-mode", payload: { mode: "consume" } });
       const models = await runtime.app.inject({ method: "GET", url: "/v1/models" });
-      const routeId = models.json().data[0].id;
-      expect(models.json().data).toEqual([
-        expect.objectContaining({ display_name: "upstream-model" }),
-        expect.objectContaining({ display_name: "explicit-chat-model" }),
-      ]);
-      const completion = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: routeId, stream: false, messages: [{ role: "user", content: "hello" }] } });
-      expect(completion.statusCode, completion.body).toBe(200); expect(completion.json().choices[0].message.content).toBe("upstream ok");
+      expect(models.json().data.map((item: { id: string }) => item.id)).toEqual(["default", "fast", "smart"]);
       const recipeTest = await runtime.app.inject({ method: "POST", url: `/api/v1/management/recipes/${consumerModel.recipeId}/test` });
       expect(recipeTest.statusCode, recipeTest.body).toBe(200); expect(recipeTest.json().data.working).toBe(true);
-      await runtime.app.inject({ method: "PUT", url: "/api/v1/management/routes/consumer--default", payload: { displayName: "Default", recipeId: consumerModel.recipeId, enabled: true, isDefault: true } });
+      const scopedRouteId = "consumer--test-api--route--default";
+      await runtime.app.inject({ method: "PUT", url: `/api/v1/management/routes/${scopedRouteId}`, payload: { displayName: "Default", recipeId: consumerModel.recipeId, enabled: true, isDefault: true } });
+      const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Connection routing" } });
+      const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "External", connectionId: "test-api", routeId: "default" } });
+      const run = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", sessionId: session.json().data.id, messages: [{ role: "user", content: "hello" }] } });
+      expect(run.statusCode, run.body).toBe(202);
+      expect(run.json().data.routeId).toBe(scopedRouteId);
       await runtime.app.inject({ method: "PUT", url: "/api/v1/management/connections/test-api", payload: { displayName: "Test API", baseUrl: `http://127.0.0.1:${address.port}/v1`, authType: "none" } });
       const refreshedStatus = await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" });
-      expect(refreshedStatus.json().routes).toContainEqual(expect.objectContaining({ id: "consumer--default", recipeId: consumerModel.recipeId }));
+      expect(refreshedStatus.json().routes).toContainEqual(expect.objectContaining({ id: scopedRouteId, recipeId: consumerModel.recipeId }));
       await runtime.app.inject({ method: "DELETE", url: "/api/v1/management/connections/test-api" });
-      expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data).toEqual([]);
-      expect((await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" })).json().routes).not.toContainEqual(expect.objectContaining({ id: "consumer--default" }));
+      expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((item: { id: string }) => item.id)).toEqual(["default", "fast", "smart"]);
+      expect((await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" })).json().routes).not.toContainEqual(expect.objectContaining({ id: scopedRouteId }));
     } finally { await runtime.app.close(); await new Promise<void>((resolve) => upstream.close(() => resolve())); }
   });
 

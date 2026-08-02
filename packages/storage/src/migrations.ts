@@ -201,4 +201,13 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_artifacts_session ON artifacts(session_id, created_at DESC);
     `,
   },
+  {
+    version: 6,
+    sql: `
+      ALTER TABLE sessions ADD COLUMN connection_id TEXT NOT NULL DEFAULT 'hosted--local';
+      ALTER TABLE sessions ADD COLUMN route_id TEXT NOT NULL DEFAULT 'default'
+        CHECK (route_id IN ('fast', 'default', 'smart'));
+      CREATE INDEX IF NOT EXISTS idx_sessions_connection ON sessions(connection_id, updated_at DESC);
+    `,
+  },
 ] as const;

@@ -68,7 +68,7 @@ describe("desktop renderer shell", () => {
   });
 
   it("matches the compact Codex sidebar and new-chat project rail", () => {
-    expect(html).toContain('class="runtime-mode-toggle"');
+    expect(html).not.toContain('class="runtime-mode-toggle"');
     expect(html).toContain('<span>Codex</span>');
     expect(renderer).toContain('treeItem(session.title, "task-row", undefined');
     expect(renderer).not.toContain("function chatIcon()");
@@ -80,25 +80,28 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"');
   });
 
-  it("switches between hosting and securely stored OpenAI-compatible connections", () => {
-    expect(html).toContain('data-runtime-mode="host"');
-    expect(html).toContain('data-runtime-mode="consume"');
+  it("shows playbooks and securely stored OpenAI-compatible connections together", () => {
+    expect(html).not.toContain('data-runtime-mode="host"');
+    expect(html).not.toContain('data-runtime-mode="consume"');
+    expect(html).toContain('id="manage-playbooks"');
+    expect(html).toContain('id="manage-connections"');
     expect(html).toContain('id="connections-page"');
     expect(html).toContain('id="consumer-connection-url"');
     expect(html).toContain('id="connection-search"');
     expect(html).toContain('id="connection-editor"');
     expect(renderer).toContain('window.fitz.saveConsumerConnection');
-    expect(renderer).toContain('api("/api/v1/runtime-mode", "PUT"');
+    expect(renderer).not.toContain('/api/v1/runtime-mode');
     expect(renderer).toContain('consumerFixedRouteId');
-    expect(renderer).toContain('const CONSUMER_COMPOSER_ROUTE_IDS = new Set');
-    expect(renderer).toContain('runtimeMode !== "consume" || CONSUMER_COMPOSER_ROUTE_IDS.has(String(card.id))');
-    expect(renderer).toContain('if (runtimeMode === "consume") option.dataset.group = "Routes"');
+    expect(renderer).toContain('const LOCAL_CONNECTION_ID = "hosted--local"');
+    expect(renderer).toContain('connectionId: selectedConnectionId');
+    expect(renderer).toContain('routeId: model.value as FixedRouteId');
     expect(renderer).not.toContain('candidate.routeId === card.id');
     expect(renderer).toContain('testRecipe({ id: consumerModel.recipeId');
     expect(renderer).toContain("function connectionViews(): ConnectionView[]");
-    expect(renderer).toContain('id: "hosted--local"');
+    expect(renderer).toContain('id: LOCAL_CONNECTION_ID');
     expect(renderer).toContain('managementConfiguration?.hostName ?? "This PC"');
-    expect(renderer).toContain('recipe.capabilities?.chatCompletions !== false');
+    expect(renderer).toContain('configuredConnectionId === connection.id');
+    expect(renderer).toContain('const shownModels = configuring ? connection.availableModels : connection.models');
     expect(renderer).toContain('if (!connection.hosted)');
     expect(renderer).not.toContain('url.className = "connection-url"');
     expect(html).toContain("Provider and self-hosted OpenAI-compatible APIs.");
