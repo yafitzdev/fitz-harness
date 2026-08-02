@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { basename, dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   DefaultPackageManager,
   SettingsManager,
@@ -79,6 +79,7 @@ export class PiPackageService {
 
   async installed(): Promise<InstalledPiPackage[]> {
     await this.#settings.reload();
+    await this.#adoptManagedNpmPackages();
     const resolved = await this.#manager.resolve(async () => "skip");
     const configured = this.#manager.listConfiguredPackages().filter((entry) => entry.scope === "user");
     return Promise.all(configured.map(async (entry) => {
@@ -132,6 +133,25 @@ export class PiPackageService {
     });
   }
 
+  async #adoptManagedNpmPackages(): Promise<void> {
+    const packageRoot = join(this.#agentDir, "npm");
+    const manifest = await packageManifest(packageRoot);
+    const dependencyNames = Object.keys(manifest?.dependencies ?? {});
+    if (!dependencyNames.length) return;
+    const configured = this.#settings.getGlobalSettings().packages ?? [];
+    const configuredSources = new Set(configured.map(packageSource));
+    const discovered: string[] = [];
+    for (const name of dependencyNames) {
+      const installedManifest = await packageManifest(join(packageRoot, "node_modules", ...name.split("/")));
+      if (!isPiPackageManifest(installedManifest)) continue;
+      const source = `npm:${name}`;
+      if (!configuredSources.has(source)) discovered.push(source);
+    }
+    if (!discovered.length) return;
+    this.#settings.setPackages([...configured, ...discovered]);
+    await this.#settings.flush();
+  }
+
   #serialize<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.#operation.then(operation, operation);
     this.#operation = result.then(() => undefined, () => undefined);
@@ -165,10 +185,12 @@ function packageTypes(keywords: string[]): PiCatalogPackage["types"] {
   return types.length ? types : ["extension"];
 }
 
-async function packageManifest(path: string): Promise<{ name?: string; version?: string; description?: string } | undefined> {
-  try { return JSON.parse(await readFile(`${path}/package.json`, "utf8")) as { name?: string; version?: string; description?: string }; }
+interface PackageManifest { name?: string; version?: string; description?: string; dependencies?: Record<string, string>; keywords?: string[]; pi?: Record<string, unknown> }
+async function packageManifest(path: string): Promise<PackageManifest | undefined> {
+  try { return JSON.parse(await readFile(`${path}/package.json`, "utf8")) as PackageManifest; }
   catch { return undefined; }
 }
+function isPiPackageManifest(manifest: PackageManifest | undefined): boolean { return Boolean(manifest?.pi || manifest?.keywords?.some((keyword) => keyword === "pi-package" || keyword.startsWith("pi-extension"))); }
 
 function resourceCounts(resolved: ResolvedPaths, source: string): InstalledPiPackage["resources"] {
   const count = (resources: ResolvedPaths[keyof ResolvedPaths]) => resources.filter((resource) => resource.metadata.source === source).length;

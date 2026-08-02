@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -36,6 +36,19 @@ describe("PiPackageService", () => {
     expect(await service.installed()).toEqual([expect.objectContaining({ enabled: true })]);
     await service.remove(installed!.source);
     expect(await service.installed()).toEqual([]);
+  });
+
+  it("adopts Pi packages installed directly into the managed npm workspace", async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, "agent");
+    const packageDir = join(agentDir, "npm", "node_modules", "pi-rtk-optimizer");
+    await mkdir(packageDir, { recursive: true });
+    await writeFile(join(agentDir, "npm", "package.json"), JSON.stringify({ name: "pi-extensions", private: true, dependencies: { "pi-rtk-optimizer": "^0.9.0" } }));
+    await writeFile(join(packageDir, "package.json"), JSON.stringify({ name: "pi-rtk-optimizer", version: "0.9.0", description: "RTK optimizer", keywords: ["pi-package", "pi-extension"] }));
+    const service = new PiPackageService({ agentDir, cwd: root });
+
+    expect(await service.installed()).toEqual([expect.objectContaining({ source: "npm:pi-rtk-optimizer", displayName: "pi-rtk-optimizer", version: "0.9.0", enabled: true })]);
+    expect(JSON.parse(await readFile(join(agentDir, "settings.json"), "utf8"))).toEqual(expect.objectContaining({ packages: ["npm:pi-rtk-optimizer"] }));
   });
 });
 
