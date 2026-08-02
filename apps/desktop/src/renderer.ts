@@ -100,6 +100,11 @@ const accessModeIcon = element("access-mode-icon") as unknown as SVGElement;
 const form = element("composer") as HTMLFormElement;
 const workspace = query(".workspace");
 const prompt = element("prompt") as HTMLTextAreaElement;
+const conversationLayoutObserver = new ResizeObserver(syncConversationScrollbar);
+const conversationContentObserver = new MutationObserver(syncConversationScrollbar);
+conversationLayoutObserver.observe(messages);
+conversationContentObserver.observe(messages, { childList: true, subtree: true });
+syncConversationScrollbar();
 const newChatContext = element("new-chat-context");
 const newChatProject = element("new-chat-project");
 const newChatProjectControl = element("new-chat-project-control") as HTMLButtonElement;
@@ -2436,6 +2441,11 @@ function showLanding(hasTask = false): void {
   }
   messages.append(landing);
   updateTitles();
+}
+
+function syncConversationScrollbar(): void {
+  const scrollbarWidth = Math.max(0, messages.offsetWidth - messages.clientWidth);
+  workspace.style.setProperty("--conversation-scrollbar", `${scrollbarWidth}px`);
 }
 
 function showConnectionFailure(detail: string): void {
