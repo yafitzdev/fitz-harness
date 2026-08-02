@@ -355,6 +355,12 @@ describe("Fitz host", () => {
     const response = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", sessionId: "context-session", messages: [{ role: "user", content: "continue" }] } }); expect(response.statusCode).toBe(202); expect(response.json().context.compacted).toBe(true); const transcript = store.transcriptAfter("context-session", 0); expect(transcript.some((entry) => entry.kind === "compaction")).toBe(true); expect(transcript.some((entry) => entry.role === "user" && entry.content.text === "continue")).toBe(true); await runtime.app.close();
   });
 
+  it("manually compacts a session into a reusable context checkpoint", async () => {
+    const runtime = createHost(); const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Context" } }); const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "Long" } }); const sessionId = session.json().data.id;
+    runtime.store.appendTranscriptEntry({ id: "manual-context", sessionId, kind: "message", role: "user", content: { text: "preserve this context" }, createdAt: new Date().toISOString() }); const compacted = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/compact`, payload: { model: "default" } });
+    expect(compacted.statusCode).toBe(200); expect(compacted.json().data).toEqual(expect.objectContaining({ originalMessageCount: 1, estimatedContextTokens: expect.any(Number) })); expect(runtime.store.transcriptAfter(sessionId, 0).at(-1)).toEqual(expect.objectContaining({ kind: "compaction", content: expect.objectContaining({ manual: true, throughSequence: 1 }) })); await runtime.app.close();
+  });
+
   it("issues and redeems one-time pairing codes without pre-authentication", async () => {
     const store = SqliteStore.memory(); const security = new SecurityService(store, "pairing-pepper"); const admin = security.createUser("Admin", "administrator"); const adminToken = security.issueDevice(admin.id, "Console").token; const runtime = createHost({ store, security, authMode: "required" }); const headers = { authorization: `Bearer ${adminToken}` };
     const issued = await runtime.app.inject({ method: "POST", url: "/api/v1/management/pairing-codes", headers, payload: { intendedRole: "consumer", ttlSeconds: 60 } }); expect(issued.statusCode).toBe(201); const code = issued.json().data.code;

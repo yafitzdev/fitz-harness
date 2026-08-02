@@ -24,6 +24,7 @@ describe("desktop renderer shell", () => {
       "choose-project-folder",
       "model-toggle",
       "context-meter",
+      "context-compact",
       "advanced-settings",
       "task-menu-toggle",
       "rename-task",
@@ -147,6 +148,14 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".agent-activity-details");
     expect(styles).toContain(".agent-activity.open .agent-activity-chevron");
     expect(styles).toContain(".message.commentary");
+  });
+
+  it("manually compacts context from the inline usage popover", () => {
+    expect(html).toContain('id="context-compact"');
+    expect(renderer).toContain('api(`/api/v1/sessions/${currentSession}/compact`, "POST"');
+    expect(renderer).toContain("estimateTranscriptContext");
+    expect(renderer).toContain('appendContextActivity("Context compacted")');
+    expect(styles).toContain(".context-usage-popover button");
   });
 
   it("uses the measured Codex desktop design tokens", () => {

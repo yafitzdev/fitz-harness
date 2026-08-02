@@ -56,6 +56,8 @@ const contextMeter = element("context-meter");
 const contextUsagePopover = element("context-usage-popover");
 const contextPercent = element("context-percent");
 const contextTokens = element("context-tokens");
+const contextCompactButton = element("context-compact") as HTMLButtonElement;
+const contextCompactStatus = element("context-compact-status");
 const accessModeToggle = element("access-mode-toggle") as HTMLButtonElement;
 const accessModeMenu = element("access-mode-menu");
 const accessModeLabel = element("access-mode-label");
@@ -193,6 +195,7 @@ speed.addEventListener("change", applySpeedSelection);
 modelToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(modelMenu, modelToggle); });
 contextMeter.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(contextUsagePopover, contextMeter as HTMLButtonElement); });
 contextUsagePopover.addEventListener("click", (event) => event.stopPropagation());
+contextCompactButton.addEventListener("click", () => void compactCurrentSession());
 accessModeToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(accessModeMenu, accessModeToggle); });
 accessModeMenu.addEventListener("click", (event) => event.stopPropagation());
 for (const choice of document.querySelectorAll<HTMLButtonElement>("[data-access-mode]")) choice.addEventListener("click", () => setAccessMode(choice.dataset.accessMode as AccessMode));
@@ -347,6 +350,7 @@ async function selectProject(id: string): Promise<void> {
 
 async function selectSession(id: string, rerender = true, projectId?: string): Promise<void> {
   hideChatHover();
+  contextCompactStatus.hidden = true; contextCompactStatus.textContent = "";
   showConversationWorkspace();
   newChatMode = false;
   workspace.classList.remove("new-chat-open");
@@ -362,11 +366,11 @@ async function selectSession(id: string, rerender = true, projectId?: string): P
   try {
     const transcript = await api(`/api/v1/sessions/${id}/transcript`);
     messages.replaceChildren();
-    sessionTokenEstimate = 0;
+    sessionTokenEstimate = estimateTranscriptContext(transcript.data ?? []);
     const transcriptTools = new Map<string, { row: HTMLElement; toolName: string; input: unknown }>();
     for (const entry of transcript.data ?? []) {
       if (entry.kind === "message") {
-        const text = entry.content?.text ?? ""; sessionTokenEstimate += estimateTokens(text);
+        const text = entry.content?.text ?? "";
         if (entry.role === "assistant" && entry.content?.phase === "commentary") appendCommentary(text);
         else appendMessage(entry.role ?? "system", text);
       }
@@ -382,7 +386,7 @@ async function selectSession(id: string, rerender = true, projectId?: string): P
         if (existing) completeToolActivity(existing.row, existing.toolName, existing.input, entry.content?.result, Boolean(entry.content?.isError));
         else completeToolActivity(appendToolActivity(String(entry.content?.toolName ?? "tool"), undefined, toolCallId, true), String(entry.content?.toolName ?? "tool"), undefined, entry.content?.result, Boolean(entry.content?.isError));
       }
-      if (entry.kind === "compaction") appendContextActivity();
+      if (entry.kind === "compaction") appendContextActivity(entry.content?.manual === true ? "Context compacted" : "Context automatically compacted");
     }
     const pendingApprovals = await api(`/api/v1/sessions/${id}/tool-approvals?status=pending`);
     for (const approval of pendingApprovals.data ?? []) appendToolApproval(approval);
@@ -416,6 +420,7 @@ function openNewChat(): void {
   newChatProjectDetached = false;
   currentSession = undefined;
   sessionTokenEstimate = 0;
+  contextCompactStatus.hidden = true; contextCompactStatus.textContent = "";
   expandedProjects.add(currentProject);
   saveSet("fitz-expanded-projects", expandedProjects);
   workspace.classList.add("new-chat-open");
@@ -1359,10 +1364,10 @@ function safeStringify(value: unknown): string {
   catch { return String(value); }
 }
 
-function appendContextActivity(): HTMLElement {
+function appendContextActivity(text = "Context automatically compacted"): HTMLElement {
   const row = document.createElement("div"); row.className = "message agent-activity";
   const icon = document.createElement("span"); icon.className = "agent-activity-icon"; icon.append(contextActivityIcon());
-  const label = document.createElement("span"); label.className = "agent-activity-label"; label.textContent = "Context automatically compacted";
+  const label = document.createElement("span"); label.className = "agent-activity-label"; label.textContent = text;
   row.append(icon, label); messages.append(row); return row;
 }
 
@@ -1431,6 +1436,7 @@ function refreshComposerState(): void {
   modelToggle.disabled = model.options.length === 0 || Boolean(currentRun);
   accessModeToggle.disabled = Boolean(currentRun);
   attachButton.disabled = !currentSession || Boolean(currentRun);
+  contextCompactButton.disabled = !currentSession || Boolean(currentRun);
   addArtifactButton.disabled = !currentSession;
   sendButton.classList.toggle("running", Boolean(currentRun));
   sendButton.title = currentRun ? "Stop task" : "Send message";
@@ -1496,6 +1502,16 @@ function toggleSidebar(): void { shell.classList.toggle("sidebar-collapsed"); cl
 function resizePrompt(): void { prompt.style.height = "auto"; prompt.style.height = `${Math.min(prompt.scrollHeight, 180)}px`; }
 function updateContextMeter(): void { const usedTokens = sessionTokenEstimate + estimateTokens(prompt.value); const used = Math.min(100, (usedTokens / contextTokenLimit) * 100); contextMeter.style.setProperty("--context-used", `${used}%`); contextPercent.textContent = `${Math.round(used)}% full`; contextTokens.textContent = `≈${formatTokenCount(usedTokens)} / ${formatTokenCount(contextTokenLimit)} tokens used`; contextMeter.setAttribute("aria-label", `Context window ${Math.round(used)}% full, approximately ${formatTokenCount(usedTokens)} of ${formatTokenCount(contextTokenLimit)} tokens used`); }
 
+async function compactCurrentSession(): Promise<void> {
+  if (!currentSession || currentRun) return;
+  contextCompactButton.disabled = true; contextCompactStatus.hidden = false; contextCompactStatus.textContent = "Compacting…";
+  try {
+    const response = await api(`/api/v1/sessions/${currentSession}/compact`, "POST", { model: model.value || "default" });
+    sessionTokenEstimate = Number(response.data?.estimatedContextTokens ?? sessionTokenEstimate); updateContextMeter(); appendContextActivity("Context compacted"); contextCompactStatus.textContent = `Reduced ${formatTokenCount(Number(response.data?.estimatedInputTokens ?? 0))} to ${formatTokenCount(sessionTokenEstimate)} tokens`;
+  } catch (error) { contextCompactStatus.textContent = errorMessage(error); }
+  finally { contextCompactButton.disabled = false; }
+}
+
 function beginSidebarResize(event: PointerEvent): void {
   event.preventDefault(); sidebarResizer.classList.add("dragging"); sidebarResizer.setPointerCapture(event.pointerId);
   const move = (moveEvent: PointerEvent) => setSidebarWidth(moveEvent.clientX);
@@ -1559,5 +1575,11 @@ function formatElapsed(value: number): string {
   return minutes > 0 ? `${minutes}m ${String(seconds % 60).padStart(2, "0")}s` : `${seconds}s`;
 }
 function estimateTokens(value: string): number { return value ? Math.max(1, Math.ceil(value.length / 4)) : 0; }
+function estimateTranscriptContext(entries: Json[]): number {
+  const checkpoint = [...entries].reverse().find((entry) => entry.kind === "compaction" && entry.content?.manual === true && typeof entry.content?.summary === "string" && Number.isFinite(Number(entry.content?.throughSequence)));
+  const throughSequence = checkpoint ? Number(checkpoint.content.throughSequence) : -1; let total = checkpoint ? estimateTokens(`Conversation summary:\n${checkpoint.content.summary}`) : 0;
+  for (const entry of entries) if (entry.kind === "message" && typeof entry.content?.text === "string" && Number(entry.sequence) > throughSequence) total += estimateTokens(entry.content.text);
+  return total;
+}
 function formatTokenCount(value: number): string { return value >= 1000 ? `${Math.round(value / 1000)}k` : String(Math.round(value)); }
 class HttpError extends Error { constructor(message: string, readonly status: number) { super(message); } }

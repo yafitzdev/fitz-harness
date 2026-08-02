@@ -159,7 +159,10 @@
               <div class="composer-controls">
                 <div class="context-usage-wrap">
                   <button id="context-meter" class="context-meter" type="button" title="Context window usage" aria-label="Context window usage"></button>
-                  <div id="context-usage-popover" class="popover context-usage-popover" hidden><span>Context window:</span><strong id="context-percent">0% full</strong><b id="context-tokens">0 / 128k tokens used</b></div>
+                  <div id="context-usage-popover" class="popover context-usage-popover" hidden>
+                    <span>Context window:</span><strong id="context-percent">0% full</strong><b id="context-tokens">0 / 128k tokens used</b>
+                    <button id="context-compact" type="button">Compact now</button><small id="context-compact-status" hidden></small>
+                  </div>
                 </div>
                 <div class="model-picker">
                   <button id="model-toggle" class="model-toggle" type="button" aria-label="Model settings" aria-expanded="false" disabled><span id="model-summary">Model</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"></path></svg></button>

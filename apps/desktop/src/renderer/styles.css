@@ -290,6 +290,10 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .context-usage-popover { right: -82px; bottom: 34px; width: 255px; display: grid; justify-items: center; gap: 3px; padding: 11px 14px; color: var(--muted); text-align: center; }
 .context-usage-popover strong { color: #b9bcb6; font-weight: 550; }
 .context-usage-popover b { color: var(--text); font-size: 13px; }
+.context-usage-popover button { width: 100%; margin-top: 7px; padding: 7px 9px; border-radius: var(--codex-radius-md); background: rgba(255,255,255,.07); color: var(--text); cursor: pointer; }
+.context-usage-popover button:hover:not(:disabled) { background: rgba(255,255,255,.11); }
+.context-usage-popover button:disabled { opacity: .45; cursor: default; }
+.context-usage-popover small { color: var(--codex-text-tertiary); font-size: 10px; }
 .model-picker { position: relative; }
 .model-toggle { min-width: 142px; display: flex; align-items: center; justify-content: flex-end; gap: 7px; padding: 6px 9px; border-radius: 9px; background: transparent; color: #d7d8d3; cursor: pointer; font-size: 12px; }
 .model-toggle svg { width: 14px; height: 14px; color: var(--muted); }
