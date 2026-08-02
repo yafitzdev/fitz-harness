@@ -203,7 +203,7 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".advanced-settings-panel");
     expect(styles).toContain(".model-menu { right: 0; bottom: 38px;");
     expect(styles).toContain(".settings-submenu.open-left");
-    expect(html).toContain('<option value="1024">Light</option><option value="4096" selected>Medium</option><option value="8192">High</option>');
+    expect(html).toContain('<option value="2048">Light</option><option value="8192" selected>Medium</option><option value="16384">High</option>');
     expect(html).not.toContain('data-setting="speed"');
     expect(html).not.toContain("Extra High");
     expect(html).not.toContain("Ultra");
