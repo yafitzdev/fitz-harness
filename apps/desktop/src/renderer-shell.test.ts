@@ -65,7 +65,8 @@ describe("desktop renderer shell", () => {
   });
 
   it("matches the compact Codex sidebar and new-chat project rail", () => {
-    expect(html).toContain('<div class="sidebar-brand">Codex</div>');
+    expect(html).toContain('class="runtime-mode-toggle"');
+    expect(html).toContain('<span>Codex</span>');
     expect(renderer).toContain('treeItem(session.title, "task-row", undefined');
     expect(renderer).not.toContain("function chatIcon()");
     expect(styles).toContain("height: 42px; display: flex; align-items: center");
@@ -74,6 +75,17 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".task-row { padding: 6px 34px 6px 30px;");
     expect(renderer).toContain('identity.data?.authMode === "disabled" || identity.data?.user?.role === "administrator"');
     expect(html).toContain('d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"');
+  });
+
+  it("switches between hosting and securely stored OpenAI-compatible connections", () => {
+    expect(html).toContain('data-runtime-mode="host"');
+    expect(html).toContain('data-runtime-mode="consume"');
+    expect(html).toContain('id="connections-page"');
+    expect(html).toContain('id="consumer-connection-url"');
+    expect(renderer).toContain('window.fitz.saveConsumerConnection');
+    expect(renderer).toContain('api("/api/v1/runtime-mode", "PUT"');
+    expect(main).toContain('safeStorage.encryptString(JSON.stringify(connections))');
+    expect(main).not.toContain('apiKey: connection.apiKey, models');
   });
 
   it("opens Playbooks as a first-class searchable workspace page", () => {

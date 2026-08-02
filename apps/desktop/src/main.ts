@@ -1,6 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, safeStorage, shell, type MenuItemConstructorOptions } from "electron";
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,9 +17,49 @@ const hostUrl = validateHostUrl(commandLineValue("host-url") ?? (localHostPort ?
 let deviceToken = process.env.FITZ_DEVICE_TOKEN;
 interface DesktopUpdateStatus { state: "idle" | "checking" | "available" | "downloading" | "current" | "downloaded" | "error" | "development"; percent?: number; version?: string }
 let latestUpdateStatus: DesktopUpdateStatus = { state: app.isPackaged ? "idle" : "development" };
+interface StoredConsumerConnection { id: string; displayName: string; baseUrl: string; authType: "none" | "bearer"; apiKey?: string; models: Array<{ id: string; routeId: string }>; updatedAt: string }
 
 ipcMain.handle("fitz:request", async (_event, input: unknown) => { if (!isRecord(input)) throw new TypeError("Request must be an object"); const path = validateRequestPath(String(input.path ?? "")); const method = typeof input.method === "string" ? input.method.toUpperCase() : "GET"; if (!["GET", "POST", "PUT", "PATCH", "DELETE"].includes(method)) throw new Error("HTTP method is not allowed"); const responseType = input.responseType === "base64" ? "base64" : "text"; const response = await fetch(new URL(path, hostUrl), { method, headers: { accept: responseType === "base64" ? "*/*" : "application/json", ...(input.body !== undefined ? { "content-type": "application/json" } : {}), ...(deviceToken ? { authorization: `Bearer ${deviceToken}` } : {}) }, ...(input.body !== undefined ? { body: JSON.stringify(input.body) } : {}) }); return { status: response.status, body: responseType === "base64" ? Buffer.from(await response.arrayBuffer()).toString("base64") : await response.text() }; });
 ipcMain.handle("fitz:connection-info", () => ({ origin: new URL(hostUrl).origin }));
+ipcMain.handle("fitz:consumer-connections-list", () => loadConsumerConnections().map(publicConsumerConnection));
+ipcMain.handle("fitz:consumer-connection-save", async (_event, input: unknown) => {
+  if (!isRecord(input)) throw new TypeError("Connection must be an object");
+  const existing = typeof input.id === "string" ? loadConsumerConnections().find((item) => item.id === input.id) : undefined;
+  const id = existing?.id ?? randomUUID();
+  const displayName = requireBoundedText(input.displayName, "Connection name", 100);
+  const baseUrl = requireConsumerBaseUrl(input.baseUrl);
+  const authType = input.authType === "none" ? "none" : input.authType === "bearer" ? "bearer" : undefined;
+  if (!authType) throw new Error("Authorization must be Bearer token or None");
+  const enteredKey = typeof input.apiKey === "string" && input.apiKey.trim() ? input.apiKey.trim() : undefined;
+  const apiKey = authType === "bearer" ? enteredKey ?? existing?.apiKey : undefined;
+  if (authType === "bearer" && !apiKey) throw new Error("API key is required");
+  const response = await trustedHostRequest(`/api/v1/management/connections/${encodeURIComponent(id)}`, "PUT", { displayName, baseUrl, authType, ...(apiKey ? { apiKey } : {}) });
+  const parsed = await parseHostResponse(response);
+  const data = isRecord(parsed.data) ? parsed.data : {};
+  const connection: StoredConsumerConnection = { id, displayName, baseUrl, authType, ...(apiKey ? { apiKey } : {}), models: parseConsumerModels(data.models), updatedAt: typeof data.updatedAt === "string" ? data.updatedAt : new Date().toISOString() };
+  persistConsumerConnections([...loadConsumerConnections().filter((item) => item.id !== id), connection]);
+  return publicConsumerConnection(connection);
+});
+ipcMain.handle("fitz:consumer-connection-remove", async (_event, value: unknown) => {
+  const id = requireBoundedText(value, "Connection ID", 100);
+  const response = await trustedHostRequest(`/api/v1/management/connections/${encodeURIComponent(id)}`, "DELETE");
+  if (!response.ok && response.status !== 404) throw new Error(hostError(await response.text()));
+  persistConsumerConnections(loadConsumerConnections().filter((item) => item.id !== id));
+});
+ipcMain.handle("fitz:consumer-connections-sync", async () => {
+  const results: Array<{ id: string; connected: boolean; error?: string }> = [];
+  const updated: StoredConsumerConnection[] = [];
+  for (const connection of loadConsumerConnections()) {
+    try {
+      const response = await trustedHostRequest(`/api/v1/management/connections/${encodeURIComponent(connection.id)}`, "PUT", { displayName: connection.displayName, baseUrl: connection.baseUrl, authType: connection.authType, ...(connection.apiKey ? { apiKey: connection.apiKey } : {}) });
+      const parsed = await parseHostResponse(response); const data = isRecord(parsed.data) ? parsed.data : {};
+      updated.push({ ...connection, models: parseConsumerModels(data.models), updatedAt: typeof data.updatedAt === "string" ? data.updatedAt : connection.updatedAt });
+      results.push({ id: connection.id, connected: true });
+    } catch (error) { updated.push(connection); results.push({ id: connection.id, connected: false, error: error instanceof Error ? error.message : String(error) }); }
+  }
+  persistConsumerConnections(updated);
+  return results;
+});
 ipcMain.handle("fitz:pair-device", async (_event, input: unknown) => { if (!isRecord(input)) throw new TypeError("Pairing details must be an object"); const code = requireBoundedText(input.code, "Pairing code", 128); const displayName = requireBoundedText(input.displayName, "Display name", 100); const deviceName = requireBoundedText(input.deviceName, "Device name", 100); if (!safeStorage.isEncryptionAvailable()) return { status: 503, body: JSON.stringify({ error: "Secure credential storage is unavailable" }) }; const response = await fetch(new URL("/api/v1/pairing/redeem", hostUrl), { method: "POST", headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify({ code, displayName, deviceName }) }); const body = await response.text(); if (!response.ok) return { status: response.status, body }; const parsed = JSON.parse(body) as Record<string, unknown>; const data = isRecord(parsed.data) ? parsed.data : {}; const token = typeof data.token === "string" ? data.token : undefined; if (!token) return { status: 502, body: JSON.stringify({ error: "The host did not return a device credential" }) }; persistDeviceToken(token); deviceToken = token; const { token: _token, ...safeData } = data; return { status: response.status, body: JSON.stringify({ ...parsed, data: safeData }) }; });
 ipcMain.handle("fitz:open-external", async (_event, url: unknown) => { if (typeof url !== "string" || !isAllowedExternalUrl(url)) throw new Error("External URL is not allowed"); await shell.openExternal(url); });
 ipcMain.handle("fitz:choose-folder", async () => { const result = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] }); return result.canceled ? undefined : result.filePaths[0]; });
@@ -70,5 +110,15 @@ function requireBoundedText(value: unknown, label: string, maximum: number): str
 function deviceTokenPath(): string { const hostId = createHash("sha256").update(new URL(hostUrl).origin).digest("hex").slice(0, 16); return join(app.getPath("userData"), `device-token-${hostId}.bin`); }
 function persistDeviceToken(token: string): void { mkdirSync(dirname(deviceTokenPath()), { recursive: true }); writeFileSync(deviceTokenPath(), safeStorage.encryptString(token), { flag: "w" }); }
 function loadDeviceToken(): string | undefined { try { if (!safeStorage.isEncryptionAvailable() || !existsSync(deviceTokenPath())) return undefined; return safeStorage.decryptString(readFileSync(deviceTokenPath())); } catch { return undefined; } }
+function consumerConnectionsPath(): string { const hostId = createHash("sha256").update(new URL(hostUrl).origin).digest("hex").slice(0, 16); return join(app.getPath("userData"), `consumer-connections-${hostId}.bin`); }
+function loadConsumerConnections(): StoredConsumerConnection[] { try { if (!safeStorage.isEncryptionAvailable() || !existsSync(consumerConnectionsPath())) return []; const value = JSON.parse(safeStorage.decryptString(readFileSync(consumerConnectionsPath()))) as unknown; return Array.isArray(value) ? value.filter(isStoredConsumerConnection) : []; } catch { return []; } }
+function persistConsumerConnections(connections: StoredConsumerConnection[]): void { if (!safeStorage.isEncryptionAvailable()) throw new Error("Secure credential storage is unavailable"); mkdirSync(dirname(consumerConnectionsPath()), { recursive: true }); writeFileSync(consumerConnectionsPath(), safeStorage.encryptString(JSON.stringify(connections)), { flag: "w" }); }
+function publicConsumerConnection(connection: StoredConsumerConnection) { return { id: connection.id, displayName: connection.displayName, baseUrl: connection.baseUrl, authType: connection.authType, hasCredential: Boolean(connection.apiKey), models: connection.models, updatedAt: connection.updatedAt }; }
+function isStoredConsumerConnection(value: unknown): value is StoredConsumerConnection { return isRecord(value) && typeof value.id === "string" && typeof value.displayName === "string" && typeof value.baseUrl === "string" && (value.authType === "none" || value.authType === "bearer") && Array.isArray(value.models) && typeof value.updatedAt === "string"; }
+function parseConsumerModels(value: unknown): Array<{ id: string; routeId: string }> { if (!Array.isArray(value)) return []; return value.flatMap((item) => isRecord(item) && typeof item.id === "string" && typeof item.routeId === "string" ? [{ id: item.id, routeId: item.routeId }] : []); }
+function requireConsumerBaseUrl(value: unknown): string { const text = requireBoundedText(value, "Base URL", 2048); const url = new URL(text); if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Base URL must use HTTP or HTTPS"); if (url.username || url.password || url.search || url.hash) throw new Error("Base URL must not contain credentials, a query, or a fragment"); return url.toString().replace(/\/$/, ""); }
+async function trustedHostRequest(path: string, method: string, body?: unknown): Promise<Response> { return fetch(new URL(validateRequestPath(path), hostUrl), { method, headers: { accept: "application/json", ...(body !== undefined ? { "content-type": "application/json" } : {}), ...(deviceToken ? { authorization: `Bearer ${deviceToken}` } : {}) }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) }); }
+async function parseHostResponse(response: Response): Promise<Record<string, unknown>> { const content = await response.text(); if (!response.ok) throw new Error(hostError(content)); const parsed = content ? JSON.parse(content) as unknown : {}; if (!isRecord(parsed)) throw new Error("The Fitz host returned an invalid response"); return parsed; }
+function hostError(content: string): string { try { const parsed = JSON.parse(content) as unknown; if (isRecord(parsed) && typeof parsed.error === "string") return parsed.error; } catch {} return content || "The Fitz host rejected the request"; }
 async function runGit(root: string, args: string[]): Promise<string> { const result = await execFileAsync("git", ["-C", root, ...args], { windowsHide: true, maxBuffer: 1_000_000 }); return result.stdout.trim(); }
 async function gitBranchState(root: string): Promise<{ current: string; branches: string[] }> { const [current, listing] = await Promise.all([runGit(root, ["branch", "--show-current"]), runGit(root, ["branch", "--format=%(refname:short)"])]); return { current, branches: listing.split(/\r?\n/).map((value) => value.trim()).filter(Boolean) }; }

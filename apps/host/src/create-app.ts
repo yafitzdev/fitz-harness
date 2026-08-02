@@ -42,6 +42,21 @@ import type { AgentRuntime } from "@fitz/agent-core";
 import { ContextManager } from "@fitz/context";
 import { TailscaleMonitor, TailscaleServeManager, WindowsStartupManager } from "@fitz/connectivity";
 import { classifyArtifact, normalizeMimeType } from "@fitz/media";
+import { OpenAICompatibleClient, OpenAICompatibleEngineAdapter } from "@fitz/engine-openai-compatible";
+
+type RuntimeMode = "host" | "consume";
+interface ConsumerModelRegistration { modelId: string; routeId: string; recipeId: string }
+interface ConsumerConnectionRegistration {
+  id: string;
+  displayName: string;
+  baseUrl: string;
+  authType: "none" | "bearer";
+  credentialEnv: string;
+  models: ConsumerModelRegistration[];
+  updatedAt: string;
+}
+
+const CONSUMER_ROUTE_PREFIX = "consumer--";
 
 export interface CreateHostOptions {
   store?: SqliteStore;
@@ -123,7 +138,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const routes = new RouteResolver(store.listRoutes(), store.listRecipes());
   const events = new LifecycleEventBus(1_000, store.latestLifecycleSequence());
   const fakeAdapter = options.adapters ? options.fakeAdapter : (options.fakeAdapter ?? new FakeEngineAdapter());
-  const adapterList = options.adapters ?? (fakeAdapter ? [fakeAdapter] : []);
+  const adapterList = options.adapters ?? (fakeAdapter ? [fakeAdapter, new OpenAICompatibleEngineAdapter()] : [new OpenAICompatibleEngineAdapter()]);
   const adapters = new EngineAdapterRegistry(adapterList);
   const resources = new ResourceGovernor(
     options.resourceMonitor ?? new SystemResourceMonitor(),
@@ -144,6 +159,15 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const unsubscribeMetrics = events.subscribe((event) => metrics.observeLifecycleEvent(event));
   const requestStarts = new WeakMap<object, number>();
   const principals = new WeakMap<object, AuthenticatedPrincipal>();
+  const currentMode = (): RuntimeMode => store.getSetting<RuntimeMode>("runtimeMode") === "consume" ? "consume" : "host";
+  const consumerConnections = (): ConsumerConnectionRegistration[] => store.getSetting<ConsumerConnectionRegistration[]>("consumerConnections") ?? [];
+  const routeMatchesMode = (route: Route): boolean => currentMode() === "consume" ? route.id.startsWith(CONSUMER_ROUTE_PREFIX) : !route.id.startsWith(CONSUMER_ROUTE_PREFIX);
+  const activeRoutes = (): Route[] => routes.listRoutes().filter(routeMatchesMode);
+  const resolveActiveRoute = (routeId: string) => {
+    const resolved = routes.resolve(routeId);
+    if (!routeMatchesMode(resolved.route)) throw new RouteNotFoundError(routeId);
+    return resolved;
+  };
 
   app.addHook("onRequest", async (request, reply) => {
     requestStarts.set(request, performance.now());
@@ -175,7 +199,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
 
   app.get("/v1/models", async (request): Promise<ModelListResponse> => ({
     object: "list",
-    data: routes.listRoutes().filter((route) => {
+    data: activeRoutes().filter((route) => {
       const principal = principals.get(request);
       return !principal || security?.authorizeRoute(principal, route.id);
     }).map((route) => ({
@@ -192,7 +216,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     let body;
     try {
       body = parseChatCompletionRequest(request.body);
-      const resolved = routes.resolve(body.model);
+      const resolved = resolveActiveRoute(body.model);
       const principal = principals.get(request);
       if (principal && !security?.authorizeRoute(principal, body.model)) {
         return reply.code(403).send(openAIError(new SecurityPolicyError("Route access denied"), "permission_error"));
@@ -289,7 +313,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     };
   });
   app.get("/api/v1/connectivity/status", async () => ({ tailscale: await tailscale.status() }));
-  app.post("/api/v1/pairing/redeem", async (request, reply) => { try { const body = requireRecord(request.body); const access = securityRequired(security); const redeemed = access.redeemPairingCode(requireString(body.code, "code"), requireString(body.displayName, "displayName"), requireString(body.deviceName, "deviceName")); access.setRouteGrants(redeemed.user.id, routes.listRoutes().map((route) => route.id)); return reply.code(201).send({ data: redeemed }); } catch (error) { return reply.code(error instanceof SecurityPolicyError ? 403 : 400).send({ error: errorMessage(error) }); } });
+  app.post("/api/v1/pairing/redeem", async (request, reply) => { try { const body = requireRecord(request.body); const access = securityRequired(security); const redeemed = access.redeemPairingCode(requireString(body.code, "code"), requireString(body.displayName, "displayName"), requireString(body.deviceName, "deviceName")); access.setRouteGrants(redeemed.user.id, activeRoutes().map((route) => route.id)); return reply.code(201).send({ data: redeemed }); } catch (error) { return reply.code(error instanceof SecurityPolicyError ? 403 : 400).send({ error: errorMessage(error) }); } });
 
   app.post("/api/v1/agent/runs", async (request, reply) => {
     try {
@@ -297,7 +321,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       if (body.sessionId) { const session = store.getSession(body.sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); }
       if (principal && !security?.authorizeRoute(principal, body.model)) return reply.code(403).send({ error: "Route access denied" });
       if (principal) { const promptChars = body.messages.reduce((total, message) => total + message.content.length, 0); security?.enforceQuota(principal, promptChars, body.maxTokens ?? principal.quota.maxOutputTokens, agentRuns.queue().length); }
-      const resolved = routes.resolve(body.model); const prepared = await context.prepare(body, resolved.recipe.contextTokens); const run = agentRuns.start(prepared.request, principal?.user.id, body.messages); security?.audit("agent-run.created", principal?.user.id, "agent-run", run.id, { routeId: run.routeId, compacted: prepared.compacted });
+      const resolved = resolveActiveRoute(body.model); const prepared = await context.prepare(body, resolved.recipe.contextTokens); const run = agentRuns.start(prepared.request, principal?.user.id, body.messages); security?.audit("agent-run.created", principal?.user.id, "agent-run", run.id, { routeId: run.routeId, compacted: prepared.compacted });
       return reply.code(202).send({ protocolVersion: PROTOCOL_VERSION, data: run, queue: agentRuns.queue(principal?.user.role === "administrator" ? undefined : principal?.user.id).find((item) => item.runId === run.id), context: { compacted: prepared.compacted, estimatedInputTokens: prepared.estimatedInputTokens, budgetTokens: prepared.budgetTokens } });
     } catch (error) { return reply.code(error instanceof SecurityPolicyError ? 429 : error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) }); }
   });
@@ -325,7 +349,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   app.get("/api/v1/sessions/:sessionId", async (request, reply) => { const session = store.getSession((request.params as { sessionId: string }).sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); if (!canAccessOwner(principals.get(request), session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); return { data: session }; });
   app.patch("/api/v1/sessions/:sessionId", async (request, reply) => { try { const session = store.getSession((request.params as { sessionId: string }).sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); if (!canAccessOwner(principals.get(request), session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); const body = requireRecord(request.body); const updated: SessionRecord = { ...session, ...(typeof body.title === "string" ? { title: requireString(body.title, "title") } : {}), ...(body.status === "active" || body.status === "archived" ? { status: body.status } : {}), updatedAt: new Date().toISOString() }; store.updateSession(updated); return { data: updated }; } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
   app.get("/api/v1/sessions/:sessionId/transcript", async (request, reply) => { const session = store.getSession((request.params as { sessionId: string }).sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); if (!canAccessOwner(principals.get(request), session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); const query = request.query as { after?: string; limit?: string }; return { data: store.transcriptAfter(session.id, toNonNegativeInteger(query.after, 0), Math.min(toNonNegativeInteger(query.limit, 1000), 1000)) }; });
-  app.post("/api/v1/sessions/:sessionId/compact", async (request, reply) => { try { const session = store.getSession((request.params as { sessionId: string }).sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); const principal = principals.get(request); if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); const body = isRecord(request.body) ? request.body : {}; const routeId = typeof body.model === "string" ? requireString(body.model, "model") : "default"; const resolved = routes.resolve(routeId); const result = await context.compactSession(session.id, resolved.recipe.contextTokens); security?.audit("session.compacted", principal?.user.id, "session", session.id, { routeId, throughSequence: result.entry.content.throughSequence }); return { data: result }; } catch (error) { return reply.code(error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) }); } });
+  app.post("/api/v1/sessions/:sessionId/compact", async (request, reply) => { try { const session = store.getSession((request.params as { sessionId: string }).sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); const principal = principals.get(request); if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); const body = isRecord(request.body) ? request.body : {}; const routeId = typeof body.model === "string" ? requireString(body.model, "model") : activeRoutes()[0]?.id ?? "default"; const resolved = resolveActiveRoute(routeId); const result = await context.compactSession(session.id, resolved.recipe.contextTokens); security?.audit("session.compacted", principal?.user.id, "session", session.id, { routeId, throughSequence: result.entry.content.throughSequence }); return { data: result }; } catch (error) { return reply.code(error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) }); } });
   app.get("/api/v1/sessions/:sessionId/artifacts", async (request, reply) => { const session = store.getSession((request.params as { sessionId: string }).sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); if (!canAccessOwner(principals.get(request), session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); return { data: store.listArtifacts(session.id) }; });
   app.post("/api/v1/sessions/:sessionId/artifacts", async (request, reply) => { try { const session = store.getSession((request.params as { sessionId: string }).sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); const principal = principals.get(request); if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); const body = requireRecord(request.body); const name = requireString(body.name, "name"); const mimeType = normalizeMimeType(requireString(body.mimeType, "mimeType")); const content = decodeBase64(body.contentBase64); if (content.byteLength > 1_500_000) throw new TypeError("Artifact exceeds the 1500000 byte limit"); const artifact = { id: randomUUID(), sessionId: session.id, name, mimeType, kind: classifyArtifact(mimeType, name), byteSize: content.byteLength, sha256: createHash("sha256").update(content).digest("hex"), createdAt: new Date().toISOString(), metadata: isRecord(body.metadata) ? body.metadata : {}, ...(principal ? { createdByUserId: principal.user.id } : {}) }; store.createArtifact(artifact, content); security?.audit("artifact.created", principal?.user.id, "artifact", artifact.id, { sessionId: session.id, mimeType, byteSize: artifact.byteSize }); return reply.code(201).send({ data: artifact }); } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
   app.get("/api/v1/artifacts/:artifactId/content", async (request, reply) => { const artifact = store.getArtifact((request.params as { artifactId: string }).artifactId); if (!artifact) return reply.code(404).send({ error: "Artifact not found" }); const session = store.getSession(artifact.sessionId); if (!session || !canAccessOwner(principals.get(request), session.ownerUserId)) return reply.code(403).send({ error: "Artifact access denied" }); const content = store.getArtifactContent(artifact.id); if (!content) return reply.code(404).send({ error: "Artifact content not found" }); return reply.header("x-content-type-options", "nosniff").header("content-security-policy", "sandbox; default-src 'none'").header("content-disposition", `attachment; filename="${safeFilename(artifact.name)}"`).type(artifact.mimeType).send(Buffer.from(content)); });
@@ -352,6 +376,93 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         recoveredAgentRuns,
         recoveredToolApprovals,
       };
+    },
+  );
+
+  app.get("/api/v1/runtime-mode", async () => ({ data: { mode: currentMode() } }));
+  app.put(
+    "/api/v1/runtime-mode",
+    { preHandler: adminGuard(options.adminToken, authMode, principals) },
+    async (request, reply) => {
+      try {
+        const body = requireRecord(request.body);
+        if (body.mode !== "host" && body.mode !== "consume") throw new TypeError("mode must be host or consume");
+        store.setSetting("runtimeMode", body.mode);
+        security?.audit("runtime-mode.changed", principals.get(request)?.user.id, "runtime", "mode", { mode: body.mode });
+        return { data: { mode: currentMode() } };
+      } catch (error) {
+        return reply.code(400).send({ error: errorMessage(error) });
+      }
+    },
+  );
+
+  app.get(
+    "/api/v1/management/connections",
+    { preHandler: adminGuard(options.adminToken, authMode, principals) },
+    async () => ({ data: consumerConnections().map(publicConsumerConnection) }),
+  );
+
+  app.put(
+    "/api/v1/management/connections/:connectionId",
+    { preHandler: adminGuard(options.adminToken, authMode, principals) },
+    async (request, reply) => {
+      const connectionId = requireIdentifier((request.params as { connectionId: string }).connectionId, "connectionId");
+      try {
+        const body = requireRecord(request.body);
+        const displayName = requireString(body.displayName, "displayName");
+        const baseUrl = normalizeConsumerBaseUrl(body.baseUrl);
+        const authType = body.authType === "none" ? "none" : body.authType === "bearer" ? "bearer" : undefined;
+        if (!authType) throw new TypeError("authType must be none or bearer");
+        const apiKey = authType === "bearer" ? requireString(body.apiKey, "apiKey") : undefined;
+        const credentialEnv = consumerCredentialEnvironment(connectionId);
+        if (apiKey) process.env[credentialEnv] = apiKey;
+        else delete process.env[credentialEnv];
+        const discovered = await new OpenAICompatibleClient({ ...(apiKey ? { apiKey } : {}) }).listModels(baseUrl, AbortSignal.timeout(15_000));
+        const modelIds = [...new Set(discovered.map((item) => item.id.trim()).filter(Boolean))];
+        if (!modelIds.length) throw new Error("The API returned no models");
+
+        const registrations = consumerConnections();
+        const previous = registrations.find((item) => item.id === connectionId);
+        if (previous) removeConsumerRegistration(previous, store, routes);
+        const models = modelIds.map((modelId) => consumerModelRegistration(connectionId, modelId));
+        for (const model of models) {
+          const recipe: Recipe = {
+            id: model.recipeId,
+            playbookId: `consumer-${connectionId}`,
+            displayName: model.modelId,
+            adapter: "openai-compatible",
+            modelId: model.modelId,
+            contextTokens: 131_072,
+            capabilities: { chatCompletions: true, streaming: true, toolCalls: true, responseFormat: false, minP: false, maxConcurrentGenerations: 8 },
+            lifecycle: { loadPolicy: "onDemand", evictionPolicy: "never", idleTtlSeconds: 0, minimumResidencySeconds: 0 },
+            configuration: { baseUrl, ...(authType === "bearer" ? { apiKeyEnv: credentialEnv } : {}), healthPath: consumerHealthPath(baseUrl) },
+          };
+          const route: Route = { id: model.routeId, displayName: model.modelId, description: displayName, recipeId: model.recipeId, enabled: true };
+          store.upsertRecipe(recipe); routes.upsertRecipe(recipe); store.upsertRoute(route); routes.upsertRoute(route);
+        }
+        const connection: ConsumerConnectionRegistration = { id: connectionId, displayName, baseUrl, authType, credentialEnv, models, updatedAt: new Date().toISOString() };
+        store.setSetting("consumerConnections", [...registrations.filter((item) => item.id !== connectionId), connection]);
+        security?.audit("consumer-connection.saved", principals.get(request)?.user.id, "consumer-connection", connectionId, { displayName, baseUrl, modelCount: models.length });
+        return { data: publicConsumerConnection(connection) };
+      } catch (error) {
+        return reply.code(502).send({ error: errorMessage(error) });
+      }
+    },
+  );
+
+  app.delete(
+    "/api/v1/management/connections/:connectionId",
+    { preHandler: adminGuard(options.adminToken, authMode, principals) },
+    async (request, reply) => {
+      const connectionId = requireIdentifier((request.params as { connectionId: string }).connectionId, "connectionId");
+      const registrations = consumerConnections();
+      const connection = registrations.find((item) => item.id === connectionId);
+      if (!connection) return reply.code(404).send({ error: "Connection not found" });
+      removeConsumerRegistration(connection, store, routes);
+      delete process.env[connection.credentialEnv];
+      store.setSetting("consumerConnections", registrations.filter((item) => item.id !== connectionId));
+      security?.audit("consumer-connection.removed", principals.get(request)?.user.id, "consumer-connection", connectionId);
+      return reply.code(204).send();
     },
   );
 
@@ -685,6 +796,53 @@ function validateWorkingDirectory(engineRoot: string, workingDirectory: string):
   const child = relative(root, target);
   if (child.startsWith("..") || isAbsolute(child)) throw new TypeError("workingDirectory must stay inside the engine folder");
   return child || ".";
+}
+
+function requireIdentifier(value: unknown, name: string): string {
+  const id = requireString(value, name);
+  if (id.length > 100 || !/^[a-zA-Z0-9_-]+$/.test(id)) throw new TypeError(`${name} contains unsupported characters`);
+  return id;
+}
+
+function normalizeConsumerBaseUrl(value: unknown): string {
+  const baseUrl = requireBaseUrl(value);
+  const url = new URL(baseUrl);
+  if (url.search || url.hash) throw new TypeError("baseUrl must not contain a query or fragment");
+  const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1" || url.hostname === "[::1]";
+  if (url.protocol === "http:" && !loopback) throw new TypeError("Remote connections must use HTTPS");
+  return url.toString().replace(/\/$/, "");
+}
+
+function consumerHealthPath(baseUrl: string): string {
+  return /\/v1$/i.test(new URL(baseUrl).pathname.replace(/\/$/, "")) ? "/models" : "/v1/models";
+}
+
+function consumerCredentialEnvironment(connectionId: string): string {
+  return `FITZ_CONSUMER_${createHash("sha256").update(connectionId).digest("hex").slice(0, 16).toUpperCase()}`;
+}
+
+function consumerModelRegistration(connectionId: string, modelId: string): ConsumerModelRegistration {
+  const suffix = createHash("sha256").update(modelId).digest("hex").slice(0, 16);
+  return { modelId, routeId: `${CONSUMER_ROUTE_PREFIX}${connectionId}--${suffix}`, recipeId: `consumer-recipe--${connectionId}--${suffix}` };
+}
+
+function removeConsumerRegistration(connection: ConsumerConnectionRegistration, store: SqliteStore, routes: RouteResolver): void {
+  for (const model of connection.models) {
+    routes.deleteRoute(model.routeId); store.deleteRoute(model.routeId);
+    routes.deleteRecipe(model.recipeId); store.deleteRecipe(model.recipeId);
+  }
+}
+
+function publicConsumerConnection(connection: ConsumerConnectionRegistration): Record<string, unknown> {
+  return {
+    id: connection.id,
+    displayName: connection.displayName,
+    baseUrl: connection.baseUrl,
+    authType: connection.authType,
+    hasCredential: connection.authType === "bearer",
+    models: connection.models.map((model) => ({ id: model.modelId, routeId: model.routeId })),
+    updatedAt: connection.updatedAt,
+  };
 }
 
 async function collectCompletion(

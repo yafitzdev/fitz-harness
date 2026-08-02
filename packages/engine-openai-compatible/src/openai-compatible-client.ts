@@ -5,6 +5,12 @@ export interface OpenAICompatibleClientOptions {
   apiKey?: string;
 }
 
+export interface OpenAICompatibleModel {
+  id: string;
+  object?: string;
+  owned_by?: string;
+}
+
 interface StreamChunk {
   choices?: Array<{
     delta?: {
@@ -39,13 +45,29 @@ export class OpenAICompatibleClient {
     return response.ok;
   }
 
+  async listModels(baseUrl: string, signal?: AbortSignal): Promise<OpenAICompatibleModel[]> {
+    const response = await this.#fetch(openAIEndpoint(baseUrl, "models"), {
+      headers: this.headers(),
+      ...(signal ? { signal } : {}),
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(`OpenAI-compatible model discovery failed (${response.status}): ${detail.slice(0, 500)}`);
+    }
+    const payload = await response.json() as { data?: unknown };
+    if (!Array.isArray(payload.data)) throw new Error("OpenAI-compatible model discovery returned no model list");
+    return payload.data.flatMap((value) => isRecord(value) && typeof value.id === "string" && value.id
+      ? [{ id: value.id, ...(typeof value.object === "string" ? { object: value.object } : {}), ...(typeof value.owned_by === "string" ? { owned_by: value.owned_by } : {}) }]
+      : []);
+  }
+
   async *streamChat(
     baseUrl: string,
     modelId: string,
     request: InferenceRequest,
     signal: AbortSignal,
   ): AsyncIterable<InferenceDelta> {
-    const response = await this.#fetch(joinUrl(baseUrl, "/v1/chat/completions"), {
+    const response = await this.#fetch(openAIEndpoint(baseUrl, "chat/completions"), {
       method: "POST",
       headers: { ...this.headers(), "content-type": "application/json" },
       body: JSON.stringify({
@@ -122,6 +144,17 @@ export async function* parseSseJson(
 
 function joinUrl(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
+}
+
+function openAIEndpoint(baseUrl: string, endpoint: string): string {
+  const normalized = baseUrl.replace(/\/$/, "");
+  return /\/v1$/i.test(normalized)
+    ? `${normalized}/${endpoint.replace(/^\//, "")}`
+    : `${normalized}/v1/${endpoint.replace(/^\//, "")}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function normalizeFinishReason(value: string | null | undefined): InferenceDelta["finishReason"] {

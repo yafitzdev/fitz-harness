@@ -3,6 +3,8 @@ import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer } from "node:http";
+import { once } from "node:events";
 import { createHost } from "./create-app.js";
 import { TailscaleMonitor, TailscaleServeManager, WindowsStartupManager } from "@fitz/connectivity";
 import { SecurityService } from "@fitz/security";
@@ -23,6 +25,31 @@ describe("Fitz host", () => {
     ]);
     expect(models.body).not.toContain("fake-best");
     await runtime.app.close();
+  });
+
+  it("discovers an external API and exposes only the active runtime mode", async () => {
+    const upstream = createServer((request, response) => {
+      if (request.url === "/v1/models") { response.writeHead(200, { "content-type": "application/json" }); response.end('{"data":[{"id":"upstream-model"}]}'); return; }
+      if (request.url === "/v1/chat/completions") { response.writeHead(200, { "content-type": "text/event-stream" }); response.end('data: {"choices":[{"delta":{"content":"upstream ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'); return; }
+      response.writeHead(404); response.end();
+    });
+    upstream.listen(0, "127.0.0.1"); await once(upstream, "listening");
+    const address = upstream.address(); if (!address || typeof address === "string") throw new Error("Expected TCP address");
+    const runtime = createHost();
+    try {
+      const saved = await runtime.app.inject({ method: "PUT", url: "/api/v1/management/connections/test-api", payload: { displayName: "Test API", baseUrl: `http://127.0.0.1:${address.port}/v1`, authType: "none" } });
+      expect(saved.statusCode).toBe(200);
+      expect(saved.json().data.models).toEqual([expect.objectContaining({ id: "upstream-model" })]);
+      expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((item: { id: string }) => item.id).sort()).toEqual(["default", "fast", "smart"]);
+      await runtime.app.inject({ method: "PUT", url: "/api/v1/runtime-mode", payload: { mode: "consume" } });
+      const models = await runtime.app.inject({ method: "GET", url: "/v1/models" });
+      const routeId = models.json().data[0].id;
+      expect(models.json().data).toEqual([expect.objectContaining({ display_name: "upstream-model" })]);
+      const completion = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: routeId, stream: false, messages: [{ role: "user", content: "hello" }] } });
+      expect(completion.statusCode, completion.body).toBe(200); expect(completion.json().choices[0].message.content).toBe("upstream ok");
+      await runtime.app.inject({ method: "DELETE", url: "/api/v1/management/connections/test-api" });
+      expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data).toEqual([]);
+    } finally { await runtime.app.close(); await new Promise<void>((resolve) => upstream.close(() => resolve())); }
   });
 
   it("persists recipe changes from the management API", async () => {

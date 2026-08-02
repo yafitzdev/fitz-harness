@@ -77,7 +77,12 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .icon-button { width: var(--codex-control-size); height: var(--codex-control-size); display: inline-grid; place-items: center; padding: 0; border-radius: var(--codex-radius-md); color: var(--muted); background: transparent; cursor: pointer; }
 .icon-button:hover:not(:disabled), .quiet-button:hover { background: var(--surface-hover); color: var(--text); }
 .icon-button:disabled { opacity: .3; cursor: not-allowed; }
-.sidebar-brand { min-height: 38px; display: flex; align-items: center; padding: 0 9px; color: #d8dad5; font-size: 17px; font-weight: 650; letter-spacing: -.02em; }
+.sidebar-brand { min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 7px 0 9px; color: #d8dad5; font-size: 17px; font-weight: 650; letter-spacing: -.02em; }
+.runtime-mode-toggle { display: flex; align-items: center; gap: 2px; padding: 2px; border-radius: 8px; background: rgba(255,255,255,.045); }
+.runtime-mode-toggle button { width: 27px; height: 25px; display: grid; place-items: center; padding: 0; border-radius: 6px; background: transparent; color: #777c77; cursor: pointer; }
+.runtime-mode-toggle button:hover { color: #b9bcb7; }
+.runtime-mode-toggle button[aria-pressed="true"] { background: rgba(255,255,255,.09); color: #e0e2dd; }
+.runtime-mode-toggle svg { width: 16px; height: 16px; }
 .nav-action { width: 100%; display: flex; align-items: center; gap: 9px; padding: 8px 9px; color: var(--text); background: transparent; border-radius: 7px; cursor: pointer; text-align: left; }
 .nav-action:hover { background: rgba(255,255,255,.08); }
 .nav-action.active { background: rgba(255,255,255,.1); color: white; }
@@ -308,6 +313,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .model-toggle:hover:not(:disabled) { background: var(--surface-hover); }
 .model-toggle:disabled { opacity: .4; }
 .model-menu { right: 0; bottom: 38px; width: 330px; }
+.settings-submenu-heading { display: block; padding: 7px 10px 4px; color: var(--codex-text-tertiary); font-size: 10px; font-weight: 500; }
 .setting-row, .advanced-row { width: 100%; min-height: 43px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 11px; border-radius: 10px; background: transparent; color: var(--text); cursor: pointer; font-size: 14px; }
 .setting-row:hover, .setting-row.active, .advanced-row:hover { background: rgba(255,255,255,.08); }
 .setting-row > span:last-child { min-width: 0; display: flex; align-items: center; gap: 8px; color: #b2b5af; }
@@ -491,6 +497,27 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .management-page-content { width: min(820px, calc(100% - 48px)); margin: 44px auto 80px; }
 .management-page-content h1 { margin: 0; font-size: 28px; font-weight: 560; letter-spacing: -.03em; }
 .management-page-content > p { margin: 5px 0 24px; color: var(--muted); font-size: 15px; }
+.connections-content { width: min(760px, calc(100% - 48px)); }
+.connection-form { display: grid; grid-template-columns: minmax(0,1fr) minmax(180px,.55fr); gap: 15px 12px; margin: 28px 0 34px; padding: 18px; border-radius: var(--codex-radius-xl); background: var(--codex-gray-800); }
+.connection-form label { min-width: 0; display: grid; gap: 7px; color: var(--codex-text-secondary); font-size: 11px; }
+.connection-form .wide-field { grid-column: 1 / -1; }
+.connection-form input, .connection-form select { width: 100%; height: 38px; box-sizing: border-box; padding: 0 11px; border: 1px solid var(--border-soft); border-radius: var(--codex-radius-md); outline: 0; background: #171917; color: var(--text); }
+.connection-form input:focus, .connection-form select:focus { border-color: #666a65; }
+.connection-form-status { grid-column: 1 / -1; margin: 0; color: var(--codex-text-secondary); font-size: 11px; }
+.connection-form-status.error { color: #e9a09c; }
+.connection-form .editor-actions { grid-column: 1 / -1; margin-top: 0; }
+.consumer-connections { display: grid; gap: 9px; }
+.consumer-connection { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 14px; padding: 14px 15px; border-radius: var(--codex-radius-lg); background: var(--codex-gray-800); }
+.consumer-connection-main { min-width: 0; display: grid; gap: 5px; }
+.consumer-connection-main strong { overflow: hidden; font-size: 13px; font-weight: 560; text-overflow: ellipsis; white-space: nowrap; }
+.consumer-connection-main small { overflow: hidden; color: var(--codex-text-tertiary); font: 10px/1.4 "Cascadia Mono", Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.consumer-models { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+.consumer-models span { max-width: 260px; overflow: hidden; padding: 4px 7px; border-radius: 7px; background: rgba(255,255,255,.055); color: var(--codex-text-secondary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.consumer-connection-actions { display: flex; align-items: flex-start; gap: 5px; }
+.consumer-connection-actions button { padding: 6px 8px; border-radius: 7px; background: transparent; color: var(--codex-text-secondary); cursor: pointer; font-size: 11px; }
+.consumer-connection-actions button:hover { background: rgba(255,255,255,.065); color: var(--text); }
+.consumer-connection-actions button.danger { color: #d99a96; }
+.connections-empty { margin: 18px 0; color: var(--codex-text-tertiary); font-size: 12px; text-align: center; }
 .management-search { height: 40px; display: flex; align-items: center; gap: 9px; margin-bottom: 28px; padding: 0 13px; border: 1px solid #4b4e4a; border-radius: 20px; background: #303230; color: var(--muted); }
 .management-search:focus-within { border-color: #6b6e69; }
 .management-search svg { flex: 0 0 auto; }

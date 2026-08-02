@@ -123,7 +123,7 @@ export function readConfiguration(recipe: Recipe): OpenAICompatibleConfiguration
   if (recipe.adapter !== "openai-compatible") throw new TypeError("Recipe adapter must be openai-compatible");
   const baseUrl = stringValue(recipe.configuration.baseUrl, "baseUrl");
   const apiKeyEnv = optionalString(recipe.configuration.apiKeyEnv, "apiKeyEnv");
-  const healthPath = optionalString(recipe.configuration.healthPath, "healthPath") ?? "/v1/models";
+  const healthPath = optionalString(recipe.configuration.healthPath, "healthPath") ?? (/\/v1\/?$/i.test(baseUrl) ? "/models" : "/v1/models");
   const allowInsecureRemote = recipe.configuration.allowInsecureRemote === true;
   return { baseUrl, healthPath, allowInsecureRemote, ...(apiKeyEnv ? { apiKeyEnv } : {}) };
 }

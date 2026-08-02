@@ -51,6 +51,16 @@ describe("OpenAICompatibleEngineAdapter", () => {
       issues: [expect.objectContaining({ code: "insecure_remote_endpoint" })],
     });
   });
+
+  it("accepts the conventional v1 API base without duplicating the path", async () => {
+    const requests: Array<{ url?: string; authorization?: string }> = [];
+    const server = createServer((request, response) => handleRequest(request, response, requests)); servers.push(server); server.listen(0, "127.0.0.1"); await once(server, "listening");
+    const address = server.address(); if (!address || typeof address === "string") throw new Error("Expected TCP address");
+    const adapter = new OpenAICompatibleEngineAdapter({ environment: { TEST_OPENAI_KEY: "secret" } }); const recipe = recipeFor(`http://127.0.0.1:${address.port}/v1`); const spec = await adapter.buildLaunchSpec(recipe, { host: "127.0.0.1", port: 1 }); const instance = await adapter.start(recipe, spec, new AbortController().signal);
+    await adapter.waitUntilReady(instance, new AbortController().signal);
+    for await (const _chunk of adapter.streamChat(instance, { id: "v1", routeId: "default", messages: [{ role: "user", content: "hello" }] }, new AbortController().signal)) { /* consume */ }
+    expect(requests.map((item) => item.url)).toEqual(["/v1/models", "/v1/chat/completions"]);
+  });
 });
 
 function recipeFor(baseUrl: string): Recipe {

@@ -108,7 +108,7 @@ function reconcileNInferConfiguration(store: SqliteStore): void {
   const legacyDefault = existingById.get("default-agent");
   const recipeIds = new Set([...store.listRecipes(), ...playbook.recipes].map((recipe) => recipe.id));
   for (const route of existingRoutes) {
-    if (!templates.some((template) => template.id === route.id)) store.deleteRoute(route.id);
+    if (!route.id.startsWith("consumer--") && !templates.some((template) => template.id === route.id)) store.deleteRoute(route.id);
   }
   for (const template of templates) {
     const existing = existingById.get(template.id) ?? (template.id === "default" ? legacyDefault : undefined);

@@ -36,6 +36,14 @@ export class RouteResolver {
     this.#routes.set(route.id, structuredClone(route));
   }
 
+  deleteRoute(routeId: string): void {
+    this.#routes.delete(routeId);
+  }
+
+  deleteRecipe(recipeId: string): void {
+    this.#recipes.delete(recipeId);
+  }
+
   resolve(routeId: string): ResolvedRoute {
     const route = this.#routes.get(routeId);
     if (!route?.enabled) throw new RouteNotFoundError(routeId);

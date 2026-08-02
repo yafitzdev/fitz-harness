@@ -25,7 +25,13 @@
     </header>
     <div class="app-shell">
       <aside class="sidebar" aria-label="Workspace navigation">
-        <div class="sidebar-brand">Codex</div>
+        <div class="sidebar-brand">
+          <span>Codex</span>
+          <div class="runtime-mode-toggle" role="group" aria-label="Fitz runtime mode">
+            <button type="button" data-runtime-mode="host" title="Host models" aria-label="Host models" aria-pressed="true"><svg viewBox="0 0 20 20"><rect x="3" y="3.5" width="14" height="5" rx="1.5"></rect><rect x="3" y="11.5" width="14" height="5" rx="1.5"></rect><path d="M6 6h.01M6 14h.01M9 6h5M9 14h5"></path></svg></button>
+            <button type="button" data-runtime-mode="consume" title="Consume APIs" aria-label="Consume APIs" aria-pressed="false"><svg viewBox="0 0 20 20"><path d="M7.5 6V3.5M12.5 6V3.5M5 6h10v2.5a5 5 0 0 1-5 5v3M7.5 16.5h5"></path></svg></button>
+          </div>
+        </div>
         <button id="new-session" class="nav-action" type="button">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"></path></svg>
           <span>New chat</span>
@@ -34,6 +40,10 @@
         <button id="manage-playbooks" class="nav-action" type="button">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4.5h5.5A2.5 2.5 0 0 1 12 7v9H6.5A2.5 2.5 0 0 0 4 18.5z"></path><path d="M16 4.5h-4A2.5 2.5 0 0 0 9.5 7v9H13.5a2.5 2.5 0 0 1 2.5 2.5z"></path></svg>
           <span>Playbooks</span>
+        </button>
+        <button id="manage-connections" class="nav-action" type="button" hidden>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 6V3.5M12.5 6V3.5M5 6h10v2.5a5 5 0 0 1-5 5v3M7.5 16.5h5"></path></svg>
+          <span>Connections</span>
         </button>
         <button id="manage-administration" class="nav-action" type="button" hidden>
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.8 16 5v4.4c0 3.8-2.4 6.3-6 7.8-3.6-1.5-6-4-6-7.8V5z"></path><circle cx="10" cy="8" r="2"></circle><path d="M6.8 14c.6-1.8 1.7-2.7 3.2-2.7s2.6.9 3.2 2.7"></path></svg>
@@ -134,6 +144,24 @@
               <div class="editor-actions"><button class="quiet-button" type="button" data-close-management-editor>Cancel</button><button class="primary-button" type="submit">Save recipe</button></div>
             </form>
           </section>
+        </section>
+
+        <section id="connections-page" class="management-page connections-page" aria-label="API connections" hidden>
+          <header class="management-page-header"><button id="refresh-connections" class="icon-button" type="button" title="Refresh connections" aria-label="Refresh connections"><svg viewBox="0 0 20 20"><path d="M15.5 7A6 6 0 1 0 16 12"></path><path d="M15.5 3v4h-4"></path></svg></button></header>
+          <div class="management-page-content connections-content">
+            <h1>Connections</h1>
+            <p>Connect any OpenAI-compatible API. Models are discovered automatically.</p>
+            <form id="connection-form" class="connection-form">
+              <input id="consumer-connection-id" type="hidden">
+              <label>Connection name<input id="consumer-connection-name" maxlength="100" required placeholder="Home workstation"></label>
+              <label class="wide-field">OpenAI-compatible base URL<input id="consumer-connection-url" type="url" maxlength="2048" required placeholder="https://host.example/v1"></label>
+              <label>Authorization<select id="consumer-connection-auth"><option value="bearer">Bearer token</option><option value="none">None</option></select></label>
+              <label id="consumer-api-key-field">API key<input id="consumer-connection-key" type="password" autocomplete="off" placeholder="Stored securely"></label>
+              <p id="connection-form-status" class="connection-form-status" hidden></p>
+              <div class="editor-actions"><button id="cancel-connection-edit" class="quiet-button" type="button" hidden>Cancel</button><button class="primary-button" type="submit">Connect</button></div>
+            </form>
+            <div id="consumer-connections" class="consumer-connections"></div>
+          </div>
         </section>
 
         <section id="messages" class="messages" aria-live="polite"></section>
