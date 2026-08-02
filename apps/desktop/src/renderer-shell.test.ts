@@ -320,12 +320,18 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("grid-template-columns: minmax(0, var(--conversation-width))");
     expect(styles).toContain("justify-content: center");
     expect(styles).toContain("width: var(--conversation-width)");
-    expect(styles).toContain("grid-row: 3");
-    expect(styles).toContain("margin: 0 0 12px var(--conversation-gutter)");
+    expect(styles).toContain("--composer-height: 112px");
+    expect(styles).toContain("padding: 32px 0 calc(var(--composer-height) + 44px)");
+    expect(styles).toContain("left: var(--conversation-gutter)");
+    expect(styles).toContain("bottom: 12px");
+    expect(styles).toContain(".composer-dock::before");
+    expect(styles).toContain("inset: var(--codex-radius-3xl) 0 -12px");
     expect(styles).toContain("--conversation-scrollbar: 0px");
     expect(styles).toContain(".workspace.inspector-open { --conversation-space: calc(100% - var(--inspector-width) - var(--conversation-scrollbar))");
-    expect(renderer).toContain("new ResizeObserver(syncConversationScrollbar)");
+    expect(renderer).toContain("new ResizeObserver(syncConversationLayout)");
+    expect(renderer).toContain("conversationLayoutObserver.observe(composerDock)");
     expect(renderer).toContain("messages.offsetWidth - messages.clientWidth");
+    expect(renderer).toContain("composerDock.offsetHeight");
   });
 
   it("expands Advanced model settings and sends the chosen temperature and output limit", () => {

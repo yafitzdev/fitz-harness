@@ -104,6 +104,9 @@
         { id: "host-startup", label: "Host startup", availability: "partial", automatedAt: "2026-08-02", automated: ["partial", "The packaged host now manages a per-user Windows sign-in entry that launches start-host.ps1 invisibly, with inline Administration status plus staged install/remove controls and an audit trail. Registry behavior is dependency-injected and tested without changing the workstation. A fresh 195 MB host package contains the launcher, and its packaged smoke test boots healthy with inference UNLOADED. A real Windows sign-out/sign-in cycle remains manual."], scope: "Start the lightweight host automatically while leaving models unloaded.", tests: ["Install startup from Administration, then restart Windows or sign in.", "Confirm the host becomes healthy.", "Confirm no model loads automatically.", "Open and close the desktop without stopping the host."] }
       ];
 
+      const conversationSection = sections.find((section) => section.id === "conversation");
+      if (conversationSection) conversationSection.automated = ["pass", "The transcript and floating composer share one responsive column. Transcript content scrolls behind the composer and disappears beneath its fully opaque surface through the bottom window edge, with no abrupt cutoff or visible lower gap. Runtime measurements of the composer height, Inspector, and platform scrollbar preserve clean scroll clearance and exact alignment as the window, attachments, and multiline input change size."];
+
       const storageKey = "fitz-refinement-review-v1";
       let saved = {};
       try { saved = JSON.parse(localStorage.getItem(storageKey) || "{}"); } catch {}

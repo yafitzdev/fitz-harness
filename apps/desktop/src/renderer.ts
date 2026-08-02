@@ -100,11 +100,12 @@ const accessModeIcon = element("access-mode-icon") as unknown as SVGElement;
 const form = element("composer") as HTMLFormElement;
 const workspace = query(".workspace");
 const prompt = element("prompt") as HTMLTextAreaElement;
-const conversationLayoutObserver = new ResizeObserver(syncConversationScrollbar);
-const conversationContentObserver = new MutationObserver(syncConversationScrollbar);
+const conversationLayoutObserver = new ResizeObserver(syncConversationLayout);
+const conversationContentObserver = new MutationObserver(syncConversationLayout);
 conversationLayoutObserver.observe(messages);
+conversationLayoutObserver.observe(composerDock);
 conversationContentObserver.observe(messages, { childList: true, subtree: true });
-syncConversationScrollbar();
+syncConversationLayout();
 const newChatContext = element("new-chat-context");
 const newChatProject = element("new-chat-project");
 const newChatProjectControl = element("new-chat-project-control") as HTMLButtonElement;
@@ -2443,9 +2444,10 @@ function showLanding(hasTask = false): void {
   updateTitles();
 }
 
-function syncConversationScrollbar(): void {
+function syncConversationLayout(): void {
   const scrollbarWidth = Math.max(0, messages.offsetWidth - messages.clientWidth);
   workspace.style.setProperty("--conversation-scrollbar", `${scrollbarWidth}px`);
+  workspace.style.setProperty("--composer-height", `${composerDock.offsetHeight}px`);
 }
 
 function showConnectionFailure(detail: string): void {
