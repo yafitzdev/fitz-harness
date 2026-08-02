@@ -1,4 +1,5 @@
 import { reconnectDelay } from "@fitz/connectivity/reconnect";
+import type { DesktopUpdateStatus } from "./preload.js";
 
 type Json = Record<string, any>;
 type FixedRouteId = "fast" | "default" | "smart";
@@ -107,6 +108,11 @@ const artifactFile = element("artifact-file") as HTMLInputElement;
 const composerAttachments = element("composer-attachments");
 const addArtifactButton = element("add-artifact") as HTMLButtonElement;
 const updateButton = element("update") as HTMLButtonElement;
+const checkDesktopUpdate = element("check-desktop-update") as HTMLButtonElement;
+const installDesktopUpdate = element("install-desktop-update") as HTMLButtonElement;
+const desktopUpdateLabel = element("desktop-update-label");
+const desktopUpdateVersion = element("desktop-update-version");
+const desktopUpdateProgress = element("desktop-update-progress");
 const projectDialog = element("project-dialog") as HTMLDialogElement;
 const projectForm = element("project-form") as HTMLFormElement;
 const projectName = element("project-name") as HTMLInputElement;
@@ -275,9 +281,10 @@ element("archive-task").addEventListener("click", () => void archiveCurrentTask(
 renameForm.addEventListener("submit", (event) => { event.preventDefault(); void renameCurrentTask(); });
 removeProjectForm.addEventListener("submit", (event) => { event.preventDefault(); void removeProject(); });
 updateButton.addEventListener("click", () => void window.fitz.installUpdate());
-window.fitz.onUpdateStatus((updateStatus) => {
-  updateButton.hidden = updateStatus !== "downloaded";
-});
+installDesktopUpdate.addEventListener("click", () => void window.fitz.installUpdate());
+checkDesktopUpdate.addEventListener("click", () => void checkForDesktopUpdate());
+window.fitz.onUpdateStatus(renderDesktopUpdate);
+void window.fitz.updateStatus().then(renderDesktopUpdate).catch(() => renderDesktopUpdate({ state: "error" }));
 projectForm.addEventListener("submit", (event) => { event.preventDefault(); void createProject(); });
 taskForm.addEventListener("submit", (event) => { event.preventDefault(); void createSession(); });
 pairingForm.addEventListener("submit", (event) => { event.preventDefault(); void pairDevice(); });
@@ -1044,6 +1051,35 @@ async function exportDiagnosticBundle(): Promise<void> {
     if (path) showToast(`Diagnostics saved to ${path}`);
   } catch (error) { showToast(errorMessage(error)); }
   finally { exportDiagnostics.disabled = false; }
+}
+
+async function checkForDesktopUpdate(): Promise<void> {
+  checkDesktopUpdate.disabled = true;
+  try { await window.fitz.checkForUpdates(); }
+  catch { renderDesktopUpdate({ state: "error" }); }
+  finally { if (desktopUpdateLabel.dataset.state !== "checking" && desktopUpdateLabel.dataset.state !== "downloading") checkDesktopUpdate.disabled = false; }
+}
+
+function renderDesktopUpdate(update: DesktopUpdateStatus): void {
+  const percent = update.state === "downloaded" ? 100 : Math.max(0, Math.min(100, update.percent ?? 0));
+  const labels: Record<DesktopUpdateStatus["state"], string> = {
+    idle: "Ready to check",
+    checking: "Checking for updates…",
+    available: "Update found. Download starting…",
+    downloading: `Downloading update · ${Math.round(percent)}%`,
+    current: "Fitz is up to date",
+    downloaded: "Update ready to install",
+    error: "Update check failed",
+    development: "Update checks are available in packaged builds",
+  };
+  desktopUpdateLabel.textContent = labels[update.state];
+  desktopUpdateLabel.dataset.state = update.state;
+  desktopUpdateVersion.textContent = update.version ? `Version ${update.version}` : "";
+  desktopUpdateProgress.style.width = `${percent}%`;
+  const busy = update.state === "checking" || update.state === "available" || update.state === "downloading";
+  checkDesktopUpdate.disabled = busy;
+  installDesktopUpdate.hidden = update.state !== "downloaded";
+  updateButton.hidden = update.state !== "downloaded";
 }
 
 async function loadRemoteAccess(): Promise<void> {

@@ -270,4 +270,16 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('api("/api/v1/management/connectivity/tailscale-serve", "DELETE")');
     expect(styles).toContain(".remote-access-confirmation[hidden]");
   });
+
+  it("shows desktop update state, progress, checks, and restart installation inline", () => {
+    for (const id of ["check-desktop-update", "install-desktop-update", "desktop-update-label", "desktop-update-progress"]) {
+      expect(html).toContain(`id="${id}"`);
+    }
+    expect(renderer).toContain("window.fitz.updateStatus().then(renderDesktopUpdate)");
+    expect(renderer).toContain("Downloading update · ${Math.round(percent)}%");
+    expect(preload).toContain('ipcRenderer.invoke("fitz:update-status")');
+    expect(main).toContain('autoUpdater.on("download-progress"');
+    expect(main).toContain('publishUpdateStatus({ state: "development" })');
+    expect(styles).toContain(".desktop-update-track");
+  });
 });

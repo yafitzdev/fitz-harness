@@ -15,6 +15,8 @@ const directory = dirname(fileURLToPath(import.meta.url));
 const localHostPort = commandLineValue("host-port");
 const hostUrl = validateHostUrl(commandLineValue("host-url") ?? (localHostPort ? `http://127.0.0.1:${localHostPort}` : undefined) ?? process.env.FITZ_HOST_URL ?? "http://127.0.0.1:8787");
 let deviceToken = process.env.FITZ_DEVICE_TOKEN;
+interface DesktopUpdateStatus { state: "idle" | "checking" | "available" | "downloading" | "current" | "downloaded" | "error" | "development"; percent?: number; version?: string }
+let latestUpdateStatus: DesktopUpdateStatus = { state: app.isPackaged ? "idle" : "development" };
 
 ipcMain.handle("fitz:request", async (_event, input: unknown) => { if (!isRecord(input)) throw new TypeError("Request must be an object"); const path = validateRequestPath(String(input.path ?? "")); const method = typeof input.method === "string" ? input.method.toUpperCase() : "GET"; if (!["GET", "POST", "PUT", "PATCH", "DELETE"].includes(method)) throw new Error("HTTP method is not allowed"); const responseType = input.responseType === "base64" ? "base64" : "text"; const response = await fetch(new URL(path, hostUrl), { method, headers: { accept: responseType === "base64" ? "*/*" : "application/json", ...(input.body !== undefined ? { "content-type": "application/json" } : {}), ...(deviceToken ? { authorization: `Bearer ${deviceToken}` } : {}) }, ...(input.body !== undefined ? { body: JSON.stringify(input.body) } : {}) }); return { status: response.status, body: responseType === "base64" ? Buffer.from(await response.arrayBuffer()).toString("base64") : await response.text() }; });
 ipcMain.handle("fitz:connection-info", () => ({ origin: new URL(hostUrl).origin }));
@@ -35,11 +37,19 @@ ipcMain.handle("fitz:show-menu", (event, name: unknown, clientX: unknown, client
   View: [{ label: "Toggle sidebar", accelerator: "Ctrl+B", click: () => command("toggle-sidebar") }, { label: "Toggle environment", click: () => command("toggle-environment") }, { type: "separator" }, { role: "reload" }, { role: "toggleDevTools" }],
   Help: [{ label: "Fitz Codex on GitHub", click: () => void shell.openExternal("https://github.com/yafitzdev/fitz-codex") }],
 }; const template = templates[name]; if (!template) return; Menu.buildFromTemplate(template).popup({ window, x: clientX, y: clientY }); });
-ipcMain.handle("fitz:update-check", async () => { if (app.isPackaged) await autoUpdater.checkForUpdates(); }); ipcMain.handle("fitz:update-install", () => { if (app.isPackaged) autoUpdater.quitAndInstall(false, true); });
+ipcMain.handle("fitz:update-status", () => latestUpdateStatus);
+ipcMain.handle("fitz:update-check", async () => { if (app.isPackaged) await autoUpdater.checkForUpdates(); else publishUpdateStatus({ state: "development" }); });
+ipcMain.handle("fitz:update-install", () => { if (app.isPackaged) autoUpdater.quitAndInstall(false, true); });
 
 function createWindow(): void { const window = new BrowserWindow({ width: 1280, height: 800, minWidth: 860, minHeight: 560, frame: false, autoHideMenuBar: true, show: false, backgroundColor: "#111317", webPreferences: { preload: join(directory, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } }); window.webContents.setWindowOpenHandler(({ url }) => { if (isAllowedExternalUrl(url)) void shell.openExternal(url); return { action: "deny" }; }); window.webContents.on("will-navigate", (event, url) => { if (url !== window.webContents.getURL()) event.preventDefault(); }); window.once("ready-to-show", () => window.show()); void window.loadFile(join(directory, "renderer", "index.html")); }
-function publishUpdateStatus(status: string): void { for (const window of BrowserWindow.getAllWindows()) window.webContents.send("fitz:update-status", status); }
-autoUpdater.autoDownload = true; autoUpdater.on("checking-for-update", () => publishUpdateStatus("checking")); autoUpdater.on("update-available", () => publishUpdateStatus("available")); autoUpdater.on("update-not-available", () => publishUpdateStatus("current")); autoUpdater.on("update-downloaded", () => publishUpdateStatus("downloaded")); autoUpdater.on("error", () => publishUpdateStatus("error"));
+function publishUpdateStatus(status: DesktopUpdateStatus): void { latestUpdateStatus = status; for (const window of BrowserWindow.getAllWindows()) window.webContents.send("fitz:update-status", status); }
+autoUpdater.autoDownload = true;
+autoUpdater.on("checking-for-update", () => publishUpdateStatus({ state: "checking" }));
+autoUpdater.on("update-available", (info) => publishUpdateStatus({ state: "available", version: info.version }));
+autoUpdater.on("download-progress", (progress) => publishUpdateStatus({ state: "downloading", percent: Math.max(0, Math.min(100, progress.percent)) }));
+autoUpdater.on("update-not-available", (info) => publishUpdateStatus({ state: "current", version: info.version }));
+autoUpdater.on("update-downloaded", (info) => publishUpdateStatus({ state: "downloaded", version: info.version, percent: 100 }));
+autoUpdater.on("error", () => publishUpdateStatus({ state: "error" }));
 await app.whenReady();
 deviceToken ??= loadDeviceToken();
 if (process.env.FITZ_DESKTOP_SMOKE === "1") {
