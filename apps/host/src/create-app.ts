@@ -500,7 +500,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
           messages: [{ role: "user", content: "Say hi." }],
           maxTokens: 16,
           temperature: 0,
-        }, controller.signal);
+        }, controller.signal, { unloadAfterCompletion: true });
         let output = "";
         try {
           for await (const delta of stream) if (delta.text) output += delta.text;
@@ -508,7 +508,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
           request.raw.off("aborted", cancel);
         }
         if (!output.trim()) throw new Error("Recipe completed without returning text");
-        return { data: { recipeId, working: true, output: output.trim().slice(0, 500) } };
+        return { data: { recipeId, working: true, unloaded: true, output: output.trim().slice(0, 500) } };
       } catch (error) {
         const statusCode = error instanceof RecipeNotFoundError ? 404 : 502;
         return reply.code(statusCode).send({ error: errorMessage(error) });

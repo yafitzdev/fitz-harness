@@ -69,8 +69,9 @@ describe("Fitz host", () => {
     const response = await runtime.app.inject({ method: "POST", url: "/api/v1/management/recipes/probe-recipe/test" });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().data).toEqual(expect.objectContaining({ recipeId: "probe-recipe", working: true }));
+    expect(response.json().data).toEqual(expect.objectContaining({ recipeId: "probe-recipe", working: true, unloaded: true }));
     expect(response.json().data.output).toContain("probe-model");
+    expect(runtime.lifecycle.snapshot().state).toBe("UNLOADED");
     expect(runtime.routes.listRoutes()).toEqual(routesBefore);
     await runtime.app.close();
   });

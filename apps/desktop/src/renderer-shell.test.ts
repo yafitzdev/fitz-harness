@@ -69,6 +69,9 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('treeItem(session.title, "task-row", undefined');
     expect(renderer).not.toContain("function chatIcon()");
     expect(styles).toContain("height: 42px; display: flex; align-items: center");
+    expect(html).toContain('class="section-heading projects-heading"');
+    expect(styles).toContain(".projects-heading #new-project { opacity: 0; pointer-events: none;");
+    expect(styles).toContain(".task-row { padding: 6px 34px 6px 30px;");
     expect(renderer).toContain('identity.data?.authMode === "disabled" || identity.data?.user?.role === "administrator"');
     expect(html).toContain('d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"');
   });
@@ -105,8 +108,12 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('state === "passed" ? "✓ Working"');
     expect(renderer).toContain('state === "failed" ? "Retry"');
     expect(renderer).toContain('detail: "Sending “Say hi.” to this recipe"');
+    expect(renderer).toContain('modelLabel.className = "recipe-card-label"');
+    expect(renderer).toContain('contextLabel.className = "recipe-card-label recipe-context-label"');
+    expect(renderer).not.toContain('detail.textContent = `${recipe.adapter} · ${recipe.modelId}`');
     expect(styles).toContain(".recipe-test-button");
     expect(styles).toContain(".recipe-test-button.passed");
+    expect(styles).toContain(".recipe-card-label {");
   });
 
   it("exposes working keyboard, retry, attachment, and cancellation paths", () => {

@@ -77,10 +77,17 @@ describe("InferenceScheduler", () => {
       events,
     );
 
-    const output = await collect(scheduler.enqueueRecipe("unassigned", { messages: [{ role: "user", content: "Say hi." }], maxTokens: 16 }));
+    const output = await collect(scheduler.enqueueRecipe(
+      "unassigned",
+      { messages: [{ role: "user", content: "Say hi." }], maxTokens: 16 },
+      undefined,
+      { unloadAfterCompletion: true },
+    ));
 
     expect(output).toContain("Say hi.");
     expect(adapter.starts.at(-1)?.modelId).toBe("unassigned-model");
+    expect(adapter.stops).toEqual([expect.objectContaining({ mode: "graceful" })]);
+    expect(lifecycle.snapshot().state).toBe("UNLOADED");
     expect(scheduler.routes.resolve("default").recipe.id).toBe("routed");
   });
 

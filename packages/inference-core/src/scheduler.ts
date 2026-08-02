@@ -9,6 +9,7 @@ interface QueueJob {
   id: string;
   routeId: string;
   recipeId?: string;
+  unloadAfterCompletion?: boolean;
   request: InferenceRequest;
   output: AsyncChannel<InferenceDelta>;
   controller: AbortController;
@@ -18,6 +19,10 @@ interface QueueJob {
 export interface ScheduledStream extends AsyncIterable<InferenceDelta> {
   requestId: string;
   cancel(): void;
+}
+
+export interface RecipeEnqueueOptions {
+  unloadAfterCompletion?: boolean;
 }
 
 export class InferenceScheduler {
@@ -49,9 +54,10 @@ export class InferenceScheduler {
     recipeId: string,
     input: Omit<InferenceRequest, "id" | "routeId">,
     externalSignal?: AbortSignal,
+    options: RecipeEnqueueOptions = {},
   ): ScheduledStream {
     this.routes.resolveRecipe(recipeId);
-    return this.#enqueue(`recipe:${recipeId}`, input, externalSignal, recipeId);
+    return this.#enqueue(`recipe:${recipeId}`, input, externalSignal, recipeId, options.unloadAfterCompletion);
   }
 
   #enqueue(
@@ -59,12 +65,21 @@ export class InferenceScheduler {
     input: Omit<InferenceRequest, "id" | "routeId">,
     externalSignal?: AbortSignal,
     recipeId?: string,
+    unloadAfterCompletion?: boolean,
   ): ScheduledStream {
     const id = randomUUID();
     const output = new AsyncChannel<InferenceDelta>();
     const controller = new AbortController();
     const request: InferenceRequest = { ...input, id, routeId };
-    const job: QueueJob = { id, routeId, request, output, controller, ...(recipeId ? { recipeId } : {}) };
+    const job: QueueJob = {
+      id,
+      routeId,
+      request,
+      output,
+      controller,
+      ...(recipeId ? { recipeId } : {}),
+      ...(unloadAfterCompletion ? { unloadAfterCompletion: true } : {}),
+    };
 
     if (!this.#accepting) {
       output.fail(new Error("Inference scheduler is shutting down"));
@@ -136,6 +151,7 @@ export class InferenceScheduler {
           for await (const delta of this.lifecycle.run(recipe, job.request, job.controller.signal)) {
             job.output.push(delta);
           }
+          if (job.unloadAfterCompletion) await this.lifecycle.stop(`recipe-test:${recipe.id}`, "graceful");
           job.output.close();
           this.#publishQueue(job, "completed", 0);
         } catch (error) {

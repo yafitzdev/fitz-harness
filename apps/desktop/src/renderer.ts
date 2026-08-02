@@ -1302,10 +1302,11 @@ function renderManagementPage(): void {
     for (const recipe of playbookRecipes) {
       const recipeCard = document.createElement("article"); recipeCard.className = "recipe-card";
       const recipeDetails = document.createElement("button"); recipeDetails.type = "button"; recipeDetails.className = "recipe-card-details"; recipeDetails.addEventListener("click", () => openRecipeEditor(recipe));
-      const name = document.createElement("span"); name.textContent = recipe.displayName;
-      const context = document.createElement("code"); context.textContent = `${formatTokenCount(recipe.contextTokens)} ctx`;
-      const detail = document.createElement("small"); detail.textContent = `${recipe.adapter} · ${recipe.modelId}`;
-      recipeDetails.append(name, context, detail);
+      const name = document.createElement("span"); name.className = "recipe-display-name"; name.textContent = recipe.displayName;
+      const labels = document.createElement("div"); labels.className = "recipe-card-labels";
+      const modelLabel = document.createElement("span"); modelLabel.className = "recipe-card-label"; modelLabel.textContent = recipe.modelId;
+      const contextLabel = document.createElement("span"); contextLabel.className = "recipe-card-label recipe-context-label"; contextLabel.textContent = `${formatTokenCount(recipe.contextTokens)} ctx`;
+      labels.append(modelLabel, contextLabel); recipeDetails.append(name, labels);
       const routeToggle = document.createElement("div"); routeToggle.className = "recipe-route-toggle"; routeToggle.setAttribute("role", "group"); routeToggle.setAttribute("aria-label", `${recipe.displayName} routing`);
       for (const definition of FIXED_ROUTES) {
         const route = routes.find((item: Json) => item.id === definition.id);
