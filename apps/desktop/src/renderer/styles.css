@@ -176,7 +176,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .dialog-copy strong { color: var(--text); }
 .danger-button { padding: 8px 13px; border-radius: 8px; background: #b33b35; color: white; font-weight: 600; cursor: pointer; }
 
-.messages { min-height: 0; display: grid; grid-auto-rows: max-content; grid-template-columns: minmax(0, calc(var(--conversation-width) - var(--conversation-content-inset) - var(--conversation-content-inset))); align-content: start; justify-content: start; overflow-y: auto; padding: 32px 0 calc(var(--composer-height) + 44px) calc(var(--conversation-gutter) + var(--conversation-content-inset)); scroll-behavior: smooth; }
+.messages { min-height: 0; display: grid; grid-auto-rows: max-content; grid-template-columns: minmax(0, calc(var(--conversation-width) - var(--conversation-content-inset) - var(--conversation-content-inset))); align-content: start; justify-content: start; overflow-y: auto; padding: 32px 0 calc(var(--composer-height) + 44px) calc(var(--conversation-gutter) + var(--conversation-content-inset)); }
 .workspace.new-chat-open .workspace-header { visibility: hidden; border-color: transparent; }
 .new-chat-landing { min-height: 72%; display: grid; align-content: center; justify-items: center; text-align: center; }
 .new-chat-landing .landing-mark { width: 52px; height: 52px; margin-bottom: 20px; border: 0; background: transparent; color: #676a66; }

@@ -340,6 +340,9 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('id="scroll-to-bottom"');
     expect(renderer).toContain('messages.addEventListener("scroll", updateScrollToBottom');
     expect(renderer).toContain('messages.scrollTo({ top: messages.scrollHeight, behavior: "smooth" })');
+    expect(styles).not.toContain("scroll-behavior: smooth");
+    expect(renderer).toContain("if (!messages.childElementCount) showLanding(true)");
+    expect(renderer).toContain("messages.scrollTop = messages.scrollHeight");
     expect(renderer).toContain("distanceFromBottom < 48");
     expect(styles).toContain(".scroll-to-bottom");
     expect(styles).toContain("bottom: calc(100% + 12px)");

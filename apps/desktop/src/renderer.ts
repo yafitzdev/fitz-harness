@@ -595,6 +595,7 @@ async function selectSession(id: string, rerender = true, projectId?: string): P
     for (const approval of pendingApprovals.data ?? []) appendToolApproval(approval);
     updateContextMeter();
     if (!messages.childElementCount) showLanding(true);
+    messages.scrollTop = messages.scrollHeight;
     await loadArtifacts();
   } catch (error) {
     messages.replaceChildren();
