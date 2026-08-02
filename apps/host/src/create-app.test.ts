@@ -28,6 +28,16 @@ describe("Fitz host", () => {
     await runtime.app.close();
   });
 
+  it("warms a selected route without generating a message", async () => {
+    const runtime = createHost();
+    try {
+      const response = await runtime.app.inject({ method: "POST", url: "/api/v1/inference/warm", payload: { model: "default", connectionId: "hosted--local" } });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json().data).toEqual(expect.objectContaining({ state: "READY", recipeId: "fake-best" }));
+      expect(runtime.lifecycle.snapshot()).toEqual(expect.objectContaining({ state: "READY", activeLeases: 0 }));
+    } finally { await runtime.app.close(); }
+  });
+
   it("keeps internal connection routes out of the public model contract", async () => {
     const runtime = createHost();
     try {

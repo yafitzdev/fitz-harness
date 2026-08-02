@@ -10,7 +10,7 @@ describe("production NiNfer playbook", () => {
     expect(new Set(playbook.recipes.map((recipe) => recipe.playbookId))).toEqual(new Set([NINFER_PLAYBOOK_ID]));
     expect(playbook.recipes).toHaveLength(2);
     expect(playbook.recipes.every((recipe) => validateNInferConfiguration(recipe).length === 0)).toBe(true);
-    expect(playbook.recipes.every((recipe) => recipe.lifecycle.idleTtlSeconds === 1_800)).toBe(true);
+    expect(playbook.recipes.every((recipe) => recipe.lifecycle.idleTtlSeconds === 600)).toBe(true);
     expect(playbook.recipes.map((recipe) => readNInferConfiguration(recipe).draftTokens)).toEqual([4, 3]);
     expect(playbook.routes).toEqual([
       expect.objectContaining({ id: "fast", recipeId: playbook.recipes[1]!.id }),

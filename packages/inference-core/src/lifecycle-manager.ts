@@ -38,6 +38,7 @@ export class LifecycleManager {
   #activeLeases = 0;
   #failureReason: string | undefined;
   #evictionTask: ScheduledTask | undefined;
+  #readinessTask: { recipeId: string; promise: Promise<void> } | undefined;
 
   constructor(options: LifecycleManagerOptions) {
     this.#adapters = options.adapters;
@@ -95,6 +96,12 @@ export class LifecycleManager {
     }
   }
 
+  async warm(recipe: Recipe): Promise<InstanceSnapshot> {
+    await this.#ensureReady(recipe, new AbortController().signal);
+    this.#scheduleEviction();
+    return this.snapshot();
+  }
+
   async stop(reason = "manual-stop", mode: "graceful" | "force" = "graceful"): Promise<void> {
     this.#cancelEviction();
     if (this.#state === "UNLOADED") return;
@@ -120,7 +127,16 @@ export class LifecycleManager {
     this.#cancelEviction();
     if (this.#state === "READY" && this.#recipe?.id === recipe.id) return;
     if (this.#state === "BUSY") throw new Error("Lifecycle manager received concurrent generations");
+    if (this.#readinessTask?.recipeId === recipe.id) return this.#readinessTask.promise;
+    if (this.#readinessTask) await this.#readinessTask.promise;
 
+    const promise = this.#loadRecipe(recipe, signal);
+    this.#readinessTask = { recipeId: recipe.id, promise };
+    try { await promise; }
+    finally { if (this.#readinessTask?.promise === promise) this.#readinessTask = undefined; }
+  }
+
+  async #loadRecipe(recipe: Recipe, signal: AbortSignal): Promise<void> {
     if (this.#state !== "UNLOADED" && this.#state !== "FAILED") {
       await this.stop("recipe-switch");
     } else if (this.#state === "FAILED") {

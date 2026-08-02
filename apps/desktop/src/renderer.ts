@@ -44,6 +44,8 @@ let piCatalogPackages: PiCatalogPackage[] = [];
 let installedPiSkills: PiSkillSummary[] = [];
 let piCatalogTotal = 0;
 let pluginSearchTimer: ReturnType<typeof setTimeout> | undefined;
+let modelWarmupTimer: ReturnType<typeof setTimeout> | undefined;
+let composerHadText = false;
 let selectedConnectionId = LOCAL_CONNECTION_ID;
 let pendingRemoteAction: "enable" | "disable" | undefined;
 let pendingStartupAction: "install" | "remove" | undefined;
@@ -291,7 +293,7 @@ form.addEventListener("submit", (event) => {
 messages.addEventListener("scroll", updateScrollToBottom, { passive: true });
 scrollToBottom.addEventListener("click", () => messages.scrollTo({ top: messages.scrollHeight, behavior: "smooth" }));
 window.fitz.onNavigationCommand((command) => void navigateHistory(command === "back" ? -1 : 1));
-prompt.addEventListener("input", () => { resizePrompt(); updateContextMeter(); refreshComposerState(); });
+prompt.addEventListener("input", () => { resizePrompt(); updateContextMeter(); refreshComposerState(); scheduleModelWarmup(); });
 prompt.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
@@ -348,7 +350,7 @@ attachButton.addEventListener("click", chooseArtifact);
 addArtifactButton.addEventListener("click", chooseArtifact);
 artifactFile.addEventListener("change", () => void uploadArtifact());
 chooseProjectFolder.addEventListener("click", () => void selectProjectFolder());
-model.addEventListener("change", () => { updateModelControls(); if (currentSession) void updateSessionBinding(); });
+model.addEventListener("change", () => { updateModelControls(); resetComposerWarmup(); scheduleModelWarmup(); if (currentSession) void updateSessionBinding(); });
 effort.addEventListener("change", updateModelControls);
 modelToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(modelMenu, modelToggle); });
 contextMeter.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(contextUsagePopover, contextMeter as HTMLButtonElement); });
@@ -639,6 +641,7 @@ function openNewChat(): void {
   renderConnectionChoices();
   newChatContext.hidden = false;
   prompt.value = "";
+  resetComposerWarmup();
   composerAttachments.replaceChildren();
   composerAttachments.hidden = true;
   renderProjectTree();
@@ -670,7 +673,7 @@ function showNewChatLanding(): void {
   const grid = document.createElement("div"); grid.className = "starter-grid";
   for (const [label, iconPath] of suggestions) {
     const button = document.createElement("button"); button.type = "button"; button.className = "starter-card"; button.append(svg(iconPath!), Object.assign(document.createElement("span"), { textContent: label }));
-    button.addEventListener("click", () => { prompt.value = label!; resizePrompt(); updateContextMeter(); refreshComposerState(); prompt.focus(); });
+    button.addEventListener("click", () => { prompt.value = label!; resizePrompt(); updateContextMeter(); refreshComposerState(); scheduleModelWarmup(); prompt.focus(); });
     grid.append(button);
   }
   landing.append(mark, heading, grid); messages.append(landing); updateTitles();
@@ -1837,7 +1840,7 @@ async function saveRecipe(): Promise<void> {
       playbookId: value("recipe-playbook-id"), displayName: value("recipe-display-name"), adapter: value("recipe-adapter"), modelId: value("recipe-model-id"),
       contextTokens: Number(value("recipe-context-tokens")), configuration,
       capabilities: editingRecipe?.capabilities ?? { chatCompletions: true, streaming: true, toolCalls: false, responseFormat: false, minP: false, maxConcurrentGenerations: 1 },
-      lifecycle: editingRecipe?.lifecycle ?? { loadPolicy: "onDemand", evictionPolicy: "idle-ttl", idleTtlSeconds: 1_800, minimumResidencySeconds: 0 },
+      lifecycle: editingRecipe?.lifecycle ?? { loadPolicy: "onDemand", evictionPolicy: "idle-ttl", idleTtlSeconds: 600, minimumResidencySeconds: 0 },
     });
     closeManagementEditor(); await loadManagementConfiguration(true);
   } catch (error) { showToast(errorMessage(error)); } finally { setFormBusy(recipeForm, false); }
@@ -1936,7 +1939,7 @@ function renderConnectionChoices(): void {
     const button = document.createElement("button"); button.type = "button"; button.dataset.connectionId = connection.id;
     button.append(svg('<circle cx="10" cy="10" r="6"></circle><path d="M7 10h6M10 7v6"></path>'), Object.assign(document.createElement("span"), { textContent: connection.displayName }));
     if (connection.id === selectedConnectionId) button.append(Object.assign(document.createElement("b"), { textContent: "✓" }));
-    button.addEventListener("click", () => { selectedConnectionId = connection.id; renderConnectionChoices(); closePopovers(); });
+    button.addEventListener("click", () => { selectedConnectionId = connection.id; resetComposerWarmup(); scheduleModelWarmup(); renderConnectionChoices(); closePopovers(); });
     newChatConnectionList.append(button);
   }
 }
@@ -2164,6 +2167,7 @@ async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLE
   if (!currentSession) { openNewChat(); return; }
   if (!model.value) { showToast("No model route is available"); return; }
   prompt.value = "";
+  resetComposerWarmup();
   resizePrompt();
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   if (!existingUserMessage) appendMessage("user", content);
@@ -2856,6 +2860,17 @@ function setContextPanel(open: boolean): void {
 
 function toggleSidebar(): void { shell.classList.toggle("sidebar-collapsed"); closePopovers(); }
 function resizePrompt(): void { prompt.style.height = "auto"; prompt.style.height = `${Math.min(prompt.scrollHeight, 180)}px`; }
+function resetComposerWarmup(): void { composerHadText = false; if (modelWarmupTimer) clearTimeout(modelWarmupTimer); modelWarmupTimer = undefined; }
+function scheduleModelWarmup(): void {
+  const hasText = prompt.value.length > 0;
+  if (!hasText) { resetComposerWarmup(); return; }
+  if (composerHadText || currentRun || !model.value) return;
+  composerHadText = true;
+  modelWarmupTimer = setTimeout(() => {
+    modelWarmupTimer = undefined;
+    void api("/api/v1/inference/warm", "POST", { model: model.value, connectionId: selectedConnectionId }).catch(() => { composerHadText = false; });
+  }, 120);
+}
 function updateContextMeter(): void { const usedTokens = sessionTokenEstimate + estimateTokens(prompt.value); const used = Math.min(100, (usedTokens / contextTokenLimit) * 100); contextMeter.style.setProperty("--context-used", `${used}%`); contextPercent.textContent = `${Math.round(used)}% full`; contextTokens.textContent = `≈${formatTokenCount(usedTokens)} / ${formatTokenCount(contextTokenLimit)} tokens used`; contextMeter.setAttribute("aria-label", `Context window ${Math.round(used)}% full, approximately ${formatTokenCount(usedTokens)} of ${formatTokenCount(contextTokenLimit)} tokens used`); }
 
 async function compactCurrentSession(): Promise<void> {

@@ -377,6 +377,14 @@ describe("desktop renderer shell", () => {
     expect(html).not.toContain("Ultra");
   });
 
+  it("silently warms the selected route after the first composer character", () => {
+    expect(renderer).toContain("scheduleModelWarmup()");
+    expect(renderer).toContain('api("/api/v1/inference/warm", "POST", { model: model.value, connectionId: selectedConnectionId })');
+    expect(renderer).toContain("if (composerHadText || currentRun || !model.value) return");
+    expect(renderer).toContain("}, 120)");
+    expect(renderer).toContain("idleTtlSeconds: 600");
+  });
+
   it("keeps every dropdown and overflow surface at the compact Codex menu density", () => {
     expect(styles).toContain(".popover { position: absolute; z-index: 18; padding: 4px;");
     expect(styles).toContain(".menu-surface button { width: 100%; min-height: 32px;");

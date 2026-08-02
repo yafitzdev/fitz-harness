@@ -208,6 +208,18 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     };
   });
   app.get("/api/v1/me", async (request) => { const principal = principals.get(request); return { data: principal ? { authMode: "required", user: principal.user, device: principal.device, routeIds: principal.routeGrants, quota: principal.quota } : { authMode: "disabled" } }; });
+  app.post("/api/v1/inference/warm", async (request, reply) => {
+    try {
+      const body = requireRecord(request.body);
+      const publicRouteId = requirePublicRouteId(body.model);
+      const principal = principals.get(request);
+      if (principal && !security?.authorizeRoute(principal, publicRouteId)) return reply.code(403).send({ error: "Route access denied" });
+      const connectionId = typeof body.connectionId === "string" && body.connectionId.trim() ? body.connectionId.trim() : LOCAL_CONNECTION_ID;
+      const executionRouteId = connectionId === LOCAL_CONNECTION_ID ? publicRouteId : consumerConnectionRouteId(connectionId, publicRouteId);
+      const resolved = resolveActiveRoute(executionRouteId);
+      return { data: await lifecycle.warm(resolved.recipe) };
+    } catch (error) { return reply.code(error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) }); }
+  });
 
   app.post("/api/v1/pairing/bootstrap", async (request, reply) => {
     if (!isDirectLoopbackRequest(request)) return reply.code(403).send({ error: "Initial administration setup is only available directly on the host" });

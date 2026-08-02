@@ -43,6 +43,20 @@ describe("InferenceScheduler", () => {
     expect(adapter.stops).toHaveLength(1);
   });
 
+  it("shares a speculative warm-up load with the first generation", async () => {
+    const adapter = new FakeEngineAdapter({ loadDelayMs: 10 });
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]) });
+    const selectedRecipe = recipe("best", 600);
+    const scheduler = new InferenceScheduler(new RouteResolver([route("default", "best")], [selectedRecipe]), lifecycle);
+
+    const warmup = lifecycle.warm(selectedRecipe);
+    const output = collect(scheduler.enqueue("default", { messages: [{ role: "user", content: "hello" }] }));
+    await Promise.all([warmup, output]);
+
+    expect(adapter.starts).toHaveLength(1);
+    expect(lifecycle.snapshot().state).toBe("READY");
+  });
+
   it("serializes requests and switches recipes safely", async () => {
     const adapter = new FakeEngineAdapter({ tokenDelayMs: 1 });
     const events = new LifecycleEventBus();
