@@ -34,6 +34,10 @@
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4.5h5.5A2.5 2.5 0 0 1 12 7v9H6.5A2.5 2.5 0 0 0 4 18.5z"></path><path d="M16 4.5h-4A2.5 2.5 0 0 0 9.5 7v9H13.5a2.5 2.5 0 0 1 2.5 2.5z"></path></svg>
           <span>Playbooks</span>
         </button>
+        <button id="manage-administration" class="nav-action" type="button" hidden>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.8 16 5v4.4c0 3.8-2.4 6.3-6 7.8-3.6-1.5-6-4-6-7.8V5z"></path><circle cx="10" cy="8" r="2"></circle><path d="M6.8 14c.6-1.8 1.7-2.7 3.2-2.7s2.6.9 3.2 2.7"></path></svg>
+          <span>Administration</span>
+        </button>
 
         <div class="sidebar-section">
           <div class="section-heading">
@@ -89,6 +93,17 @@
               <p id="pairing-error" class="pairing-error" hidden></p>
               <button class="pairing-submit" type="submit">Connect</button>
             </form>
+          </div>
+        </section>
+
+        <section id="administration-page" class="management-page administration-page" aria-label="Administration" hidden>
+          <header class="management-page-header"><button id="refresh-administration" class="icon-button" type="button" title="Refresh administration" aria-label="Refresh administration"><svg viewBox="0 0 20 20"><path d="M15.5 7A6 6 0 1 0 16 12"></path><path d="M15.5 3v4h-4"></path></svg></button></header>
+          <div class="administration-content">
+            <h1>Administration</h1><p>Pair devices, manage users, and control their access.</p>
+            <section class="admin-section"><h2>Pair a device</h2><form id="pairing-code-form" class="admin-inline-form"><label>Role<select id="pairing-code-role"><option value="consumer">Consumer</option><option value="agent">Agent</option><option value="administrator">Administrator</option></select></label><label>Expires<select id="pairing-code-ttl"><option value="600">10 minutes</option><option value="3600">1 hour</option><option value="86400">24 hours</option></select></label><button type="submit">Generate code</button></form><div id="pairing-code-result" class="pairing-code-result" hidden><div><small>One-time code</small><strong id="issued-pairing-code"></strong><span id="issued-pairing-expiry"></span></div><button id="copy-pairing-code" type="button">Copy</button></div></section>
+            <section class="admin-section"><div class="admin-section-heading"><h2>Users</h2></div><form id="create-user-form" class="admin-inline-form"><label class="grow">Display name<input id="create-user-name" maxlength="100" required placeholder="New user"></label><label>Role<select id="create-user-role"><option value="consumer">Consumer</option><option value="agent">Agent</option><option value="administrator">Administrator</option></select></label><button type="submit">Create user</button></form><div id="admin-users" class="admin-users"></div></section>
+            <section class="admin-section"><h2>Tool policies</h2><p class="admin-section-description">Set an explicit tool decision for a role or one user. User policies override role policies.</p><form id="tool-policy-form" class="admin-inline-form"><label>Applies to<select id="tool-policy-subject-type"><option value="role">Role</option><option value="user">User</option></select></label><label class="grow">Subject<select id="tool-policy-subject"></select></label><label class="grow">Tool<input id="tool-policy-name" maxlength="100" required placeholder="bash, read, edit…"></label><label>Decision<select id="tool-policy-decision"><option value="ask">Ask</option><option value="allow">Allow</option><option value="deny">Deny</option></select></label><button type="submit">Save policy</button></form><div id="tool-policies" class="tool-policies"></div></section>
+            <section class="admin-section"><h2>Recent activity</h2><div id="admin-audit-events" class="admin-audit-events"></div></section>
           </div>
         </section>
 

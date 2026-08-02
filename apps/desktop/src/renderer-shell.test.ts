@@ -230,4 +230,19 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".pairing-page");
     expect(renderer).toContain('setConnection(configuredHostOrigin.replace');
   });
+
+  it("provides inline administrator controls for pairing, users, devices, routes, quotas, and tools", () => {
+    for (const id of ["administration-page", "pairing-code-form", "create-user-form", "admin-users", "tool-policy-form", "tool-policies", "admin-audit-events"]) {
+      expect(html).toContain(`id="${id}"`);
+    }
+    expect(renderer).toContain('api("/api/v1/management/pairing-codes", "POST"');
+    expect(renderer).toContain('api("/api/v1/management/users")');
+    expect(renderer).toContain('api("/api/v1/management/tool-policies")');
+    expect(renderer).toContain('api("/api/v1/management/audit-events?limit=50")');
+    expect(renderer).toContain('/routes`, "PUT", { routeIds }');
+    expect(renderer).toContain('/quota`, "PUT", quota');
+    expect(renderer).toContain('revokeAdminDevice(device.id)');
+    expect(styles).toContain(".administration-content");
+    expect(styles).toContain(".tool-policy");
+  });
 });

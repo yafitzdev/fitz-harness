@@ -34,7 +34,7 @@ import {
   type ToolPolicyRecord,
 } from "@fitz/protocol";
 import { MetricsRegistry, redactSecrets } from "@fitz/observability";
-import { SecurityPolicyError, SecurityService, type AuthenticatedPrincipal } from "@fitz/security";
+import { DEFAULT_QUOTAS, SecurityPolicyError, SecurityService, type AuthenticatedPrincipal } from "@fitz/security";
 import { SqliteStore } from "@fitz/storage";
 import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
 import { AgentRunCoordinator } from "./agent-runs.js";
@@ -168,6 +168,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       recovery: { interruptedRequests: recoveredInterruptedRequests, interruptedAgentRuns: recoveredAgentRuns, interruptedToolApprovals: recoveredToolApprovals },
     };
   });
+  app.get("/api/v1/me", async (request) => { const principal = principals.get(request); return { data: principal ? { authMode: "required", user: principal.user, device: principal.device, routeIds: principal.routeGrants, quota: principal.quota } : { authMode: "disabled" } }; });
 
   app.get("/v1/models", async (request): Promise<ModelListResponse> => ({
     object: "list",
@@ -285,7 +286,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     };
   });
   app.get("/api/v1/connectivity/status", async () => ({ tailscale: await tailscale.status() }));
-  app.post("/api/v1/pairing/redeem", async (request, reply) => { try { const body = requireRecord(request.body); const redeemed = securityRequired(security).redeemPairingCode(requireString(body.code, "code"), requireString(body.displayName, "displayName"), requireString(body.deviceName, "deviceName")); return reply.code(201).send({ data: redeemed }); } catch (error) { return reply.code(error instanceof SecurityPolicyError ? 403 : 400).send({ error: errorMessage(error) }); } });
+  app.post("/api/v1/pairing/redeem", async (request, reply) => { try { const body = requireRecord(request.body); const access = securityRequired(security); const redeemed = access.redeemPairingCode(requireString(body.code, "code"), requireString(body.displayName, "displayName"), requireString(body.deviceName, "deviceName")); access.setRouteGrants(redeemed.user.id, routes.listRoutes().map((route) => route.id)); return reply.code(201).send({ data: redeemed }); } catch (error) { return reply.code(error instanceof SecurityPolicyError ? 403 : 400).send({ error: errorMessage(error) }); } });
 
   app.post("/api/v1/agent/runs", async (request, reply) => {
     try {
@@ -519,6 +520,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   app.get("/api/v1/management/tool-policies", { preHandler: administratorGuard }, async () => ({ data: store.listToolPolicies() }));
   app.put("/api/v1/management/tool-policies/:subjectType/:subjectId/:toolName", { preHandler: administratorGuard }, async (request, reply) => { try { const params = request.params as { subjectType: string; subjectId: string; toolName: string }; if (params.subjectType !== "role" && params.subjectType !== "user") throw new TypeError("subjectType must be role or user"); const body = requireRecord(request.body); if (body.decision !== "allow" && body.decision !== "deny" && body.decision !== "ask") throw new TypeError("decision must be allow, deny, or ask"); const policy: ToolPolicyRecord = { subjectType: params.subjectType, subjectId: params.subjectId, toolName: params.toolName, decision: body.decision, updatedAt: new Date().toISOString() }; store.upsertToolPolicy(policy); security?.audit("tool-policy.updated", principals.get(request)?.user.id, "tool-policy", `${params.subjectType}:${params.subjectId}:${params.toolName}`, { decision: body.decision }); return { data: policy }; } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
   app.get("/api/v1/management/users", { preHandler: administratorGuard }, async () => ({ data: store.listUsers() }));
+  app.get("/api/v1/management/users/:userId/access", { preHandler: administratorGuard }, async (request, reply) => { const userId = (request.params as { userId: string }).userId; const user = store.getUser(userId); if (!user) return reply.code(404).send({ error: "User not found" }); return { data: { user, devices: store.listDevices(userId), routeIds: store.listUserRouteGrants(userId), quota: store.getUserQuota(userId) ?? DEFAULT_QUOTAS[user.role], currentDeviceId: principals.get(request)?.device.id } }; });
   app.post("/api/v1/management/users", { preHandler: administratorGuard }, async (request, reply) => {
     try {
       const body = requireRecord(request.body); const user = securityRequired(security).createUser(requireString(body.displayName, "displayName"), parseRole(body.role));

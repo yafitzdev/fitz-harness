@@ -22,6 +22,10 @@ let queueRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let sessionTokenEstimate = 0;
 let contextTokenLimit = 131_072;
 let configuredHostOrigin = "Fitz host";
+let administrator = false;
+let currentUserId: string | undefined;
+let administrationUsers: Json[] = [];
+let administrationPolicies: Json[] = [];
 let managementConfiguration: Json | undefined;
 let newChatMode = false;
 let newChatProjectDetached = false;
@@ -128,6 +132,26 @@ const pairingDisplayName = element("pairing-display-name") as HTMLInputElement;
 const pairingDeviceName = element("pairing-device-name") as HTMLInputElement;
 const pairingDescription = element("pairing-description");
 const pairingError = element("pairing-error");
+const administrationPage = element("administration-page");
+const administrationButton = element("manage-administration") as HTMLButtonElement;
+const pairingCodeForm = element("pairing-code-form") as HTMLFormElement;
+const pairingCodeRole = element("pairing-code-role") as HTMLSelectElement;
+const pairingCodeTtl = element("pairing-code-ttl") as HTMLSelectElement;
+const pairingCodeResult = element("pairing-code-result");
+const issuedPairingCode = element("issued-pairing-code");
+const issuedPairingExpiry = element("issued-pairing-expiry");
+const copyPairingCode = element("copy-pairing-code") as HTMLButtonElement;
+const createUserForm = element("create-user-form") as HTMLFormElement;
+const createUserName = element("create-user-name") as HTMLInputElement;
+const createUserRole = element("create-user-role") as HTMLSelectElement;
+const adminUsers = element("admin-users");
+const toolPolicyForm = element("tool-policy-form") as HTMLFormElement;
+const toolPolicySubjectType = element("tool-policy-subject-type") as HTMLSelectElement;
+const toolPolicySubject = element("tool-policy-subject") as HTMLSelectElement;
+const toolPolicyName = element("tool-policy-name") as HTMLInputElement;
+const toolPolicyDecision = element("tool-policy-decision") as HTMLSelectElement;
+const toolPolicies = element("tool-policies");
+const adminAuditEvents = element("admin-audit-events");
 const playbookList = element("playbook-list");
 const playbookSearch = element("playbook-search") as HTMLInputElement;
 const managementTitle = element("management-title");
@@ -179,6 +203,8 @@ document.addEventListener("keydown", (event) => {
 element("new-project").addEventListener("click", () => openProjectDialog());
 element("new-session").addEventListener("click", openNewChat);
 element("manage-playbooks").addEventListener("click", () => void openPlaybookPage());
+administrationButton.addEventListener("click", () => void openAdministrationPage());
+element("refresh-administration").addEventListener("click", () => void loadAdministration());
 element("refresh-playbooks").addEventListener("click", () => void loadManagementConfiguration(true));
 element("close-management-editor").addEventListener("click", closeManagementEditor);
 for (const button of document.querySelectorAll<HTMLButtonElement>("[data-close-management-editor]")) button.addEventListener("click", closeManagementEditor);
@@ -242,6 +268,11 @@ window.fitz.onUpdateStatus((updateStatus) => {
 projectForm.addEventListener("submit", (event) => { event.preventDefault(); void createProject(); });
 taskForm.addEventListener("submit", (event) => { event.preventDefault(); void createSession(); });
 pairingForm.addEventListener("submit", (event) => { event.preventDefault(); void pairDevice(); });
+pairingCodeForm.addEventListener("submit", (event) => { event.preventDefault(); void issuePairingCode(); });
+copyPairingCode.addEventListener("click", () => void window.fitz.copyText(issuedPairingCode.textContent ?? ""));
+createUserForm.addEventListener("submit", (event) => { event.preventDefault(); void createAdminUser(); });
+toolPolicySubjectType.addEventListener("change", renderToolPolicySubjects);
+toolPolicyForm.addEventListener("submit", (event) => { event.preventDefault(); void saveToolPolicy(); });
 recipeForm.addEventListener("submit", (event) => { event.preventDefault(); void saveRecipe(); });
 engineForm.addEventListener("submit", (event) => { event.preventDefault(); void saveEngine(); });
 (element("engine-folder") as HTMLSelectElement).addEventListener("change", applyEngineFolderChoice);
@@ -259,7 +290,7 @@ async function initialize(): Promise<void> {
   try {
     setConnection("Connecting…", "loading");
     setStatus("Connecting", "loading");
-    const [health, models, connection] = await Promise.all([api("/health"), api("/v1/models"), window.fitz.connectionInfo()]); configuredHostOrigin = connection.origin;
+    const [health, models, connection, identity] = await Promise.all([api("/health"), api("/v1/models"), window.fitz.connectionInfo(), api("/api/v1/me")]); configuredHostOrigin = connection.origin; currentUserId = identity.data?.user?.id; administrator = identity.data?.user?.role === "administrator"; administrationButton.hidden = !administrator;
     model.replaceChildren();
     for (const card of models.data ?? []) model.add(new Option(card.display_name ?? card.id, card.id));
     updateModelControls();
@@ -271,7 +302,7 @@ async function initialize(): Promise<void> {
     await loadProjects();
     void loadManagementConfiguration(false);
   } catch (error) {
-    if (error instanceof HttpError && error.status === 401) { configuredHostOrigin = (await window.fitz.connectionInfo()).origin; setConnection("Pair device", "error"); setStatus("Pairing required", "error"); showPairingPage(`Enter a one-time code to connect to ${configuredHostOrigin}.`); }
+    if (error instanceof HttpError && error.status === 401) { currentUserId = undefined; administrator = false; administrationButton.hidden = true; configuredHostOrigin = (await window.fitz.connectionInfo()).origin; setConnection("Pair device", "error"); setStatus("Pairing required", "error"); showPairingPage(`Enter a one-time code to connect to ${configuredHostOrigin}.`); }
     else { setConnection("Click to retry", "error"); setStatus("Offline", "error"); showConnectionFailure(errorMessage(error)); }
   } finally {
     refreshComposerState();
@@ -690,16 +721,19 @@ async function openPlaybookPage(): Promise<void> {
   if (!pairingPage.hidden) { pairingCode.focus(); return; }
   closePopovers();
   setContextPanel(false);
+  administrationPage.hidden = true;
   playbookPage.hidden = false;
   closeManagementEditor();
   setConversationInert(true);
   element("manage-playbooks").classList.add("active");
+  administrationButton.classList.remove("active");
   playbookList.replaceChildren(panelEmpty("Loading playbooks…"));
   await loadManagementConfiguration(true);
 }
 
-function showPairingPage(message: string): void { closePopovers(); setContextPanel(false); playbookPage.hidden = true; pairingPage.hidden = false; closeManagementEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
-function showConversationWorkspace(): void { pairingPage.hidden = true; playbookPage.hidden = true; closeManagementEditor(); setConversationInert(false); element("manage-playbooks").classList.remove("active"); }
+async function openAdministrationPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); setContextPanel(false); pairingPage.hidden = true; playbookPage.hidden = true; administrationPage.hidden = false; closeManagementEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); administrationButton.classList.add("active"); adminUsers.replaceChildren(panelEmpty("Loading users…")); await loadAdministration(); }
+function showPairingPage(message: string): void { closePopovers(); setContextPanel(false); administrationPage.hidden = true; playbookPage.hidden = true; pairingPage.hidden = false; closeManagementEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); administrationButton.classList.remove("active"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
+function showConversationWorkspace(): void { pairingPage.hidden = true; administrationPage.hidden = true; playbookPage.hidden = true; closeManagementEditor(); setConversationInert(false); element("manage-playbooks").classList.remove("active"); administrationButton.classList.remove("active"); }
 function setConversationInert(inert: boolean): void { for (const area of [workspaceHeader, messages, composerDock]) { area.toggleAttribute("inert", inert); area.setAttribute("aria-hidden", String(inert)); } }
 
 async function pairDevice(): Promise<void> {
@@ -711,6 +745,260 @@ async function pairDevice(): Promise<void> {
     pairingCode.value = ""; await initialize();
   } catch (error) { pairingError.textContent = errorMessage(error); pairingError.hidden = false; }
   finally { setFormBusy(pairingForm, false); }
+}
+
+async function issuePairingCode(): Promise<void> {
+  setFormBusy(pairingCodeForm, true);
+  try {
+    const response = await api("/api/v1/management/pairing-codes", "POST", {
+      intendedRole: pairingCodeRole.value,
+      ttlSeconds: Number(pairingCodeTtl.value),
+    });
+    issuedPairingCode.textContent = response.data.code;
+    issuedPairingExpiry.textContent = `Expires ${new Date(response.data.expiresAt).toLocaleString()}`;
+    pairingCodeResult.hidden = false;
+  }
+  catch (error) { showToast(errorMessage(error)); }
+  finally { setFormBusy(pairingCodeForm, false); }
+}
+
+async function createAdminUser(): Promise<void> {
+  setFormBusy(createUserForm, true);
+  try {
+    await api("/api/v1/management/users", "POST", {
+      displayName: createUserName.value.trim(),
+      role: createUserRole.value,
+    });
+    createUserName.value = "";
+    await loadAdministration();
+  }
+  catch (error) { showToast(errorMessage(error)); }
+  finally { setFormBusy(createUserForm, false); }
+}
+
+async function loadAdministration(): Promise<void> {
+  if (!administrator) return;
+  try {
+    const [users, policies, audit] = await Promise.all([
+      api("/api/v1/management/users"),
+      api("/api/v1/management/tool-policies"),
+      api("/api/v1/management/audit-events?limit=50"),
+    ]);
+    administrationUsers = users.data ?? [];
+    administrationPolicies = policies.data ?? [];
+    const access = await Promise.all(administrationUsers.map((user) =>
+      api(`/api/v1/management/users/${user.id}/access`).then((response) => response.data),
+    ));
+    adminUsers.replaceChildren(...access.map(renderAdminUser));
+    if (!access.length) adminUsers.append(panelEmpty("No users yet"));
+    renderToolPolicySubjects();
+    renderToolPolicies();
+    renderAdminAuditEvents(audit.data ?? []);
+  }
+  catch (error) { adminUsers.replaceChildren(panelEmpty(`Administration unavailable: ${errorMessage(error)}`)); }
+}
+
+function renderAdminUser(access: Json): HTMLElement {
+  const user = access.user as Json;
+  const activeDevices = (access.devices ?? []).filter((device: Json) => !device.revokedAt).length;
+  const details = document.createElement("details");
+  details.className = "admin-user";
+
+  const summary = document.createElement("summary");
+  const title = document.createElement("span");
+  title.className = "admin-user-title";
+  title.append(
+    Object.assign(document.createElement("strong"), { textContent: user.displayName }),
+    Object.assign(document.createElement("small"), { textContent: `${activeDevices} active device${activeDevices === 1 ? "" : "s"}` }),
+  );
+  const role = document.createElement("select");
+  role.setAttribute("aria-label", `Role for ${user.displayName}`);
+  for (const value of ["consumer", "agent", "administrator"]) {
+    role.add(new Option(value[0]!.toUpperCase() + value.slice(1), value));
+  }
+  role.value = user.role;
+  role.disabled = user.id === currentUserId;
+  role.addEventListener("click", (event) => event.stopPropagation());
+  role.addEventListener("change", () => void updateAdminUser(user.id, { role: role.value }));
+  const status = document.createElement("span");
+  status.className = "admin-user-status";
+  status.textContent = user.id === currentUserId ? "Current user" : user.status;
+  summary.append(title, role, status);
+
+  const body = document.createElement("div");
+  body.className = "admin-user-body";
+  const routesHeading = document.createElement("h3");
+  routesHeading.textContent = "Routes";
+  const routeList = document.createElement("div");
+  routeList.className = "admin-routes";
+  for (const route of FIXED_ROUTES) {
+    const label = document.createElement("label");
+    label.className = "admin-route";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = route.id;
+    input.checked = user.role === "administrator" || (access.routeIds ?? []).includes(route.id);
+    input.disabled = user.role === "administrator";
+    label.append(input, route.label);
+    routeList.append(label);
+  }
+
+  const quotaHeading = document.createElement("h3");
+  quotaHeading.textContent = "Quotas";
+  const quota = document.createElement("div");
+  quota.className = "admin-access";
+  const quotaFields = [
+    ["maxRequestsPerMinute", "Requests / minute"],
+    ["maxPromptChars", "Prompt characters"],
+    ["maxOutputTokens", "Output tokens"],
+    ["maxQueueDepth", "Queue depth"],
+  ];
+  for (const [key, labelText] of quotaFields) {
+    const label = document.createElement("label");
+    label.textContent = labelText!;
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "1";
+    input.value = String(access.quota?.[key!] ?? 1);
+    input.dataset.quota = key!;
+    label.append(input);
+    quota.append(label);
+  }
+
+  const devicesHeading = document.createElement("h3");
+  devicesHeading.textContent = "Devices";
+  const devices = document.createElement("div");
+  devices.className = "admin-devices";
+  for (const device of access.devices ?? []) {
+    const item = document.createElement("span");
+    item.className = "admin-device";
+    const current = device.id === access.currentDeviceId;
+    item.append(Object.assign(document.createElement("span"), {
+      textContent: `${device.name}${current ? " · current" : ""}${device.revokedAt ? " · revoked" : ""}`,
+    }));
+    if (!device.revokedAt && !current) {
+      const revoke = document.createElement("button");
+      revoke.type = "button";
+      revoke.title = `Revoke ${device.name}`;
+      revoke.setAttribute("aria-label", revoke.title);
+      revoke.textContent = "×";
+      revoke.addEventListener("click", () => void revokeAdminDevice(device.id));
+      item.append(revoke);
+    }
+    devices.append(item);
+  }
+  if (!(access.devices ?? []).length) devices.append(panelEmpty("No devices"));
+
+  const actions = document.createElement("div");
+  actions.className = "admin-user-actions";
+  const save = document.createElement("button");
+  save.type = "button";
+  save.textContent = "Save access";
+  save.addEventListener("click", () => void saveAdminAccess(user.id, details, save));
+  actions.append(save);
+  if (user.id !== currentUserId) {
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = user.status === "active" ? "danger" : "";
+    toggle.textContent = user.status === "active" ? "Disable user" : "Enable user";
+    toggle.addEventListener("click", () => void updateAdminUser(user.id, { status: user.status === "active" ? "disabled" : "active" }));
+    actions.append(toggle);
+  }
+  body.append(routesHeading, routeList, quotaHeading, quota, devicesHeading, devices, actions);
+  details.append(summary, body);
+  return details;
+}
+
+function renderToolPolicySubjects(): void {
+  const previous = toolPolicySubject.value;
+  toolPolicySubject.replaceChildren();
+  if (toolPolicySubjectType.value === "role") {
+    for (const role of ["consumer", "agent", "administrator"]) toolPolicySubject.add(new Option(role, role));
+  } else {
+    for (const user of administrationUsers) toolPolicySubject.add(new Option(user.displayName, user.id));
+  }
+  if ([...toolPolicySubject.options].some((option) => option.value === previous)) toolPolicySubject.value = previous;
+}
+
+function renderToolPolicies(): void {
+  toolPolicies.replaceChildren();
+  for (const policy of administrationPolicies) {
+    const row = document.createElement("div");
+    row.className = "tool-policy";
+    const subject = policy.subjectType === "user"
+      ? administrationUsers.find((user) => user.id === policy.subjectId)?.displayName ?? policy.subjectId
+      : policy.subjectId;
+    row.append(
+      Object.assign(document.createElement("strong"), { textContent: policy.toolName }),
+      Object.assign(document.createElement("span"), { textContent: `${policy.subjectType}: ${subject}` }),
+      Object.assign(document.createElement("em"), { textContent: policy.decision }),
+    );
+    toolPolicies.append(row);
+  }
+  if (!administrationPolicies.length) toolPolicies.append(panelEmpty("No explicit tool policies"));
+}
+
+function renderAdminAuditEvents(events: Json[]): void {
+  adminAuditEvents.replaceChildren();
+  for (const event of events) {
+    const row = document.createElement("div");
+    row.className = "admin-audit-event";
+    const actor = administrationUsers.find((user) => user.id === event.actorUserId)?.displayName ?? "System";
+    const timestamp = String(event.timestamp ?? "");
+    const target = event.targetType ?? "system";
+    row.append(
+      Object.assign(document.createElement("strong"), { textContent: event.action }),
+      Object.assign(document.createElement("span"), { textContent: `${actor} · ${target}${event.targetId ? ` · ${event.targetId}` : ""}` }),
+      Object.assign(document.createElement("time"), { textContent: timestamp ? new Date(timestamp).toLocaleString() : "", dateTime: timestamp }),
+    );
+    adminAuditEvents.append(row);
+  }
+  if (!events.length) adminAuditEvents.append(panelEmpty("No activity yet"));
+}
+
+async function saveToolPolicy(): Promise<void> {
+  setFormBusy(toolPolicyForm, true);
+  try {
+    const subjectType = toolPolicySubjectType.value;
+    const subjectId = toolPolicySubject.value;
+    const toolName = toolPolicyName.value.trim();
+    if (!subjectId) throw new Error("Choose a policy subject");
+    await api(`/api/v1/management/tool-policies/${encodeURIComponent(subjectType)}/${encodeURIComponent(subjectId)}/${encodeURIComponent(toolName)}`, "PUT", {
+      decision: toolPolicyDecision.value,
+    });
+    toolPolicyName.value = "";
+    await loadAdministration();
+  } catch (error) { showToast(errorMessage(error)); }
+  finally { setFormBusy(toolPolicyForm, false); }
+}
+
+async function updateAdminUser(userId: string, update: Json): Promise<void> {
+  try {
+    await api(`/api/v1/management/users/${userId}`, "PATCH", update);
+    await loadAdministration();
+  } catch (error) { showToast(errorMessage(error)); }
+}
+
+async function revokeAdminDevice(deviceId: string): Promise<void> {
+  try {
+    await api(`/api/v1/management/devices/${deviceId}`, "DELETE");
+    await loadAdministration();
+  } catch (error) { showToast(errorMessage(error)); }
+}
+
+async function saveAdminAccess(userId: string, card: HTMLElement, button: HTMLButtonElement): Promise<void> {
+  button.disabled = true;
+  try {
+    const routeIds = [...card.querySelectorAll<HTMLInputElement>(".admin-route input:checked")].map((input) => input.value);
+    const quota: Json = {};
+    for (const input of card.querySelectorAll<HTMLInputElement>("[data-quota]")) quota[input.dataset.quota!] = Number(input.value);
+    await Promise.all([
+      api(`/api/v1/management/users/${userId}/routes`, "PUT", { routeIds }),
+      api(`/api/v1/management/users/${userId}/quota`, "PUT", quota),
+    ]);
+    showToast("Access saved");
+  } catch (error) { showToast(errorMessage(error)); }
+  finally { button.disabled = false; }
 }
 
 async function loadManagementConfiguration(renderPage: boolean): Promise<void> {
