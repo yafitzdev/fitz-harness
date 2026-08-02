@@ -245,4 +245,18 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".administration-content");
     expect(styles).toContain(".tool-policy");
   });
+
+  it("renders and exports host-redacted diagnostics from the administration workspace", () => {
+    for (const id of ["diagnostic-summary", "diagnostic-metrics", "diagnostic-failures", "export-diagnostics"]) {
+      expect(html).toContain(`id="${id}"`);
+    }
+    expect(renderer).toContain('api("/api/v1/management/diagnostics")');
+    expect(renderer).toContain("renderDiagnostics(diagnostics)");
+    expect(renderer).toContain("window.fitz.saveDiagnostics(JSON.stringify(diagnosticBundle, null, 2))");
+    expect(preload).toContain('ipcRenderer.invoke("fitz:save-diagnostics", content)');
+    expect(main).toContain('ipcMain.handle("fitz:save-diagnostics"');
+    expect(main).toContain("content.length > 10_000_000");
+    expect(styles).toContain(".diagnostic-summary");
+    expect(styles).toContain(".diagnostic-row");
+  });
 });

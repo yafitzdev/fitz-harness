@@ -26,6 +26,7 @@ let administrator = false;
 let currentUserId: string | undefined;
 let administrationUsers: Json[] = [];
 let administrationPolicies: Json[] = [];
+let diagnosticBundle: Json | undefined;
 let managementConfiguration: Json | undefined;
 let newChatMode = false;
 let newChatProjectDetached = false;
@@ -152,6 +153,11 @@ const toolPolicyName = element("tool-policy-name") as HTMLInputElement;
 const toolPolicyDecision = element("tool-policy-decision") as HTMLSelectElement;
 const toolPolicies = element("tool-policies");
 const adminAuditEvents = element("admin-audit-events");
+const diagnosticGeneratedAt = element("diagnostic-generated-at");
+const diagnosticSummary = element("diagnostic-summary");
+const diagnosticMetrics = element("diagnostic-metrics");
+const diagnosticFailures = element("diagnostic-failures");
+const exportDiagnostics = element("export-diagnostics") as HTMLButtonElement;
 const playbookList = element("playbook-list");
 const playbookSearch = element("playbook-search") as HTMLInputElement;
 const managementTitle = element("management-title");
@@ -273,6 +279,7 @@ copyPairingCode.addEventListener("click", () => void window.fitz.copyText(issued
 createUserForm.addEventListener("submit", (event) => { event.preventDefault(); void createAdminUser(); });
 toolPolicySubjectType.addEventListener("change", renderToolPolicySubjects);
 toolPolicyForm.addEventListener("submit", (event) => { event.preventDefault(); void saveToolPolicy(); });
+exportDiagnostics.addEventListener("click", () => void exportDiagnosticBundle());
 recipeForm.addEventListener("submit", (event) => { event.preventDefault(); void saveRecipe(); });
 engineForm.addEventListener("submit", (event) => { event.preventDefault(); void saveEngine(); });
 (element("engine-folder") as HTMLSelectElement).addEventListener("change", applyEngineFolderChoice);
@@ -779,10 +786,11 @@ async function createAdminUser(): Promise<void> {
 async function loadAdministration(): Promise<void> {
   if (!administrator) return;
   try {
-    const [users, policies, audit] = await Promise.all([
+    const [users, policies, audit, diagnostics] = await Promise.all([
       api("/api/v1/management/users"),
       api("/api/v1/management/tool-policies"),
       api("/api/v1/management/audit-events?limit=50"),
+      api("/api/v1/management/diagnostics"),
     ]);
     administrationUsers = users.data ?? [];
     administrationPolicies = policies.data ?? [];
@@ -794,6 +802,8 @@ async function loadAdministration(): Promise<void> {
     renderToolPolicySubjects();
     renderToolPolicies();
     renderAdminAuditEvents(audit.data ?? []);
+    diagnosticBundle = diagnostics;
+    renderDiagnostics(diagnostics);
   }
   catch (error) { adminUsers.replaceChildren(panelEmpty(`Administration unavailable: ${errorMessage(error)}`)); }
 }
@@ -954,6 +964,72 @@ function renderAdminAuditEvents(events: Json[]): void {
     adminAuditEvents.append(row);
   }
   if (!events.length) adminAuditEvents.append(panelEmpty("No activity yet"));
+}
+
+function renderDiagnostics(diagnostics: Json): void {
+  diagnosticGeneratedAt.textContent = diagnostics.generatedAt
+    ? `Captured ${new Date(diagnostics.generatedAt).toLocaleString()} · values are redacted before leaving the host`
+    : "";
+  diagnosticSummary.replaceChildren();
+  const stats = [
+    ["Engine", diagnostics.engine?.state ?? "Unknown"],
+    ["Queue", String(diagnostics.queueDepth ?? 0)],
+    ["Free RAM", diagnosticMib(diagnostics.resources?.freeRamMiB, diagnostics.resources?.totalRamMiB)],
+    ["Free VRAM", diagnosticMib(diagnostics.resources?.freeVramMiB, diagnostics.resources?.totalVramMiB)],
+  ];
+  for (const [label, value] of stats) {
+    const stat = document.createElement("div");
+    stat.className = "diagnostic-stat";
+    stat.append(
+      Object.assign(document.createElement("small"), { textContent: label }),
+      Object.assign(document.createElement("strong"), { textContent: value }),
+    );
+    diagnosticSummary.append(stat);
+  }
+
+  const metricRows: Array<[string, string]> = [];
+  for (const [name, value] of Object.entries(diagnostics.metrics?.counters ?? {})) metricRows.push([name, Number(value).toLocaleString()]);
+  for (const [name, value] of Object.entries(diagnostics.metrics?.gauges ?? {})) metricRows.push([name, String(value)]);
+  for (const [name, value] of Object.entries<Json>(diagnostics.metrics?.timings ?? {})) metricRows.push([name, `${Number(value.averageMs ?? 0).toFixed(1)} ms avg`]);
+  renderDiagnosticRows(diagnosticMetrics, metricRows, "No metrics recorded yet");
+
+  const failures: Array<[string, string]> = [];
+  for (const request of diagnostics.recentRequests ?? []) {
+    if (["failed", "interrupted", "cancelled"].includes(request.status)) failures.push([`${request.routeId} · ${request.status}`, request.errorCode ?? request.id]);
+  }
+  for (const event of diagnostics.recentLifecycleEvents ?? []) {
+    if (event.data?.state === "FAILED") failures.push([event.data.recipeId ?? "engine", event.data.reason ?? "Engine failed"]);
+  }
+  renderDiagnosticRows(diagnosticFailures, failures.slice(0, 20), "No recent failures");
+}
+
+function renderDiagnosticRows(container: HTMLElement, rows: Array<[string, string]>, empty: string): void {
+  container.replaceChildren();
+  for (const [name, value] of rows) {
+    const row = document.createElement("div");
+    row.className = "diagnostic-row";
+    row.append(
+      Object.assign(document.createElement("span"), { textContent: name }),
+      Object.assign(document.createElement("strong"), { textContent: value }),
+    );
+    container.append(row);
+  }
+  if (!rows.length) container.append(panelEmpty(empty));
+}
+
+function diagnosticMib(free: unknown, total: unknown): string {
+  if (!Number.isFinite(Number(free)) || !Number.isFinite(Number(total))) return "Unavailable";
+  return `${Math.round(Number(free)).toLocaleString()} / ${Math.round(Number(total)).toLocaleString()} MiB`;
+}
+
+async function exportDiagnosticBundle(): Promise<void> {
+  if (!diagnosticBundle) return;
+  exportDiagnostics.disabled = true;
+  try {
+    const path = await window.fitz.saveDiagnostics(JSON.stringify(diagnosticBundle, null, 2));
+    if (path) showToast(`Diagnostics saved to ${path}`);
+  } catch (error) { showToast(errorMessage(error)); }
+  finally { exportDiagnostics.disabled = false; }
 }
 
 async function saveToolPolicy(): Promise<void> {
