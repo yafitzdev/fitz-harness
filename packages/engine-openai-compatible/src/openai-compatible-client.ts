@@ -9,6 +9,11 @@ export interface OpenAICompatibleModel {
   id: string;
   object?: string;
   owned_by?: string;
+  endpoints?: string[];
+  features?: string[];
+  capabilities?: Record<string, unknown>;
+  type?: string;
+  task?: string;
 }
 
 interface StreamChunk {
@@ -56,9 +61,21 @@ export class OpenAICompatibleClient {
     }
     const payload = await response.json() as { data?: unknown };
     if (!Array.isArray(payload.data)) throw new Error("OpenAI-compatible model discovery returned no model list");
-    return payload.data.flatMap((value) => isRecord(value) && typeof value.id === "string" && value.id
-      ? [{ id: value.id, ...(typeof value.object === "string" ? { object: value.object } : {}), ...(typeof value.owned_by === "string" ? { owned_by: value.owned_by } : {}) }]
-      : []);
+    return payload.data.flatMap((value) => {
+      if (!isRecord(value) || typeof value.id !== "string" || !value.id) return [];
+      const endpoints = stringArray(value.endpoints);
+      const features = stringArray(value.features);
+      return [{
+        id: value.id,
+        ...(typeof value.object === "string" ? { object: value.object } : {}),
+        ...(typeof value.owned_by === "string" ? { owned_by: value.owned_by } : {}),
+        ...(endpoints ? { endpoints } : {}),
+        ...(features ? { features } : {}),
+        ...(isRecord(value.capabilities) ? { capabilities: value.capabilities } : {}),
+        ...(typeof value.type === "string" ? { type: value.type } : {}),
+        ...(typeof value.task === "string" ? { task: value.task } : {}),
+      }];
+    });
   }
 
   async *streamChat(
@@ -109,6 +126,62 @@ export class OpenAICompatibleClient {
   private headers(): Record<string, string> {
     return this.#apiKey ? { authorization: `Bearer ${this.#apiKey}` } : {};
   }
+}
+
+/**
+ * OpenAI's model-list schema does not require capability metadata. Prefer an
+ * explicit chat endpoint/capability when a provider supplies one, then reject
+ * well-known non-chat model families for bare OpenAI-style catalogs.
+ */
+export function supportsChatCompletions(model: OpenAICompatibleModel): boolean {
+  if (model.endpoints?.length) {
+    return model.endpoints.some((endpoint) => isChatCapability(endpoint));
+  }
+
+  const declaredChatCapability = findDeclaredChatCapability(model.capabilities);
+  if (declaredChatCapability !== undefined) return declaredChatCapability;
+
+  const declaredType = [model.type, model.task].filter((value): value is string => Boolean(value));
+  if (declaredType.some((value) => isChatCapability(value))) return true;
+  if (declaredType.some((value) => isNonChatCapability(value))) return false;
+
+  const normalizedId = model.id.trim().toLowerCase();
+  return !NON_CHAT_MODEL_PATTERNS.some((pattern) => pattern.test(normalizedId));
+}
+
+const NON_CHAT_MODEL_PATTERNS = [
+  /(^|[-_.:/])(embed(?:ding)?s?|rerank(?:er)?s?|moderation)([-_.:/]|$)/,
+  /(^|[-_.:/])(transcrib(?:e|er|ed)?|transcription|whisper|tts)([-_.:/]|$)/,
+  /(^|[-_.:/])(dall[-_.]?e|sora|gpt[-_.]?image)([-_.:/]|$)/,
+  /(^|[-_.:/])image[-_.]?(?:gen|generation|1)([-_.:/]|$)/,
+];
+
+function findDeclaredChatCapability(capabilities: Record<string, unknown> | undefined): boolean | undefined {
+  if (!capabilities) return undefined;
+  for (const [key, value] of Object.entries(capabilities)) {
+    if (typeof value === "boolean" && isChatCapability(key)) return value;
+  }
+  return undefined;
+}
+
+function isChatCapability(value: string): boolean {
+  const normalized = value.trim().toLowerCase().replaceAll("_", "-");
+  return normalized === "chat"
+    || normalized === "chat-completion"
+    || normalized === "chat-completions"
+    || normalized === "text-generation"
+    || normalized.endsWith("/chat/completions");
+}
+
+function isNonChatCapability(value: string): boolean {
+  const normalized = value.trim().toLowerCase().replaceAll("_", "-");
+  return ["embedding", "embeddings", "rerank", "reranking", "moderation", "transcription", "text-to-speech", "image-generation"].includes(normalized);
+}
+
+function stringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const strings = value.filter((item): item is string => typeof item === "string" && item.length > 0);
+  return strings.length ? strings : undefined;
 }
 
 export async function* parseSseJson(

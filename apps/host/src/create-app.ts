@@ -42,7 +42,7 @@ import type { AgentRuntime } from "@fitz/agent-core";
 import { ContextManager } from "@fitz/context";
 import { TailscaleMonitor, TailscaleServeManager, WindowsStartupManager } from "@fitz/connectivity";
 import { classifyArtifact, normalizeMimeType } from "@fitz/media";
-import { OpenAICompatibleClient, OpenAICompatibleEngineAdapter } from "@fitz/engine-openai-compatible";
+import { OpenAICompatibleClient, OpenAICompatibleEngineAdapter, supportsChatCompletions } from "@fitz/engine-openai-compatible";
 
 type RuntimeMode = "host" | "consume";
 interface ConsumerModelRegistration { modelId: string; routeId: string; recipeId: string }
@@ -418,8 +418,8 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         if (apiKey) process.env[credentialEnv] = apiKey;
         else delete process.env[credentialEnv];
         const discovered = await new OpenAICompatibleClient({ ...(apiKey ? { apiKey } : {}) }).listModels(baseUrl, AbortSignal.timeout(15_000));
-        const modelIds = [...new Set(discovered.map((item) => item.id.trim()).filter(Boolean))];
-        if (!modelIds.length) throw new Error("The API returned no models");
+        const modelIds = [...new Set(discovered.filter(supportsChatCompletions).map((item) => item.id.trim()).filter(Boolean))];
+        if (!modelIds.length) throw new Error("The API returned no chat-completion models");
 
         const registrations = consumerConnections();
         const previous = registrations.find((item) => item.id === connectionId);

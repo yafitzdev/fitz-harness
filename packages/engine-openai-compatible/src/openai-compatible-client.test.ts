@@ -1,0 +1,42 @@
+import { describe, expect, it } from "vitest";
+import { OpenAICompatibleClient, supportsChatCompletions } from "./openai-compatible-client.js";
+
+describe("OpenAICompatibleClient model discovery", () => {
+  it("preserves optional provider capability metadata", async () => {
+    const client = new OpenAICompatibleClient({
+      fetch: async () => new Response(JSON.stringify({
+        data: [{
+          id: "command-a",
+          endpoints: ["chat"],
+          features: ["tool-use"],
+          capabilities: { chat_completions: true },
+          type: "language",
+          task: "chat-completion",
+        }],
+      }), { status: 200, headers: { "content-type": "application/json" } }),
+    });
+
+    await expect(client.listModels("https://example.test/v1")).resolves.toEqual([{
+      id: "command-a",
+      endpoints: ["chat"],
+      features: ["tool-use"],
+      capabilities: { chat_completions: true },
+      type: "language",
+      task: "chat-completion",
+    }]);
+  });
+
+  it("accepts chat models and rejects non-chat catalog entries", () => {
+    expect(supportsChatCompletions({ id: "command-a", endpoints: ["chat"] })).toBe(true);
+    expect(supportsChatCompletions({ id: "custom-chat", capabilities: { chat_completions: true } })).toBe(true);
+    expect(supportsChatCompletions({ id: "unknown-instruct-model" })).toBe(true);
+
+    expect(supportsChatCompletions({ id: "command-a", endpoints: ["embed"] })).toBe(false);
+    expect(supportsChatCompletions({ id: "embed-v4.0" })).toBe(false);
+    expect(supportsChatCompletions({ id: "rerank-v3.5" })).toBe(false);
+    expect(supportsChatCompletions({ id: "cohere-transcribe-03-2026" })).toBe(false);
+    expect(supportsChatCompletions({ id: "whisper-1" })).toBe(false);
+    expect(supportsChatCompletions({ id: "omni-moderation-latest" })).toBe(false);
+    expect(supportsChatCompletions({ id: "gpt-image-1" })).toBe(false);
+  });
+});

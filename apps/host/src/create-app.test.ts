@@ -29,7 +29,7 @@ describe("Fitz host", () => {
 
   it("discovers an external API and exposes only the active runtime mode", async () => {
     const upstream = createServer((request, response) => {
-      if (request.url === "/v1/models") { response.writeHead(200, { "content-type": "application/json" }); response.end('{"data":[{"id":"upstream-model"}]}'); return; }
+      if (request.url === "/v1/models") { response.writeHead(200, { "content-type": "application/json" }); response.end('{"data":[{"id":"upstream-model"},{"id":"explicit-chat-model","endpoints":["chat"]},{"id":"embed-v4.0"},{"id":"rerank-v3.5"},{"id":"cohere-transcribe-03-2026"},{"id":"provider-embedding","endpoints":["embed"]}]}'); return; }
       if (request.url === "/v1/chat/completions") { response.writeHead(200, { "content-type": "text/event-stream" }); response.end('data: {"choices":[{"delta":{"content":"upstream ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'); return; }
       response.writeHead(404); response.end();
     });
@@ -41,11 +41,15 @@ describe("Fitz host", () => {
       expect(saved.statusCode).toBe(200);
       const consumerModel = saved.json().data.models[0];
       expect(consumerModel).toEqual(expect.objectContaining({ id: "upstream-model", routeId: expect.any(String), recipeId: expect.any(String) }));
+      expect(saved.json().data.models.map((model: { id: string }) => model.id)).toEqual(["upstream-model", "explicit-chat-model"]);
       expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((item: { id: string }) => item.id).sort()).toEqual(["default", "fast", "smart"]);
       await runtime.app.inject({ method: "PUT", url: "/api/v1/runtime-mode", payload: { mode: "consume" } });
       const models = await runtime.app.inject({ method: "GET", url: "/v1/models" });
       const routeId = models.json().data[0].id;
-      expect(models.json().data).toEqual([expect.objectContaining({ display_name: "upstream-model" })]);
+      expect(models.json().data).toEqual([
+        expect.objectContaining({ display_name: "upstream-model" }),
+        expect.objectContaining({ display_name: "explicit-chat-model" }),
+      ]);
       const completion = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: routeId, stream: false, messages: [{ role: "user", content: "hello" }] } });
       expect(completion.statusCode, completion.body).toBe(200); expect(completion.json().choices[0].message.content).toBe("upstream ok");
       const recipeTest = await runtime.app.inject({ method: "POST", url: `/api/v1/management/recipes/${consumerModel.recipeId}/test` });
