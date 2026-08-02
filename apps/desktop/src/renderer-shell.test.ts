@@ -288,12 +288,15 @@ describe("desktop renderer shell", () => {
   });
 
   it("reveals compact Copy and user Edit actions on message hover", () => {
-    expect(renderer).toContain("appendMessageActions(article, content, role, text)");
+    expect(renderer).toContain("appendMessageActions(article, content, role, text, createdAt)");
     expect(renderer).toContain('copy.title = "Copy message"');
     expect(renderer).toContain('edit.title = "Edit message"');
     expect(renderer).toContain("startInlineMessageEdit(article, content, actions, originalText)");
     expect(renderer).toContain('copyValue(content.innerText, "Copied message")');
+    expect(renderer).toContain('time.className = "message-time"');
+    expect(renderer).toContain("formatMessageTimestamp(createdAt)");
     expect(styles).toContain(".message:hover .message-actions");
+    expect(styles).toContain(".message.assistant .message-actions, .message.commentary .message-actions");
     expect(styles).toContain(".message-action svg");
   });
 
@@ -305,6 +308,7 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('event.key === "Enter" && (event.ctrlKey || event.metaKey)');
     expect(styles).toContain(".message-inline-editor");
     expect(styles).toContain(".message-edit-controls");
+    expect(styles).toContain("margin-top: 6px");
   });
 
   it("expands Advanced model settings and sends the chosen temperature and output limit", () => {

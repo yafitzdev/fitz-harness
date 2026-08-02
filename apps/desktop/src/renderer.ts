@@ -2451,20 +2451,21 @@ function appendMessage(role: string, text: string, createdAt?: string): HTMLElem
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   if (role !== "commentary") finishWorkSummary(createdAt);
   const article = document.createElement("article"); article.className = `message ${role}`;
-  const content = document.createElement("div"); content.className = "message-body"; if (role === "assistant" || role === "commentary") setMarkdown(content, text); else content.textContent = text; article.append(content); appendMessageActions(article, content, role, text); messages.append(article); messages.scrollTop = messages.scrollHeight; return content;
+  const content = document.createElement("div"); content.className = "message-body"; if (role === "assistant" || role === "commentary") setMarkdown(content, text); else content.textContent = text; article.append(content); appendMessageActions(article, content, role, text, createdAt); messages.append(article); messages.scrollTop = messages.scrollHeight; return content;
 }
 
 function appendCommentary(text: string, createdAt?: string): HTMLElement {
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   const article = document.createElement("article"); article.className = "message commentary";
-  const content = document.createElement("div"); content.className = "message-body"; setMarkdown(content, text); article.append(content); appendMessageActions(article, content, "commentary", text);
+  const content = document.createElement("div"); content.className = "message-body"; setMarkdown(content, text); article.append(content); appendMessageActions(article, content, "commentary", text, createdAt);
   appendWorkNode(article, createdAt);
   return content;
 }
 
-function appendMessageActions(article: HTMLElement, content: HTMLElement, role: string, originalText: string): void {
+function appendMessageActions(article: HTMLElement, content: HTMLElement, role: string, originalText: string, createdAt?: string): void {
   if (!["user", "assistant", "commentary"].includes(role)) return;
   const actions = document.createElement("div"); actions.className = "message-actions";
+  const time = document.createElement("time"); time.className = "message-time"; time.dateTime = createdAt ?? new Date().toISOString(); time.textContent = formatMessageTimestamp(createdAt); actions.append(time);
   const copy = document.createElement("button"); copy.type = "button"; copy.className = "message-action"; copy.title = "Copy message"; copy.setAttribute("aria-label", "Copy message");
   copy.append(svg('<rect x="7" y="7" width="9" height="9" rx="1.6"></rect><path d="M5.8 13.4H5A2 2 0 0 1 3 11.4V5a2 2 0 0 1 2-2h6.4a2 2 0 0 1 2 2v.8"></path>'));
   copy.addEventListener("click", () => void copyValue(content.innerText, "Copied message"));
@@ -2476,6 +2477,13 @@ function appendMessageActions(article: HTMLElement, content: HTMLElement, role: 
     actions.append(edit);
   }
   article.append(actions);
+}
+
+function formatMessageTimestamp(value?: string): string {
+  const date = value ? new Date(value) : new Date();
+  const weekday = new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(date);
+  const time = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(date);
+  return `${weekday} ${time}`;
 }
 
 function startInlineMessageEdit(article: HTMLElement, content: HTMLElement, actions: HTMLElement, originalText: string): void {
