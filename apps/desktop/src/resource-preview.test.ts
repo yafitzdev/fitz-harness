@@ -25,6 +25,17 @@ describe("desktop resource previews", () => {
     await writeFile(join(parent, "secret.txt"), "nope");
     await expect(readProjectResource(root, "README.md:1")).resolves.toMatchObject({ kind: "markdown", content: "# Hello\n", line: 1 });
     await expect(readProjectResource(root, join(parent, "secret.txt"))).resolves.toMatchObject({ kind: "text", content: "nope" });
-    await expect(readProjectResource(root, "../secret.txt")).rejects.toThrow("limited to the active project");
+    await expect(readProjectResource(root, "../secret.txt")).rejects.toThrow("File not found");
+  });
+
+  it("resolves a bare filename from directories disclosed by agent tools", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "fitz-preview-hints-"));
+    const root = join(parent, "project");
+    const listedDirectory = join(parent, "agent-output");
+    await mkdir(root);
+    await mkdir(listedDirectory);
+    await writeFile(join(listedDirectory, "tic-tac-toe.ts"), "export const game = true;\n");
+    await expect(readProjectResource(root, "tic-tac-toe.ts", [listedDirectory])).resolves.toMatchObject({ kind: "code", name: "tic-tac-toe.ts" });
+    await expect(readProjectResource(root, "missing.ts", [listedDirectory])).rejects.toThrow("File not found: missing.ts");
   });
 });

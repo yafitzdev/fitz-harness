@@ -66,6 +66,7 @@ const pinnedProjects = storedSet("fitz-pinned-projects");
 const pinnedSessions = storedSet("fitz-pinned-sessions");
 const unreadSessions = storedSet("fitz-unread-sessions");
 const expandedProjects = storedSet("fitz-expanded-projects");
+const resourceSearchRoots = new Set<string>();
 const recipeTestStates = new Map<string, { state: "testing" | "passed" | "failed"; detail: string }>();
 
 const shell = query(".app-shell");
@@ -552,6 +553,7 @@ async function selectSession(id: string, rerender = true, projectId?: string): P
   try {
     const transcript = await api(`/api/v1/sessions/${id}/transcript`);
     messages.replaceChildren();
+    resourceSearchRoots.clear();
     sessionTokenEstimate = estimateTranscriptContext(transcript.data ?? []);
     const transcriptTools = new Map<string, { row: HTMLElement; toolName: string; input: unknown }>();
     for (const entry of transcript.data ?? []) {
@@ -2369,7 +2371,7 @@ async function inspectResource(reference: string): Promise<void> {
   setInspectorHeading(reference.split(/[\\/]/).pop() ?? reference, reference, "file");
   inspectorOpen.hidden = true;
   try {
-    const preview = await window.fitz.previewResource({ projectRoot, reference });
+    const preview = await window.fitz.previewResource({ projectRoot, reference, searchRoots: [...resourceSearchRoots] });
     if (version !== inspectionVersion) return;
     inspectedResource = { kind: "file", path: preview.path };
     inspectedPreview = preview; inspectorSourceMode = false; inspectorRenderToggle.setAttribute("aria-pressed", "false"); inspectorRenderToggle.title = "View source"; inspectorRenderToggle.setAttribute("aria-label", "View source"); inspectorRenderToggle.hidden = preview.kind !== "markdown" && preview.kind !== "html";
@@ -2378,8 +2380,14 @@ async function inspectResource(reference: string): Promise<void> {
     renderResourcePreview(preview);
   } catch (error) {
     if (version !== inspectionVersion) return;
-    inspectedResource = undefined; inspectedPreview = undefined; inspectorOpen.hidden = true; inspectorRenderToggle.hidden = true; artifactPreview.replaceChildren(inspectorError(errorMessage(error)));
+    inspectedResource = undefined; inspectedPreview = undefined; inspectorOpen.hidden = true; inspectorRenderToggle.hidden = true; artifactPreview.replaceChildren(inspectorError(resourcePreviewError(error, reference)));
   }
+}
+
+function resourcePreviewError(error: unknown, reference: string): string {
+  const detail = errorMessage(error).replace(/^Error invoking remote method '[^']+':\s*Error:\s*/i, "");
+  if (/\b(?:ENOENT|File not found:)\b/i.test(detail)) return `Could not find ${reference}. The file may have moved or the agent only mentioned its name.`;
+  return detail;
 }
 
 function renderResourcePreview(preview: ResourcePreview): void {
@@ -2455,6 +2463,7 @@ function appendToolActivity(toolName: string, input: unknown, toolCallId: string
   const summary = document.createElement("button"); summary.type = "button"; summary.className = "agent-activity-summary"; summary.setAttribute("aria-expanded", "false");
   const icon = document.createElement("span"); icon.className = "agent-activity-icon"; icon.append(activityIcon(toolName));
   const label = document.createElement("span"); label.className = "agent-activity-label"; label.textContent = describeToolActivity(toolName, input, running); label.title = label.textContent;
+  registerResourceSearchRoot(toolName, input);
   const resource = toolResourceReference(toolName, input);
   if (resource) { label.classList.add("resource-link"); label.tabIndex = 0; label.setAttribute("role", "link"); label.addEventListener("click", (event) => { event.stopPropagation(); void inspectResource(resource); }); label.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); void inspectResource(resource); } }); }
   const chevron = document.createElement("span"); chevron.className = "agent-activity-chevron"; chevron.append(svg('<path d="m8 5.5 4.5 4.5L8 14.5"></path>'));
@@ -2577,6 +2586,16 @@ function toolResourceReference(toolName: string, input: unknown): string | undef
   if (!["edit", "write", "read"].includes(toolName) || !input || typeof input !== "object") return undefined;
   const value = input as Json; const path = value.path ?? value.file_path ?? value.filePath;
   return typeof path === "string" && path.trim() ? path.trim() : undefined;
+}
+
+function registerResourceSearchRoot(toolName: string, input: unknown): void {
+  if (!input || typeof input !== "object") return;
+  const value = input as Json; const path = value.path ?? value.file_path ?? value.filePath;
+  if (typeof path !== "string" || !/^(?:[A-Za-z]:[\\/]|\\\\)/.test(path.trim())) return;
+  const normalized = path.trim();
+  resourceSearchRoots.delete(normalized); resourceSearchRoots.add(normalized);
+  while (resourceSearchRoots.size > 32) resourceSearchRoots.delete(resourceSearchRoots.values().next().value!);
+  void toolName;
 }
 
 function friendlyToolName(toolName: string): string { return toolName.replaceAll("_", " "); }

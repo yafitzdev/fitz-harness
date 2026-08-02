@@ -372,7 +372,8 @@ describe("desktop renderer shell", () => {
     for (const id of ["inspector-title", "inspector-location", "inspector-render-toggle", "inspector-open", "inspector-close"]) expect(html).toContain(`id="${id}"`);
     expect(renderer).not.toContain('item("Toggle environment"');
     expect(renderer).toContain('window.addEventListener("fitz:open-resource"');
-    expect(renderer).toContain("window.fitz.previewResource({ projectRoot, reference })");
+    expect(renderer).toContain("window.fitz.previewResource({ projectRoot, reference, searchRoots: [...resourceSearchRoots] })");
+    expect(renderer).toContain("resourcePreviewError(error, reference)");
     expect(renderer).toContain("renderResourcePreview(inspectedPreview)");
     expect(renderer).toContain('frame.setAttribute("sandbox", "")');
     expect(styles).toContain(".inspector-panel");
