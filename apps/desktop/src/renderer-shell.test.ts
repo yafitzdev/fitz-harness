@@ -57,7 +57,10 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('data-app-menu="File"');
     expect(html).toContain('data-window-action="minimize"');
     expect(main).toContain("frame: false");
-    expect(main).toContain('ipcMain.handle("fitz:show-menu"');
+    expect(html).toContain('id="app-menu-popover"');
+    expect(renderer).toContain("function openAppMenu(");
+    expect(main).toContain('ipcMain.handle("fitz:edit-command"');
+    expect(main).not.toContain('ipcMain.handle("fitz:show-menu"');
     expect(main).toContain('ipcMain.handle("fitz:window-action"');
     expect(main).not.toContain("window.getBounds()");
     expect(styles).toContain("grid-template-rows: 36px minmax(0, 1fr)");
@@ -341,8 +344,11 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('revokeAdminDevice(device.id)');
     expect(styles).toContain(".administration-content");
     expect(styles).toContain(".tool-policy");
+    expect(html).toContain('id="select-popover"');
+    expect(renderer).toContain("function initializeCustomSelects()");
+    expect(renderer).toContain("function openCustomSelect(");
+    expect(styles).toContain(".select-popover .select-option.selected::after");
     expect(styles).toContain("background-position: right 9px center");
-    expect(styles).toContain("padding-right: 27px !important");
   });
 
   it("renders and exports host-redacted diagnostics from the administration workspace", () => {

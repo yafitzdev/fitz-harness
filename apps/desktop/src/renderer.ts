@@ -47,6 +47,7 @@ let projectHoverHideTimer: ReturnType<typeof setTimeout> | undefined;
 let removeProjectTarget: string | undefined;
 let editingRecipe: Json | undefined;
 let accessMode: AccessMode = storedAccessMode();
+let activeCustomSelect: HTMLSelectElement | undefined;
 let renameTarget: { kind: "project" | "task"; id: string } | undefined;
 const pinnedProjects = storedSet("fitz-pinned-projects");
 const pinnedSessions = storedSet("fitz-pinned-sessions");
@@ -136,6 +137,8 @@ const taskProject = element("task-project") as HTMLSelectElement;
 const taskName = element("task-name") as HTMLInputElement;
 const taskMenuToggle = element("task-menu-toggle") as HTMLButtonElement;
 const taskMenu = element("task-menu");
+const appMenuPopover = element("app-menu-popover");
+const selectPopover = element("select-popover");
 const sidebarContextMenu = element("sidebar-context-menu");
 const sidebarResizer = element("sidebar-resizer");
 const renameDialog = element("rename-dialog") as HTMLDialogElement;
@@ -230,6 +233,7 @@ const toast = element("toast");
 
 restoreSidebarWidth();
 renderAccessMode();
+initializeCustomSelects();
 void initialize();
 
 form.addEventListener("submit", (event) => {
@@ -268,9 +272,8 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("[data-close-m
 playbookSearch.addEventListener("input", renderManagementPage);
 connectionSearch.addEventListener("input", renderConsumerConnections);
 element("sidebar-menu").addEventListener("click", toggleSidebar);
-for (const menuButton of document.querySelectorAll<HTMLButtonElement>("[data-app-menu]")) menuButton.addEventListener("click", () => { const rect = menuButton.getBoundingClientRect(); void window.fitz.showMenu(menuButton.dataset.appMenu ?? "", Math.round(rect.left), Math.round(rect.bottom)); });
+for (const menuButton of document.querySelectorAll<HTMLButtonElement>("[data-app-menu]")) menuButton.addEventListener("click", (event) => openAppMenu(menuButton.dataset.appMenu ?? "", menuButton, event));
 for (const windowButton of document.querySelectorAll<HTMLButtonElement>("[data-window-action]")) windowButton.addEventListener("click", () => void window.fitz.windowAction(windowButton.dataset.windowAction as "minimize" | "maximize" | "close"));
-window.fitz.onMenuCommand((command) => { if (command === "new-chat") openNewChat(); else if (command === "new-project") openProjectDialog(); else if (command === "toggle-sidebar") toggleSidebar(); else if (command === "toggle-environment") setContextPanel(contextPanel.hasAttribute("hidden")); });
 sidebarResizer.addEventListener("pointerdown", beginSidebarResize);
 sidebarResizer.addEventListener("keydown", resizeSidebarWithKeyboard);
 connectionStatus.addEventListener("click", () => void initialize());
@@ -756,19 +759,19 @@ function buildTaskMenu(id: string): void {
   const session = (currentProject ? sessionsByProject.get(currentProject) : undefined)?.find((item) => item.id === id);
   const project = projectRecords.find((item) => item.id === currentProject);
   if (!session) return;
-  addMenuItem(pinnedSessions.has(id) ? "Unpin chat" : "Pin chat", () => toggleStored(pinnedSessions, id, "fitz-pinned-sessions"));
-  addMenuItem("Rename chat", () => { currentSession = id; openRenameDialog(); });
-  addMenuItem("Archive chat", () => { currentSession = id; void archiveCurrentTask(); }, true);
-  addMenuItem(unreadSessions.has(id) ? "Mark as read" : "Mark as unread", () => toggleStored(unreadSessions, id, "fitz-unread-sessions"));
+  addMenuItem(pinnedSessions.has(id) ? "Unpin chat" : "Pin chat", () => toggleStored(pinnedSessions, id, "fitz-pinned-sessions"), false, '<path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path>');
+  addMenuItem("Rename chat", () => { currentSession = id; openRenameDialog(); }, false, '<path d="M4 14.5V17h2.5L15 8.5 11.5 5z"></path><path d="m10.5 6 3.5 3.5"></path>');
+  addMenuItem("Archive chat", () => { currentSession = id; void archiveCurrentTask(); }, true, '<rect x="3" y="5" width="14" height="11" rx="2"></rect><path d="M3 8h14M8 11h4"></path>');
+  addMenuItem(unreadSessions.has(id) ? "Mark as read" : "Mark as unread", () => toggleStored(unreadSessions, id, "fitz-unread-sessions"), false, '<path d="M4 4.5h12v9H9l-4 3v-3H4z"></path>');
   if (project?.rootPath) {
     addMenuSeparator();
-    addMenuItem("Open in Explorer", () => void openProjectPath(project.rootPath));
-    addMenuItem("Copy working directory", () => void copyValue(project.rootPath, "Working directory copied"));
+    addMenuItem("Open in Explorer", () => void openProjectPath(project.rootPath), false, '<path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path><path d="M3.5 6.5V4h5l1.5 2"></path>');
+    addMenuItem("Copy working directory", () => void copyValue(project.rootPath, "Working directory copied"), false, '<rect x="6" y="6" width="10" height="10" rx="2"></rect><path d="M13 6V4H4v9h2"></path>');
   }
-  addMenuItem("Copy session ID", () => void copyValue(id, "Session ID copied"));
-  addMenuItem("Copy deeplink", () => void copyValue(`fitz://sessions/${id}`, "Deeplink copied"));
+  addMenuItem("Copy session ID", () => void copyValue(id, "Session ID copied"), false, '<rect x="6" y="6" width="10" height="10" rx="2"></rect><path d="M13 6V4H4v9h2"></path>');
+  addMenuItem("Copy deeplink", () => void copyValue(`fitz://sessions/${id}`, "Deeplink copied"), false, '<path d="m8 12 4-4"></path><path d="M6.5 13.5 5 15a3 3 0 0 1-4-4l2.5-2.5a3 3 0 0 1 4.2 0"></path><path d="M13.5 6.5 15 5a3 3 0 0 1 4 4l-2.5 2.5a3 3 0 0 1-4.2 0"></path>');
   addMenuSeparator();
-  addMenuItem("Continue in new chat", () => void continueInNewChat(session));
+  addMenuItem("Continue in new chat", () => void continueInNewChat(session), false, '<path d="M4 5h7a4 4 0 0 1 4 4v6"></path><path d="m12 12 3 3 3-3"></path>');
 }
 
 function addMenuItem(label: string, action: () => void, danger = false, icon?: string, disabled = false): void {
@@ -1780,6 +1783,122 @@ function openSettingsSubmenu(kind: "model" | "effort", row: HTMLButtonElement): 
   if (bounds.bottom > window.innerHeight - 16) settingsSubmenu.style.top = `${Number.parseFloat(settingsSubmenu.style.top) - (bounds.bottom - window.innerHeight + 16)}px`;
 }
 
+function initializeCustomSelects(): void {
+  const enhance = (select: HTMLSelectElement) => {
+    if (select.hidden || select.dataset.customMenu === "true") return;
+    select.dataset.customMenu = "true";
+    select.setAttribute("aria-haspopup", "listbox");
+    select.setAttribute("aria-expanded", "false");
+    select.addEventListener("pointerdown", (event) => {
+      if (select.disabled || event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      select.focus();
+      openCustomSelect(select);
+    });
+    select.addEventListener("click", (event) => { if (!select.disabled) { event.preventDefault(); event.stopPropagation(); } });
+    select.addEventListener("keydown", (event) => {
+      if (select.disabled || !["Enter", " ", "ArrowDown", "ArrowUp"].includes(event.key)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openCustomSelect(select, true);
+    });
+  };
+  document.querySelectorAll<HTMLSelectElement>("select").forEach(enhance);
+  new MutationObserver((records) => {
+    for (const record of records) for (const node of record.addedNodes) {
+      if (!(node instanceof HTMLElement)) continue;
+      if (node instanceof HTMLSelectElement) enhance(node);
+      node.querySelectorAll<HTMLSelectElement>("select").forEach(enhance);
+    }
+  }).observe(document.body, { childList: true, subtree: true });
+  selectPopover.addEventListener("click", (event) => event.stopPropagation());
+  selectPopover.addEventListener("keydown", (event) => {
+    const choices = [...selectPopover.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
+    const current = choices.indexOf(document.activeElement as HTMLButtonElement);
+    if (event.key === "Escape") { event.preventDefault(); activeCustomSelect?.focus(); closePopovers(); return; }
+    const next = event.key === "ArrowDown" ? Math.min(current + 1, choices.length - 1) : event.key === "ArrowUp" ? Math.max(current - 1, 0) : event.key === "Home" ? 0 : event.key === "End" ? choices.length - 1 : -1;
+    if (next >= 0) { event.preventDefault(); choices[next]?.focus(); }
+  });
+}
+
+function openCustomSelect(select: HTMLSelectElement, focusSelection = false): void {
+  const reopening = activeCustomSelect === select && !selectPopover.hidden;
+  closePopovers();
+  if (reopening) return;
+  activeCustomSelect = select;
+  select.setAttribute("aria-expanded", "true");
+  selectPopover.replaceChildren();
+  let currentGroup = "";
+  let selectedButton: HTMLButtonElement | undefined;
+  for (const option of [...select.options]) {
+    const group = option.parentElement instanceof HTMLOptGroupElement ? option.parentElement.label : "";
+    if (group && group !== currentGroup) {
+      const heading = document.createElement("small"); heading.className = "select-group-label"; heading.textContent = group; selectPopover.append(heading); currentGroup = group;
+    }
+    const button = document.createElement("button"); button.type = "button"; button.className = "select-option"; button.disabled = option.disabled; button.dataset.value = option.value; button.setAttribute("role", "option"); button.setAttribute("aria-selected", String(option.selected));
+    button.classList.toggle("selected", option.selected); button.textContent = option.textContent ?? option.value;
+    if (option.selected) selectedButton = button;
+    button.addEventListener("click", (event) => { event.stopPropagation(); select.value = option.value; select.dispatchEvent(new Event("change", { bubbles: true })); closePopovers(); select.focus(); });
+    selectPopover.append(button);
+  }
+  const rect = select.getBoundingClientRect();
+  selectPopover.style.width = `${Math.max(150, rect.width)}px`;
+  selectPopover.style.left = `${Math.min(rect.left, window.innerWidth - Math.max(150, rect.width) - 8)}px`;
+  selectPopover.style.top = `${rect.bottom + 5}px`;
+  selectPopover.hidden = false;
+  const menuRect = selectPopover.getBoundingClientRect();
+  if (menuRect.bottom > window.innerHeight - 8 && rect.top > menuRect.height + 12) selectPopover.style.top = `${Math.max(8, rect.top - menuRect.height - 5)}px`;
+  if (focusSelection) queueMicrotask(() => (selectedButton ?? selectPopover.querySelector<HTMLButtonElement>("button:not(:disabled)"))?.focus());
+}
+
+function openAppMenu(name: string, toggle: HTMLButtonElement, event: MouseEvent): void {
+  event.preventDefault();
+  event.stopPropagation();
+  const reopening = appMenuPopover.dataset.menu === name && !appMenuPopover.hidden;
+  closePopovers();
+  if (reopening) return;
+  appMenuPopover.dataset.menu = name;
+  appMenuPopover.replaceChildren();
+  const separator = () => appMenuPopover.append(document.createElement("hr"));
+  const item = (label: string, icon: string, action: () => void, shortcut = "") => {
+    const button = document.createElement("button"); button.type = "button";
+    const text = document.createElement("span"); text.className = "menu-label"; text.textContent = label;
+    button.append(svg(icon), text);
+    if (shortcut) { const key = document.createElement("kbd"); key.textContent = shortcut; button.append(key); }
+    button.addEventListener("click", (clickEvent) => { clickEvent.stopPropagation(); closePopovers(); action(); });
+    appMenuPopover.append(button);
+  };
+  const edit = (command: "undo" | "redo" | "cut" | "copy" | "paste" | "select-all" | "reload" | "devtools") => () => void window.fitz.editCommand(command);
+  if (name === "File") {
+    item("New chat", '<path d="M4 4h12v12H4z"></path><path d="M7 10h6M10 7v6"></path>', openNewChat, "Ctrl+N");
+    item("New project", '<path d="M3 6h5l1.5 2H17v8H3z"></path><path d="M3 6V4h5l1.5 2"></path>', openProjectDialog);
+    separator();
+    item("Close window", '<path d="m5 5 10 10M15 5 5 15"></path>', () => void window.fitz.windowAction("close"));
+  } else if (name === "Edit") {
+    item("Undo", '<path d="M7 7H3V3"></path><path d="M3 7c2-3 5-4 8-3 3 1 5 4 5 7"></path>', edit("undo"), "Ctrl+Z");
+    item("Redo", '<path d="M13 7h4V3"></path><path d="M17 7c-2-3-5-4-8-3-3 1-5 4-5 7"></path>', edit("redo"), "Ctrl+Y");
+    separator();
+    item("Cut", '<circle cx="6" cy="15" r="2"></circle><circle cx="14" cy="15" r="2"></circle><path d="m7.5 13.5 7-9M12.5 13.5l-7-9"></path>', edit("cut"), "Ctrl+X");
+    item("Copy", '<rect x="7" y="7" width="10" height="10" rx="2"></rect><path d="M13 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"></path>', edit("copy"), "Ctrl+C");
+    item("Paste", '<rect x="5" y="5" width="10" height="12" rx="2"></rect><path d="M8 5V3h4v2"></path>', edit("paste"), "Ctrl+V");
+    item("Select all", '<path d="M7 3H3v4M13 3h4v4M17 13v4h-4M7 17H3v-4"></path>', edit("select-all"), "Ctrl+A");
+  } else if (name === "View") {
+    item("Toggle sidebar", '<rect x="3" y="4" width="14" height="12" rx="2"></rect><path d="M7 4v12"></path>', toggleSidebar, "Ctrl+B");
+    item("Toggle environment", '<path d="M4 5h12M4 10h12M4 15h12"></path><circle cx="7" cy="5" r="1"></circle><circle cx="13" cy="10" r="1"></circle><circle cx="9" cy="15" r="1"></circle>', () => setContextPanel(contextPanel.hasAttribute("hidden")));
+    separator();
+    item("Reload", '<path d="M16 7V3l-2 2a6 6 0 1 0 1 8"></path>', edit("reload"), "Ctrl+R");
+    item("Developer tools", '<path d="m7 6-4 4 4 4M13 6l4 4-4 4M11 4 9 16"></path>', edit("devtools"));
+  } else if (name === "Help") {
+    item("Fitz Codex on GitHub", '<circle cx="10" cy="10" r="7"></circle><path d="M8 8a2 2 0 1 1 3 1.7c-.7.4-1 .8-1 1.5M10 14h.01"></path>', () => void window.fitz.openExternal("https://github.com/yafitzdev/fitz-codex"));
+  }
+  const rect = toggle.getBoundingClientRect();
+  appMenuPopover.style.left = `${rect.left}px`;
+  appMenuPopover.style.top = `${rect.bottom + 3}px`;
+  appMenuPopover.hidden = false;
+  toggle.setAttribute("aria-expanded", "true");
+}
+
 function togglePopover(popover: HTMLElement, toggle: HTMLButtonElement): void {
   const opening = popover.hidden;
   closePopovers();
@@ -1788,6 +1907,10 @@ function togglePopover(popover: HTMLElement, toggle: HTMLButtonElement): void {
 }
 
 function closePopovers(): void {
+  if (activeCustomSelect) activeCustomSelect.setAttribute("aria-expanded", "false");
+  activeCustomSelect = undefined;
+  selectPopover.hidden = true;
+  appMenuPopover.hidden = true;
   modelMenu.hidden = true;
   settingsSubmenu.hidden = true;
   advancedSettingsPanel.hidden = true;
@@ -1808,6 +1931,7 @@ function closePopovers(): void {
   newChatBranchControl.setAttribute("aria-expanded", "false");
   for (const row of document.querySelectorAll(".setting-row")) row.classList.remove("active");
   for (const toggle of projects.querySelectorAll(".tree-menu-toggle")) toggle.setAttribute("aria-expanded", "false");
+  for (const toggle of document.querySelectorAll("[data-app-menu]")) toggle.setAttribute("aria-expanded", "false");
 }
 
 async function sendPrompt(): Promise<void> {

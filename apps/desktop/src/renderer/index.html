@@ -78,8 +78,8 @@
               <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="5" cy="10" r="1"></circle><circle cx="10" cy="10" r="1"></circle><circle cx="15" cy="10" r="1"></circle></svg>
             </button>
             <div id="task-menu" class="popover task-menu no-drag menu-surface" hidden>
-              <button id="rename-task" type="button"><span>Rename chat</span><kbd>Ctrl+Alt+R</kbd></button>
-              <button id="archive-task" type="button"><span>Archive chat</span><kbd>Ctrl+Shift+A</kbd></button>
+              <button id="rename-task" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 14.5V17h2.5L15 8.5 11.5 5z"></path><path d="m10.5 6 3.5 3.5"></path></svg><span class="menu-label">Rename chat</span><kbd>Ctrl+Alt+R</kbd></button>
+              <button id="archive-task" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="5" width="14" height="11" rx="2"></rect><path d="M3 8h14M8 11h4"></path></svg><span class="menu-label">Archive chat</span><kbd>Ctrl+Shift+A</kbd></button>
             </div>
           </div>
           <div class="header-actions no-drag">
@@ -293,6 +293,8 @@
 
     <input id="artifact-file" type="file" hidden>
 
+    <div id="app-menu-popover" class="popover menu-surface app-menu-popover no-drag" hidden></div>
+    <div id="select-popover" class="popover menu-surface select-popover no-drag" role="listbox" hidden></div>
     <div id="sidebar-context-menu" class="popover menu-surface sidebar-context-menu" hidden></div>
     <aside id="chat-hover-card" class="chat-hover-card" hidden><header><strong id="hover-chat-title"></strong><time id="hover-chat-age"></time></header><p><svg viewBox="0 0 20 20"><path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path></svg><span id="hover-project-name"></span></p><p><svg viewBox="0 0 20 20"><path d="M6 4v9M6 7h5M11 7v6M11 10h4"></path></svg><span>main</span></p></aside>
     <aside id="project-hover-card" class="project-hover-card" hidden>

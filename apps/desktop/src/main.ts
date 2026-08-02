@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, safeStorage, shell, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from "electron";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -83,12 +83,7 @@ ipcMain.handle("fitz:git-checkout-branch", async (_event, path: unknown, branch:
 ipcMain.handle("fitz:git-create-branch", async (_event, path: unknown, branch: unknown) => { const root = requireLocalPath(path); const name = requireBranchName(branch); await runGit(root, ["check-ref-format", "--branch", name]); await runGit(root, ["switch", "-c", name]); return gitBranchState(root); });
 ipcMain.handle("fitz:git-create-worktree", async (_event, path: unknown, branch: unknown) => { const root = requireLocalPath(path); const name = requireBranchName(branch); await runGit(root, ["check-ref-format", "--branch", name]); const repositoryRoot = await runGit(root, ["rev-parse", "--show-toplevel"]); const parent = join(dirname(repositoryRoot), `${basename(repositoryRoot)}-worktrees`); const target = join(parent, name.replaceAll("/", "-")); if (existsSync(target)) throw new Error("A worktree already exists for that branch name"); mkdirSync(parent, { recursive: true }); await runGit(repositoryRoot, ["worktree", "add", "-b", name, target]); return { path: target, branch: name }; });
 ipcMain.handle("fitz:window-action", (event, action: unknown) => { const window = BrowserWindow.fromWebContents(event.sender); if (!window) return; if (action === "minimize") window.minimize(); else if (action === "maximize") window.isMaximized() ? window.unmaximize() : window.maximize(); else if (action === "close") window.close(); });
-ipcMain.handle("fitz:show-menu", (event, name: unknown, clientX: unknown, clientY: unknown) => { const window = BrowserWindow.fromWebContents(event.sender); if (!window || typeof name !== "string" || typeof clientX !== "number" || typeof clientY !== "number") return; const command = (value: string) => event.sender.send("fitz:menu-command", value); const templates: Record<string, MenuItemConstructorOptions[]> = {
-  File: [{ label: "New chat", accelerator: "Ctrl+N", click: () => command("new-chat") }, { label: "New project", click: () => command("new-project") }, { type: "separator" }, { role: "close" }],
-  Edit: [{ role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" }],
-  View: [{ label: "Toggle sidebar", accelerator: "Ctrl+B", click: () => command("toggle-sidebar") }, { label: "Toggle environment", click: () => command("toggle-environment") }, { type: "separator" }, { role: "reload" }, { role: "toggleDevTools" }],
-  Help: [{ label: "Fitz Codex on GitHub", click: () => void shell.openExternal("https://github.com/yafitzdev/fitz-codex") }],
-}; const template = templates[name]; if (!template) return; Menu.buildFromTemplate(template).popup({ window, x: clientX, y: clientY }); });
+ipcMain.handle("fitz:edit-command", (event, command: unknown) => { const contents = event.sender; if (command === "undo") contents.undo(); else if (command === "redo") contents.redo(); else if (command === "cut") contents.cut(); else if (command === "copy") contents.copy(); else if (command === "paste") contents.paste(); else if (command === "select-all") contents.selectAll(); else if (command === "reload") contents.reload(); else if (command === "devtools") contents.toggleDevTools(); });
 ipcMain.handle("fitz:update-status", () => latestUpdateStatus);
 ipcMain.handle("fitz:update-check", async () => { if (app.isPackaged) await autoUpdater.checkForUpdates(); else publishUpdateStatus({ state: "development" }); });
 ipcMain.handle("fitz:update-install", () => { if (app.isPackaged) autoUpdater.quitAndInstall(false, true); });
