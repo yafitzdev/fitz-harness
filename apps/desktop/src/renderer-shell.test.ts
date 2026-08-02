@@ -383,12 +383,11 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("if (composerHadText || currentRun || !model.value) return");
     expect(renderer).toContain("}, 120)");
     expect(renderer).toContain("idleTtlSeconds: 600");
-    expect(renderer).toContain('contextMeter.classList.toggle("model-loading", loading)');
-    expect(renderer).toContain('contextMeter.setAttribute("aria-label", "Loading model")');
-    expect(styles).toContain("@keyframes model-spinner");
-    expect(styles).toContain(".context-meter.model-loading::before");
-    expect(styles).toContain("animation: model-spinner 680ms linear infinite");
-    expect(styles).not.toContain("prefers-reduced-motion: reduce) { .context-meter.model-loading");
+    expect(renderer).not.toContain('contextMeter.classList.toggle("model-loading", loading)');
+    expect(styles).toContain("@keyframes run-activity-spinner");
+    expect(styles).toContain(".run-activity::before");
+    expect(styles).toContain("animation: run-activity-spinner 680ms linear infinite");
+    expect(styles).not.toContain(".context-meter.model-loading");
   });
 
   it("keeps every dropdown and overflow surface at the compact Codex menu density", () => {

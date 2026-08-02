@@ -263,7 +263,8 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .markdown-table td:last-child { border-right: 0; }
 .message.system { padding: 10px 12px; border-left: 2px solid var(--red); background: rgba(232,124,120,.06); color: #efaaa6; }
 .run-activity { display: flex; align-items: center; gap: 10px; color: var(--muted); }
-.run-activity::before { content: ""; width: 14px; height: 14px; flex: 0 0 auto; border: 2px solid #50534f; border-top-color: #b6b9b3; border-radius: 50%; animation: spin 850ms linear infinite; }
+.run-activity::before { content: ""; width: 14px; height: 14px; flex: 0 0 auto; border: 2px solid #50534f; border-top-color: #b6b9b3; border-right-color: #b6b9b3; border-radius: 50%; animation: run-activity-spinner 680ms linear infinite; }
+@keyframes run-activity-spinner { to { transform: rotate(1turn); } }
 .agent-activity { width: 100%; min-width: 0; display: block; margin-bottom: 8px; color: var(--codex-text-secondary); }
 .agent-activity-summary { width: calc(100% + 16px); min-width: 0; min-height: 32px; display: flex; align-items: center; gap: 8px; margin: 0 -8px; padding: 4px 8px; border-radius: var(--codex-radius-md); background: transparent; color: inherit; cursor: pointer; text-align: left; transition: background-color 150ms ease, color 150ms ease; }
 .agent-activity-summary:hover, .agent-activity.open > .agent-activity-summary { background: rgba(255,255,255,.05); color: var(--text); }
@@ -371,11 +372,8 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .access-mode-menu strong { font-size: 12px; font-weight: 550; }
 .access-mode-menu small { color: var(--codex-text-tertiary); font-size: 10px; }
 .context-usage-wrap { position: relative; display: flex; align-items: center; }
-.context-meter { --context-used: 0%; position: relative; width: 18px; height: 18px; flex: 0 0 auto; padding: 0; border-radius: 50%; background: conic-gradient(#9a9d98 var(--context-used), #555854 0); cursor: pointer; -webkit-mask: radial-gradient(circle, transparent 44%, #000 47%); mask: radial-gradient(circle, transparent 44%, #000 47%); }
+.context-meter { --context-used: 0%; width: 18px; height: 18px; flex: 0 0 auto; padding: 0; border-radius: 50%; background: conic-gradient(#9a9d98 var(--context-used), #555854 0); cursor: pointer; -webkit-mask: radial-gradient(circle, transparent 44%, #000 47%); mask: radial-gradient(circle, transparent 44%, #000 47%); }
 .context-meter:hover { background: conic-gradient(#d1d3cd var(--context-used), #696c67 0); }
-.context-meter.model-loading, .context-meter.model-loading:hover { background: transparent; cursor: default; -webkit-mask: none; mask: none; }
-.context-meter.model-loading::before { content: ""; position: absolute; inset: 1px; border: 2px solid #555854; border-top-color: #d1d3cd; border-right-color: #d1d3cd; border-radius: 50%; animation: model-spinner 680ms linear infinite; }
-@keyframes model-spinner { to { transform: rotate(1turn); } }
 .context-usage-popover { right: -72px; bottom: 32px; width: 220px; display: grid; justify-items: center; gap: 2px; padding: 8px 10px; color: var(--muted); text-align: center; font-size: 12px; }
 .context-usage-popover strong { color: #b9bcb6; font-weight: 550; }
 .context-usage-popover b { color: var(--text); font-size: 13px; }
