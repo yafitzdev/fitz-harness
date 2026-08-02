@@ -67,6 +67,23 @@ describe("InferenceScheduler", () => {
     expect(events.after(0).some((event) => event.type === "queue.updated")).toBe(true);
   });
 
+  it("tests an exact recipe without assigning it to a consumer route", async () => {
+    const adapter = new FakeEngineAdapter();
+    const events = new LifecycleEventBus();
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]), events });
+    const scheduler = new InferenceScheduler(
+      new RouteResolver([route("default", "routed")], [recipe("routed", 60), recipe("unassigned", 60)]),
+      lifecycle,
+      events,
+    );
+
+    const output = await collect(scheduler.enqueueRecipe("unassigned", { messages: [{ role: "user", content: "Say hi." }], maxTokens: 16 }));
+
+    expect(output).toContain("Say hi.");
+    expect(adapter.starts.at(-1)?.modelId).toBe("unassigned-model");
+    expect(scheduler.routes.resolve("default").recipe.id).toBe("routed");
+  });
+
   it("cancels active and queued work without wedging the scheduler", async () => {
     const adapter = new FakeEngineAdapter({ tokenDelayMs: 30 });
     const events = new LifecycleEventBus();

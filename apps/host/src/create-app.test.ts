@@ -48,6 +48,33 @@ describe("Fitz host", () => {
     await runtime.app.close();
   });
 
+  it("tests an exact recipe without changing fixed route assignments", async () => {
+    const runtime = createHost();
+    await runtime.app.inject({
+      method: "PUT",
+      url: "/api/v1/management/recipes/probe-recipe",
+      payload: {
+        playbookId: "probe-playbook",
+        displayName: "Probe Recipe",
+        adapter: "fake",
+        modelId: "probe-model",
+        contextTokens: 64_000,
+        capabilities: { chatCompletions: true, streaming: true, toolCalls: false, responseFormat: false, minP: false, maxConcurrentGenerations: 1 },
+        lifecycle: { loadPolicy: "onDemand", evictionPolicy: "idle-ttl", idleTtlSeconds: 300, minimumResidencySeconds: 0 },
+        configuration: {},
+      },
+    });
+    const routesBefore = runtime.routes.listRoutes();
+
+    const response = await runtime.app.inject({ method: "POST", url: "/api/v1/management/recipes/probe-recipe/test" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data).toEqual(expect.objectContaining({ recipeId: "probe-recipe", working: true }));
+    expect(response.json().data.output).toContain("probe-model");
+    expect(runtime.routes.listRoutes()).toEqual(routesBefore);
+    await runtime.app.close();
+  });
+
   it("moves a fixed route assignment to one recipe", async () => {
     const runtime = createHost();
     const response = await runtime.app.inject({

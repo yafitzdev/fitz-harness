@@ -485,6 +485,37 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     },
   );
 
+  app.post(
+    "/api/v1/management/recipes/:recipeId/test",
+    { preHandler: adminGuard(options.adminToken, authMode, principals) },
+    async (request, reply) => {
+      const recipeId = (request.params as { recipeId: string }).recipeId;
+      try {
+        const recipe = routes.resolveRecipe(recipeId);
+        if (!recipe.capabilities.chatCompletions) throw new TypeError(`Recipe ${recipeId} does not support chat completions`);
+        const controller = new AbortController();
+        const cancel = () => controller.abort();
+        request.raw.once("aborted", cancel);
+        const stream = scheduler.enqueueRecipe(recipeId, {
+          messages: [{ role: "user", content: "Say hi." }],
+          maxTokens: 16,
+          temperature: 0,
+        }, controller.signal);
+        let output = "";
+        try {
+          for await (const delta of stream) if (delta.text) output += delta.text;
+        } finally {
+          request.raw.off("aborted", cancel);
+        }
+        if (!output.trim()) throw new Error("Recipe completed without returning text");
+        return { data: { recipeId, working: true, output: output.trim().slice(0, 500) } };
+      } catch (error) {
+        const statusCode = error instanceof RecipeNotFoundError ? 404 : 502;
+        return reply.code(statusCode).send({ error: errorMessage(error) });
+      }
+    },
+  );
+
   app.put(
     "/api/v1/management/routes/:routeId",
     { preHandler: adminGuard(options.adminToken, authMode, principals) },

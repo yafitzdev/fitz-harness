@@ -45,6 +45,7 @@ const pinnedProjects = storedSet("fitz-pinned-projects");
 const pinnedSessions = storedSet("fitz-pinned-sessions");
 const unreadSessions = storedSet("fitz-unread-sessions");
 const expandedProjects = storedSet("fitz-expanded-projects");
+const recipeTestStates = new Map<string, { state: "testing" | "passed" | "failed"; detail: string }>();
 
 const shell = query(".app-shell");
 const workspaceHeader = query(".workspace-header");
@@ -1311,10 +1312,39 @@ function renderManagementPage(): void {
         const button = document.createElement("button"); button.type = "button"; button.className = `route-symbol route-${definition.id}`; button.title = definition.label; button.setAttribute("aria-label", `${definition.label} route`); button.setAttribute("aria-pressed", String(route?.recipeId === recipe.id)); button.classList.toggle("active", route?.recipeId === recipe.id); button.append(svg(definition.icon)); button.addEventListener("click", () => void assignFixedRoute(definition, recipe, button));
         routeToggle.append(button);
       }
-      recipeCard.append(recipeDetails, routeToggle); card.append(recipeCard);
+      const recipeActions = document.createElement("div"); recipeActions.className = "recipe-card-actions";
+      const testButton = document.createElement("button"); testButton.type = "button"; testButton.className = "recipe-test-button"; testButton.setAttribute("aria-live", "polite"); testButton.addEventListener("click", (event) => { event.stopPropagation(); void testRecipe(recipe, recipeCard, testButton); });
+      recipeActions.append(routeToggle, testButton); renderRecipeTestState(recipe.id, recipeCard, testButton);
+      recipeCard.append(recipeDetails, recipeActions); card.append(recipeCard);
     }
     playbookList.append(card);
   }
+}
+
+async function testRecipe(recipe: Json, card: HTMLElement, button: HTMLButtonElement): Promise<void> {
+  recipeTestStates.set(recipe.id, { state: "testing", detail: "Sending “Say hi.” to this recipe" });
+  renderRecipeTestState(recipe.id, card, button);
+  try {
+    const response = await api(`/api/v1/management/recipes/${encodeURIComponent(recipe.id)}/test`, "POST");
+    recipeTestStates.set(recipe.id, { state: "passed", detail: String(response.data?.output ?? "Recipe returned a response") });
+  } catch (error) {
+    recipeTestStates.set(recipe.id, { state: "failed", detail: errorMessage(error) });
+  }
+  renderRecipeTestState(recipe.id, card, button);
+}
+
+function renderRecipeTestState(recipeId: string, card: HTMLElement, button: HTMLButtonElement): void {
+  const result = recipeTestStates.get(recipeId);
+  const state = result?.state ?? "idle";
+  button.disabled = state === "testing";
+  button.classList.toggle("testing", state === "testing");
+  button.classList.toggle("passed", state === "passed");
+  button.classList.toggle("failed", state === "failed");
+  card.classList.toggle("recipe-test-passed", state === "passed");
+  card.classList.toggle("recipe-test-failed", state === "failed");
+  button.textContent = state === "testing" ? "Testing…" : state === "passed" ? "✓ Working" : state === "failed" ? "Retry" : "Test";
+  button.title = result?.detail ?? "Send “Say hi.” directly to this recipe";
+  button.setAttribute("aria-label", state === "passed" ? "Recipe test passed" : state === "failed" ? `Recipe test failed: ${result?.detail ?? "Unknown error"}. Retry` : state === "testing" ? "Testing recipe" : "Test recipe");
 }
 
 async function assignFixedRoute(definition: (typeof FIXED_ROUTES)[number], recipe: Json, button: HTMLButtonElement): Promise<void> {

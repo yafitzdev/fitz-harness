@@ -506,7 +506,13 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .recipe-card-details span, .recipe-card-details small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recipe-card-details small { color: var(--muted); }
 .recipe-card-details code { color: #b8bbb5; font: 11px/1.4 "Cascadia Mono", Consolas, monospace; }
-.recipe-route-toggle { align-self: center; display: flex; align-items: center; gap: 1px; margin-right: 12px; padding: 2px; border: 0; border-radius: 11px; background: #1c1e1c; }
+.recipe-card-actions { align-self: center; display: flex; align-items: center; gap: 8px; margin-right: 12px; }
+.recipe-route-toggle { display: flex; align-items: center; gap: 1px; padding: 2px; border: 0; border-radius: 11px; background: #1c1e1c; }
+.recipe-test-button { min-width: 58px; height: 32px; padding: 0 9px; border: 0; border-radius: 9px; background: transparent; color: var(--codex-text-secondary); cursor: pointer; font-size: 12px; white-space: nowrap; transition: background-color 120ms ease, color 120ms ease; }
+.recipe-test-button:hover:not(:disabled), .recipe-test-button:focus-visible { background: #303230; color: var(--text); }
+.recipe-test-button.testing { color: var(--codex-text-tertiary); cursor: wait; }
+.recipe-test-button.passed { background: #303230; color: var(--text); }
+.recipe-test-button.failed { color: #d9908b; }
 .route-symbol { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 9px; background: transparent; color: #777b74; cursor: pointer; transition: background-color 100ms ease, color 100ms ease; }
 .route-symbol:hover { background: #303230; color: #d5d7d2; }
 .route-symbol.active { background: #303230; color: #ebece8; }
@@ -545,6 +551,6 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
   .workspace-title #task-title { display: none; }
   .starter-grid, .configuration-grid { grid-template-columns: 1fr 1fr; }
   .recipe-card { grid-template-columns: 1fr; }
-  .recipe-route-toggle { justify-self: end; margin: 0 10px 9px; }
+  .recipe-card-actions { justify-content: flex-end; margin: 0 10px 9px; }
   .mode-pill, .run-status, .composer-hint { display: none; }
 }

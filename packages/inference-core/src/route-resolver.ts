@@ -44,6 +44,12 @@ export class RouteResolver {
     return { route: structuredClone(route), recipe: structuredClone(recipe) };
   }
 
+  resolveRecipe(recipeId: string): Recipe {
+    const recipe = this.#recipes.get(recipeId);
+    if (!recipe) throw new RecipeNotFoundError(recipeId);
+    return structuredClone(recipe);
+  }
+
   listRoutes(): Route[] {
     return [...this.#routes.values()]
       .filter((route) => route.enabled)

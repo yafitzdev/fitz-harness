@@ -89,13 +89,24 @@ describe("desktop renderer shell", () => {
     expect(html).not.toContain("engine-root-path");
     expect(renderer).not.toContain('status.textContent = engine ? "Registered"');
     expect(renderer).not.toContain("${folder.rootPath}");
-    expect(styles).toContain(".recipe-route-toggle { align-self: center; display: flex; align-items: center; gap: 1px; margin-right: 12px; padding: 2px; border: 0;");
+    expect(styles).toContain(".recipe-card-actions { align-self: center; display: flex; align-items: center;");
+    expect(styles).toContain(".recipe-route-toggle { display: flex; align-items: center; gap: 1px; padding: 2px; border: 0;");
     expect(renderer).toContain('class="route-icon-cut"');
     expect(renderer).toContain('class="route-icon-filled" fill-rule="evenodd"');
     expect(html).not.toContain("NiNfer");
     expect(html).not.toContain("llama.cpp");
     expect(html).not.toContain("vLLM");
     expect(renderer).toContain("showConversationWorkspace()");
+  });
+
+  it("tests each Playbooks recipe directly and reports the result on its row", () => {
+    expect(renderer).toContain('testButton.className = "recipe-test-button"');
+    expect(renderer).toContain('api(`/api/v1/management/recipes/${encodeURIComponent(recipe.id)}/test`, "POST")');
+    expect(renderer).toContain('state === "passed" ? "✓ Working"');
+    expect(renderer).toContain('state === "failed" ? "Retry"');
+    expect(renderer).toContain('detail: "Sending “Say hi.” to this recipe"');
+    expect(styles).toContain(".recipe-test-button");
+    expect(styles).toContain(".recipe-test-button.passed");
   });
 
   it("exposes working keyboard, retry, attachment, and cancellation paths", () => {

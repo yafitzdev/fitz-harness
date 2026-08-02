@@ -8,6 +8,7 @@ import { RouteResolver } from "./route-resolver.js";
 interface QueueJob {
   id: string;
   routeId: string;
+  recipeId?: string;
   request: InferenceRequest;
   output: AsyncChannel<InferenceDelta>;
   controller: AbortController;
@@ -41,11 +42,29 @@ export class InferenceScheduler {
     input: Omit<InferenceRequest, "id" | "routeId">,
     externalSignal?: AbortSignal,
   ): ScheduledStream {
+    return this.#enqueue(routeId, input, externalSignal);
+  }
+
+  enqueueRecipe(
+    recipeId: string,
+    input: Omit<InferenceRequest, "id" | "routeId">,
+    externalSignal?: AbortSignal,
+  ): ScheduledStream {
+    this.routes.resolveRecipe(recipeId);
+    return this.#enqueue(`recipe:${recipeId}`, input, externalSignal, recipeId);
+  }
+
+  #enqueue(
+    routeId: string,
+    input: Omit<InferenceRequest, "id" | "routeId">,
+    externalSignal?: AbortSignal,
+    recipeId?: string,
+  ): ScheduledStream {
     const id = randomUUID();
     const output = new AsyncChannel<InferenceDelta>();
     const controller = new AbortController();
     const request: InferenceRequest = { ...input, id, routeId };
-    const job: QueueJob = { id, routeId, request, output, controller };
+    const job: QueueJob = { id, routeId, request, output, controller, ...(recipeId ? { recipeId } : {}) };
 
     if (!this.#accepting) {
       output.fail(new Error("Inference scheduler is shutting down"));
@@ -113,7 +132,7 @@ export class InferenceScheduler {
         this.#publishQueuedPositions();
 
         try {
-          const { recipe } = this.routes.resolve(job.routeId);
+          const recipe = job.recipeId ? this.routes.resolveRecipe(job.recipeId) : this.routes.resolve(job.routeId).recipe;
           for await (const delta of this.lifecycle.run(recipe, job.request, job.controller.signal)) {
             job.output.push(delta);
           }
