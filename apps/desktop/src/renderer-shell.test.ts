@@ -55,6 +55,8 @@ describe("desktop renderer shell", () => {
 
   it("uses one integrated title bar with functional window and application menus", () => {
     expect(html).toContain('class="app-titlebar drag-region"');
+    expect(html).toContain('class="workspace-header"');
+    expect(html).not.toContain('class="workspace-header drag-region"');
     expect(html).toContain('data-app-menu="File"');
     expect(html).toContain('data-window-action="minimize"');
     expect(main).toContain("frame: false");
