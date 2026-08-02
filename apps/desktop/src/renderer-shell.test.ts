@@ -287,6 +287,16 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".markdown-table table");
   });
 
+  it("reveals compact Copy and user Edit actions on message hover", () => {
+    expect(renderer).toContain("appendMessageActions(article, content, role, text)");
+    expect(renderer).toContain('copy.title = "Copy message"');
+    expect(renderer).toContain('edit.title = "Edit message"');
+    expect(renderer).toContain('prompt.value = originalText');
+    expect(renderer).toContain('copyValue(content.innerText, "Copied message")');
+    expect(styles).toContain(".message:hover .message-actions");
+    expect(styles).toContain(".message-action svg");
+  });
+
   it("expands Advanced model settings and sends the chosen temperature and output limit", () => {
     for (const id of ["advanced-settings-panel", "temperature", "temperature-value"]) expect(html).toContain(`id="${id}"`);
     expect(renderer).toContain("toggleAdvancedSettings()");

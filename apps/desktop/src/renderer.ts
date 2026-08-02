@@ -2451,15 +2451,31 @@ function appendMessage(role: string, text: string, createdAt?: string): HTMLElem
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   if (role !== "commentary") finishWorkSummary(createdAt);
   const article = document.createElement("article"); article.className = `message ${role}`;
-  const content = document.createElement("div"); content.className = "message-body"; if (role === "assistant" || role === "commentary") setMarkdown(content, text); else content.textContent = text; article.append(content); messages.append(article); messages.scrollTop = messages.scrollHeight; return content;
+  const content = document.createElement("div"); content.className = "message-body"; if (role === "assistant" || role === "commentary") setMarkdown(content, text); else content.textContent = text; article.append(content); appendMessageActions(article, content, role, text); messages.append(article); messages.scrollTop = messages.scrollHeight; return content;
 }
 
 function appendCommentary(text: string, createdAt?: string): HTMLElement {
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   const article = document.createElement("article"); article.className = "message commentary";
-  const content = document.createElement("div"); content.className = "message-body"; setMarkdown(content, text); article.append(content);
+  const content = document.createElement("div"); content.className = "message-body"; setMarkdown(content, text); article.append(content); appendMessageActions(article, content, "commentary", text);
   appendWorkNode(article, createdAt);
   return content;
+}
+
+function appendMessageActions(article: HTMLElement, content: HTMLElement, role: string, originalText: string): void {
+  if (!["user", "assistant", "commentary"].includes(role)) return;
+  const actions = document.createElement("div"); actions.className = "message-actions";
+  const copy = document.createElement("button"); copy.type = "button"; copy.className = "message-action"; copy.title = "Copy message"; copy.setAttribute("aria-label", "Copy message");
+  copy.append(svg('<rect x="7" y="7" width="9" height="9" rx="1.6"></rect><path d="M5.8 13.4H5A2 2 0 0 1 3 11.4V5a2 2 0 0 1 2-2h6.4a2 2 0 0 1 2 2v.8"></path>'));
+  copy.addEventListener("click", () => void copyValue(content.innerText, "Copied message"));
+  actions.append(copy);
+  if (role === "user") {
+    const edit = document.createElement("button"); edit.type = "button"; edit.className = "message-action"; edit.title = "Edit message"; edit.setAttribute("aria-label", "Edit message");
+    edit.append(svg('<path d="m4.2 14.8.7-3.2 7.8-7.8a1.45 1.45 0 0 1 2.05 2.05L7 13.65z"></path><path d="m11.7 4.8 2.05 2.05"></path>'));
+    edit.addEventListener("click", () => { prompt.value = originalText; resizePrompt(); updateContextMeter(); refreshComposerState(); prompt.focus(); });
+    actions.append(edit);
+  }
+  article.append(actions);
 }
 
 function markAssistantAsCommentary(content: HTMLElement): void {
