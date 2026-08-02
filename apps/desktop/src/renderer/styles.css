@@ -377,6 +377,21 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .modal-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 2px; }
 .toast { position: fixed; z-index: 20; right: 18px; bottom: 18px; max-width: 360px; padding: 10px 13px; border: 1px solid var(--border); border-radius: 9px; background: #2a2c2a; box-shadow: 0 12px 35px rgba(0,0,0,.35); }
 .management-page { position: absolute; z-index: 8; inset: 0; overflow-y: auto; background: var(--bg); }
+.pairing-page { display: grid; place-items: center; padding: 48px 24px; }
+.pairing-content { width: min(520px, 100%); }
+.pairing-mark { width: 42px; height: 42px; display: grid; place-items: center; margin-bottom: 20px; border-radius: 13px; background: var(--codex-gray-800); color: var(--codex-text-secondary); }
+.pairing-mark svg { width: 23px; height: 23px; }
+.pairing-content h1 { margin: 0; font-size: 28px; font-weight: 560; letter-spacing: -.03em; }
+.pairing-content > p { margin: 7px 0 28px; color: var(--codex-text-secondary); font-size: 15px; }
+.pairing-content form { display: grid; gap: 16px; }
+.pairing-content label { display: grid; gap: 7px; color: var(--codex-text-secondary); font-size: 12px; }
+.pairing-content input { width: 100%; height: 44px; padding: 0 13px; border: 1px solid var(--border); border-radius: var(--codex-radius-md); background: var(--codex-gray-800); color: var(--text); font-size: 14px; outline: 0; }
+.pairing-content input:focus { border-color: #696c67; box-shadow: 0 0 0 1px #696c67; }
+.pairing-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.pairing-error { margin: 0; color: var(--red); font-size: 12px; }
+.pairing-submit { justify-self: end; min-width: 110px; padding: 9px 17px; border-radius: var(--codex-radius-md); background: #e8e8e3; color: #171817; cursor: pointer; font-weight: 550; }
+.pairing-submit:disabled { opacity: .5; cursor: default; }
+.pairing-page[hidden] { display: none; }
 .management-page-header { height: 50px; display: flex; align-items: center; justify-content: flex-end; padding: 0 12px; border-bottom: 1px solid var(--border-soft); }
 .management-actions { display: flex; align-items: center; gap: 7px; }
 .compact-button { padding: 7px 14px; border-radius: 9px; }

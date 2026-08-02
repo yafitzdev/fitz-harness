@@ -21,6 +21,7 @@ let toastTimer: ReturnType<typeof setTimeout> | undefined;
 let queueRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let sessionTokenEstimate = 0;
 let contextTokenLimit = 131_072;
+let configuredHostOrigin = "Fitz host";
 let managementConfiguration: Json | undefined;
 let newChatMode = false;
 let newChatProjectDetached = false;
@@ -120,6 +121,13 @@ const renameTaskName = element("rename-task-name") as HTMLInputElement;
 const renameHeading = element("rename-heading");
 const renameLabel = element("rename-label");
 const playbookPage = element("playbook-page");
+const pairingPage = element("pairing-page");
+const pairingForm = element("pairing-form") as HTMLFormElement;
+const pairingCode = element("pairing-code") as HTMLInputElement;
+const pairingDisplayName = element("pairing-display-name") as HTMLInputElement;
+const pairingDeviceName = element("pairing-device-name") as HTMLInputElement;
+const pairingDescription = element("pairing-description");
+const pairingError = element("pairing-error");
 const playbookList = element("playbook-list");
 const playbookSearch = element("playbook-search") as HTMLInputElement;
 const managementTitle = element("management-title");
@@ -233,6 +241,7 @@ window.fitz.onUpdateStatus((updateStatus) => {
 });
 projectForm.addEventListener("submit", (event) => { event.preventDefault(); void createProject(); });
 taskForm.addEventListener("submit", (event) => { event.preventDefault(); void createSession(); });
+pairingForm.addEventListener("submit", (event) => { event.preventDefault(); void pairDevice(); });
 recipeForm.addEventListener("submit", (event) => { event.preventDefault(); void saveRecipe(); });
 engineForm.addEventListener("submit", (event) => { event.preventDefault(); void saveEngine(); });
 (element("engine-folder") as HTMLSelectElement).addEventListener("change", applyEngineFolderChoice);
@@ -250,20 +259,20 @@ async function initialize(): Promise<void> {
   try {
     setConnection("Connecting…", "loading");
     setStatus("Connecting", "loading");
-    const [health, models] = await Promise.all([api("/health"), api("/v1/models")]);
+    const [health, models, connection] = await Promise.all([api("/health"), api("/v1/models"), window.fitz.connectionInfo()]); configuredHostOrigin = connection.origin;
     model.replaceChildren();
     for (const card of models.data ?? []) model.add(new Option(card.display_name ?? card.id, card.id));
     updateModelControls();
     engineState.textContent = health.engine?.state ?? "UNLOADED";
     routeState.textContent = model.selectedOptions[0]?.textContent ?? "—";
-    setConnection("127.0.0.1:8787", "active");
+    setConnection(configuredHostOrigin.replace(/^https?:\/\//, ""), "active");
     setStatus(health.engine?.state ?? "Ready", "idle");
+    showConversationWorkspace();
     await loadProjects();
     void loadManagementConfiguration(false);
   } catch (error) {
-    setConnection("Click to retry", "error");
-    setStatus("Offline", "error");
-    showConnectionFailure(errorMessage(error));
+    if (error instanceof HttpError && error.status === 401) { configuredHostOrigin = (await window.fitz.connectionInfo()).origin; setConnection("Pair device", "error"); setStatus("Pairing required", "error"); showPairingPage(`Enter a one-time code to connect to ${configuredHostOrigin}.`); }
+    else { setConnection("Click to retry", "error"); setStatus("Offline", "error"); showConnectionFailure(errorMessage(error)); }
   } finally {
     refreshComposerState();
   }
@@ -678,6 +687,7 @@ async function continueInNewChat(session: Json): Promise<void> {
 }
 
 async function openPlaybookPage(): Promise<void> {
+  if (!pairingPage.hidden) { pairingCode.focus(); return; }
   closePopovers();
   setContextPanel(false);
   playbookPage.hidden = false;
@@ -688,8 +698,20 @@ async function openPlaybookPage(): Promise<void> {
   await loadManagementConfiguration(true);
 }
 
-function showConversationWorkspace(): void { playbookPage.hidden = true; closeManagementEditor(); setConversationInert(false); element("manage-playbooks").classList.remove("active"); }
+function showPairingPage(message: string): void { closePopovers(); setContextPanel(false); playbookPage.hidden = true; pairingPage.hidden = false; closeManagementEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
+function showConversationWorkspace(): void { pairingPage.hidden = true; playbookPage.hidden = true; closeManagementEditor(); setConversationInert(false); element("manage-playbooks").classList.remove("active"); }
 function setConversationInert(inert: boolean): void { for (const area of [workspaceHeader, messages, composerDock]) { area.toggleAttribute("inert", inert); area.setAttribute("aria-hidden", String(inert)); } }
+
+async function pairDevice(): Promise<void> {
+  setFormBusy(pairingForm, true); pairingError.hidden = true; pairingError.textContent = "";
+  try {
+    const response = await window.fitz.pairDevice({ code: pairingCode.value.trim(), displayName: pairingDisplayName.value.trim(), deviceName: pairingDeviceName.value.trim() }); let parsed: Json;
+    try { parsed = JSON.parse(response.body) as Json; } catch { parsed = { error: response.body }; }
+    if (response.status >= 400) throw new HttpError(parsed.error?.message ?? parsed.error ?? `Pairing failed (${response.status})`, response.status);
+    pairingCode.value = ""; await initialize();
+  } catch (error) { pairingError.textContent = errorMessage(error); pairingError.hidden = false; }
+  finally { setFormBusy(pairingForm, false); }
+}
 
 async function loadManagementConfiguration(renderPage: boolean): Promise<void> {
   try {

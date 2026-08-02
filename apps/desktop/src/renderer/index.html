@@ -78,6 +78,20 @@
           </div>
         </header>
 
+        <section id="pairing-page" class="management-page pairing-page" aria-label="Device pairing" hidden>
+          <div class="pairing-content">
+            <div class="pairing-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 14.5 15.5 7.5M7.4 10.2 5 12.6a3.4 3.4 0 0 0 4.8 4.8l2.4-2.4M16.6 13.8l2.4-2.4a3.4 3.4 0 0 0-4.8-4.8L11.8 9"></path></svg></div>
+            <h1>Connect this device</h1>
+            <p id="pairing-description">Enter a one-time code from your Fitz host.</p>
+            <form id="pairing-form">
+              <label>Pairing code<input id="pairing-code" autocomplete="one-time-code" maxlength="128" required autofocus placeholder="XXXX-XXXX"></label>
+              <div class="pairing-fields"><label>Your name<input id="pairing-display-name" autocomplete="name" maxlength="100" required placeholder="Name"></label><label>Device name<input id="pairing-device-name" maxlength="100" required value="Fitz desktop"></label></div>
+              <p id="pairing-error" class="pairing-error" hidden></p>
+              <button class="pairing-submit" type="submit">Connect</button>
+            </form>
+          </div>
+        </section>
+
         <section id="playbook-page" class="management-page" aria-label="Playbook management" hidden>
           <header class="management-page-header">
             <div class="management-actions"><button id="refresh-playbooks" class="icon-button" type="button" title="Refresh engines" aria-label="Refresh engines"><svg viewBox="0 0 20 20"><path d="M15.5 7A6 6 0 1 0 16 12"></path><path d="M15.5 3v4h-4"></path></svg></button></div>
