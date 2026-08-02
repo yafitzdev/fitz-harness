@@ -114,7 +114,7 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('/api/v1/management/recipes/${encodeURIComponent(id)}');
     expect(renderer).toContain("sessionTokenEstimate += estimateTokens");
     expect(renderer).toContain('api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" })');
-    expect(renderer).toContain("maxTokens: Number(effort.value)");
+    expect(renderer).toContain("max_tokens: Number(effort.value)");
     expect(renderer).toContain('api(`/api/v1/agent/runs/${currentRun}`, "DELETE")');
   });
 
@@ -159,6 +159,30 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".agent-activity-details");
     expect(styles).toContain(".agent-activity.open .agent-activity-chevron");
     expect(styles).toContain(".message.commentary");
+  });
+
+  it("matches Codex assistant, command disclosure, and shell presentation", () => {
+    expect(renderer).not.toContain('className = "assistant-mark"');
+    expect(styles).not.toContain(".assistant-mark");
+    expect(renderer).toContain('toolName === "bash"');
+    expect(renderer).toContain('details.classList.add("shell-details")');
+    expect(renderer).toContain('title.textContent = "Shell"');
+    expect(renderer).toContain('status.textContent = running ? "Running…" : "✓ Success"');
+    expect(styles).toContain(".agent-activity-summary:hover .agent-activity-chevron");
+    expect(styles).toContain("opacity: 0; transition: opacity 120ms ease");
+    expect(styles).toContain(".agent-activity.open .agent-activity-chevron { transform: rotate(90deg); }");
+    expect(styles).toContain(".agent-activity-details.shell-details");
+    expect(styles).toContain('.shell-command::before { content: "$ ";');
+  });
+
+  it("expands Advanced model settings and sends the chosen temperature and output limit", () => {
+    for (const id of ["advanced-settings-panel", "temperature", "temperature-value"]) expect(html).toContain(`id="${id}"`);
+    expect(renderer).toContain("toggleAdvancedSettings()");
+    expect(renderer).toContain('localStorage.setItem("fitz-temperature", temperature.value)');
+    expect(renderer).toContain("temperature: Number(temperature.value)");
+    expect(renderer).toContain("max_tokens: Number(effort.value)");
+    expect(styles).toContain('.advanced-row[aria-expanded="true"] svg');
+    expect(styles).toContain(".advanced-settings-panel");
   });
 
   it("manually compacts context from the inline usage popover", () => {

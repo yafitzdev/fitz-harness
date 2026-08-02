@@ -202,7 +202,12 @@
                     <button class="setting-row" type="button" data-setting="effort"><span>Effort</span><span><span id="effort-value">Medium</span><svg viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"></path></svg></span></button>
                     <button class="setting-row" type="button" data-setting="speed"><span>Speed</span><span><span id="speed-value">Standard</span><svg viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"></path></svg></span></button>
                     <div class="settings-divider"></div>
-                    <button id="advanced-settings" class="advanced-row" type="button"><span>Advanced</span><svg viewBox="0 0 20 20"><path d="m6 12 4-4 4 4"></path></svg></button>
+                    <button id="advanced-settings" class="advanced-row" type="button" aria-expanded="false"><span>Advanced</span><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></button>
+                    <div id="advanced-settings-panel" class="advanced-settings-panel" hidden>
+                      <label for="temperature"><span>Temperature</span><output id="temperature-value" for="temperature">0.4</output></label>
+                      <input id="temperature" type="range" min="0" max="2" step="0.1" value="0.4">
+                      <small>Lower is focused; higher is more varied.</small>
+                    </div>
                     <div id="settings-submenu" class="popover settings-submenu" hidden></div>
                     <select id="model" aria-label="Model route" hidden disabled></select>
                     <select id="effort" aria-label="Effort" hidden><option value="1024">Light</option><option value="4096" selected>Medium</option><option value="8192">High</option><option value="16384">Extra High</option><option value="32768">Max</option><option value="65536">Ultra</option></select>

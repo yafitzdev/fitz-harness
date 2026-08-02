@@ -61,6 +61,10 @@ const modelValue = element("model-value");
 const effortValue = element("effort-value");
 const speedValue = element("speed-value");
 const settingsSubmenu = element("settings-submenu");
+const advancedSettings = element("advanced-settings") as HTMLButtonElement;
+const advancedSettingsPanel = element("advanced-settings-panel");
+const temperature = element("temperature") as HTMLInputElement;
+const temperatureValue = element("temperature-value");
 const contextMeter = element("context-meter");
 const contextUsagePopover = element("context-usage-popover");
 const contextPercent = element("context-percent");
@@ -271,7 +275,11 @@ newBranchName.addEventListener("keydown", (event) => { if (event.key === "Enter"
 element("create-worktree-submit").addEventListener("click", () => void createWorktree());
 newWorktreeBranch.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); void createWorktree(); } });
 for (const row of document.querySelectorAll<HTMLButtonElement>("[data-setting]")) row.addEventListener("click", (event) => { event.stopPropagation(); openSettingsSubmenu(row.dataset.setting as "model" | "effort" | "speed", row); });
-element("advanced-settings").addEventListener("click", () => showToast("Advanced recipe and routing controls are available in Playbooks"));
+advancedSettings.addEventListener("click", (event) => { event.stopPropagation(); toggleAdvancedSettings(); });
+temperature.addEventListener("input", updateTemperature);
+const storedTemperature = Number(localStorage.getItem("fitz-temperature") ?? "0.4");
+temperature.value = String(Number.isFinite(storedTemperature) && storedTemperature >= 0 && storedTemperature <= 2 ? storedTemperature : 0.4);
+updateTemperature();
 taskMenuToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(taskMenu, taskMenuToggle); });
 modelMenu.addEventListener("click", (event) => event.stopPropagation());
 taskMenu.addEventListener("click", (event) => event.stopPropagation());
@@ -1528,8 +1536,23 @@ function updateModelControls(): void {
 
 function applySpeedSelection(): void { const route = speed.value === "fast" ? "fast" : "default"; if ([...model.options].some((option) => option.value === route)) model.value = route; updateModelControls(); }
 
+function toggleAdvancedSettings(): void {
+  const opening = advancedSettingsPanel.hidden;
+  settingsSubmenu.hidden = true;
+  for (const item of document.querySelectorAll(".setting-row")) item.classList.remove("active");
+  advancedSettingsPanel.hidden = !opening;
+  advancedSettings.setAttribute("aria-expanded", String(opening));
+}
+
+function updateTemperature(): void {
+  temperatureValue.textContent = Number(temperature.value).toFixed(1);
+  localStorage.setItem("fitz-temperature", temperature.value);
+}
+
 function openSettingsSubmenu(kind: "model" | "effort" | "speed", row: HTMLButtonElement): void {
   const select = kind === "model" ? model : kind === "effort" ? effort : speed;
+  advancedSettingsPanel.hidden = true;
+  advancedSettings.setAttribute("aria-expanded", "false");
   settingsSubmenu.replaceChildren();
   for (const option of [...select.options]) {
     const button = document.createElement("button"); button.type = "button"; button.classList.toggle("selected", option.value === select.value);
@@ -1554,6 +1577,7 @@ function togglePopover(popover: HTMLElement, toggle: HTMLButtonElement): void {
 function closePopovers(): void {
   modelMenu.hidden = true;
   settingsSubmenu.hidden = true;
+  advancedSettingsPanel.hidden = true;
   contextUsagePopover.hidden = true;
   accessModeMenu.hidden = true;
   taskMenu.hidden = true;
@@ -1563,6 +1587,7 @@ function closePopovers(): void {
   hideProjectHover();
   hideChatHover();
   modelToggle.setAttribute("aria-expanded", "false");
+  advancedSettings.setAttribute("aria-expanded", "false");
   contextMeter.setAttribute("aria-expanded", "false");
   accessModeToggle.setAttribute("aria-expanded", "false");
   taskMenuToggle.setAttribute("aria-expanded", "false");
@@ -1603,7 +1628,8 @@ async function sendPrompt(): Promise<void> {
   try {
     const response = await api("/api/v1/agent/runs", "POST", {
       model: model.value,
-      maxTokens: Number(effort.value),
+      max_tokens: Number(effort.value),
+      temperature: Number(temperature.value),
       sessionId: currentSession,
       accessMode,
       messages: [{ role: "user", content }],
@@ -1854,7 +1880,6 @@ function showConnectionFailure(detail: string): void {
 function appendMessage(role: string, text: string): HTMLElement {
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   const article = document.createElement("article"); article.className = `message ${role}`;
-  if (role === "assistant") { const mark = document.createElement("span"); mark.className = "assistant-mark"; mark.append(sparkIcon()); article.append(mark); }
   const content = document.createElement("div"); content.className = "message-body"; content.textContent = text; article.append(content); messages.append(article); messages.scrollTop = messages.scrollHeight; return content;
 }
 
@@ -1868,7 +1893,6 @@ function markAssistantAsCommentary(content: HTMLElement): void {
   if (!article) return;
   article.classList.remove("assistant");
   article.classList.add("commentary");
-  article.querySelector(".assistant-mark")?.remove();
 }
 
 function appendToolActivity(toolName: string, input: unknown, toolCallId: string, running: boolean): HTMLElement {
@@ -1877,11 +1901,14 @@ function appendToolActivity(toolName: string, input: unknown, toolCallId: string
   const summary = document.createElement("button"); summary.type = "button"; summary.className = "agent-activity-summary"; summary.setAttribute("aria-expanded", "false");
   const icon = document.createElement("span"); icon.className = "agent-activity-icon"; icon.append(activityIcon(toolName));
   const label = document.createElement("span"); label.className = "agent-activity-label"; label.textContent = describeToolActivity(toolName, input, running); label.title = label.textContent;
-  const chevron = document.createElement("span"); chevron.className = "agent-activity-chevron"; chevron.append(svg('<path d="m7 9.5 3 3 3-3"></path>'));
+  const chevron = document.createElement("span"); chevron.className = "agent-activity-chevron"; chevron.append(svg('<path d="m8 5.5 4.5 4.5L8 14.5"></path>'));
   summary.append(icon, label, chevron);
   const details = document.createElement("div"); details.className = "agent-activity-details";
-  if (input !== undefined) details.append(toolActivityDetail("Input", input, "tool-activity-input"));
-  details.append(toolActivityDetail("Result", running ? undefined : null, "tool-activity-result"));
+  if (toolName === "bash") renderShellActivity(details, input, running);
+  else {
+    if (input !== undefined) details.append(toolActivityDetail("Input", input, "tool-activity-input"));
+    details.append(toolActivityDetail("Result", running ? undefined : null, "tool-activity-result"));
+  }
   details.hidden = true;
   summary.addEventListener("click", () => { const open = details.hasAttribute("hidden"); details.hidden = !open; row.classList.toggle("open", open); summary.setAttribute("aria-expanded", String(open)); });
   row.append(summary, details); messages.append(row); messages.scrollTop = messages.scrollHeight; return row;
@@ -1893,6 +1920,39 @@ function completeToolActivity(row: HTMLElement, toolName: string, input: unknown
   if (label) { label.textContent = isError ? `${describeToolActivity(toolName, input, false)} (failed)` : describeToolActivity(toolName, input, false); label.title = label.textContent; }
   const resultValue = row.querySelector<HTMLElement>(".tool-activity-result .tool-activity-value");
   if (resultValue) resultValue.textContent = formatToolPayload(result, "No result returned");
+  const shellOutput = row.querySelector<HTMLElement>(".shell-output");
+  if (shellOutput) shellOutput.textContent = shellOutputText(result);
+  const shellStatus = row.querySelector<HTMLElement>(".shell-status");
+  if (shellStatus) { shellStatus.textContent = isError ? "× Failed" : "✓ Success"; shellStatus.classList.toggle("failed", isError); }
+}
+
+function renderShellActivity(details: HTMLElement, input: unknown, running: boolean): void {
+  details.classList.add("shell-details");
+  const title = document.createElement("span"); title.className = "shell-title"; title.textContent = "Shell";
+  const command = document.createElement("pre"); command.className = "shell-command"; command.textContent = shellCommand(input);
+  const output = document.createElement("pre"); output.className = "shell-output"; output.textContent = running ? "Running…" : "No output";
+  const status = document.createElement("span"); status.className = "shell-status"; status.textContent = running ? "Running…" : "✓ Success";
+  details.append(title, command, output, status);
+}
+
+function shellCommand(input: unknown): string {
+  if (input && typeof input === "object") {
+    const value = input as Json;
+    const command = value.command ?? value.cmd;
+    if (typeof command === "string") return command;
+  }
+  return formatToolPayload(input, "Command unavailable");
+}
+
+function shellOutputText(result: unknown): string {
+  if (result && typeof result === "object") {
+    const content = (result as Json).content;
+    if (Array.isArray(content)) {
+      const text = content.filter((item) => item && typeof item === "object" && typeof item.text === "string").map((item) => item.text).join("");
+      if (text) return text.trimEnd();
+    }
+  }
+  return formatToolPayload(result, "No output");
 }
 
 function toolActivityDetail(label: string, value: unknown, className: string): HTMLElement {
@@ -1983,6 +2043,8 @@ function refreshComposerState(): void {
   model.disabled = model.options.length === 0 || Boolean(currentRun);
   effort.disabled = Boolean(currentRun);
   speed.disabled = model.options.length === 0 || Boolean(currentRun);
+  temperature.disabled = Boolean(currentRun);
+  advancedSettings.disabled = Boolean(currentRun);
   modelToggle.disabled = model.options.length === 0 || Boolean(currentRun);
   accessModeToggle.disabled = Boolean(currentRun);
   attachButton.disabled = !currentSession || Boolean(currentRun);
