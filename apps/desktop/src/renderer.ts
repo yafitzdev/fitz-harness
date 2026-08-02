@@ -75,6 +75,7 @@ const workspaceHeader = query(".workspace-header");
 const composerDock = query(".composer-dock");
 const projects = element("projects");
 const messages = element("messages");
+const scrollToBottom = element("scroll-to-bottom") as HTMLButtonElement;
 const model = element("model") as HTMLSelectElement;
 const effort = element("effort") as HTMLSelectElement;
 const modelToggle = element("model-toggle") as HTMLButtonElement;
@@ -283,6 +284,8 @@ form.addEventListener("submit", (event) => {
   if (currentRun) void cancelRun();
   else void sendPrompt();
 });
+messages.addEventListener("scroll", updateScrollToBottom, { passive: true });
+scrollToBottom.addEventListener("click", () => messages.scrollTo({ top: messages.scrollHeight, behavior: "smooth" }));
 prompt.addEventListener("input", () => { resizePrompt(); updateContextMeter(); refreshComposerState(); });
 prompt.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
@@ -2448,6 +2451,12 @@ function syncConversationLayout(): void {
   const scrollbarWidth = Math.max(0, messages.offsetWidth - messages.clientWidth);
   workspace.style.setProperty("--conversation-scrollbar", `${scrollbarWidth}px`);
   workspace.style.setProperty("--composer-height", `${composerDock.offsetHeight}px`);
+  updateScrollToBottom();
+}
+
+function updateScrollToBottom(): void {
+  const distanceFromBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight;
+  scrollToBottom.hidden = distanceFromBottom < 48 || Boolean(messages.querySelector(".landing, .new-chat-landing"));
 }
 
 function showConnectionFailure(detail: string): void {

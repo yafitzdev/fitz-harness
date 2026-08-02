@@ -334,6 +334,12 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("conversationLayoutObserver.observe(composerDock)");
     expect(renderer).toContain("messages.offsetWidth - messages.clientWidth");
     expect(renderer).toContain("composerDock.offsetHeight");
+    expect(html).toContain('id="scroll-to-bottom"');
+    expect(renderer).toContain('messages.addEventListener("scroll", updateScrollToBottom');
+    expect(renderer).toContain('messages.scrollTo({ top: messages.scrollHeight, behavior: "smooth" })');
+    expect(renderer).toContain("distanceFromBottom < 48");
+    expect(styles).toContain(".scroll-to-bottom");
+    expect(styles).toContain("bottom: calc(100% + 12px)");
   });
 
   it("expands Advanced model settings and sends the chosen temperature and output limit", () => {
