@@ -314,8 +314,9 @@ describe("desktop renderer shell", () => {
   });
 
   it("uses the responsive composer measure as the single conversation axis", () => {
-    expect(styles).toContain("--conversation-width: min(768px, calc(var(--conversation-space) - 36px))");
-    expect(styles).toContain("--conversation-gutter: max(18px, calc((var(--conversation-space) - var(--conversation-width)) / 2))");
+    expect(styles).toContain("--conversation-inset: clamp(48px, 8vw, 96px)");
+    expect(styles).toContain("--conversation-width: min(768px, calc(var(--conversation-space) - var(--conversation-inset)))");
+    expect(styles).toContain("--conversation-gutter: max(24px, calc((var(--conversation-space) - var(--conversation-width)) / 2))");
     expect(styles).toContain("grid-template-columns: minmax(0, var(--conversation-width))");
     expect(styles).toContain("justify-content: center");
     expect(styles).toContain("width: var(--conversation-width)");
@@ -369,7 +370,7 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("--codex-radius-3xl: 25px");
     expect(styles).toContain("--codex-control-size: 28px");
     expect(styles).toContain("--sidebar-width: 275px");
-    expect(styles).toContain("--conversation-width: min(768px, calc(var(--conversation-space) - 36px))");
+    expect(styles).toContain("--conversation-width: min(768px, calc(var(--conversation-space) - var(--conversation-inset)))");
     expect(styles).toContain("max-width: 100%");
     expect(styles).toContain("backdrop-filter: blur(16px)");
     expect(styles).toContain("--codex-elevation-prominent:");
