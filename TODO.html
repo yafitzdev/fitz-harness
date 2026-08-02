@@ -105,7 +105,7 @@
       ];
 
       const conversationSection = sections.find((section) => section.id === "conversation");
-      if (conversationSection) conversationSection.automated = ["pass", "The transcript and floating composer share one responsive column. Transcript content scrolls behind the composer and disappears beneath its fully opaque surface through the bottom window edge, with no abrupt cutoff or visible lower gap. Runtime measurements of the composer height, Inspector, and platform scrollbar preserve clean scroll clearance and exact alignment as the window, attachments, and multiline input change size."];
+      if (conversationSection) conversationSection.automated = ["pass", "The transcript and floating composer share one computed left axis rather than mixing browser centering with calculated positioning. A one-pixel content safety inset prevents table borders or bright glyphs from peeking around the composer's rounded edge. Content scrolls behind its opaque surface through the bottom window edge, while runtime measurements preserve clearance and alignment as the window, attachments, Inspector, and multiline input change size."];
 
       const storageKey = "fitz-refinement-review-v1";
       let saved = {};
