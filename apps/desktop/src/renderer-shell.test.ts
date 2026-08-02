@@ -68,6 +68,15 @@ describe("desktop renderer shell", () => {
     expect(html).not.toContain('id="sidebar-restore"');
   });
 
+  it("keeps every management workspace on one stable scrollbar-aware axis", () => {
+    expect(styles).toContain("--management-content-width: 900px");
+    expect(styles).toContain("scrollbar-gutter: stable both-edges");
+    expect(styles).toContain("width: min(var(--management-content-width), calc(100% - 48px))");
+    expect(styles).toContain("*::-webkit-scrollbar { width: 10px; height: 10px; }");
+    expect(styles).toContain("background-clip: content-box");
+    expect(styles).not.toContain(".management-page-content { width: min(820px");
+  });
+
   it("matches the compact Codex sidebar and new-chat project rail", () => {
     expect(html).not.toContain('class="runtime-mode-toggle"');
     expect(html).toContain('<span>Codex</span>');
