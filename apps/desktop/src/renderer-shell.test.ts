@@ -291,10 +291,20 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("appendMessageActions(article, content, role, text)");
     expect(renderer).toContain('copy.title = "Copy message"');
     expect(renderer).toContain('edit.title = "Edit message"');
-    expect(renderer).toContain('prompt.value = originalText');
+    expect(renderer).toContain("startInlineMessageEdit(article, content, actions, originalText)");
     expect(renderer).toContain('copyValue(content.innerText, "Copied message")');
     expect(styles).toContain(".message:hover .message-actions");
     expect(styles).toContain(".message-action svg");
+  });
+
+  it("edits user prompts inline with Cancel and Send controls", () => {
+    expect(renderer).toContain('editor.className = "message-inline-editor"');
+    expect(renderer).toContain('cancel.textContent = "Cancel"');
+    expect(renderer).toContain('send.textContent = "Send"');
+    expect(renderer).toContain("void sendPrompt(revised, article)");
+    expect(renderer).toContain('event.key === "Enter" && (event.ctrlKey || event.metaKey)');
+    expect(styles).toContain(".message-inline-editor");
+    expect(styles).toContain(".message-edit-controls");
   });
 
   it("expands Advanced model settings and sends the chosen temperature and output limit", () => {

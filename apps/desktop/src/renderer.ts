@@ -2096,8 +2096,8 @@ function closePopovers(): void {
   for (const toggle of document.querySelectorAll("[data-app-menu]")) toggle.setAttribute("aria-expanded", "false");
 }
 
-async function sendPrompt(): Promise<void> {
-  const content = prompt.value.trim();
+async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLElement): Promise<void> {
+  const content = (submittedContent ?? prompt.value).trim();
   if (!content) return;
   if (!currentSession && newChatMode && currentProject) {
     try {
@@ -2118,7 +2118,7 @@ async function sendPrompt(): Promise<void> {
   prompt.value = "";
   resizePrompt();
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
-  appendMessage("user", content);
+  if (!existingUserMessage) appendMessage("user", content);
   const activity = appendRunActivity("Working");
   const runStartedAt = Date.now();
   sessionTokenEstimate += estimateTokens(content);
@@ -2472,10 +2472,29 @@ function appendMessageActions(article: HTMLElement, content: HTMLElement, role: 
   if (role === "user") {
     const edit = document.createElement("button"); edit.type = "button"; edit.className = "message-action"; edit.title = "Edit message"; edit.setAttribute("aria-label", "Edit message");
     edit.append(svg('<path d="m4.2 14.8.7-3.2 7.8-7.8a1.45 1.45 0 0 1 2.05 2.05L7 13.65z"></path><path d="m11.7 4.8 2.05 2.05"></path>'));
-    edit.addEventListener("click", () => { prompt.value = originalText; resizePrompt(); updateContextMeter(); refreshComposerState(); prompt.focus(); });
+    edit.addEventListener("click", () => startInlineMessageEdit(article, content, actions, originalText));
     actions.append(edit);
   }
   article.append(actions);
+}
+
+function startInlineMessageEdit(article: HTMLElement, content: HTMLElement, actions: HTMLElement, originalText: string): void {
+  if (currentRun) { showToast("Wait for the current response before editing a message."); return; }
+  const editor = document.createElement("textarea"); editor.className = "message-inline-editor"; editor.value = originalText; editor.setAttribute("aria-label", "Edit message");
+  const controls = document.createElement("div"); controls.className = "message-edit-controls";
+  const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "message-edit-cancel"; cancel.textContent = "Cancel";
+  const send = document.createElement("button"); send.type = "button"; send.className = "message-edit-send"; send.textContent = "Send";
+  const restore = () => { editor.replaceWith(content); controls.remove(); actions.hidden = false; article.classList.remove("editing"); };
+  const submit = () => {
+    const revised = editor.value.trim();
+    if (!revised) { editor.focus(); return; }
+    content.textContent = revised;
+    restore();
+    void sendPrompt(revised, article);
+  };
+  cancel.addEventListener("click", restore); send.addEventListener("click", submit);
+  editor.addEventListener("keydown", (event) => { if (event.key === "Escape") { event.preventDefault(); restore(); } if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); submit(); } });
+  actions.hidden = true; article.classList.add("editing"); content.replaceWith(editor); article.insertBefore(controls, actions); controls.append(cancel, send); editor.focus(); editor.setSelectionRange(editor.value.length, editor.value.length);
 }
 
 function markAssistantAsCommentary(content: HTMLElement): void {
