@@ -5,6 +5,10 @@ type Json = Record<string, any>;
 type FixedRouteId = "fast" | "default" | "smart";
 type AccessMode = "full" | "ask" | "read-only";
 type RuntimeMode = "host" | "consume";
+type ConnectionModelView = ConsumerConnectionSummary["models"][number] & { displayName?: string; modelId?: string; contextTokens?: number };
+type HostedConnectionView = Omit<ConsumerConnectionSummary, "models"> & { hosted: true; models: ConnectionModelView[] };
+type SavedConnectionView = Omit<ConsumerConnectionSummary, "models"> & { hosted: false; models: ConnectionModelView[]; source: ConsumerConnectionSummary };
+type ConnectionView = HostedConnectionView | SavedConnectionView;
 
 const FIXED_ROUTES: readonly { id: FixedRouteId; label: string; icon: string }[] = [
   { id: "fast", label: "Fast", icon: '<path class="route-icon-outline" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path><path class="route-icon-filled" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path>' },
@@ -858,9 +862,10 @@ async function syncAndLoadConsumerConnections(reportFailure: boolean): Promise<v
 
 function renderConsumerConnections(): void {
   consumerConnections.replaceChildren();
-  if (!consumerConnectionRecords.length) { const empty = document.createElement("p"); empty.className = "connections-empty"; empty.textContent = "No APIs connected yet"; consumerConnections.append(empty); return; }
+  const connectionRecords = connectionViews();
+  if (!connectionRecords.length) { const empty = document.createElement("p"); empty.className = "connections-empty"; empty.textContent = "No APIs connected yet"; consumerConnections.append(empty); return; }
   const query = connectionSearch.value.trim().toLowerCase();
-  const visible = consumerConnectionRecords.filter((connection) => !query || [connection.displayName, connection.baseUrl, ...connection.models.map((model) => model.id)].some((value) => value.toLowerCase().includes(query)));
+  const visible = connectionRecords.filter((connection) => !query || [connection.displayName, connection.baseUrl, ...connection.models.flatMap((model) => [model.id, model.displayName, model.modelId])].some((value) => String(value ?? "").toLowerCase().includes(query)));
   if (!visible.length) { consumerConnections.append(panelEmpty("No matching connections")); return; }
   const routes = managementConfiguration?.routes ?? [];
   for (const connection of visible) {
@@ -870,18 +875,23 @@ function renderConsumerConnections(): void {
     const name = document.createElement("h3"); name.textContent = connection.displayName;
     identity.append(name);
     const actions = document.createElement("div"); actions.className = "playbook-actions";
-    const refresh = document.createElement("button"); refresh.type = "button"; refresh.className = "quiet-button compact-button"; refresh.textContent = "Refresh"; refresh.addEventListener("click", () => void testConsumerConnection(connection, refresh));
-    const edit = document.createElement("button"); edit.type = "button"; edit.className = "quiet-button compact-button"; edit.textContent = "Configure"; edit.addEventListener("click", () => openConnectionEditor(connection));
-    const remove = document.createElement("button"); remove.type = "button"; remove.className = "quiet-button compact-button danger"; remove.textContent = "Remove"; remove.addEventListener("click", () => { if (remove.dataset.confirm !== "true") { remove.dataset.confirm = "true"; remove.textContent = "Confirm"; return; } void removeConsumerConnection(connection.id); });
-    actions.append(refresh, edit, remove); heading.append(identity, actions); card.append(heading);
+    if (!connection.hosted) {
+      const refresh = document.createElement("button"); refresh.type = "button"; refresh.className = "quiet-button compact-button"; refresh.textContent = "Refresh"; refresh.addEventListener("click", () => void testConsumerConnection(connection.source, refresh));
+      const edit = document.createElement("button"); edit.type = "button"; edit.className = "quiet-button compact-button"; edit.textContent = "Configure"; edit.addEventListener("click", () => openConnectionEditor(connection.source));
+      const remove = document.createElement("button"); remove.type = "button"; remove.className = "quiet-button compact-button danger"; remove.textContent = "Remove"; remove.addEventListener("click", () => { if (remove.dataset.confirm !== "true") { remove.dataset.confirm = "true"; remove.textContent = "Confirm"; return; } void removeConsumerConnection(connection.id); });
+      actions.append(refresh, edit, remove);
+    }
+    heading.append(identity, actions); card.append(heading);
     if (!connection.models.length) card.append(panelEmpty("No models discovered"));
     for (const consumerModel of connection.models) {
       const recipeCard = document.createElement("article"); recipeCard.className = "recipe-card";
       const recipeDetails = document.createElement("div"); recipeDetails.className = "recipe-card-details";
-      const modelName = document.createElement("span"); modelName.className = "recipe-display-name"; modelName.textContent = consumerModel.id;
+      const modelName = document.createElement("span"); modelName.className = "recipe-display-name"; modelName.textContent = consumerModel.displayName ?? consumerModel.id;
       const labels = document.createElement("div"); labels.className = "recipe-card-labels";
-      const modelLabel = document.createElement("span"); modelLabel.className = "recipe-card-label"; modelLabel.textContent = "API model";
-      labels.append(modelLabel); recipeDetails.append(modelName, labels);
+      const modelLabel = document.createElement("span"); modelLabel.className = "recipe-card-label"; modelLabel.textContent = consumerModel.modelId ?? "API model";
+      labels.append(modelLabel);
+      if (consumerModel.contextTokens) { const contextLabel = document.createElement("span"); contextLabel.className = "recipe-card-label recipe-context-label"; contextLabel.textContent = `${formatTokenCount(consumerModel.contextTokens)} ctx`; labels.append(contextLabel); }
+      recipeDetails.append(modelName, labels);
       const routeToggle = document.createElement("div"); routeToggle.className = "recipe-route-toggle"; routeToggle.setAttribute("role", "group"); routeToggle.setAttribute("aria-label", `${consumerModel.id} routing`);
       for (const definition of FIXED_ROUTES) {
         const routeId = consumerFixedRouteId(definition.id);
@@ -896,6 +906,24 @@ function renderConsumerConnections(): void {
     }
     consumerConnections.append(card);
   }
+}
+
+function connectionViews(): ConnectionView[] {
+  const recipes = (managementConfiguration?.recipes ?? []).filter((recipe: Json) => !String(recipe.id).startsWith("consumer-recipe--") && recipe.capabilities?.chatCompletions !== false);
+  const engines = managementConfiguration?.engines ?? [];
+  const hostedByPlaybook = new Map<string, HostedConnectionView>();
+  for (const recipe of recipes) {
+    const playbookId = String(recipe.playbookId);
+    const engine = engines.find((candidate: Json) => candidate.id === playbookId);
+    let connection = hostedByPlaybook.get(playbookId);
+    if (!connection) {
+      connection = { id: `hosted--${playbookId}`, displayName: engine?.displayName ?? playbookId, baseUrl: "", authType: "none", hasCredential: false, models: [], updatedAt: String(engine?.updatedAt ?? ""), hosted: true };
+      hostedByPlaybook.set(playbookId, connection);
+    }
+    const route = (managementConfiguration?.routes ?? []).find((candidate: Json) => !String(candidate.id).startsWith("consumer--") && candidate.recipeId === recipe.id);
+    connection.models.push({ id: String(recipe.id), routeId: String(route?.id ?? recipe.id), recipeId: String(recipe.id), displayName: String(recipe.displayName ?? recipe.id), modelId: String(recipe.modelId ?? recipe.id), contextTokens: Number(recipe.contextTokens) });
+  }
+  return [...hostedByPlaybook.values(), ...consumerConnectionRecords.map((connection): SavedConnectionView => ({ ...connection, hosted: false, models: connection.models.map((model) => ({ ...model })), source: connection }))];
 }
 
 async function saveConsumerConnection(): Promise<void> {

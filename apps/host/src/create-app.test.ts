@@ -27,6 +27,19 @@ describe("Fitz host", () => {
     await runtime.app.close();
   });
 
+  it("uses a hosted recipe directly from a consumer route without loopback", async () => {
+    const runtime = createHost();
+    try {
+      const assigned = await runtime.app.inject({ method: "PUT", url: "/api/v1/management/routes/consumer--default", payload: { displayName: "Default", recipeId: "fake-best", enabled: true, isDefault: true } });
+      expect(assigned.statusCode, assigned.body).toBe(200);
+      await runtime.app.inject({ method: "PUT", url: "/api/v1/runtime-mode", payload: { mode: "consume" } });
+      expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data).toEqual([expect.objectContaining({ id: "consumer--default" })]);
+      const completion = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "consumer--default", stream: false, messages: [{ role: "user", content: "hosted locally" }] } });
+      expect(completion.statusCode, completion.body).toBe(200);
+      expect(completion.json().choices[0].message.content).toContain("Fake response from fake-best-v1");
+    } finally { await runtime.app.close(); }
+  });
+
   it("discovers an external API and exposes only the active runtime mode", async () => {
     const upstream = createServer((request, response) => {
       if (request.url === "/v1/models") { response.writeHead(200, { "content-type": "application/json" }); response.end('{"data":[{"id":"upstream-model"},{"id":"explicit-chat-model","endpoints":["chat"]},{"id":"embed-v4.0"},{"id":"rerank-v3.5"},{"id":"cohere-transcribe-03-2026"},{"id":"provider-embedding","endpoints":["embed"]}]}'); return; }
