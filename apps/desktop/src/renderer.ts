@@ -5,8 +5,8 @@ type Json = Record<string, any>;
 type FixedRouteId = "fast" | "default" | "smart";
 type AccessMode = "full" | "ask" | "read-only";
 type ConnectionModelView = ConsumerConnectionSummary["models"][number] & { displayName?: string; modelId?: string; contextTokens?: number };
-type HostedConnectionView = Omit<ConsumerConnectionSummary, "models"> & { hosted: true; models: ConnectionModelView[]; availableModels: ConnectionModelView[] };
-type SavedConnectionView = Omit<ConsumerConnectionSummary, "models"> & { hosted: false; models: ConnectionModelView[]; availableModels: ConnectionModelView[]; source: ConsumerConnectionSummary };
+type HostedConnectionView = Omit<ConsumerConnectionSummary, "models"> & { hosted: true; availableModels: ConnectionModelView[] };
+type SavedConnectionView = Omit<ConsumerConnectionSummary, "models"> & { hosted: false; availableModels: ConnectionModelView[]; source: ConsumerConnectionSummary };
 type ConnectionView = HostedConnectionView | SavedConnectionView;
 
 const FIXED_ROUTES: readonly { id: FixedRouteId; label: string; icon: string }[] = [
@@ -35,7 +35,6 @@ let administrationPolicies: Json[] = [];
 let diagnosticBundle: Json | undefined;
 let consumerConnectionRecords: ConsumerConnectionSummary[] = [];
 let selectedConnectionId = LOCAL_CONNECTION_ID;
-let configuredConnectionId: string | undefined;
 let pendingRemoteAction: "enable" | "disable" | undefined;
 let pendingStartupAction: "install" | "remove" | undefined;
 let managementConfiguration: Json | undefined;
@@ -862,7 +861,7 @@ function renderConsumerConnections(): void {
   const connectionRecords = connectionViews();
   if (!connectionRecords.length) { const empty = document.createElement("p"); empty.className = "connections-empty"; empty.textContent = "No APIs connected yet"; consumerConnections.append(empty); return; }
   const query = connectionSearch.value.trim().toLowerCase();
-  const visible = connectionRecords.filter((connection) => !query || [connection.displayName, ...connection.models.flatMap((model) => [model.id, model.displayName, model.modelId]), ...connection.availableModels.flatMap((model) => [model.id, model.modelId])].some((value) => String(value ?? "").toLowerCase().includes(query)));
+  const visible = connectionRecords.filter((connection) => !query || [connection.displayName, ...connection.availableModels.flatMap((model) => [model.id, model.displayName, model.modelId])].some((value) => String(value ?? "").toLowerCase().includes(query)));
   if (!visible.length) { consumerConnections.append(panelEmpty("No matching connections")); return; }
   const routes = managementConfiguration?.routes ?? [];
   for (const connection of visible) {
@@ -874,16 +873,13 @@ function renderConsumerConnections(): void {
     const actions = document.createElement("div"); actions.className = "playbook-actions";
     if (!connection.hosted) {
       const refresh = document.createElement("button"); refresh.type = "button"; refresh.className = "quiet-button compact-button"; refresh.textContent = "Refresh"; refresh.addEventListener("click", () => void testConsumerConnection(connection.source, refresh));
-      const edit = document.createElement("button"); edit.type = "button"; edit.className = "quiet-button compact-button"; edit.textContent = configuredConnectionId === connection.id ? "Done" : "Configure"; edit.addEventListener("click", () => { configuredConnectionId = configuredConnectionId === connection.id ? undefined : connection.id; renderConsumerConnections(); });
       const manage = document.createElement("button"); manage.type = "button"; manage.className = "quiet-button compact-button"; manage.textContent = "Edit"; manage.addEventListener("click", () => openConnectionEditor(connection.source));
       const remove = document.createElement("button"); remove.type = "button"; remove.className = "quiet-button compact-button danger"; remove.textContent = "Remove"; remove.addEventListener("click", () => { if (remove.dataset.confirm !== "true") { remove.dataset.confirm = "true"; remove.textContent = "Confirm"; return; } void removeConsumerConnection(connection.id); });
-      actions.append(refresh, edit, manage, remove);
+      actions.append(refresh, manage, remove);
     }
     heading.append(identity, actions); card.append(heading);
-    const configuring = !connection.hosted && configuredConnectionId === connection.id;
-    const shownModels = configuring ? connection.availableModels : connection.models;
-    if (!shownModels.length) card.append(panelEmpty(configuring ? "No chat models discovered" : "No routes configured"));
-    for (const consumerModel of shownModels) {
+    if (!connection.availableModels.length) card.append(panelEmpty("No chat models available"));
+    for (const consumerModel of connection.availableModels) {
       const recipeCard = document.createElement("article"); recipeCard.className = "recipe-card";
       const recipeDetails = document.createElement("div"); recipeDetails.className = "recipe-card-details";
       const modelName = document.createElement("span"); modelName.className = "recipe-display-name"; modelName.textContent = consumerModel.displayName ?? consumerModel.id;
@@ -894,17 +890,14 @@ function renderConsumerConnections(): void {
       recipeDetails.append(modelName, labels);
       const recipeActions = document.createElement("div"); recipeActions.className = "recipe-card-actions";
       const testButton = document.createElement("button"); testButton.type = "button"; testButton.className = "recipe-test-button"; testButton.setAttribute("aria-live", "polite"); testButton.addEventListener("click", () => void testRecipe({ id: consumerModel.recipeId, displayName: consumerModel.id }, recipeCard, testButton));
-      if (configuring) {
-        const routeToggle = document.createElement("div"); routeToggle.className = "recipe-route-toggle"; routeToggle.setAttribute("role", "group"); routeToggle.setAttribute("aria-label", `${consumerModel.id} routing`);
-        for (const definition of FIXED_ROUTES) {
-          const routeId = consumerFixedRouteId(connection.id, definition.id);
-          const route = routes.find((item: Json) => item.id === routeId) ?? routes.find((item: Json) => item.id === `consumer--${definition.id}` && item.recipeId === consumerModel.recipeId);
-          const button = document.createElement("button"); button.type = "button"; button.className = `route-symbol route-${definition.id}`; button.title = definition.label; button.setAttribute("aria-label", `${definition.label} route`); button.setAttribute("aria-pressed", String(route?.recipeId === consumerModel.recipeId)); button.classList.toggle("active", route?.recipeId === consumerModel.recipeId); button.append(svg(definition.icon)); button.addEventListener("click", () => void assignConsumerRoute(connection.id, definition, consumerModel, button));
-          routeToggle.append(button);
-        }
-        recipeActions.append(routeToggle);
+      const routeToggle = document.createElement("div"); routeToggle.className = "recipe-route-toggle"; routeToggle.setAttribute("role", "group"); routeToggle.setAttribute("aria-label", `${consumerModel.id} routing`);
+      for (const definition of FIXED_ROUTES) {
+        const routeId = connection.hosted ? definition.id : consumerFixedRouteId(connection.id, definition.id);
+        const route = routes.find((item: Json) => item.id === routeId) ?? (!connection.hosted ? routes.find((item: Json) => item.id === `consumer--${definition.id}` && item.recipeId === consumerModel.recipeId) : undefined);
+        const button = document.createElement("button"); button.type = "button"; button.className = `route-symbol route-${definition.id}`; button.title = definition.label; button.setAttribute("aria-label", `${definition.label} route`); button.setAttribute("aria-pressed", String(route?.recipeId === consumerModel.recipeId)); button.classList.toggle("active", route?.recipeId === consumerModel.recipeId); button.append(svg(definition.icon)); button.addEventListener("click", () => void assignConnectionRoute(connection, definition, consumerModel, button));
+        routeToggle.append(button);
       }
-      recipeActions.append(testButton); renderRecipeTestState(consumerModel.recipeId, recipeCard, testButton);
+      recipeActions.append(routeToggle, testButton); renderRecipeTestState(consumerModel.recipeId, recipeCard, testButton);
       recipeCard.append(recipeDetails, recipeActions); card.append(recipeCard);
     }
     consumerConnections.append(card);
@@ -913,23 +906,11 @@ function renderConsumerConnections(): void {
 
 function connectionViews(): ConnectionView[] {
   const recipes = managementConfiguration?.recipes ?? [];
-  const routes = managementConfiguration?.routes ?? [];
-  const recipeView = (route: Json, definition: (typeof FIXED_ROUTES)[number]): ConnectionModelView | undefined => {
-    const recipe = recipes.find((candidate: Json) => candidate.id === route?.recipeId);
-    if (!recipe) return undefined;
-    return { id: definition.id, routeId: String(route.id), recipeId: String(recipe.id), displayName: definition.label, modelId: String(recipe.displayName ?? recipe.modelId ?? recipe.id), contextTokens: Number(recipe.contextTokens) };
-  };
-  const hostedModels = FIXED_ROUTES.map((definition) => recipeView(routes.find((route: Json) => route.id === definition.id), definition)).filter(Boolean) as ConnectionModelView[];
-  const hostedConnection: HostedConnectionView = { id: LOCAL_CONNECTION_ID, displayName: String(managementConfiguration?.hostName ?? "This PC"), baseUrl: "", authType: "none", hasCredential: false, models: hostedModels, availableModels: hostedModels, updatedAt: "", hosted: true };
-  return [hostedConnection, ...consumerConnectionRecords.map((connection): SavedConnectionView => {
-    const recipeIds = new Set(connection.models.map((model) => model.recipeId));
-    const models = FIXED_ROUTES.map((definition) => {
-      const scoped = routes.find((route: Json) => route.id === consumerFixedRouteId(connection.id, definition.id));
-      const legacy = routes.find((route: Json) => route.id === `consumer--${definition.id}` && recipeIds.has(route.recipeId));
-      return recipeView(scoped ?? legacy, definition);
-    }).filter(Boolean) as ConnectionModelView[];
-    return { ...connection, hosted: false, models, availableModels: connection.models.map((model) => ({ ...model })), source: connection };
-  })];
+  const hostedModels = recipes
+    .filter((recipe: Json) => !String(recipe.id).startsWith("consumer-recipe--") && recipe.capabilities?.chatCompletions !== false)
+    .map((recipe: Json): ConnectionModelView => ({ id: String(recipe.id), routeId: "", recipeId: String(recipe.id), displayName: String(recipe.displayName ?? recipe.modelId ?? recipe.id), modelId: String(recipe.modelId ?? recipe.id), contextTokens: Number(recipe.contextTokens) }));
+  const hostedConnection: HostedConnectionView = { id: LOCAL_CONNECTION_ID, displayName: String(managementConfiguration?.hostName ?? "This PC"), baseUrl: "", authType: "none", hasCredential: false, availableModels: hostedModels, updatedAt: "", hosted: true };
+  return [hostedConnection, ...consumerConnectionRecords.map((connection): SavedConnectionView => ({ ...connection, hosted: false, availableModels: connection.models.map((model) => ({ ...model })), source: connection }))];
 }
 
 async function saveConsumerConnection(): Promise<void> {
@@ -1442,11 +1423,10 @@ function renderManagementPage(): void {
   const configuration = managementConfiguration;
   playbookList.replaceChildren();
   managementTitle.textContent = "Playbooks";
-  managementDescription.textContent = "Engine folders appear automatically. Configure their recipes and routing here.";
+  managementDescription.textContent = "Engine folders appear automatically. Configure and test their recipes here.";
   playbookSearch.placeholder = "Search playbooks";
   if (!configuration) { playbookList.append(panelEmpty("Management data is unavailable")); return; }
   const recipes = configuration.recipes ?? [];
-  const routes = configuration.routes ?? [];
   const folders = configuration.engineFolders ?? [];
   const query = playbookSearch.value.trim().toLowerCase();
   const matches = (...values: unknown[]) => !query || values.some((value) => String(value ?? "").toLowerCase().includes(query));
@@ -1478,15 +1458,9 @@ function renderManagementPage(): void {
       const modelLabel = document.createElement("span"); modelLabel.className = "recipe-card-label"; modelLabel.textContent = recipe.modelId;
       const contextLabel = document.createElement("span"); contextLabel.className = "recipe-card-label recipe-context-label"; contextLabel.textContent = `${formatTokenCount(recipe.contextTokens)} ctx`;
       labels.append(modelLabel, contextLabel); recipeDetails.append(name, labels);
-      const routeToggle = document.createElement("div"); routeToggle.className = "recipe-route-toggle"; routeToggle.setAttribute("role", "group"); routeToggle.setAttribute("aria-label", `${recipe.displayName} routing`);
-      for (const definition of FIXED_ROUTES) {
-        const route = routes.find((item: Json) => item.id === definition.id);
-        const button = document.createElement("button"); button.type = "button"; button.className = `route-symbol route-${definition.id}`; button.title = definition.label; button.setAttribute("aria-label", `${definition.label} route`); button.setAttribute("aria-pressed", String(route?.recipeId === recipe.id)); button.classList.toggle("active", route?.recipeId === recipe.id); button.append(svg(definition.icon)); button.addEventListener("click", () => void assignFixedRoute(definition, recipe, button));
-        routeToggle.append(button);
-      }
       const recipeActions = document.createElement("div"); recipeActions.className = "recipe-card-actions";
       const testButton = document.createElement("button"); testButton.type = "button"; testButton.className = "recipe-test-button"; testButton.setAttribute("aria-live", "polite"); testButton.addEventListener("click", (event) => { event.stopPropagation(); void testRecipe(recipe, recipeCard, testButton); });
-      recipeActions.append(routeToggle, testButton); renderRecipeTestState(recipe.id, recipeCard, testButton);
+      recipeActions.append(testButton); renderRecipeTestState(recipe.id, recipeCard, testButton);
       recipeCard.append(recipeDetails, recipeActions); card.append(recipeCard);
     }
     playbookList.append(card);
@@ -1519,36 +1493,17 @@ function renderRecipeTestState(recipeId: string, card: HTMLElement, button: HTML
   button.setAttribute("aria-label", state === "passed" ? "Recipe test passed" : state === "failed" ? `Recipe test failed: ${result?.detail ?? "Unknown error"}. Retry` : state === "testing" ? "Testing recipe" : "Test recipe");
 }
 
-async function assignFixedRoute(definition: (typeof FIXED_ROUTES)[number], recipe: Json, button: HTMLButtonElement): Promise<void> {
-  const current = managementConfiguration?.routes?.find((route: Json) => route.id === definition.id);
-  if (current?.recipeId === recipe.id) return;
-  button.disabled = true;
-  try {
-    await api(`/api/v1/management/routes/${definition.id}`, "PUT", {
-      displayName: definition.label,
-      description: definition.id === "fast" ? "Lowest-latency route" : definition.id === "smart" ? "Highest-capability route" : "Primary route",
-      recipeId: recipe.id,
-      enabled: true,
-      isDefault: definition.id === "default",
-    });
-    await loadManagementConfiguration(true);
-  } catch (error) {
-    button.disabled = false;
-    showToast(errorMessage(error));
-  }
-}
-
 function consumerFixedRouteId(connectionId: string, id: FixedRouteId): string { return `consumer--${connectionId}--route--${id}`; }
 
-async function assignConsumerRoute(connectionId: string, definition: (typeof FIXED_ROUTES)[number], consumerModel: ConsumerConnectionSummary["models"][number], button: HTMLButtonElement): Promise<void> {
-  const routeId = consumerFixedRouteId(connectionId, definition.id);
+async function assignConnectionRoute(connection: ConnectionView, definition: (typeof FIXED_ROUTES)[number], consumerModel: ConnectionModelView, button: HTMLButtonElement): Promise<void> {
+  const routeId = connection.hosted ? definition.id : consumerFixedRouteId(connection.id, definition.id);
   const current = managementConfiguration?.routes?.find((route: Json) => route.id === routeId);
   if (current?.recipeId === consumerModel.recipeId) return;
   button.disabled = true;
   try {
     await api(`/api/v1/management/routes/${routeId}`, "PUT", {
       displayName: definition.label,
-      description: definition.id === "fast" ? "Lowest-latency consumer route" : definition.id === "smart" ? "Highest-capability consumer route" : "Primary consumer route",
+      description: definition.id === "fast" ? "Lowest-latency route" : definition.id === "smart" ? "Highest-capability route" : "Primary route",
       recipeId: consumerModel.recipeId,
       enabled: true,
       isDefault: definition.id === "default",

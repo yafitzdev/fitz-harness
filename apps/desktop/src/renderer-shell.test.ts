@@ -100,8 +100,11 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("function connectionViews(): ConnectionView[]");
     expect(renderer).toContain('id: LOCAL_CONNECTION_ID');
     expect(renderer).toContain('managementConfiguration?.hostName ?? "This PC"');
-    expect(renderer).toContain('configuredConnectionId === connection.id');
-    expect(renderer).toContain('const shownModels = configuring ? connection.availableModels : connection.models');
+    expect(renderer).not.toContain('configuredConnectionId');
+    expect(renderer).not.toContain('edit.textContent = configuredConnectionId');
+    expect(renderer).toContain('for (const consumerModel of connection.availableModels)');
+    expect(renderer).toContain('connection.hosted ? definition.id : consumerFixedRouteId');
+    expect(renderer).toContain('assignConnectionRoute(connection, definition, consumerModel, button)');
     expect(renderer).toContain('if (!connection.hosted)');
     expect(renderer).not.toContain('url.className = "connection-url"');
     expect(html).toContain("Provider and self-hosted OpenAI-compatible APIs.");
@@ -118,7 +121,8 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("openPlaybookPage()");
     expect(renderer).toContain("renderManagementPage()");
     expect(renderer).toContain("FIXED_ROUTES");
-    expect(renderer).toContain("assignFixedRoute(");
+    expect(renderer).not.toContain("assignFixedRoute(");
+    expect(renderer).toContain('Configure and test their recipes here.');
     expect(renderer).not.toContain("now uses ${recipe.displayName}");
     expect(renderer).toContain("openEngineEditor");
     expect(renderer).toContain('/api/v1/management/engines/${encodeURIComponent(folderName)}');
