@@ -61,6 +61,7 @@ let inspectedResource: { kind: "file"; path: string } | { kind: "url"; url: stri
 let inspectionVersion = 0;
 let inspectedPreview: ResourcePreview | undefined;
 let inspectorSourceMode = false;
+let activeWorkSummary: { root: HTMLElement; toggle: HTMLButtonElement; details: HTMLElement; startedAt: number; lastAt: number } | undefined;
 let renameTarget: { kind: "project" | "task"; id: string } | undefined;
 const pinnedProjects = storedSet("fitz-pinned-projects");
 const pinnedSessions = storedSet("fitz-pinned-sessions");
@@ -133,6 +134,7 @@ const inspectorOpen = element("inspector-open") as HTMLButtonElement;
 const inspectorClose = element("inspector-close") as HTMLButtonElement;
 const inspectorRenderToggle = element("inspector-render-toggle") as HTMLButtonElement;
 const inspectorIcon = element("inspector-icon");
+const inspectorResizer = element("inspector-resizer");
 const artifacts = element("artifacts");
 const requestQueue = element("request-queue");
 const queueCount = element("queue-count");
@@ -265,6 +267,7 @@ const removeProjectName = element("remove-project-name");
 const toast = element("toast");
 
 restoreSidebarWidth();
+restoreInspectorWidth();
 renderAccessMode();
 initializeCustomSelects();
 void initialize();
@@ -315,6 +318,8 @@ for (const menuButton of document.querySelectorAll<HTMLButtonElement>("[data-app
 for (const windowButton of document.querySelectorAll<HTMLButtonElement>("[data-window-action]")) windowButton.addEventListener("click", () => void window.fitz.windowAction(windowButton.dataset.windowAction as "minimize" | "maximize" | "close"));
 sidebarResizer.addEventListener("pointerdown", beginSidebarResize);
 sidebarResizer.addEventListener("keydown", resizeSidebarWithKeyboard);
+inspectorResizer.addEventListener("pointerdown", beginInspectorResize);
+inspectorResizer.addEventListener("keydown", resizeInspectorWithKeyboard);
 connectionStatus.addEventListener("click", () => void initialize());
 contextToggle.addEventListener("click", () => setContextPanel(contextPanel.hasAttribute("hidden")));
 inspectorClose.addEventListener("click", () => setContextPanel(false));
@@ -553,26 +558,27 @@ async function selectSession(id: string, rerender = true, projectId?: string): P
   try {
     const transcript = await api(`/api/v1/sessions/${id}/transcript`);
     messages.replaceChildren();
+    activeWorkSummary = undefined;
     resourceSearchRoots.clear();
     sessionTokenEstimate = estimateTranscriptContext(transcript.data ?? []);
     const transcriptTools = new Map<string, { row: HTMLElement; toolName: string; input: unknown }>();
     for (const entry of transcript.data ?? []) {
       if (entry.kind === "message") {
         const text = entry.content?.text ?? "";
-        if (entry.role === "assistant" && entry.content?.phase === "commentary") appendCommentary(text);
-        else appendMessage(entry.role ?? "system", text);
+        if (entry.role === "assistant" && entry.content?.phase === "commentary") appendCommentary(text, entry.createdAt);
+        else appendMessage(entry.role ?? "system", text, entry.createdAt);
       }
       if (entry.kind === "tool-call") {
         const toolCallId = String(entry.content?.toolCallId ?? entry.id);
         const toolName = String(entry.content?.toolName ?? "tool");
         const input = entry.content?.input;
-        transcriptTools.set(toolCallId, { row: appendToolActivity(toolName, input, toolCallId, true), toolName, input });
+        transcriptTools.set(toolCallId, { row: appendToolActivity(toolName, input, toolCallId, true, entry.createdAt), toolName, input });
       }
       if (entry.kind === "tool-result") {
         const toolCallId = String(entry.content?.toolCallId ?? entry.id);
         const existing = transcriptTools.get(toolCallId);
         if (existing) completeToolActivity(existing.row, existing.toolName, existing.input, entry.content?.result, Boolean(entry.content?.isError));
-        else completeToolActivity(appendToolActivity(String(entry.content?.toolName ?? "tool"), undefined, toolCallId, true), String(entry.content?.toolName ?? "tool"), undefined, entry.content?.result, Boolean(entry.content?.isError));
+        else completeToolActivity(appendToolActivity(String(entry.content?.toolName ?? "tool"), undefined, toolCallId, true, entry.createdAt), String(entry.content?.toolName ?? "tool"), undefined, entry.content?.result, Boolean(entry.content?.isError));
       }
       if (entry.kind === "compaction") appendContextActivity(entry.content?.manual === true ? "Context compacted" : "Context automatically compacted");
     }
@@ -631,6 +637,7 @@ function openNewChatForProject(id: string): void { currentProject = id; expanded
 
 function showNewChatLanding(): void {
   messages.replaceChildren();
+  activeWorkSummary = undefined;
   const project = projectRecords.find((item) => item.id === currentProject);
   const landing = document.createElement("div"); landing.className = "new-chat-landing";
   const mark = document.createElement("div"); mark.className = "landing-mark"; mark.append(terminalCloudIcon());
@@ -2417,6 +2424,7 @@ async function openInspectedResourceExternally(): Promise<void> {
 
 function showLanding(hasTask = false): void {
   messages.replaceChildren();
+  activeWorkSummary = undefined;
   const landing = document.createElement("div"); landing.className = "landing";
   const mark = document.createElement("div"); mark.className = "landing-mark"; mark.append(sparkIcon());
   const heading = document.createElement("h1"); heading.textContent = hasTask ? "What should we work on?" : currentProject ? "Start a task" : "Bring your code. Build with Fitz.";
@@ -2439,14 +2447,18 @@ function showConnectionFailure(detail: string): void {
   landing.append(heading, message, retry); messages.append(landing);
 }
 
-function appendMessage(role: string, text: string): HTMLElement {
+function appendMessage(role: string, text: string, createdAt?: string): HTMLElement {
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
+  if (role !== "commentary") finishWorkSummary(createdAt);
   const article = document.createElement("article"); article.className = `message ${role}`;
   const content = document.createElement("div"); content.className = "message-body"; if (role === "assistant" || role === "commentary") setMarkdown(content, text); else content.textContent = text; article.append(content); messages.append(article); messages.scrollTop = messages.scrollHeight; return content;
 }
 
-function appendCommentary(text: string): HTMLElement {
-  const content = appendMessage("commentary", text);
+function appendCommentary(text: string, createdAt?: string): HTMLElement {
+  if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
+  const article = document.createElement("article"); article.className = "message commentary";
+  const content = document.createElement("div"); content.className = "message-body"; setMarkdown(content, text); article.append(content);
+  appendWorkNode(article, createdAt);
   return content;
 }
 
@@ -2455,9 +2467,10 @@ function markAssistantAsCommentary(content: HTMLElement): void {
   if (!article) return;
   article.classList.remove("assistant");
   article.classList.add("commentary");
+  appendWorkNode(article);
 }
 
-function appendToolActivity(toolName: string, input: unknown, toolCallId: string, running: boolean): HTMLElement {
+function appendToolActivity(toolName: string, input: unknown, toolCallId: string, running: boolean, createdAt?: string): HTMLElement {
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   const row = document.createElement("div"); row.className = `message agent-activity${running ? " running" : ""}`; row.dataset.toolCallId = toolCallId; row.dataset.toolName = toolName;
   const summary = document.createElement("button"); summary.type = "button"; summary.className = "agent-activity-summary"; summary.setAttribute("aria-expanded", "false");
@@ -2465,7 +2478,7 @@ function appendToolActivity(toolName: string, input: unknown, toolCallId: string
   const label = document.createElement("span"); label.className = "agent-activity-label"; label.textContent = describeToolActivity(toolName, input, running); label.title = label.textContent;
   registerResourceSearchRoot(toolName, input);
   const resource = toolResourceReference(toolName, input);
-  if (resource) { label.classList.add("resource-link"); label.tabIndex = 0; label.setAttribute("role", "link"); label.addEventListener("click", (event) => { event.stopPropagation(); void inspectResource(resource); }); label.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); void inspectResource(resource); } }); }
+  if (resource) { label.classList.add("file-target"); label.tabIndex = 0; label.setAttribute("role", "link"); label.addEventListener("click", (event) => { event.stopPropagation(); void inspectResource(resource); }); label.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); void inspectResource(resource); } }); }
   const chevron = document.createElement("span"); chevron.className = "agent-activity-chevron"; chevron.append(svg('<path d="m8 5.5 4.5 4.5L8 14.5"></path>'));
   summary.append(icon, label, chevron);
   const details = document.createElement("div"); details.className = "agent-activity-details";
@@ -2476,7 +2489,7 @@ function appendToolActivity(toolName: string, input: unknown, toolCallId: string
   }
   details.hidden = true;
   summary.addEventListener("click", () => { const open = details.hasAttribute("hidden"); details.hidden = !open; row.classList.toggle("open", open); summary.setAttribute("aria-expanded", String(open)); });
-  row.append(summary, details); messages.append(row); messages.scrollTop = messages.scrollHeight; return row;
+  row.append(summary, details); appendWorkNode(row, createdAt); return row;
 }
 
 function completeToolActivity(row: HTMLElement, toolName: string, input: unknown, result: unknown, isError: boolean): void {
@@ -2540,10 +2553,11 @@ function safeStringify(value: unknown): string {
 }
 
 function appendContextActivity(text = "Context automatically compacted"): HTMLElement {
-  const row = document.createElement("div"); row.className = "message agent-activity";
+  finishWorkSummary();
+  const row = document.createElement("div"); row.className = "message context-activity";
   const icon = document.createElement("span"); icon.className = "agent-activity-icon"; icon.append(contextActivityIcon());
   const label = document.createElement("span"); label.className = "agent-activity-label"; label.textContent = text;
-  row.append(icon, label); messages.append(row); return row;
+  row.append(icon, label); messages.append(row); messages.scrollTop = messages.scrollHeight; return row;
 }
 
 function appendToolApproval(approval: Json): HTMLElement {
@@ -2600,7 +2614,51 @@ function registerResourceSearchRoot(toolName: string, input: unknown): void {
 
 function friendlyToolName(toolName: string): string { return toolName.replaceAll("_", " "); }
 
-function appendRunActivity(text: string): HTMLElement { const value = document.createElement("div"); value.className = "message run-activity"; value.textContent = text; messages.append(value); messages.scrollTop = messages.scrollHeight; return value; }
+function appendRunActivity(text: string): HTMLElement { const value = document.createElement("div"); value.className = "message run-activity"; value.textContent = text; appendWorkNode(value); return value; }
+
+function appendWorkNode(node: HTMLElement, createdAt?: string): void {
+  const work = ensureWorkSummary(createdAt);
+  work.lastAt = Math.max(work.lastAt, activityTimestamp(createdAt));
+  work.details.append(node);
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function ensureWorkSummary(createdAt?: string): NonNullable<typeof activeWorkSummary> {
+  if (activeWorkSummary) return activeWorkSummary;
+  const root = document.createElement("section"); root.className = "work-summary open";
+  const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "work-summary-toggle"; toggle.setAttribute("aria-expanded", "true");
+  const label = document.createElement("span"); label.className = "work-summary-label"; label.textContent = "Working…";
+  const chevron = document.createElement("span"); chevron.className = "work-summary-chevron"; chevron.append(svg('<path d="m8 5.5 4.5 4.5L8 14.5"></path>'));
+  const details = document.createElement("div"); details.className = "work-summary-details";
+  toggle.append(label, chevron);
+  toggle.addEventListener("click", () => {
+    const open = details.hasAttribute("hidden");
+    details.hidden = !open;
+    root.classList.toggle("open", open);
+    toggle.setAttribute("aria-expanded", String(open));
+  });
+  root.append(toggle, details); messages.append(root);
+  const timestamp = activityTimestamp(createdAt);
+  activeWorkSummary = { root, toggle, details, startedAt: timestamp, lastAt: timestamp };
+  return activeWorkSummary;
+}
+
+function finishWorkSummary(completedAt?: string): void {
+  const work = activeWorkSummary;
+  if (!work) return;
+  const endedAt = Math.max(work.lastAt, activityTimestamp(completedAt));
+  const label = work.toggle.querySelector<HTMLElement>(".work-summary-label");
+  if (label) label.textContent = `Worked for ${formatElapsed(endedAt - work.startedAt)}`;
+  work.details.hidden = true;
+  work.root.classList.remove("open");
+  work.toggle.setAttribute("aria-expanded", "false");
+  activeWorkSummary = undefined;
+}
+
+function activityTimestamp(value?: string): number {
+  if (value) { const timestamp = Date.parse(value); if (Number.isFinite(timestamp)) return timestamp; }
+  return Date.now();
+}
 
 function setRunActivity(activity: HTMLElement, label: string, startedAt: number): void {
   activity.textContent = `${label}… ${formatElapsed(Date.now() - startedAt)}`;
@@ -2685,6 +2743,7 @@ function hideProjectHover(): void { cancelProjectHoverHide(); projectHoverCard.h
 
 function setContextPanel(open: boolean): void {
   contextPanel.hidden = !open;
+  inspectorResizer.hidden = !open;
   workspace.classList.toggle("inspector-open", open);
   shell.classList.toggle("context-open", open);
   contextToggle.setAttribute("aria-expanded", String(open));
@@ -2716,6 +2775,16 @@ function resizeSidebarWithKeyboard(event: KeyboardEvent): void { if (event.key !
 function setSidebarWidth(value: number): void { shell.style.setProperty("--sidebar-width", `${Math.max(240, Math.min(520, value))}px`); sidebarResizer.setAttribute("aria-valuenow", String(Math.round(sidebarWidth()))); }
 function sidebarWidth(): number { return Number.parseFloat(getComputedStyle(shell).getPropertyValue("--sidebar-width")) || 254; }
 function restoreSidebarWidth(): void { const saved = Number(localStorage.getItem("fitz-sidebar-width")); if (Number.isFinite(saved) && saved > 0) setSidebarWidth(saved); }
+function beginInspectorResize(event: PointerEvent): void {
+  event.preventDefault(); inspectorResizer.classList.add("dragging"); inspectorResizer.setPointerCapture(event.pointerId);
+  const move = (moveEvent: PointerEvent) => setInspectorWidth(workspace.getBoundingClientRect().right - moveEvent.clientX);
+  const finish = () => { inspectorResizer.classList.remove("dragging"); inspectorResizer.removeEventListener("pointermove", move); localStorage.setItem("fitz-inspector-width", String(inspectorWidth())); };
+  inspectorResizer.addEventListener("pointermove", move); inspectorResizer.addEventListener("pointerup", finish, { once: true }); inspectorResizer.addEventListener("pointercancel", finish, { once: true });
+}
+function resizeInspectorWithKeyboard(event: KeyboardEvent): void { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); setInspectorWidth(inspectorWidth() + (event.key === "ArrowLeft" ? 12 : -12)); localStorage.setItem("fitz-inspector-width", String(inspectorWidth())); }
+function setInspectorWidth(value: number): void { const maximum = Math.max(300, Math.min(760, workspace.getBoundingClientRect().width - 420)); workspace.style.setProperty("--inspector-width", `${Math.max(300, Math.min(maximum, value))}px`); inspectorResizer.setAttribute("aria-valuenow", String(Math.round(inspectorWidth()))); }
+function inspectorWidth(): number { return Number.parseFloat(getComputedStyle(workspace).getPropertyValue("--inspector-width")) || 400; }
+function restoreInspectorWidth(): void { const saved = Number(localStorage.getItem("fitz-inspector-width")); if (Number.isFinite(saved) && saved > 0) setInspectorWidth(saved); }
 function setStatus(text: string, state: string): void { status.textContent = text; status.dataset.state = state; }
 function setConnection(text: string, state: string): void { connectionDetail.textContent = text; connectionStatus.dataset.state = state; }
 function setFormBusy(formElement: HTMLFormElement, busy: boolean): void { for (const control of formElement.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>("input,button,select")) control.disabled = busy; }

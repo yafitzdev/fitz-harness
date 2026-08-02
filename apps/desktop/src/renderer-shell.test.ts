@@ -258,6 +258,17 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".agent-activity.open .agent-activity-chevron { transform: rotate(90deg); }");
     expect(styles).toContain(".agent-activity-details.shell-details");
     expect(styles).toContain('.shell-command::before { content: "$ ";');
+    expect(renderer).toContain('label.classList.add("file-target")');
+    expect(styles).toContain(".agent-activity-label.file-target");
+  });
+
+  it("collapses completed Pi activity behind a durable work summary", () => {
+    expect(renderer).toContain("ensureWorkSummary(createdAt)");
+    expect(renderer).toContain("finishWorkSummary(createdAt)");
+    expect(renderer).toContain('label.textContent = `Worked for ${formatElapsed(endedAt - work.startedAt)}`');
+    expect(renderer).toContain('row.className = "message context-activity"');
+    expect(styles).toContain(".work-summary-toggle");
+    expect(styles).toContain(".context-activity");
   });
 
   it("renders streamed assistant Markdown safely while keeping prompts plain", () => {
@@ -369,6 +380,7 @@ describe("desktop renderer shell", () => {
   it("replaces the deferred Environment surface with a resource Inspector", () => {
     expect(html).toContain('id="context-toggle" class="icon-button" type="button" title="Toggle environment panel" aria-label="Toggle environment panel" aria-expanded="false" hidden');
     expect(html).toContain('id="context-panel" class="inspector-panel" aria-label="Inspector" hidden');
+    expect(html).toContain('id="inspector-resizer" class="inspector-resizer"');
     for (const id of ["inspector-title", "inspector-location", "inspector-render-toggle", "inspector-open", "inspector-close"]) expect(html).toContain(`id="${id}"`);
     expect(renderer).not.toContain('item("Toggle environment"');
     expect(renderer).toContain('window.addEventListener("fitz:open-resource"');
@@ -378,6 +390,9 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('frame.setAttribute("sandbox", "")');
     expect(styles).toContain(".inspector-panel");
     expect(styles).toContain(".workspace.inspector-open .messages");
+    expect(styles).toContain(".inspector-resizer");
+    expect(renderer).toContain("beginInspectorResize");
+    expect(renderer).toContain("restoreInspectorWidth()");
     expect(preload).toContain('ipcRenderer.invoke("fitz:preview-resource", input)');
     expect(main).toContain('ipcMain.handle("fitz:preview-resource"');
   });
