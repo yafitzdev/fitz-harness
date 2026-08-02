@@ -225,6 +225,16 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".queue-cancel");
   });
 
+  it("floats Environment over the conversation instead of creating a third layout column", () => {
+    expect(styles).toContain(".app-shell.context-open { grid-template-columns: var(--sidebar-width) minmax(0, 1fr); }");
+    expect(styles).toContain(".app-shell.sidebar-collapsed.context-open { grid-template-columns: 0 minmax(0, 1fr); }");
+    expect(styles).toContain(".context-panel { position: absolute; z-index: 12; top: 64px; right: 14px;");
+    expect(styles).toContain("max-height: calc(100% - 78px)");
+    expect(html.indexOf('id="context-panel"')).toBeLessThan(html.indexOf("</main>"));
+    expect(styles).not.toContain("minmax(0, 1fr) 334px");
+    expect(styles).not.toContain("right: 0; bottom: 0; width: 320px");
+  });
+
   it("pairs a desktop without exposing its durable bearer credential to the renderer", () => {
     for (const id of ["pairing-page", "pairing-form", "pairing-code", "pairing-display-name", "pairing-device-name", "pairing-error"]) expect(html).toContain(`id="${id}"`);
     expect(renderer).toContain("showPairingPage(`Enter a one-time code to connect to ${configuredHostOrigin}.`)");
