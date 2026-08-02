@@ -412,6 +412,16 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .pairing-code-result > div { display: grid; gap: 2px; }
 .pairing-code-result small, .pairing-code-result span { color: var(--codex-text-tertiary); font-size: 10px; }
 .pairing-code-result strong { font: 600 18px/1.25 "Cascadia Mono", Consolas, monospace; letter-spacing: .08em; }
+.remote-access-status { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; }
+.remote-access-card { min-height: 63px; display: grid; align-content: space-between; gap: 8px; padding: 10px 11px; border-radius: var(--codex-radius-lg); background: var(--codex-gray-800); }
+.remote-access-card small { color: var(--codex-text-tertiary); font-size: 10px; }
+.remote-access-card strong { overflow: hidden; font-size: 12px; font-weight: 520; text-overflow: ellipsis; white-space: nowrap; }
+.remote-access-actions { display: flex; gap: 8px; margin-top: 12px; }
+.remote-access-actions button, .remote-access-confirmation button { height: 34px; padding: 0 12px; border-radius: var(--codex-radius-md); background: rgba(255,255,255,.08); color: var(--text); cursor: pointer; }
+.remote-access-actions button:hover, .remote-access-confirmation button:hover { background: rgba(255,255,255,.12); }
+.remote-access-confirmation { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; padding: 10px 11px; border-radius: var(--codex-radius-lg); background: rgba(255,255,255,.05); color: var(--codex-text-secondary); font-size: 11px; }
+.remote-access-confirmation[hidden] { display: none; }
+.remote-access-confirmation > div { display: flex; gap: 7px; }
 .admin-users { display: grid; gap: 8px; margin-top: 18px; }
 .admin-user { border-radius: var(--codex-radius-lg); background: var(--codex-gray-800); }
 .admin-user > summary { min-height: 62px; display: grid; grid-template-columns: minmax(0,1fr) 150px auto; align-items: center; gap: 12px; padding: 10px 13px; cursor: pointer; list-style: none; }

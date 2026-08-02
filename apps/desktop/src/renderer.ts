@@ -27,6 +27,7 @@ let currentUserId: string | undefined;
 let administrationUsers: Json[] = [];
 let administrationPolicies: Json[] = [];
 let diagnosticBundle: Json | undefined;
+let pendingRemoteAction: "enable" | "disable" | undefined;
 let managementConfiguration: Json | undefined;
 let newChatMode = false;
 let newChatProjectDetached = false;
@@ -158,6 +159,12 @@ const diagnosticSummary = element("diagnostic-summary");
 const diagnosticMetrics = element("diagnostic-metrics");
 const diagnosticFailures = element("diagnostic-failures");
 const exportDiagnostics = element("export-diagnostics") as HTMLButtonElement;
+const remoteAccessStatus = element("remote-access-status");
+const remoteAccessConfirmation = element("remote-access-confirmation");
+const remoteAccessConfirmationText = element("remote-access-confirmation-text");
+const enableRemoteAccess = element("enable-remote-access") as HTMLButtonElement;
+const disableRemoteAccess = element("disable-remote-access") as HTMLButtonElement;
+const confirmRemoteAccess = element("confirm-remote-access") as HTMLButtonElement;
 const playbookList = element("playbook-list");
 const playbookSearch = element("playbook-search") as HTMLInputElement;
 const managementTitle = element("management-title");
@@ -280,6 +287,11 @@ createUserForm.addEventListener("submit", (event) => { event.preventDefault(); v
 toolPolicySubjectType.addEventListener("change", renderToolPolicySubjects);
 toolPolicyForm.addEventListener("submit", (event) => { event.preventDefault(); void saveToolPolicy(); });
 exportDiagnostics.addEventListener("click", () => void exportDiagnosticBundle());
+element("refresh-remote-access").addEventListener("click", () => void loadRemoteAccess());
+enableRemoteAccess.addEventListener("click", () => showRemoteConfirmation("enable"));
+disableRemoteAccess.addEventListener("click", () => showRemoteConfirmation("disable"));
+element("cancel-remote-access").addEventListener("click", hideRemoteConfirmation);
+confirmRemoteAccess.addEventListener("click", () => void applyRemoteAccessChange());
 recipeForm.addEventListener("submit", (event) => { event.preventDefault(); void saveRecipe(); });
 engineForm.addEventListener("submit", (event) => { event.preventDefault(); void saveEngine(); });
 (element("engine-folder") as HTMLSelectElement).addEventListener("change", applyEngineFolderChoice);
@@ -786,11 +798,12 @@ async function createAdminUser(): Promise<void> {
 async function loadAdministration(): Promise<void> {
   if (!administrator) return;
   try {
-    const [users, policies, audit, diagnostics] = await Promise.all([
+    const [users, policies, audit, diagnostics, remote] = await Promise.all([
       api("/api/v1/management/users"),
       api("/api/v1/management/tool-policies"),
       api("/api/v1/management/audit-events?limit=50"),
       api("/api/v1/management/diagnostics"),
+      api("/api/v1/management/connectivity/status"),
     ]);
     administrationUsers = users.data ?? [];
     administrationPolicies = policies.data ?? [];
@@ -804,6 +817,7 @@ async function loadAdministration(): Promise<void> {
     renderAdminAuditEvents(audit.data ?? []);
     diagnosticBundle = diagnostics;
     renderDiagnostics(diagnostics);
+    renderRemoteAccess(remote.data);
   }
   catch (error) { adminUsers.replaceChildren(panelEmpty(`Administration unavailable: ${errorMessage(error)}`)); }
 }
@@ -1030,6 +1044,64 @@ async function exportDiagnosticBundle(): Promise<void> {
     if (path) showToast(`Diagnostics saved to ${path}`);
   } catch (error) { showToast(errorMessage(error)); }
   finally { exportDiagnostics.disabled = false; }
+}
+
+async function loadRemoteAccess(): Promise<void> {
+  try {
+    const response = await api("/api/v1/management/connectivity/status");
+    renderRemoteAccess(response.data);
+  } catch (error) { remoteAccessStatus.replaceChildren(panelEmpty(`Remote status unavailable: ${errorMessage(error)}`)); }
+}
+
+function renderRemoteAccess(remote: Json): void {
+  const tailscale = remote.tailscale ?? {};
+  const configuration = remote.serve?.configuration;
+  const served = remote.serve?.available === true && configuration && Object.keys(configuration).length > 0;
+  const values = [
+    ["Tailscale", String(tailscale.state ?? "unknown").replaceAll("-", " ")],
+    ["Device", tailscale.dnsName ?? tailscale.addresses?.[0] ?? "Not connected"],
+    ["Private HTTPS", remote.serve?.available === false ? "Unavailable" : served ? "Enabled" : "Disabled"],
+  ];
+  remoteAccessStatus.replaceChildren();
+  for (const [label, value] of values) {
+    const card = document.createElement("div");
+    card.className = "remote-access-card";
+    card.append(
+      Object.assign(document.createElement("small"), { textContent: label }),
+      Object.assign(document.createElement("strong"), { textContent: value }),
+    );
+    remoteAccessStatus.append(card);
+  }
+  enableRemoteAccess.disabled = tailscale.state !== "connected" || served;
+  disableRemoteAccess.disabled = !served;
+}
+
+function showRemoteConfirmation(action: "enable" | "disable"): void {
+  pendingRemoteAction = action;
+  remoteAccessConfirmationText.textContent = action === "enable"
+    ? "Enable private HTTPS through Tailscale Serve for this Fitz host?"
+    : "Disable the private HTTPS route? Remote clients will disconnect.";
+  confirmRemoteAccess.textContent = action === "enable" ? "Confirm enable" : "Confirm disable";
+  remoteAccessConfirmation.hidden = false;
+}
+
+function hideRemoteConfirmation(): void {
+  pendingRemoteAction = undefined;
+  remoteAccessConfirmation.hidden = true;
+}
+
+async function applyRemoteAccessChange(): Promise<void> {
+  if (!pendingRemoteAction) return;
+  const action = pendingRemoteAction;
+  confirmRemoteAccess.disabled = true;
+  try {
+    if (action === "enable") await api("/api/v1/management/connectivity/tailscale-serve", "POST", {});
+    else await api("/api/v1/management/connectivity/tailscale-serve", "DELETE");
+    hideRemoteConfirmation();
+    await loadAdministration();
+    showToast(action === "enable" ? "Private HTTPS enabled" : "Private HTTPS disabled");
+  } catch (error) { showToast(errorMessage(error)); }
+  finally { confirmRemoteAccess.disabled = false; }
 }
 
 async function saveToolPolicy(): Promise<void> {

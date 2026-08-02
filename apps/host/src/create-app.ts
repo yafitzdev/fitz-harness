@@ -60,6 +60,7 @@ export interface CreateHostOptions {
   contextManager?: ContextManager;
   tailscaleMonitor?: TailscaleMonitor;
   tailscaleServeManager?: TailscaleServeManager;
+  localPort?: number;
   engineRoot?: string;
 }
 
@@ -514,7 +515,8 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   );
 
   const administratorGuard = adminGuard(options.adminToken, authMode, principals);
-  app.post("/api/v1/management/connectivity/tailscale-serve", { preHandler: administratorGuard }, async (request, reply) => { try { const body = requireRecord(request.body); const localPort = body.localPort === undefined ? 8787 : requireInteger(body.localPort); const httpsPort = body.httpsPort === undefined ? 443 : requireInteger(body.httpsPort); await tailscaleServe.enable(localPort, httpsPort); security?.audit("tailscale-serve.enabled", principals.get(request)?.user.id, "connectivity", "tailscale", { localPort, httpsPort }); return { data: await tailscaleServe.status() }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
+  app.get("/api/v1/management/connectivity/status", { preHandler: administratorGuard }, async () => { const tailscaleStatus = await tailscale.status(); try { return { data: { tailscale: tailscaleStatus, serve: { available: true, configuration: await tailscaleServe.status() } } }; } catch (error) { return { data: { tailscale: tailscaleStatus, serve: { available: false, message: errorMessage(error) } } }; } });
+  app.post("/api/v1/management/connectivity/tailscale-serve", { preHandler: administratorGuard }, async (request, reply) => { try { const body = requireRecord(request.body); const localPort = body.localPort === undefined ? options.localPort ?? 8787 : requireInteger(body.localPort); const httpsPort = body.httpsPort === undefined ? 443 : requireInteger(body.httpsPort); await tailscaleServe.enable(localPort, httpsPort); security?.audit("tailscale-serve.enabled", principals.get(request)?.user.id, "connectivity", "tailscale", { localPort, httpsPort }); return { data: await tailscaleServe.status() }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
   app.delete("/api/v1/management/connectivity/tailscale-serve", { preHandler: administratorGuard }, async (request, reply) => { try { const query = request.query as { httpsPort?: string }; const httpsPort = toNonNegativeInteger(query.httpsPort, 443); await tailscaleServe.disable(httpsPort); security?.audit("tailscale-serve.disabled", principals.get(request)?.user.id, "connectivity", "tailscale", { httpsPort }); return reply.code(204).send(); } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
   app.post("/api/v1/management/pairing-codes", { preHandler: administratorGuard }, async (request, reply) => { try { const body = requireRecord(request.body); const role = parseRole(body.intendedRole); const ttlSeconds = body.ttlSeconds === undefined ? 600 : requireInteger(body.ttlSeconds); const pairing = securityRequired(security).issuePairingCode(role, ttlSeconds); security?.audit("pairing-code.issued", principals.get(request)?.user.id, "pairing-code", pairing.id, { intendedRole: role, expiresAt: pairing.expiresAt }); return reply.code(201).send({ data: pairing }); } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
   app.get("/api/v1/management/tool-policies", { preHandler: administratorGuard }, async () => ({ data: store.listToolPolicies() }));

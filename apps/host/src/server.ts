@@ -34,6 +34,7 @@ const runtime = createHost({
   logger: true,
   resourcePolicy: { reserveVramMiB },
   authMode,
+  localPort: port,
   ...(authMode === "required" ? { authPepper: requiredEnvironment("FITZ_AUTH_PEPPER") } : {}),
   ...engineOptions,
   ...(process.env.FITZ_ADMIN_TOKEN ? { adminToken: process.env.FITZ_ADMIN_TOKEN } : {}),

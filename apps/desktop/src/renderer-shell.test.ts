@@ -259,4 +259,15 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".diagnostic-summary");
     expect(styles).toContain(".diagnostic-row");
   });
+
+  it("onboards private Tailscale HTTPS inline without configuration dialogs", () => {
+    for (const id of ["remote-access-status", "enable-remote-access", "disable-remote-access", "remote-access-confirmation", "confirm-remote-access"]) {
+      expect(html).toContain(`id="${id}"`);
+    }
+    expect(renderer).toContain('api("/api/v1/management/connectivity/status")');
+    expect(renderer).toContain('showRemoteConfirmation("enable")');
+    expect(renderer).toContain('api("/api/v1/management/connectivity/tailscale-serve", "POST", {})');
+    expect(renderer).toContain('api("/api/v1/management/connectivity/tailscale-serve", "DELETE")');
+    expect(styles).toContain(".remote-access-confirmation[hidden]");
+  });
 });

@@ -4,6 +4,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHost } from "./create-app.js";
+import { TailscaleMonitor, TailscaleServeManager } from "@fitz/connectivity";
 import { SecurityService } from "@fitz/security";
 import { SqliteStore } from "@fitz/storage";
 
@@ -256,6 +257,26 @@ describe("Fitz host", () => {
       }),
     );
     expect(diagnostics.body).not.toContain("diagnostic-test-token");
+    await runtime.app.close();
+  });
+
+  it("onboards private Tailscale Serve access through administrator endpoints", async () => {
+    const calls: string[][] = [];
+    const monitor = new TailscaleMonitor(async () => ({ stdout: JSON.stringify({ BackendState: "Running", Self: { DNSName: "fitz.tail.test.", TailscaleIPs: ["100.64.0.1"] } }) }));
+    const serve = new TailscaleServeManager(async (args) => { calls.push([...args]); return { stdout: JSON.stringify({ Web: { "fitz.tail.test:443": {} } }) }; });
+    const runtime = createHost({ adminToken: "remote-test-token", tailscaleMonitor: monitor, tailscaleServeManager: serve, localPort: 9999 });
+    const headers = { "x-fitz-admin-token": "remote-test-token" };
+    const status = await runtime.app.inject({ method: "GET", url: "/api/v1/management/connectivity/status", headers });
+    const enabled = await runtime.app.inject({ method: "POST", url: "/api/v1/management/connectivity/tailscale-serve", headers, payload: {} });
+    const disabled = await runtime.app.inject({ method: "DELETE", url: "/api/v1/management/connectivity/tailscale-serve", headers });
+    expect(status.json().data).toEqual(expect.objectContaining({ tailscale: expect.objectContaining({ state: "connected", dnsName: "fitz.tail.test" }), serve: expect.objectContaining({ available: true }) }));
+    expect(enabled.statusCode).toBe(200); expect(disabled.statusCode).toBe(204);
+    expect(calls).toEqual([
+      ["serve", "status", "--json"],
+      ["serve", "--https=443", "--bg", "--yes", "http://127.0.0.1:9999"],
+      ["serve", "status", "--json"],
+      ["serve", "--https=443", "off"],
+    ]);
     await runtime.app.close();
   });
 
