@@ -386,8 +386,9 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('contextMeter.classList.toggle("model-loading", loading)');
     expect(renderer).toContain('contextMeter.setAttribute("aria-label", "Loading model")');
     expect(styles).toContain("@keyframes model-spinner");
-    expect(styles).toContain("animation: model-spinner 760ms linear infinite");
-    expect(styles).toContain("prefers-reduced-motion: reduce");
+    expect(styles).toContain(".context-meter.model-loading::before");
+    expect(styles).toContain("animation: model-spinner 680ms linear infinite");
+    expect(styles).not.toContain("prefers-reduced-motion: reduce) { .context-meter.model-loading");
   });
 
   it("keeps every dropdown and overflow surface at the compact Codex menu density", () => {

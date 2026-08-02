@@ -371,11 +371,11 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .access-mode-menu strong { font-size: 12px; font-weight: 550; }
 .access-mode-menu small { color: var(--codex-text-tertiary); font-size: 10px; }
 .context-usage-wrap { position: relative; display: flex; align-items: center; }
-.context-meter { --context-used: 0%; width: 18px; height: 18px; flex: 0 0 auto; padding: 0; border-radius: 50%; background: conic-gradient(#9a9d98 var(--context-used), #555854 0); cursor: pointer; -webkit-mask: radial-gradient(circle, transparent 44%, #000 47%); mask: radial-gradient(circle, transparent 44%, #000 47%); }
+.context-meter { --context-used: 0%; position: relative; width: 18px; height: 18px; flex: 0 0 auto; padding: 0; border-radius: 50%; background: conic-gradient(#9a9d98 var(--context-used), #555854 0); cursor: pointer; -webkit-mask: radial-gradient(circle, transparent 44%, #000 47%); mask: radial-gradient(circle, transparent 44%, #000 47%); }
 .context-meter:hover { background: conic-gradient(#d1d3cd var(--context-used), #696c67 0); }
-.context-meter.model-loading, .context-meter.model-loading:hover { background: conic-gradient(from 0deg, transparent 0 24%, #b8bbb5 24% 100%); animation: model-spinner 760ms linear infinite; cursor: default; }
+.context-meter.model-loading, .context-meter.model-loading:hover { background: transparent; cursor: default; -webkit-mask: none; mask: none; }
+.context-meter.model-loading::before { content: ""; position: absolute; inset: 1px; border: 2px solid #555854; border-top-color: #d1d3cd; border-right-color: #d1d3cd; border-radius: 50%; animation: model-spinner 680ms linear infinite; }
 @keyframes model-spinner { to { transform: rotate(1turn); } }
-@media (prefers-reduced-motion: reduce) { .context-meter.model-loading { animation: none; } }
 .context-usage-popover { right: -72px; bottom: 32px; width: 220px; display: grid; justify-items: center; gap: 2px; padding: 8px 10px; color: var(--muted); text-align: center; font-size: 12px; }
 .context-usage-popover strong { color: #b9bcb6; font-weight: 550; }
 .context-usage-popover b { color: var(--text); font-size: 13px; }
