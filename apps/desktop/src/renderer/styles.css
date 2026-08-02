@@ -45,7 +45,7 @@
 
 * { box-sizing: border-box; }
 html, body { width: 100%; height: 100%; }
-body { margin: 0; display: grid; grid-template-rows: 36px minmax(0, 1fr); overflow: hidden; background: var(--sidebar); color: var(--text); }
+body { margin: 0; display: grid; grid-template-rows: 32px minmax(0, 1fr); overflow: hidden; background: var(--sidebar); color: var(--text); }
 button, select, textarea, input { font: inherit; }
 button, select { color: inherit; }
 button { border: 0; }
@@ -59,7 +59,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .titlebar-icon, .app-menu button, .window-controls button { height: 100%; display: grid; place-items: center; padding: 0; background: transparent; color: inherit; cursor: default; }
 .titlebar-icon { width: 42px; }
 .titlebar-icon:hover, .app-menu button:hover, .window-controls button:hover { background: rgba(255,255,255,.065); color: var(--text); }
-.app-menu button { padding: 0 12px; font-size: 13px; }
+.app-menu button { padding: 0 10px; font-size: 12.5px; }
 .window-controls button { width: 46px; }
 .window-controls .window-close:hover { background: #c42b1c; color: white; }
 .window-controls svg, .titlebar-icon svg { width: 15px; height: 15px; }
@@ -70,7 +70,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 
 .sidebar { min-width: 0; display: flex; flex-direction: column; padding: 8px; overflow: hidden; background: var(--sidebar); transition: opacity 140ms ease; }
 .sidebar-collapsed .sidebar { opacity: 0; pointer-events: none; }
-.sidebar-resizer { position: fixed; z-index: 30; top: 36px; bottom: 0; left: calc(var(--sidebar-width) - 3px); width: 6px; outline: 0; cursor: col-resize; }
+.sidebar-resizer { position: fixed; z-index: 30; top: 32px; bottom: 0; left: calc(var(--sidebar-width) - 3px); width: 6px; outline: 0; cursor: col-resize; }
 .sidebar-resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 1px; background: transparent; transition: background 120ms ease; }
 .sidebar-resizer:hover::after, .sidebar-resizer:focus::after, .sidebar-resizer.dragging::after { background: #56615d; }
 .sidebar-collapsed .sidebar-resizer { display: none; }
@@ -86,6 +86,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .nav-action:hover kbd { opacity: 1; }
 .sidebar-section { margin-top: 20px; min-height: 0; overflow: auto; }
 .section-heading { height: 32px; display: flex; align-items: center; justify-content: space-between; padding: 0 7px; color: var(--muted); font-size: 13px; }
+.projects-heading > span { color: #c8cbc5; font-weight: 650; }
 .projects-heading #new-project { opacity: 0; pointer-events: none; transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease; }
 .projects-heading:hover #new-project, .projects-heading:focus-within #new-project, #new-project:focus-visible { opacity: 1; pointer-events: auto; }
 .project-tree { display: grid; gap: 3px; }
@@ -105,7 +106,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .task-row .activity-dot { width: 7px; height: 7px; margin-left: auto; border-radius: 50%; background: var(--muted); opacity: .65; }
 .tree-menu-toggle, .tree-quick-action { position: absolute; z-index: 2; top: 50%; width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border-radius: 7px; transform: translateY(-50%); background: transparent; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease; }
 .tree-menu-toggle { right: 4px; }.tree-quick-action { right: 31px; }
-.tree-item:hover .tree-menu-toggle, .tree-item:hover .tree-quick-action, .tree-item:focus-within .tree-menu-toggle, .tree-item:focus-within .tree-quick-action, .project-group:hover > .tree-item .tree-quick-action, .project-group:focus-within > .tree-item .tree-quick-action, .tree-menu-toggle[aria-expanded="true"] { opacity: 1; }
+.tree-item:hover .tree-menu-toggle, .tree-item:hover .tree-quick-action, .tree-item:focus-within .tree-menu-toggle, .tree-item:focus-within .tree-quick-action, .tree-menu-toggle[aria-expanded="true"] { opacity: 1; }
 .tree-menu-toggle:hover, .tree-quick-action:hover { background: rgba(255,255,255,.08); color: var(--text); }
 .tree-menu-toggle svg, .tree-quick-action svg { width: 15px; height: 15px; }
 .tree-empty { padding: 6px 9px 8px 30px; color: var(--subtle); font-size: 12px; }
@@ -119,14 +120,13 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .connection-card[data-state="active"] .connection-dot { background: var(--green); box-shadow: 0 0 0 3px rgba(99,197,146,.11); }
 .connection-card[data-state="error"] .connection-dot { background: var(--red); }
 
-.workspace { position: relative; min-width: 0; margin-top: 8px; display: grid; grid-template-rows: 50px minmax(0, 1fr) auto; overflow: hidden; border-top-left-radius: var(--codex-radius-2xl); background: var(--bg); box-shadow: -1px -1px 0 var(--codex-border); }
+.workspace { position: relative; min-width: 0; margin-top: 5px; display: grid; grid-template-rows: 50px minmax(0, 1fr) auto; overflow: hidden; border-top-left-radius: var(--codex-radius-lg); background: var(--bg); box-shadow: -1px -1px 0 var(--codex-border); }
 .workspace-header { display: flex; align-items: center; justify-content: space-between; padding: 0 14px; border-bottom: 1px solid var(--border-soft); }
 .workspace-title { min-width: 0; display: flex; align-items: center; gap: 8px; }
 .workspace-title { position: relative; }
 .workspace-title svg { color: var(--muted); }
 .workspace-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 #task-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
-#task-title:not(:empty)::before { content: "·"; margin-right: 8px; color: var(--subtle); }
 .task-menu-toggle { flex: 0 0 auto; }
 .popover { position: absolute; z-index: 18; padding: 4px; border: 0; border-radius: var(--codex-radius-lg); background: var(--codex-control); box-shadow: var(--codex-elevation-stroke), var(--codex-shadow-xl); backdrop-filter: blur(16px); }
 .task-menu { top: 34px; left: 120px; width: 220px; }

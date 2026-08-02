@@ -64,7 +64,7 @@ describe("desktop renderer shell", () => {
     expect(main).not.toContain('ipcMain.handle("fitz:show-menu"');
     expect(main).toContain('ipcMain.handle("fitz:window-action"');
     expect(main).not.toContain("window.getBounds()");
-    expect(styles).toContain("grid-template-rows: 36px minmax(0, 1fr)");
+    expect(styles).toContain("grid-template-rows: 32px minmax(0, 1fr)");
     expect(html).not.toContain('id="sidebar-restore"');
   });
 
@@ -76,6 +76,7 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("height: 42px; display: flex; align-items: center");
     expect(html).toContain('class="section-heading projects-heading"');
     expect(styles).toContain(".projects-heading #new-project { opacity: 0; pointer-events: none;");
+    expect(styles).toContain(".projects-heading > span { color: #c8cbc5; font-weight: 650; }");
     expect(styles).toContain(".task-row { padding: 6px 34px 6px 30px;");
     expect(renderer).toContain('identity.data?.authMode === "disabled" || identity.data?.user?.role === "administrator"');
     expect(html).toContain('d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"');
@@ -326,17 +327,18 @@ describe("desktop renderer shell", () => {
   it("matches the project hover controls and menu actions", () => {
     expect(renderer).toContain('className = "tree-quick-action"');
     expect(renderer).toContain("New chat in ${label}");
-    expect(styles).toContain(".project-group:hover > .tree-item .tree-quick-action");
+    expect(styles).not.toContain(".project-group:hover > .tree-item .tree-quick-action");
     for (const label of ["Pin project", "Open in Explorer", "Create permanent worktree", "Edit project", "Archive chats", "Remove"]) {
       expect(renderer).toContain(`"${label}"`);
     }
     expect(renderer).toContain('api(`/api/v1/projects/${id}`, "DELETE")');
   });
 
-  it("clears the starter screen and reports model loading before output arrives", () => {
+  it("clears the starter screen and reports unobtrusive work progress before output arrives", () => {
     expect(renderer).toContain('messages.querySelector(".landing, .new-chat-landing")');
-    expect(renderer).toContain('appendRunActivity("Starting model…")');
-    expect(renderer).toContain('setRunActivity(activity, "Loading model", runStartedAt)');
+    expect(renderer).toContain('appendRunActivity("Working")');
+    expect(renderer).toContain('setRunActivity(activity, "Working", runStartedAt)');
+    expect(renderer).not.toContain('setRunActivity(activity, "Loading model"');
     expect(renderer).toContain("formatElapsed(Date.now() - startedAt)");
     expect(renderer).toContain('api("/api/v1/management/status")');
   });
@@ -352,14 +354,11 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".queue-cancel");
   });
 
-  it("floats Environment over the conversation instead of creating a third layout column", () => {
-    expect(styles).toContain(".app-shell.context-open { grid-template-columns: var(--sidebar-width) minmax(0, 1fr); }");
-    expect(styles).toContain(".app-shell.sidebar-collapsed.context-open { grid-template-columns: 0 minmax(0, 1fr); }");
-    expect(styles).toContain(".context-panel { position: absolute; z-index: 12; top: 64px; right: 14px;");
-    expect(styles).toContain("max-height: calc(100% - 78px)");
-    expect(html.indexOf('id="context-panel"')).toBeLessThan(html.indexOf("</main>"));
-    expect(styles).not.toContain("minmax(0, 1fr) 334px");
-    expect(styles).not.toContain("right: 0; bottom: 0; width: 320px");
+  it("keeps the deferred Environment surface out of the current UI", () => {
+    expect(html).toContain('id="context-toggle" class="icon-button" type="button" title="Toggle environment panel" aria-label="Toggle environment panel" aria-expanded="false" hidden');
+    expect(html).toContain('id="context-panel" class="context-panel" aria-label="Environment panel" hidden');
+    expect(renderer).not.toContain('item("Toggle environment"');
+    expect(renderer).toContain("contextPanel.hidden = true");
   });
 
   it("pairs a desktop without exposing its durable bearer credential to the renderer", () => {

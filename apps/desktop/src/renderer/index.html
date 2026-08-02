@@ -34,11 +34,11 @@
           <kbd>Ctrl N</kbd>
         </button>
         <button id="manage-playbooks" class="nav-action" type="button">
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4.5h5.5A2.5 2.5 0 0 1 12 7v9H6.5A2.5 2.5 0 0 0 4 18.5z"></path><path d="M16 4.5h-4A2.5 2.5 0 0 0 9.5 7v9H13.5a2.5 2.5 0 0 1 2.5 2.5z"></path></svg>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="2"></rect><rect x="11" y="3" width="6" height="6" rx="2"></rect><rect x="3" y="11" width="6" height="6" rx="2"></rect><rect x="11" y="11" width="6" height="6" rx="2"></rect></svg>
           <span>Playbooks</span>
         </button>
         <button id="manage-connections" class="nav-action" type="button">
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 6V3.5M12.5 6V3.5M5 6h10v2.5a5 5 0 0 1-5 5v3M7.5 16.5h5"></path></svg>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m8.2 11.8-1.4 1.4a3 3 0 0 1-4.2-4.2l2.3-2.3a3 3 0 0 1 4.2 0"></path><path d="m11.8 8.2 1.4-1.4a3 3 0 1 1 4.2 4.2l-2.3 2.3a3 3 0 0 1-4.2 0"></path><path d="m7.5 12.5 5-5"></path></svg>
           <span>Connections</span>
         </button>
         <button id="manage-plugins" class="nav-action" type="button" hidden>
@@ -61,7 +61,7 @@
         </div>
 
         <div class="sidebar-spacer"></div>
-        <button id="connection-status" class="connection-card" type="button" aria-label="Reconnect to host">
+        <button id="connection-status" class="connection-card" type="button" aria-label="Reconnect to host" hidden>
           <span class="connection-dot"></span>
           <span><strong>Local host</strong><small id="connection-detail">Connecting…</small></span>
         </button>
@@ -73,7 +73,7 @@
           <div class="workspace-title">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
             <strong id="project-title">Fitz Codex</strong>
-            <span id="task-title"></span>
+            <span id="task-title" hidden></span>
             <button id="task-menu-toggle" class="icon-button task-menu-toggle no-drag" type="button" title="Task actions" aria-label="Task actions" aria-expanded="false" hidden>
               <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="5" cy="10" r="1"></circle><circle cx="10" cy="10" r="1"></circle><circle cx="15" cy="10" r="1"></circle></svg>
             </button>
@@ -84,7 +84,7 @@
           </div>
           <div class="header-actions no-drag">
             <button id="update" class="quiet-button" type="button" hidden>Restart to update</button>
-            <button id="context-toggle" class="icon-button" type="button" title="Toggle environment panel" aria-label="Toggle environment panel" aria-expanded="false">
+            <button id="context-toggle" class="icon-button" type="button" title="Toggle environment panel" aria-label="Toggle environment panel" aria-expanded="false" hidden>
               <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5h12M4 10h12M4 15h12"></path><circle cx="7" cy="5" r="1"></circle><circle cx="13" cy="10" r="1"></circle><circle cx="9" cy="15" r="1"></circle></svg>
             </button>
           </div>
@@ -319,9 +319,9 @@
     <div id="app-menu-popover" class="popover menu-surface app-menu-popover no-drag" hidden></div>
     <div id="select-popover" class="popover menu-surface select-popover no-drag" role="listbox" hidden></div>
     <div id="sidebar-context-menu" class="popover menu-surface sidebar-context-menu" hidden></div>
-    <aside id="chat-hover-card" class="chat-hover-card" hidden><header><strong id="hover-chat-title"></strong><time id="hover-chat-age"></time></header><p><svg viewBox="0 0 20 20"><path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path></svg><span id="hover-project-name"></span></p><p><svg viewBox="0 0 20 20"><path d="M6 4v9M6 7h5M11 7v6M11 10h4"></path></svg><span>main</span></p></aside>
+    <aside id="chat-hover-card" class="chat-hover-card" hidden><header><strong id="hover-chat-title"></strong><time id="hover-chat-age"></time></header><p><svg viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg><span id="hover-project-name"></span></p><p><svg viewBox="0 0 20 20"><path d="M6 4v9M6 7h5M11 7v6M11 10h4"></path></svg><span>main</span></p></aside>
     <aside id="project-hover-card" class="project-hover-card" hidden>
-      <header><span><svg viewBox="0 0 20 20"><path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path><path d="M3.5 6.5V4h5l1.5 2"></path></svg><strong id="hover-project-title"></strong></span><button id="hover-project-pin" type="button" title="Pin project" aria-label="Pin project"><svg viewBox="0 0 20 20"><path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path></svg></button></header>
+      <header><span><svg viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg><strong id="hover-project-title"></strong></span><button id="hover-project-pin" type="button" title="Pin project" aria-label="Pin project"><svg viewBox="0 0 20 20"><path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path></svg></button></header>
       <div class="project-hover-detail"><svg viewBox="0 0 20 20"><path d="M4 4.5h12v9H9l-3.5 2.5v-2.5H4z"></path></svg><span id="hover-project-task-count"></span></div>
       <button id="hover-project-path" class="project-hover-action" type="button"><svg viewBox="0 0 20 20"><rect x="3" y="4" width="14" height="12" rx="2"></rect><path d="M3 8h14"></path></svg><span id="hover-project-path-label"></span></button>
       <button id="hover-project-edit" class="project-hover-action" type="button"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="3"></circle><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M15.3 4.7l-1.4 1.4M6.1 13.9l-1.4 1.4"></path></svg><span>Edit project</span></button>

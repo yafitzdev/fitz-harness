@@ -39,6 +39,7 @@ const engineOptions = engineModeOptions(engineMode);
 const store = new SqliteStore(databasePath);
 const authPepper = authMode === "required" ? resolveAuthPepper(store) : undefined;
 if (engineMode === "ninfer") reconcileNInferConfiguration(store);
+extendLocalModelResidency(store);
 const runtime = createHost({
   store,
   logger: true,
@@ -138,6 +139,13 @@ function reconcileNInferConfiguration(store: SqliteStore): void {
   }
 }
 
+function extendLocalModelResidency(store: SqliteStore): void {
+  for (const recipe of store.listRecipes()) {
+    if (recipe.adapter === "openai-compatible" || recipe.lifecycle.evictionPolicy !== "idle-ttl" || recipe.lifecycle.idleTtlSeconds >= 1_800) continue;
+    store.upsertRecipe({ ...recipe, lifecycle: { ...recipe.lifecycle, idleTtlSeconds: 1_800 } });
+  }
+}
+
 function engineModeOptions(mode: string) {
   if (mode === "fake") {
     const fakeAdapter = new FakeEngineAdapter({
@@ -176,7 +184,7 @@ function engineRecipe(adapter: "openai-compatible" | "llama-cpp", configuration:
   return {
     id: `${adapter}-default`, playbookId: adapter, displayName: modelId, adapter, modelId, contextTokens,
     capabilities: { chatCompletions: true, streaming: true, toolCalls: false, responseFormat: false, minP: false, maxConcurrentGenerations: 1 },
-    lifecycle: { loadPolicy: "onDemand", evictionPolicy: adapter === "openai-compatible" ? "never" : "idle-ttl", idleTtlSeconds: 60, minimumResidencySeconds: 0 },
+    lifecycle: { loadPolicy: "onDemand", evictionPolicy: adapter === "openai-compatible" ? "never" : "idle-ttl", idleTtlSeconds: 1_800, minimumResidencySeconds: 0 },
     configuration,
   };
 }

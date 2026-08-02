@@ -1763,7 +1763,7 @@ async function saveRecipe(): Promise<void> {
       playbookId: value("recipe-playbook-id"), displayName: value("recipe-display-name"), adapter: value("recipe-adapter"), modelId: value("recipe-model-id"),
       contextTokens: Number(value("recipe-context-tokens")), configuration,
       capabilities: editingRecipe?.capabilities ?? { chatCompletions: true, streaming: true, toolCalls: false, responseFormat: false, minP: false, maxConcurrentGenerations: 1 },
-      lifecycle: editingRecipe?.lifecycle ?? { loadPolicy: "onDemand", evictionPolicy: "idle-ttl", idleTtlSeconds: 300, minimumResidencySeconds: 0 },
+      lifecycle: editingRecipe?.lifecycle ?? { loadPolicy: "onDemand", evictionPolicy: "idle-ttl", idleTtlSeconds: 1_800, minimumResidencySeconds: 0 },
     });
     closeManagementEditor(); await loadManagementConfiguration(true);
   } catch (error) { showToast(errorMessage(error)); } finally { setFormBusy(recipeForm, false); }
@@ -2023,8 +2023,6 @@ function openAppMenu(name: string, toggle: HTMLButtonElement, event: MouseEvent)
     item("Select all", '<path d="M7 3H3v4M13 3h4v4M17 13v4h-4M7 17H3v-4"></path>', edit("select-all"), "Ctrl+A");
   } else if (name === "View") {
     item("Toggle sidebar", '<rect x="3" y="4" width="14" height="12" rx="2"></rect><path d="M7 4v12"></path>', toggleSidebar, "Ctrl+B");
-    item("Toggle environment", '<path d="M4 5h12M4 10h12M4 15h12"></path><circle cx="7" cy="5" r="1"></circle><circle cx="13" cy="10" r="1"></circle><circle cx="9" cy="15" r="1"></circle>', () => setContextPanel(contextPanel.hasAttribute("hidden")));
-    separator();
     item("Reload", '<path d="M16 7V3l-2 2a6 6 0 1 0 1 8"></path>', edit("reload"), "Ctrl+R");
     item("Developer tools", '<path d="m7 6-4 4 4 4M13 6l4 4-4 4M11 4 9 16"></path>', edit("devtools"));
   } else if (name === "Help") {
@@ -2095,7 +2093,7 @@ async function sendPrompt(): Promise<void> {
   resizePrompt();
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   appendMessage("user", content);
-  const activity = appendRunActivity("Starting model…");
+  const activity = appendRunActivity("Working");
   const runStartedAt = Date.now();
   sessionTokenEstimate += estimateTokens(content);
   updateContextMeter();
@@ -2164,7 +2162,7 @@ async function followRun(runId: string, activity: HTMLElement, runStartedAt: num
         if (queued) { const position = Math.max(1, Number(event.data?.position ?? 1)); setStatus(`Queued ${position}`, "loading"); engineState.textContent = "QUEUED"; setRunActivity(activity, position === 1 ? "Queued · next" : `Queued · ${position - 1} ahead`, runStartedAt); }
         if (!contextPanel.hidden) void loadAgentQueue();
       }
-      if (event.type === "run.started") { queued = false; setStatus("Working", "active"); engineState.textContent = "WORKING"; setRunActivity(activity, "Loading model", runStartedAt); }
+      if (event.type === "run.started") { queued = false; setStatus("Working", "active"); engineState.textContent = "WORKING"; setRunActivity(activity, "Working", runStartedAt); }
       if (event.type === "assistant.delta") {
         if (!assistant) { activity.remove(); assistant = appendMessage("assistant", ""); }
         const delta = event.data.text ?? ""; appendMarkdown(assistant, delta); sessionTokenEstimate += estimateTokens(delta); updateContextMeter();
@@ -2218,14 +2216,11 @@ async function followRun(runId: string, activity: HTMLElement, runStartedAt: num
       try {
         const management = await api("/api/v1/management/status");
         const state = String(management.engine?.state ?? "");
-        const recipeId = String(management.engine?.recipeId ?? "");
-        const recipe = (management.recipes ?? []).find((candidate: Json) => candidate.id === recipeId);
-        const modelName = String(recipe?.displayName ?? "").replace(/\s*[·•]\s*(Fast|Best)\s*$/i, "");
         engineState.textContent = state || "WORKING";
         if (state === "READY" || state === "BUSY") setRunActivity(activity, "Thinking", runStartedAt);
         else if (state === "FAILED") activity.textContent = `Model failed: ${management.engine?.failureReason ?? "Unknown error"}`;
-        else setRunActivity(activity, modelName ? `Loading ${modelName}` : "Loading model", runStartedAt);
-      } catch { setRunActivity(activity, "Loading model", runStartedAt); }
+        else setRunActivity(activity, "Working", runStartedAt);
+      } catch { setRunActivity(activity, "Working", runStartedAt); }
     }
     if (!done) await delay(350);
   }
@@ -2534,7 +2529,7 @@ function updateTitles(): void {
   const project = projectRecords.find((item) => item.id === currentProject);
   const session = currentProject ? (sessionsByProject.get(currentProject) ?? []).find((item) => item.id === currentSession) : undefined;
   projectTitle.textContent = project?.name ?? "Fitz Codex";
-  taskTitle.textContent = session?.title ?? "";
+  taskTitle.textContent = "";
   taskMenuToggle.hidden = !session;
 }
 
@@ -2578,10 +2573,10 @@ function scheduleProjectHoverHide(): void { cancelProjectHoverHide(); projectHov
 function hideProjectHover(): void { cancelProjectHoverHide(); projectHoverCard.hidden = true; hoveredProjectId = undefined; }
 
 function setContextPanel(open: boolean): void {
-  contextPanel.hidden = !open;
-  shell.classList.toggle("context-open", open);
-  contextToggle.setAttribute("aria-expanded", String(open));
-  scheduleQueueRefresh();
+  void open;
+  contextPanel.hidden = true;
+  shell.classList.remove("context-open");
+  contextToggle.setAttribute("aria-expanded", "false");
 }
 
 function toggleSidebar(): void { shell.classList.toggle("sidebar-collapsed"); closePopovers(); }
