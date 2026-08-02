@@ -201,6 +201,12 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("max_tokens: Number(effort.value)");
     expect(styles).toContain('.advanced-row[aria-expanded="true"] svg');
     expect(styles).toContain(".advanced-settings-panel");
+    expect(styles).toContain(".model-menu { right: 0; bottom: 38px;");
+    expect(styles).toContain(".settings-submenu.open-left");
+    expect(html).toContain('<option value="1024">Light</option><option value="4096" selected>Medium</option><option value="8192">High</option>');
+    expect(html).not.toContain('data-setting="speed"');
+    expect(html).not.toContain("Extra High");
+    expect(html).not.toContain("Ultra");
   });
 
   it("manually compacts context from the inline usage popover", () => {

@@ -54,13 +54,11 @@ const projects = element("projects");
 const messages = element("messages");
 const model = element("model") as HTMLSelectElement;
 const effort = element("effort") as HTMLSelectElement;
-const speed = element("speed") as HTMLSelectElement;
 const modelToggle = element("model-toggle") as HTMLButtonElement;
 const modelMenu = element("model-menu");
 const modelSummary = element("model-summary");
 const modelValue = element("model-value");
 const effortValue = element("effort-value");
-const speedValue = element("speed-value");
 const settingsSubmenu = element("settings-submenu");
 const advancedSettings = element("advanced-settings") as HTMLButtonElement;
 const advancedSettingsPanel = element("advanced-settings-panel");
@@ -255,7 +253,6 @@ artifactFile.addEventListener("change", () => void uploadArtifact());
 chooseProjectFolder.addEventListener("click", () => void selectProjectFolder());
 model.addEventListener("change", updateModelControls);
 effort.addEventListener("change", updateModelControls);
-speed.addEventListener("change", applySpeedSelection);
 modelToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(modelMenu, modelToggle); });
 contextMeter.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(contextUsagePopover, contextMeter as HTMLButtonElement); });
 contextUsagePopover.addEventListener("click", (event) => event.stopPropagation());
@@ -275,7 +272,7 @@ element("create-branch-submit").addEventListener("click", () => void createAndCh
 newBranchName.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); void createAndCheckoutBranch(); } });
 element("create-worktree-submit").addEventListener("click", () => void createWorktree());
 newWorktreeBranch.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); void createWorktree(); } });
-for (const row of document.querySelectorAll<HTMLButtonElement>("[data-setting]")) row.addEventListener("click", (event) => { event.stopPropagation(); openSettingsSubmenu(row.dataset.setting as "model" | "effort" | "speed", row); });
+for (const row of document.querySelectorAll<HTMLButtonElement>("[data-setting]")) row.addEventListener("click", (event) => { event.stopPropagation(); openSettingsSubmenu(row.dataset.setting as "model" | "effort", row); });
 advancedSettings.addEventListener("click", (event) => { event.stopPropagation(); toggleAdvancedSettings(); });
 temperature.addEventListener("input", updateTemperature);
 const storedTemperature = Number(localStorage.getItem("fitz-temperature") ?? "0.4");
@@ -1559,13 +1556,9 @@ function updateModelControls(): void {
   modelSummary.textContent = `${model.selectedOptions[0]?.textContent ?? "Model"} · ${effortLabel}`;
   modelValue.textContent = model.selectedOptions[0]?.textContent ?? "Model";
   effortValue.textContent = effortLabel;
-  speed.value = model.value === "fast" ? "fast" : "standard";
-  speedValue.textContent = speed.selectedOptions[0]?.textContent ?? "Standard";
   syncContextLimit();
   updateContextMeter();
 }
-
-function applySpeedSelection(): void { const route = speed.value === "fast" ? "fast" : "default"; if ([...model.options].some((option) => option.value === route)) model.value = route; updateModelControls(); }
 
 function toggleAdvancedSettings(): void {
   const opening = advancedSettingsPanel.hidden;
@@ -1580,21 +1573,22 @@ function updateTemperature(): void {
   localStorage.setItem("fitz-temperature", temperature.value);
 }
 
-function openSettingsSubmenu(kind: "model" | "effort" | "speed", row: HTMLButtonElement): void {
-  const select = kind === "model" ? model : kind === "effort" ? effort : speed;
+function openSettingsSubmenu(kind: "model" | "effort", row: HTMLButtonElement): void {
+  const select = kind === "model" ? model : effort;
   advancedSettingsPanel.hidden = true;
   advancedSettings.setAttribute("aria-expanded", "false");
   settingsSubmenu.replaceChildren();
   for (const option of [...select.options]) {
     const button = document.createElement("button"); button.type = "button"; button.classList.toggle("selected", option.value === select.value);
     const label = document.createElement("span"); label.textContent = option.textContent; button.append(label);
-    if (kind === "effort" && option.value === "65536") { const note = document.createElement("small"); note.textContent = "Consumes resources faster"; label.append(note); }
-    button.addEventListener("click", (event) => { event.stopPropagation(); select.value = option.value; if (kind === "speed") applySpeedSelection(); else updateModelControls(); closePopovers(); }); settingsSubmenu.append(button);
+    button.addEventListener("click", (event) => { event.stopPropagation(); select.value = option.value; updateModelControls(); closePopovers(); }); settingsSubmenu.append(button);
   }
   for (const item of document.querySelectorAll(".setting-row")) item.classList.toggle("active", item === row);
   settingsSubmenu.style.top = `${Math.max(-8, row.offsetTop - 8)}px`;
+  settingsSubmenu.classList.remove("open-left");
   settingsSubmenu.hidden = false;
-  const bounds = settingsSubmenu.getBoundingClientRect();
+  let bounds = settingsSubmenu.getBoundingClientRect();
+  if (bounds.right > window.innerWidth - 16) { settingsSubmenu.classList.add("open-left"); bounds = settingsSubmenu.getBoundingClientRect(); }
   if (bounds.bottom > window.innerHeight - 16) settingsSubmenu.style.top = `${Number.parseFloat(settingsSubmenu.style.top) - (bounds.bottom - window.innerHeight + 16)}px`;
 }
 
@@ -2073,7 +2067,6 @@ function refreshComposerState(): void {
   prompt.disabled = !ready || Boolean(currentRun);
   model.disabled = model.options.length === 0 || Boolean(currentRun);
   effort.disabled = Boolean(currentRun);
-  speed.disabled = model.options.length === 0 || Boolean(currentRun);
   temperature.disabled = Boolean(currentRun);
   advancedSettings.disabled = Boolean(currentRun);
   modelToggle.disabled = model.options.length === 0 || Boolean(currentRun);
