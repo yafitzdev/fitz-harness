@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { FakeEngineAdapter } from "@fitz/engine-fake";
 import {
   type EngineAdapter,
@@ -171,7 +171,8 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
 
   app.addHook("onRequest", async (request, reply) => {
     requestStarts.set(request, performance.now());
-    if (authMode === "required" && request.url.split("?")[0] !== "/health" && request.url.split("?")[0] !== "/api/v1/pairing/redeem") {
+    const publicPath = request.url.split("?")[0];
+    if (authMode === "required" && publicPath !== "/health" && publicPath !== "/api/v1/pairing/redeem" && publicPath !== "/api/v1/pairing/bootstrap") {
       const principal = security?.authenticate(request.headers.authorization);
       if (!principal) return reply.code(401).send({ error: "Valid device bearer token required" });
       principals.set(request, principal);
@@ -196,6 +197,17 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     };
   });
   app.get("/api/v1/me", async (request) => { const principal = principals.get(request); return { data: principal ? { authMode: "required", user: principal.user, device: principal.device, routeIds: principal.routeGrants, quota: principal.quota } : { authMode: "disabled" } }; });
+
+  app.post("/api/v1/pairing/bootstrap", async (request, reply) => {
+    if (!isDirectLoopbackRequest(request)) return reply.code(403).send({ error: "Initial administration setup is only available directly on the host" });
+    if (authMode !== "required" || !security) return reply.code(409).send({ error: "Device authentication is not enabled" });
+    if (store.listUsers().length > 0) return reply.code(409).send({ error: "The host has already been initialized" });
+    const administrator = security.createUser(`${hostname()} Administrator`, "administrator");
+    const issued = security.issueDevice(administrator.id, `${hostname()} Desktop`);
+    security.setRouteGrants(administrator.id, activeRoutes().map((route) => route.id));
+    security.audit("security.bootstrapped", administrator.id, "user", administrator.id);
+    return reply.code(201).send({ data: { user: administrator, device: issued.device, token: issued.token } });
+  });
 
   app.get("/v1/models", async (request): Promise<ModelListResponse> => ({
     object: "list",
@@ -661,7 +673,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
 
   const administratorGuard = adminGuard(options.adminToken, authMode, principals);
   app.get("/api/v1/management/connectivity/status", { preHandler: administratorGuard }, async () => { const tailscaleStatus = await tailscale.status(); try { return { data: { tailscale: tailscaleStatus, serve: { available: true, configuration: await tailscaleServe.status() } } }; } catch (error) { return { data: { tailscale: tailscaleStatus, serve: { available: false, message: errorMessage(error) } } }; } });
-  app.post("/api/v1/management/connectivity/tailscale-serve", { preHandler: administratorGuard }, async (request, reply) => { try { const body = requireRecord(request.body); const localPort = body.localPort === undefined ? options.localPort ?? 8787 : requireInteger(body.localPort); const httpsPort = body.httpsPort === undefined ? 443 : requireInteger(body.httpsPort); await tailscaleServe.enable(localPort, httpsPort); security?.audit("tailscale-serve.enabled", principals.get(request)?.user.id, "connectivity", "tailscale", { localPort, httpsPort }); return { data: await tailscaleServe.status() }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
+  app.post("/api/v1/management/connectivity/tailscale-serve", { preHandler: administratorGuard }, async (request, reply) => { try { if (authMode !== "required") return reply.code(409).send({ error: "Device authentication must be enabled before remote access" }); const body = requireRecord(request.body); const localPort = body.localPort === undefined ? options.localPort ?? 8787 : requireInteger(body.localPort); const httpsPort = body.httpsPort === undefined ? 443 : requireInteger(body.httpsPort); await tailscaleServe.enable(localPort, httpsPort); security?.audit("tailscale-serve.enabled", principals.get(request)?.user.id, "connectivity", "tailscale", { localPort, httpsPort }); return { data: await tailscaleServe.status() }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
   app.delete("/api/v1/management/connectivity/tailscale-serve", { preHandler: administratorGuard }, async (request, reply) => { try { const query = request.query as { httpsPort?: string }; const httpsPort = toNonNegativeInteger(query.httpsPort, 443); await tailscaleServe.disable(httpsPort); security?.audit("tailscale-serve.disabled", principals.get(request)?.user.id, "connectivity", "tailscale", { httpsPort }); return reply.code(204).send(); } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
   app.get("/api/v1/management/startup", { preHandler: administratorGuard }, async () => ({ data: startup ? await startup.status() : { available: false, configured: false, message: "Startup management is unavailable" } }));
   app.post("/api/v1/management/startup", { preHandler: administratorGuard }, async (request, reply) => { try { if (!startup) throw new Error("Startup management is unavailable"); const result = await startup.install(); security?.audit("host-startup.installed", principals.get(request)?.user.id, "host", "startup"); return { data: result }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
@@ -1008,6 +1020,13 @@ function isTerminalAgentEvent(type: string): boolean { return type === "run.comp
 function parseApprovalStatus(value: string | undefined): "pending" | "approved" | "denied" | "cancelled" | undefined { return value === "pending" || value === "approved" || value === "denied" || value === "cancelled" ? value : undefined; }
 function decodeBase64(value: unknown): Buffer { if (typeof value !== "string" || value.length === 0 || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) throw new TypeError("contentBase64 must be valid padded base64"); return Buffer.from(value, "base64"); }
 function safeFilename(value: string): string { return value.replace(/[\r\n"\\/]/g, "_").slice(0, 160) || "artifact"; }
+
+function isDirectLoopbackRequest(request: FastifyRequest): boolean {
+  const address = request.ip.startsWith("::ffff:") ? request.ip.slice("::ffff:".length) : request.ip;
+  if (address !== "127.0.0.1" && address !== "::1") return false;
+  const proxyHeaders = ["forwarded", "x-forwarded-for", "x-forwarded-host", "tailscale-user-login", "tailscale-user-name", "tailscale-user-profile-pic"];
+  return proxyHeaders.every((name) => request.headers[name] === undefined);
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

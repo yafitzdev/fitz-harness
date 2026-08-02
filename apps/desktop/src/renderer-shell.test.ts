@@ -312,9 +312,13 @@ describe("desktop renderer shell", () => {
     for (const id of ["pairing-page", "pairing-form", "pairing-code", "pairing-display-name", "pairing-device-name", "pairing-error"]) expect(html).toContain(`id="${id}"`);
     expect(renderer).toContain("showPairingPage(`Enter a one-time code to connect to ${configuredHostOrigin}.`)");
     expect(renderer).toContain("window.fitz.pairDevice");
+    expect(renderer).toContain("window.fitz.bootstrapLocalDevice()");
+    expect(preload).toContain('ipcRenderer.invoke("fitz:bootstrap-local-device"');
     expect(preload).toContain('ipcRenderer.invoke("fitz:pair-device"');
     expect(preload).toContain('ipcRenderer.invoke("fitz:connection-info"');
     expect(main).toContain('ipcMain.handle("fitz:pair-device"');
+    expect(main).toContain('ipcMain.handle("fitz:bootstrap-local-device"');
+    expect(main).toContain("!isLoopbackHost(hostUrl)");
     expect(main).toContain('ipcMain.handle("fitz:connection-info"');
     expect(main).toContain("safeStorage.encryptString(token)");
     expect(main).toContain("safeStorage.decryptString");

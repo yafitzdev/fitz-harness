@@ -379,7 +379,11 @@ async function initialize(): Promise<void> {
     await loadProjects();
     void loadManagementConfiguration(false);
   } catch (error) {
-    if (error instanceof HttpError && error.status === 401) { currentUserId = undefined; administrator = false; administrationButton.hidden = true; configuredHostOrigin = (await window.fitz.connectionInfo()).origin; setConnection("Pair device", "error"); setStatus("Pairing required", "error"); showPairingPage(`Enter a one-time code to connect to ${configuredHostOrigin}.`); }
+    if (error instanceof HttpError && error.status === 401) {
+      const bootstrapped = await window.fitz.bootstrapLocalDevice().catch(() => false);
+      if (bootstrapped) { await initialize(); return; }
+      currentUserId = undefined; administrator = false; administrationButton.hidden = true; configuredHostOrigin = (await window.fitz.connectionInfo()).origin; setConnection("Pair device", "error"); setStatus("Pairing required", "error"); showPairingPage(`Enter a one-time code to connect to ${configuredHostOrigin}.`);
+    }
     else { setConnection("Click to retry", "error"); setStatus("Offline", "error"); showConnectionFailure(errorMessage(error)); }
   } finally {
     refreshComposerState();

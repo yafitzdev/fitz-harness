@@ -1,23 +1,24 @@
 # Security bootstrap
 
-Authentication is disabled for the local fake-engine development flow. Enable the production
-authentication boundary with these environment variables:
+The real host requires device authentication by default. On the first direct loopback connection,
+the Fitz desktop calls `POST /api/v1/pairing/bootstrap`, creates the sole initial administrator, and
+stores the returned device credential with Electron `safeStorage`. The endpoint is single-use and
+rejects forwarded requests, so it cannot be used through the private HTTPS proxy.
 
-- `FITZ_AUTH_MODE=required`
-- `FITZ_AUTH_PEPPER=<long random server secret>`
-- `FITZ_BOOTSTRAP_ADMIN_TOKEN=<initial bearer token>` (required only while the database has no users)
+- `FITZ_AUTH_MODE=disabled` explicitly disables authentication for isolated development only.
+- `FITZ_AUTH_PEPPER=<long random server secret>` optionally overrides the randomly generated,
+  database-persisted host secret.
 
-The bootstrap token is HMAC-SHA-256 hashed before persistence and is never returned by the API.
-After bootstrapping, use it as `Authorization: Bearer <token>` to create users and issue device
-tokens through `/api/v1/management`. Device tokens are shown once when issued; only keyed hashes
-are stored. Revocation takes effect on the next request.
+Device tokens are returned once, HMAC-SHA-256 hashed before persistence, and never exposed to the
+desktop renderer. Use `Authorization: Bearer <token>` for direct API access. Revocation takes effect
+on the next request.
 
 Administrators can access every inference route. Agent and consumer users only see and use routes
 listed in their explicit route grants. Their role default or custom quota limits request rate,
 prompt size, output tokens, and queue depth.
 
-`FITZ_ADMIN_TOKEN` remains a development-only compatibility guard when required authentication is
-disabled.
+`FITZ_ADMIN_TOKEN` remains a development-only compatibility guard when authentication is explicitly
+disabled. Fitz refuses to enable Tailscale Serve in this mode.
 
 Administrators can issue short-lived, one-use pairing codes through
 `POST /api/v1/management/pairing-codes`. A new client redeems the code without prior authentication

@@ -60,6 +60,18 @@ ipcMain.handle("fitz:consumer-connections-sync", async () => {
   persistConsumerConnections(updated);
   return results;
 });
+ipcMain.handle("fitz:bootstrap-local-device", async () => {
+  if (deviceToken || !isLoopbackHost(hostUrl) || !safeStorage.isEncryptionAvailable()) return false;
+  const response = await fetch(new URL("/api/v1/pairing/bootstrap", hostUrl), { method: "POST", headers: { accept: "application/json" } });
+  if (!response.ok) return false;
+  const parsed = JSON.parse(await response.text()) as Record<string, unknown>;
+  const data = isRecord(parsed.data) ? parsed.data : {};
+  const token = typeof data.token === "string" ? data.token : undefined;
+  if (!token) return false;
+  persistDeviceToken(token);
+  deviceToken = token;
+  return true;
+});
 ipcMain.handle("fitz:pair-device", async (_event, input: unknown) => { if (!isRecord(input)) throw new TypeError("Pairing details must be an object"); const code = requireBoundedText(input.code, "Pairing code", 128); const displayName = requireBoundedText(input.displayName, "Display name", 100); const deviceName = requireBoundedText(input.deviceName, "Device name", 100); if (!safeStorage.isEncryptionAvailable()) return { status: 503, body: JSON.stringify({ error: "Secure credential storage is unavailable" }) }; const response = await fetch(new URL("/api/v1/pairing/redeem", hostUrl), { method: "POST", headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify({ code, displayName, deviceName }) }); const body = await response.text(); if (!response.ok) return { status: response.status, body }; const parsed = JSON.parse(body) as Record<string, unknown>; const data = isRecord(parsed.data) ? parsed.data : {}; const token = typeof data.token === "string" ? data.token : undefined; if (!token) return { status: 502, body: JSON.stringify({ error: "The host did not return a device credential" }) }; persistDeviceToken(token); deviceToken = token; const { token: _token, ...safeData } = data; return { status: response.status, body: JSON.stringify({ ...parsed, data: safeData }) }; });
 ipcMain.handle("fitz:open-external", async (_event, url: unknown) => { if (typeof url !== "string" || !isAllowedExternalUrl(url)) throw new Error("External URL is not allowed"); await shell.openExternal(url); });
 ipcMain.handle("fitz:choose-folder", async () => { const result = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] }); return result.canceled ? undefined : result.filePaths[0]; });
@@ -104,6 +116,7 @@ if (process.env.FITZ_DESKTOP_SMOKE === "1") {
 app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); }); app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function commandLineValue(name: string): string | undefined { const prefix = `--${name}=`; return process.argv.find((value) => value.startsWith(prefix))?.slice(prefix.length); }
+function isLoopbackHost(value: URL): boolean { const name = value.hostname.replace(/^\[|\]$/g, "").toLowerCase(); return name === "127.0.0.1" || name === "::1" || name === "localhost"; }
 function requireLocalPath(value: unknown): string { if (typeof value !== "string" || !isAbsolute(value)) throw new Error("A valid absolute project path is required"); return value; }
 function requireBranchName(value: unknown): string { if (typeof value !== "string" || !value.trim() || value.length > 200 || /[\s~^:?*\\\[\]]/.test(value) || value.includes("..") || value.includes("@{")) throw new Error("Invalid branch name"); return value.trim(); }
 function requireBoundedText(value: unknown, label: string, maximum: number): string { if (typeof value !== "string" || !value.trim() || value.trim().length > maximum) throw new Error(`${label} is required and must be at most ${maximum} characters`); return value.trim(); }

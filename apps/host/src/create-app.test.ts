@@ -345,8 +345,9 @@ describe("Fitz host", () => {
     const calls: string[][] = [];
     const monitor = new TailscaleMonitor(async () => ({ stdout: JSON.stringify({ BackendState: "Running", Self: { DNSName: "fitz.tail.test.", TailscaleIPs: ["100.64.0.1"] } }) }));
     const serve = new TailscaleServeManager(async (args) => { calls.push([...args]); return { stdout: JSON.stringify({ Web: { "fitz.tail.test:443": {} } }) }; });
-    const runtime = createHost({ adminToken: "remote-test-token", tailscaleMonitor: monitor, tailscaleServeManager: serve, localPort: 9999 });
-    const headers = { "x-fitz-admin-token": "remote-test-token" };
+    const store = SqliteStore.memory(); const security = new SecurityService(store, "remote-pepper"); const admin = security.createUser("Admin", "administrator"); const token = security.issueDevice(admin.id, "Console").token;
+    const runtime = createHost({ store, security, authMode: "required", tailscaleMonitor: monitor, tailscaleServeManager: serve, localPort: 9999 });
+    const headers = { authorization: `Bearer ${token}` };
     const status = await runtime.app.inject({ method: "GET", url: "/api/v1/management/connectivity/status", headers });
     const enabled = await runtime.app.inject({ method: "POST", url: "/api/v1/management/connectivity/tailscale-serve", headers, payload: {} });
     const disabled = await runtime.app.inject({ method: "DELETE", url: "/api/v1/management/connectivity/tailscale-serve", headers });
@@ -358,6 +359,15 @@ describe("Fitz host", () => {
       ["serve", "status", "--json"],
       ["serve", "--https=443", "off"],
     ]);
+    await runtime.app.close();
+  });
+
+  it("refuses to expose a host whose device authentication was explicitly disabled", async () => {
+    let invoked = false;
+    const serve = new TailscaleServeManager(async () => { invoked = true; return { stdout: "{}" }; });
+    const runtime = createHost({ authMode: "disabled", adminToken: "development-token", tailscaleServeManager: serve });
+    const response = await runtime.app.inject({ method: "POST", url: "/api/v1/management/connectivity/tailscale-serve", headers: { "x-fitz-admin-token": "development-token" }, payload: {} });
+    expect(response.statusCode).toBe(409); expect(invoked).toBe(false);
     await runtime.app.close();
   });
 
@@ -485,6 +495,19 @@ describe("Fitz host", () => {
     const issued = await runtime.app.inject({ method: "POST", url: "/api/v1/management/pairing-codes", headers, payload: { intendedRole: "consumer", ttlSeconds: 60 } }); expect(issued.statusCode).toBe(201); const code = issued.json().data.code;
     const redeemed = await runtime.app.inject({ method: "POST", url: "/api/v1/pairing/redeem", payload: { code, displayName: "Remote", deviceName: "Phone" } }); expect(redeemed.statusCode).toBe(201); const token = redeemed.json().data.token; const authenticated = await runtime.app.inject({ method: "GET", url: "/v1/models", headers: { authorization: `Bearer ${token}` } }); expect(authenticated.statusCode).toBe(200); expect(authenticated.json().data.map((model: { id: string }) => model.id).sort()).toEqual(["default", "fast", "smart"]);
     const replay = await runtime.app.inject({ method: "POST", url: "/api/v1/pairing/redeem", payload: { code, displayName: "Replay", deviceName: "Other" } }); expect(replay.statusCode).toBe(403); await runtime.app.close();
+  });
+
+  it("bootstraps the first administrator only from a direct loopback request", async () => {
+    const store = SqliteStore.memory(); const security = new SecurityService(store, "bootstrap-pepper"); const runtime = createHost({ store, security, authMode: "required" });
+    const proxied = await runtime.app.inject({ method: "POST", url: "/api/v1/pairing/bootstrap", headers: { "x-forwarded-for": "100.64.0.2" } });
+    expect(proxied.statusCode).toBe(403); expect(store.listUsers()).toEqual([]);
+    const created = await runtime.app.inject({ method: "POST", url: "/api/v1/pairing/bootstrap" });
+    expect(created.statusCode).toBe(201); expect(created.json().data.token).toMatch(/^fitz_/); expect(created.json().data.user.role).toBe("administrator");
+    const authenticated = await runtime.app.inject({ method: "GET", url: "/api/v1/me", headers: { authorization: `Bearer ${created.json().data.token}` } });
+    expect(authenticated.statusCode).toBe(200); expect(authenticated.json().data.user.role).toBe("administrator");
+    const replay = await runtime.app.inject({ method: "POST", url: "/api/v1/pairing/bootstrap" });
+    expect(replay.statusCode).toBe(409);
+    await runtime.app.close();
   });
 
   it("stores bounded artifacts and serves content with defensive headers", async () => { const runtime = createHost(); const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Artifacts" } }); const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "Preview" } }); const sessionId = session.json().data.id;

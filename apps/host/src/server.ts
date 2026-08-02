@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,12 +24,13 @@ const reserveVramMiB = parseNonNegativeInteger(
   process.env.FITZ_RESERVE_VRAM_MIB ?? "2048",
   "FITZ_RESERVE_VRAM_MIB",
 );
-const authMode = process.env.FITZ_AUTH_MODE === "required" ? "required" : "disabled";
+const authMode = process.env.FITZ_AUTH_MODE === "disabled" ? "disabled" : "required";
 const agentRuntimeMode = process.env.FITZ_AGENT_RUNTIME ?? "pi";
 
 mkdirSync(dirname(databasePath), { recursive: true });
 const engineOptions = engineModeOptions(engineMode);
 const store = new SqliteStore(databasePath);
+const authPepper = authMode === "required" ? resolveAuthPepper(store) : undefined;
 if (engineMode === "ninfer") reconcileNInferConfiguration(store);
 const runtime = createHost({
   store,
@@ -37,7 +39,7 @@ const runtime = createHost({
   authMode,
   localPort: port,
   startupManager: new WindowsStartupManager(resolve(moduleDirectory, "../start-host.ps1")),
-  ...(authMode === "required" ? { authPepper: requiredEnvironment("FITZ_AUTH_PEPPER") } : {}),
+  ...(authPepper ? { authPepper } : {}),
   ...engineOptions,
   ...(process.env.FITZ_ADMIN_TOKEN ? { adminToken: process.env.FITZ_ADMIN_TOKEN } : {}),
   ...(agentRuntimeMode === "pi" ? {
@@ -53,13 +55,6 @@ const runtime = createHost({
     }),
   } : {}),
 });
-
-if (authMode === "required" && runtime.store.listUsers().length === 0) {
-  const bootstrapToken = requiredEnvironment("FITZ_BOOTSTRAP_ADMIN_TOKEN");
-  const administrator = runtime.security!.createUser("Bootstrap Administrator", "administrator");
-  runtime.security!.issueDevice(administrator.id, "Bootstrap Device", bootstrapToken);
-  runtime.security!.audit("security.bootstrapped", administrator.id, "user", administrator.id);
-}
 
 await runtime.app.listen({ host, port });
 
@@ -78,6 +73,16 @@ function parseNonNegativeInteger(value: string, name: string): number {
 }
 
 function requiredEnvironment(name: string): string { const value = process.env[name]; if (!value) throw new Error(`${name} is required`); return value; }
+
+function resolveAuthPepper(store: SqliteStore): string {
+  const configured = process.env.FITZ_AUTH_PEPPER?.trim();
+  if (configured) return configured;
+  const stored = store.getSetting<string>("security.authPepper");
+  if (stored) return stored;
+  const generated = randomBytes(32).toString("base64url");
+  store.setSetting("security.authPepper", generated);
+  return generated;
+}
 
 function ninferOptions() {
   const playbook = createNInferPlaybook();

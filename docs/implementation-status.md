@@ -58,12 +58,13 @@
   - native agent run submission, history, cancellation, event replay, and SSE endpoints
   - basic management status, route update, and instance stop endpoints
   - administrator user, device, grant, quota, revocation, and audit endpoints
-- Optional development administrator-token guard and production required-auth mode.
+- Required-by-default production device authentication with a single-use local bootstrap, encrypted
+  desktop credentials, remote pairing, and an optional development-only administrator-token guard.
 
 ## Intentionally deferred for refinement or later milestones
 
 - Full JSON Schema/OpenAPI generation and exhaustive request compatibility.
-- Interactive device-pairing exchange, encrypted secret storage, and persistent/distributed rate windows.
+- Persistent/distributed rate windows.
 - Pi tool execution gating against the durable approval service and model-assisted summary quality.
 - Tailscale installation/onboarding on the target machine and live tailnet validation.
 - Desktop UX refinement, richer event rendering, and accessibility polish.
