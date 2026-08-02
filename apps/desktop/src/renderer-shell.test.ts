@@ -99,7 +99,7 @@ describe("desktop renderer shell", () => {
     expect(renderer).not.toContain('url.className = "connection-url"');
     expect(html).toContain("Provider and self-hosted OpenAI-compatible APIs.");
     expect(html).toContain("http://127.0.0.1:8000/v1");
-    expect(styles).toContain('max-height: min(520px, calc(100vh - 32px)); overflow-y: auto;');
+    expect(styles).toContain('max-height: min(440px, calc(100vh - 32px)); overflow-y: auto;');
     expect(main).toContain('safeStorage.encryptString(JSON.stringify(connections))');
     expect(main).not.toContain('apiKey: connection.apiKey, models');
   });
@@ -229,12 +229,21 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("max_tokens: Number(effort.value)");
     expect(styles).toContain('.advanced-row[aria-expanded="true"] svg');
     expect(styles).toContain(".advanced-settings-panel");
-    expect(styles).toContain(".model-menu { right: 0; bottom: 38px;");
+    expect(styles).toContain(".model-menu { right: 0; bottom: 34px; width: 286px;");
     expect(styles).toContain(".settings-submenu.open-left");
     expect(html).toContain('<option value="2048">Light</option><option value="8192" selected>Medium</option><option value="16384">High</option>');
     expect(html).not.toContain('data-setting="speed"');
     expect(html).not.toContain("Extra High");
     expect(html).not.toContain("Ultra");
+  });
+
+  it("keeps every dropdown and overflow surface at the compact Codex menu density", () => {
+    expect(styles).toContain(".popover { position: absolute; z-index: 18; padding: 4px;");
+    expect(styles).toContain(".menu-surface button { width: 100%; min-height: 32px;");
+    expect(styles).toContain(".app-menu-popover { position: fixed; z-index: 60; width: 204px;");
+    expect(styles).toContain(".sidebar-context-menu { position: fixed; z-index: 40; width: 242px;");
+    expect(styles).toContain(".access-mode-menu { left: 0; bottom: 34px; width: 250px;");
+    expect(styles).toContain(".settings-submenu { left: calc(100% + 6px); top: 0; width: 244px;");
   });
 
   it("manually compacts context from the inline usage popover", () => {
