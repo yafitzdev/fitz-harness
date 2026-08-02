@@ -2488,11 +2488,12 @@ function formatMessageTimestamp(value?: string): string {
 
 function startInlineMessageEdit(article: HTMLElement, content: HTMLElement, actions: HTMLElement, originalText: string): void {
   if (currentRun) { showToast("Wait for the current response before editing a message."); return; }
+  const bubble = document.createElement("div"); bubble.className = "message-edit-bubble";
   const editor = document.createElement("textarea"); editor.className = "message-inline-editor"; editor.value = originalText; editor.setAttribute("aria-label", "Edit message");
   const controls = document.createElement("div"); controls.className = "message-edit-controls";
   const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "message-edit-cancel"; cancel.textContent = "Cancel";
   const send = document.createElement("button"); send.type = "button"; send.className = "message-edit-send"; send.textContent = "Send";
-  const restore = () => { editor.replaceWith(content); controls.remove(); actions.hidden = false; article.classList.remove("editing"); };
+  const restore = () => { bubble.replaceWith(content); actions.hidden = false; article.classList.remove("editing"); };
   const submit = () => {
     const revised = editor.value.trim();
     if (!revised) { editor.focus(); return; }
@@ -2502,7 +2503,7 @@ function startInlineMessageEdit(article: HTMLElement, content: HTMLElement, acti
   };
   cancel.addEventListener("click", restore); send.addEventListener("click", submit);
   editor.addEventListener("keydown", (event) => { if (event.key === "Escape") { event.preventDefault(); restore(); } if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); submit(); } });
-  actions.hidden = true; article.classList.add("editing"); content.replaceWith(editor); article.insertBefore(controls, actions); controls.append(cancel, send); editor.focus(); editor.setSelectionRange(editor.value.length, editor.value.length);
+  controls.append(cancel, send); bubble.append(editor, controls); actions.hidden = true; article.classList.add("editing"); content.replaceWith(bubble); editor.focus(); editor.setSelectionRange(editor.value.length, editor.value.length);
 }
 
 function markAssistantAsCommentary(content: HTMLElement): void {

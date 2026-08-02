@@ -306,9 +306,19 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('send.textContent = "Send"');
     expect(renderer).toContain("void sendPrompt(revised, article)");
     expect(renderer).toContain('event.key === "Enter" && (event.ctrlKey || event.metaKey)');
+    expect(renderer).toContain('bubble.className = "message-edit-bubble"');
     expect(styles).toContain(".message-inline-editor");
+    expect(styles).toContain(".message-edit-bubble");
     expect(styles).toContain(".message-edit-controls");
-    expect(styles).toContain("margin-top: 6px");
+    expect(styles).toContain("margin-top: 9px");
+  });
+
+  it("uses the responsive composer measure as the single conversation axis", () => {
+    expect(styles).toContain("--conversation-width: min(768px, calc(var(--conversation-space) - 36px))");
+    expect(styles).toContain("--conversation-gutter: max(18px, calc((var(--conversation-space) - var(--conversation-width)) / 2))");
+    expect(styles).toContain("padding: 32px var(--conversation-gutter) 220px");
+    expect(styles).toContain("width: var(--conversation-width)");
+    expect(styles).toContain(".workspace.inspector-open { --conversation-space: calc(100% - var(--inspector-width))");
   });
 
   it("expands Advanced model settings and sends the chosen temperature and output limit", () => {
@@ -353,8 +363,8 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("--codex-radius-3xl: 25px");
     expect(styles).toContain("--codex-control-size: 28px");
     expect(styles).toContain("--sidebar-width: 275px");
-    expect(styles).toContain("width: min(768px, calc(100% - 36px))");
-    expect(styles).toContain("max-width: min(77%, 620px)");
+    expect(styles).toContain("--conversation-width: min(768px, calc(var(--conversation-space) - 36px))");
+    expect(styles).toContain("max-width: 100%");
     expect(styles).toContain("backdrop-filter: blur(16px)");
     expect(styles).toContain("--codex-elevation-prominent:");
     expect(renderer).toContain("Math.max(240, Math.min(520, value))");
