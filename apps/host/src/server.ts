@@ -26,6 +26,8 @@ const reserveVramMiB = parseNonNegativeInteger(
 );
 const authMode = process.env.FITZ_AUTH_MODE === "disabled" ? "disabled" : "required";
 const agentRuntimeMode = process.env.FITZ_AGENT_RUNTIME ?? "pi";
+const agentBaseUrl = process.env.FITZ_AGENT_BASE_URL ?? `http://127.0.0.1:${port}/v1`;
+const internalAgentToken = agentRuntimeMode === "pi" && !process.env.FITZ_AGENT_BASE_URL ? randomBytes(32).toString("base64url") : undefined;
 
 mkdirSync(dirname(databasePath), { recursive: true });
 const engineOptions = engineModeOptions(engineMode);
@@ -37,6 +39,7 @@ const runtime = createHost({
   logger: true,
   resourcePolicy: { reserveVramMiB },
   authMode,
+  ...(internalAgentToken ? { internalAgentToken } : {}),
   localPort: port,
   startupManager: new WindowsStartupManager(resolve(moduleDirectory, "../start-host.ps1")),
   ...(authPepper ? { authPepper } : {}),
@@ -44,7 +47,8 @@ const runtime = createHost({
   ...(process.env.FITZ_ADMIN_TOKEN ? { adminToken: process.env.FITZ_ADMIN_TOKEN } : {}),
   ...(agentRuntimeMode === "pi" ? {
     agentRuntime: new PiAgentRuntime({
-      baseUrl: process.env.FITZ_AGENT_BASE_URL ?? `http://127.0.0.1:${port}/v1`,
+      baseUrl: agentBaseUrl,
+      apiKey: process.env.FITZ_AGENT_API_KEY ?? internalAgentToken ?? "fitz-local",
       cwd: (request) => {
         if (process.env.FITZ_AGENT_CWD) return process.env.FITZ_AGENT_CWD;
         const session = request.sessionId ? store.getSession(request.sessionId) : undefined;

@@ -19,6 +19,7 @@ export type PiSessionFactory = (options: {
   tools: readonly string[];
   routeId: string;
   baseUrl: string;
+  apiKey: string;
   contextWindow: number;
   maxTokens: number;
   approveTool: (request: PiToolCall) => Promise<PiToolApprovalResult>;
@@ -27,6 +28,7 @@ export interface PiAgentRuntimeOptions {
   cwd?: string | ((request: AgentRunRequest) => string);
   tools?: readonly string[];
   baseUrl?: string;
+  apiKey?: string;
   contextWindow?: number;
   createSession?: PiSessionFactory;
   requestToolApproval?: ToolApprovalRequester;
@@ -40,6 +42,7 @@ export class PiAgentRuntime implements AgentRuntime {
   readonly #cwd: string | ((request: AgentRunRequest) => string);
   readonly #tools: readonly string[];
   readonly #baseUrl: string;
+  readonly #apiKey: string;
   readonly #contextWindow: number;
   readonly #createSession: PiSessionFactory;
   readonly #requestToolApproval: ToolApprovalRequester | undefined;
@@ -47,6 +50,7 @@ export class PiAgentRuntime implements AgentRuntime {
     this.#cwd = options.cwd ?? process.cwd();
     this.#tools = options.tools ?? CODING_TOOLS;
     this.#baseUrl = (options.baseUrl ?? "http://127.0.0.1:8787/v1").replace(/\/$/, "");
+    this.#apiKey = options.apiKey ?? "fitz-local";
     this.#contextWindow = options.contextWindow ?? 100_000;
     this.#createSession = options.createSession ?? createSdkSession;
     this.#requestToolApproval = options.requestToolApproval;
@@ -59,6 +63,7 @@ export class PiAgentRuntime implements AgentRuntime {
       tools: this.#tools,
       routeId: request.model,
       baseUrl: this.#baseUrl,
+      apiKey: this.#apiKey,
       contextWindow: this.#contextWindow,
       maxTokens: request.maxTokens ?? 16_384,
       approveTool: (toolCall) => this.#approveTool(request.accessMode ?? "full", request.sessionId, toolCall, controller.signal, channel),
@@ -93,7 +98,7 @@ export class PiAgentRuntime implements AgentRuntime {
 async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promise<PiSession> {
   const sdk = await import("@earendil-works/pi-coding-agent");
   const modelRuntime = await sdk.ModelRuntime.create({ modelsPath: null });
-  await modelRuntime.setRuntimeApiKey("openrouter", "fitz-local", { allowNetwork: false });
+  await modelRuntime.setRuntimeApiKey("openrouter", options.apiKey, { allowNetwork: false });
   const model: Model<"openai-completions"> = {
     id: options.routeId,
     name: `Fitz ${options.routeId}`,

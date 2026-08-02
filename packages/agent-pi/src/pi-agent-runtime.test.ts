@@ -9,7 +9,7 @@ import { PiAgentRuntime, type PiSession } from "./pi-agent-runtime.js";
 describe("PiAgentRuntime", () => {
   it("translates Pi text and tool lifecycle events behind the Fitz boundary", async () => {
     let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined; let disposed = false;
-    const runtime = new PiAgentRuntime({ cwd: "C:/project", tools: ["read"], createSession: async (options) => { expect(options.tools).toEqual(["read"]); return { subscribe: (next) => { listener = next; return () => undefined; }, prompt: async (prompt) => { expect(prompt).toContain("USER: inspect this"); listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "hello" } }); listener({ type: "tool_execution_start", toolCallId: "call-1", toolName: "read", args: { path: "README.md" } }); listener({ type: "tool_execution_end", toolCallId: "call-1", toolName: "read", result: "done" }); }, abort: async () => undefined, dispose: () => { disposed = true; } }; } });
+    const runtime = new PiAgentRuntime({ cwd: "C:/project", tools: ["read"], apiKey: "private-pi-token", createSession: async (options) => { expect(options.tools).toEqual(["read"]); expect(options.apiKey).toBe("private-pi-token"); return { subscribe: (next) => { listener = next; return () => undefined; }, prompt: async (prompt) => { expect(prompt).toContain("USER: inspect this"); listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "hello" } }); listener({ type: "tool_execution_start", toolCallId: "call-1", toolName: "read", args: { path: "README.md" } }); listener({ type: "tool_execution_end", toolCallId: "call-1", toolName: "read", result: "done" }); }, abort: async () => undefined, dispose: () => { disposed = true; } }; } });
     const events = []; for await (const event of runtime.run({ model: "fast", messages: [{ role: "user", content: "inspect this" }] })) events.push(event);
     expect(events).toEqual([{ type: "assistant.delta", text: "hello" }, { type: "tool.started", toolCallId: "call-1", toolName: "read", input: { path: "README.md" } }, { type: "tool.completed", toolCallId: "call-1", toolName: "read", result: "done" }]); expect(disposed).toBe(true);
   });
@@ -62,17 +62,18 @@ describe("PiAgentRuntime", () => {
   it("runs the real Pi loop against the selected Fitz route and executes coding tools", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "fitz-pi-"));
     await writeFile(join(cwd, "probe.txt"), "PI_TOOL_OK", "utf8");
-    const requests: any[] = [];
-    const server = createServer(async (request, response) => handlePiRequest(request, response, requests));
+    const requests: any[] = []; const authorizations: Array<string | undefined> = [];
+    const server = createServer(async (request, response) => handlePiRequest(request, response, requests, authorizations));
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Expected server address");
     try {
-      const runtime = new PiAgentRuntime({ cwd, baseUrl: `http://127.0.0.1:${address.port}/v1` });
+      const runtime = new PiAgentRuntime({ cwd, baseUrl: `http://127.0.0.1:${address.port}/v1`, apiKey: "private-pi-token" });
       const events = [];
       for await (const event of runtime.run({ model: "smart", messages: [{ role: "user", content: "Read probe.txt" }], maxTokens: 256 })) events.push(event);
       expect(requests).toHaveLength(2);
+      expect(authorizations).toEqual(["Bearer private-pi-token", "Bearer private-pi-token"]);
       expect(requests[0].model).toBe("smart");
       expect(requests[0].tools[0]).toMatchObject({ type: "function", function: { name: "read" } });
       expect(requests[0].tools.map((tool: any) => tool.function?.name ?? tool.name)).toEqual(expect.arrayContaining(["read", "bash", "edit", "write", "grep", "find", "ls"]));
@@ -116,9 +117,10 @@ describe("PiAgentRuntime", () => {
   }, 30_000);
 });
 
-async function handlePiRequest(request: IncomingMessage, response: ServerResponse, requests: any[]): Promise<void> {
+async function handlePiRequest(request: IncomingMessage, response: ServerResponse, requests: any[], authorizations: Array<string | undefined>): Promise<void> {
   let body = "";
   for await (const chunk of request) body += chunk;
+  authorizations.push(request.headers.authorization);
   requests.push(JSON.parse(body));
   response.writeHead(200, { "content-type": "text/event-stream" });
   if (requests.length === 1) {

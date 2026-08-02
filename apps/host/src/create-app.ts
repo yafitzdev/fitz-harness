@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
@@ -71,6 +71,7 @@ export interface CreateHostOptions {
   adminToken?: string;
   authMode?: "disabled" | "required";
   authPepper?: string;
+  internalAgentToken?: string;
   security?: SecurityService;
   agentRuntime?: AgentRuntime;
   contextManager?: ContextManager;
@@ -180,8 +181,9 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     const publicPath = request.url.split("?")[0];
     if (authMode === "required" && publicPath !== "/health" && publicPath !== "/api/v1/pairing/redeem" && publicPath !== "/api/v1/pairing/bootstrap") {
       const principal = security?.authenticate(request.headers.authorization);
-      if (!principal) return reply.code(401).send({ error: "Valid device bearer token required" });
-      principals.set(request, principal);
+      const internalAgent = publicPath === "/v1/chat/completions" && validBearerToken(request.headers.authorization, options.internalAgentToken);
+      if (!principal && !internalAgent) return reply.code(401).send({ error: "Valid device bearer token required" });
+      if (principal) principals.set(request, principal);
     }
   });
   app.addHook("onResponse", async (request, reply) => {
@@ -933,6 +935,13 @@ function openAIError(error: unknown, type: string): OpenAIErrorResponse {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function validBearerToken(authorization: string | undefined, expected: string | undefined): boolean {
+  if (!authorization?.startsWith("Bearer ") || !expected) return false;
+  const actualHash = createHash("sha256").update(authorization.slice(7)).digest();
+  const expectedHash = createHash("sha256").update(expected).digest();
+  return timingSafeEqual(actualHash, expectedHash);
 }
 
 function adminGuard(expectedToken: string | undefined, authMode: "disabled" | "required", principals: WeakMap<object, AuthenticatedPrincipal>) {

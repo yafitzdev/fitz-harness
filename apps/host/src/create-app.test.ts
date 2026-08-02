@@ -395,6 +395,15 @@ describe("Fitz host", () => {
     expect(denied.statusCode).toBe(401); expect(models.json().data.map((model: { id: string }) => model.id)).toEqual(["fast"]); expect(forbidden.statusCode).toBe(403); await runtime.app.close();
   });
 
+  it("accepts the private Pi credential only on chat completions", async () => {
+    const store = SqliteStore.memory(); const security = new SecurityService(store, "pepper");
+    const runtime = createHost({ store, security, authMode: "required", internalAgentToken: "private-pi-token" });
+    const denied = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", headers: { authorization: "Bearer wrong" }, payload: { model: "default", stream: false, messages: [{ role: "user", content: "hello" }] } });
+    const completion = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", headers: { authorization: "Bearer private-pi-token" }, payload: { model: "default", stream: false, messages: [{ role: "user", content: "hello" }] } });
+    const models = await runtime.app.inject({ method: "GET", url: "/v1/models", headers: { authorization: "Bearer private-pi-token" } });
+    expect(denied.statusCode).toBe(401); expect(completion.statusCode).toBe(200); expect(models.statusCode).toBe(401); await runtime.app.close();
+  });
+
   it("allows administrators to provision and revoke devices with audit history", async () => {
     const store = SqliteStore.memory(); const security = new SecurityService(store, "pepper"); const admin = security.createUser("Admin", "administrator"); const { token } = security.issueDevice(admin.id, "Console"); const runtime = createHost({ store, security, authMode: "required" }); const headers = { authorization: `Bearer ${token}` };
     const created = await runtime.app.inject({ method: "POST", url: "/api/v1/management/users", headers, payload: { displayName: "Agent", role: "agent" } });
