@@ -46,6 +46,7 @@ let piCatalogTotal = 0;
 let pluginSearchTimer: ReturnType<typeof setTimeout> | undefined;
 let modelWarmupTimer: ReturnType<typeof setTimeout> | undefined;
 let composerHadText = false;
+let speculativeWarmupActive = false;
 let selectedConnectionId = LOCAL_CONNECTION_ID;
 let pendingRemoteAction: "enable" | "disable" | undefined;
 let pendingStartupAction: "install" | "remove" | undefined;
@@ -278,6 +279,8 @@ const removeProjectDialog = element("remove-project-dialog") as HTMLDialogElemen
 const removeProjectForm = element("remove-project-form") as HTMLFormElement;
 const removeProjectName = element("remove-project-name");
 const toast = element("toast");
+const engineLoadingObserver = new MutationObserver(updateModelLoadingSpinner);
+engineLoadingObserver.observe(engineState, { childList: true, characterData: true, subtree: true });
 
 restoreSidebarWidth();
 restoreInspectorWidth();
@@ -2868,10 +2871,15 @@ function scheduleModelWarmup(): void {
   composerHadText = true;
   modelWarmupTimer = setTimeout(() => {
     modelWarmupTimer = undefined;
-    void api("/api/v1/inference/warm", "POST", { model: model.value, connectionId: selectedConnectionId }).catch(() => { composerHadText = false; });
+    speculativeWarmupActive = true;
+    updateModelLoadingSpinner();
+    void api("/api/v1/inference/warm", "POST", { model: model.value, connectionId: selectedConnectionId })
+      .catch(() => { composerHadText = false; })
+      .finally(() => { speculativeWarmupActive = false; updateModelLoadingSpinner(); });
   }, 120);
 }
-function updateContextMeter(): void { const usedTokens = sessionTokenEstimate + estimateTokens(prompt.value); const used = Math.min(100, (usedTokens / contextTokenLimit) * 100); contextMeter.style.setProperty("--context-used", `${used}%`); contextPercent.textContent = `${Math.round(used)}% full`; contextTokens.textContent = `≈${formatTokenCount(usedTokens)} / ${formatTokenCount(contextTokenLimit)} tokens used`; contextMeter.setAttribute("aria-label", `Context window ${Math.round(used)}% full, approximately ${formatTokenCount(usedTokens)} of ${formatTokenCount(contextTokenLimit)} tokens used`); }
+function updateModelLoadingSpinner(): void { const loading = speculativeWarmupActive || ["QUEUED", "PREPARING", "LOADING"].includes(engineState.textContent ?? ""); contextMeter.classList.toggle("model-loading", loading); if (loading) contextMeter.setAttribute("aria-label", "Loading model"); }
+function updateContextMeter(): void { const usedTokens = sessionTokenEstimate + estimateTokens(prompt.value); const used = Math.min(100, (usedTokens / contextTokenLimit) * 100); contextMeter.style.setProperty("--context-used", `${used}%`); contextPercent.textContent = `${Math.round(used)}% full`; contextTokens.textContent = `≈${formatTokenCount(usedTokens)} / ${formatTokenCount(contextTokenLimit)} tokens used`; contextMeter.setAttribute("aria-label", `Context window ${Math.round(used)}% full, approximately ${formatTokenCount(usedTokens)} of ${formatTokenCount(contextTokenLimit)} tokens used`); updateModelLoadingSpinner(); }
 
 async function compactCurrentSession(): Promise<void> {
   if (!currentSession || currentRun) return;
