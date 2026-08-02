@@ -236,7 +236,6 @@ element("close-management-editor").addEventListener("click", closeManagementEdit
 for (const button of document.querySelectorAll<HTMLButtonElement>("[data-close-management-editor]")) button.addEventListener("click", closeManagementEditor);
 playbookSearch.addEventListener("input", renderManagementPage);
 element("sidebar-menu").addEventListener("click", toggleSidebar);
-element("sidebar-restore").addEventListener("click", toggleSidebar);
 for (const menuButton of document.querySelectorAll<HTMLButtonElement>("[data-app-menu]")) menuButton.addEventListener("click", () => { const rect = menuButton.getBoundingClientRect(); void window.fitz.showMenu(menuButton.dataset.appMenu ?? "", Math.round(rect.left), Math.round(rect.bottom)); });
 for (const windowButton of document.querySelectorAll<HTMLButtonElement>("[data-window-action]")) windowButton.addEventListener("click", () => void window.fitz.windowAction(windowButton.dataset.windowAction as "minimize" | "maximize" | "close"));
 window.fitz.onMenuCommand((command) => { if (command === "new-chat") openNewChat(); else if (command === "new-project") openProjectDialog(); else if (command === "toggle-sidebar") toggleSidebar(); else if (command === "toggle-environment") setContextPanel(contextPanel.hasAttribute("hidden")); });
@@ -328,7 +327,7 @@ async function initialize(): Promise<void> {
   try {
     setConnection("Connecting…", "loading");
     setStatus("Connecting", "loading");
-    const [health, models, connection, identity] = await Promise.all([api("/health"), api("/v1/models"), window.fitz.connectionInfo(), api("/api/v1/me")]); configuredHostOrigin = connection.origin; currentUserId = identity.data?.user?.id; administrator = identity.data?.user?.role === "administrator"; administrationButton.hidden = !administrator;
+    const [health, models, connection, identity] = await Promise.all([api("/health"), api("/v1/models"), window.fitz.connectionInfo(), api("/api/v1/me")]); configuredHostOrigin = connection.origin; currentUserId = identity.data?.user?.id; administrator = identity.data?.authMode === "disabled" || identity.data?.user?.role === "administrator"; administrationButton.hidden = !administrator;
     model.replaceChildren();
     for (const card of models.data ?? []) model.add(new Option(card.display_name ?? card.id, card.id));
     updateModelControls();
@@ -401,7 +400,7 @@ function renderProjectTree(): void {
         const emptyState = document.createElement("div"); emptyState.className = "tree-empty"; emptyState.textContent = "No chats"; childrenInner.append(emptyState);
       }
       for (const session of projectSessions) {
-        const sessionItem = treeItem(session.title, "task-row", chatIcon(), () => void selectSession(session.id, true, project.id), (toggle, event) => openSidebarMenu("task", session.id, toggle, event));
+        const sessionItem = treeItem(session.title, "task-row", undefined, () => void selectSession(session.id, true, project.id), (toggle, event) => openSidebarMenu("task", session.id, toggle, event));
         const sessionButton = sessionItem.querySelector(".task-row") as HTMLButtonElement;
         sessionButton.classList.toggle("active", session.id === currentSession);
         if (unreadSessions.has(session.id)) { const dot = document.createElement("span"); dot.className = "activity-dot"; dot.setAttribute("aria-label", "Unread"); sessionButton.append(dot); }
@@ -2080,9 +2079,9 @@ function setFormBusy(formElement: HTMLFormElement, busy: boolean): void { for (c
 function showToast(text: string): void { if (toastTimer) clearTimeout(toastTimer); toast.textContent = text; toast.hidden = false; toastTimer = setTimeout(() => { toast.hidden = true; }, 3_200); }
 function panelEmpty(text: string): HTMLElement { const value = document.createElement("div"); value.className = "panel-empty"; value.textContent = text; return value; }
 function loadingMessage(text: string): HTMLElement { const value = document.createElement("div"); value.className = "panel-empty"; value.textContent = text; return value; }
-function treeItem(label: string, className: string, icon: SVGElement, action: () => void, menu: (toggle: HTMLButtonElement, event: MouseEvent) => void, quickAction?: () => void): HTMLElement {
+function treeItem(label: string, className: string, icon: SVGElement | undefined, action: () => void, menu: (toggle: HTMLButtonElement, event: MouseEvent) => void, quickAction?: () => void): HTMLElement {
   const item = document.createElement("div"); item.className = "tree-item";
-  const value = document.createElement("button"); value.type = "button"; value.className = className; const text = document.createElement("span"); text.textContent = label; value.append(icon, text); value.addEventListener("click", action);
+  const value = document.createElement("button"); value.type = "button"; value.className = className; const text = document.createElement("span"); text.textContent = label; if (icon) value.append(icon); value.append(text); value.addEventListener("click", action);
   const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "tree-menu-toggle"; toggle.title = `${label} actions`; toggle.setAttribute("aria-label", `${label} actions`); toggle.setAttribute("aria-expanded", "false"); toggle.append(svg('<circle cx="5" cy="10" r="1"></circle><circle cx="10" cy="10" r="1"></circle><circle cx="15" cy="10" r="1"></circle>'));
   toggle.addEventListener("click", (event) => menu(toggle, event)); value.addEventListener("contextmenu", (event) => menu(toggle, event)); item.append(value);
   if (quickAction) { const quick = document.createElement("button"); quick.type = "button"; quick.className = "tree-quick-action"; quick.title = `New chat in ${label}`; quick.setAttribute("aria-label", `New chat in ${label}`); quick.append(svg('<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"></path>', "0 0 24 24")); quick.addEventListener("click", (event) => { event.stopPropagation(); quickAction(); }); item.append(quick); }
@@ -2102,8 +2101,7 @@ async function api(path: string, method = "GET", body?: unknown): Promise<Json> 
 }
 
 function svg(path: string, viewBox = "0 0 20 20"): SVGElement { const value = document.createElementNS("http://www.w3.org/2000/svg", "svg"); value.setAttribute("viewBox", viewBox); value.setAttribute("aria-hidden", "true"); value.innerHTML = path; return value; }
-function folderIcon(): SVGElement { return svg('<path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path><path d="M3.5 6.5V4h5l1.5 2"></path>'); }
-function chatIcon(): SVGElement { return svg('<path d="M4 4.5h12v9H9l-3.5 2.5v-2.5H4z"></path>'); }
+function folderIcon(): SVGElement { return svg('<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>', "0 0 24 24"); }
 function sparkIcon(): SVGElement { return svg('<path d="M10 2.8c.5 3.7 2.4 5.8 6.2 7.2-3.8 1.4-5.7 3.5-6.2 7.2-.5-3.7-2.4-5.8-6.2-7.2C7.6 8.6 9.5 6.5 10 2.8Z"></path>'); }
 function activityIcon(toolName: string): SVGElement {
   if (toolName === "edit" || toolName === "write") return svg('<path d="m4.2 14.8.7-3.2 7.8-7.8a1.45 1.45 0 0 1 2.05 2.05L7 13.65z"></path><path d="m11.7 4.8 2.05 2.05"></path>');

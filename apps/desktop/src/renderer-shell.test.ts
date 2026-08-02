@@ -11,7 +11,6 @@ describe("desktop renderer shell", () => {
   it("wires every visible shell action to a renderer interaction", () => {
     const actions = [
       "sidebar-menu",
-      "sidebar-restore",
       "sidebar-resizer",
       "new-session",
       "manage-playbooks",
@@ -61,6 +60,17 @@ describe("desktop renderer shell", () => {
     expect(main).toContain('ipcMain.handle("fitz:show-menu"');
     expect(main).toContain('ipcMain.handle("fitz:window-action"');
     expect(main).not.toContain("window.getBounds()");
+    expect(styles).toContain("grid-template-rows: 36px minmax(0, 1fr)");
+    expect(html).not.toContain('id="sidebar-restore"');
+  });
+
+  it("matches the compact Codex sidebar and new-chat project rail", () => {
+    expect(html).toContain('<div class="sidebar-brand">Codex</div>');
+    expect(renderer).toContain('treeItem(session.title, "task-row", undefined');
+    expect(renderer).not.toContain("function chatIcon()");
+    expect(styles).toContain("height: 42px; display: flex; align-items: center");
+    expect(renderer).toContain('identity.data?.authMode === "disabled" || identity.data?.user?.role === "administrator"');
+    expect(html).toContain('d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"');
   });
 
   it("opens Playbooks as a first-class searchable workspace page", () => {
