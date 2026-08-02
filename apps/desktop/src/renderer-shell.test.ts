@@ -341,6 +341,8 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('revokeAdminDevice(device.id)');
     expect(styles).toContain(".administration-content");
     expect(styles).toContain(".tool-policy");
+    expect(styles).toContain("background-position: right 9px center");
+    expect(styles).toContain("padding-right: 27px !important");
   });
 
   it("renders and exports host-redacted diagnostics from the administration workspace", () => {
