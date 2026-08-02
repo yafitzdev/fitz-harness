@@ -510,7 +510,6 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .playbook-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 10px; }
 .playbook-heading > div:first-child { min-width: 0; }
 .playbook-card h3 { margin: 0; font-size: 15px; }
-.connection-url { display: block; max-width: min(540px, 58vw); overflow: hidden; margin-top: 4px; color: var(--codex-text-tertiary); font: 10px/1.4 "Cascadia Mono", Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .playbook-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
 .playbook-actions .danger { color: #d99a96; }
 .recipe-card { width: 100%; min-height: 66px; display: grid; grid-template-columns: minmax(0,1fr) auto; overflow: hidden; border-radius: 10px; background: #242624; color: var(--text); transition: background-color 120ms ease; }
@@ -550,6 +549,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .management-editor-form input:focus, .management-editor-form select:focus, .management-editor-form textarea:focus { border-color: #626660; }
 .configuration-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
 .configuration-grid .wide-field { grid-column: 1 / -1; }
+.configuration-grid label > small { color: var(--codex-text-tertiary); font-size: 11px; font-weight: 400; }
 .management-editor-form textarea { min-height: 150px; resize: vertical; font: 12px/1.5 "Cascadia Mono", Consolas, monospace; }
 .configuration-grid .check-label { display: flex; align-items: center; gap: 9px; align-self: end; min-height: 39px; }
 .configuration-grid .check-label input { width: auto; }

@@ -155,7 +155,7 @@
           </header>
           <div id="connection-list-view" class="management-page-content">
             <h1>Connections</h1>
-            <p>OpenAI-compatible APIs and their discovered models.</p>
+            <p>Provider and self-hosted OpenAI-compatible APIs.</p>
             <label class="management-search"><svg viewBox="0 0 20 20"><circle cx="9" cy="9" r="5.5"></circle><path d="m13 13 4 4"></path></svg><input id="connection-search" type="search" placeholder="Search connections" autocomplete="off"></label>
             <div id="consumer-connections" class="playbook-list"></div>
           </div>
@@ -163,11 +163,11 @@
             <button id="connection-editor-back" class="management-back" type="button"><svg viewBox="0 0 20 20"><path d="m12.5 4-6 6 6 6"></path></svg>Connections</button>
             <form id="connection-form" class="management-editor-form">
               <input id="consumer-connection-id" type="hidden">
-              <div class="editor-heading"><small>API connection</small><h1 id="connection-editor-title">New connection</h1><p>Models are discovered from the provider's OpenAI-compatible endpoint.</p></div>
+              <div class="editor-heading"><small>API connection</small><h1 id="connection-editor-title">New connection</h1><p>Connect a provider or a model server you host yourself. Models are discovered automatically.</p></div>
               <div class="configuration-grid">
                 <label>Connection name<input id="consumer-connection-name" maxlength="100" required placeholder="Cohere"></label>
                 <label>Authorization<select id="consumer-connection-auth"><option value="bearer">Bearer token</option><option value="none">None</option></select></label>
-                <label class="wide-field">OpenAI-compatible base URL<input id="consumer-connection-url" type="url" maxlength="2048" required placeholder="https://api.example.com/v1"></label>
+                <label class="wide-field">OpenAI-compatible base URL<input id="consumer-connection-url" type="url" maxlength="2048" required placeholder="http://127.0.0.1:8000/v1"><small>Use a provider, local model server, or another Fitz host.</small></label>
                 <label id="consumer-api-key-field" class="wide-field">API key<input id="consumer-connection-key" type="password" autocomplete="off" placeholder="Stored securely"></label>
               </div>
               <p id="connection-form-status" class="connection-form-status" hidden></p>

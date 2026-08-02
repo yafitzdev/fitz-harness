@@ -88,6 +88,9 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('api("/api/v1/runtime-mode", "PUT"');
     expect(renderer).toContain('consumerFixedRouteId');
     expect(renderer).toContain('testRecipe({ id: consumerModel.recipeId');
+    expect(renderer).not.toContain('url.className = "connection-url"');
+    expect(html).toContain("Provider and self-hosted OpenAI-compatible APIs.");
+    expect(html).toContain("http://127.0.0.1:8000/v1");
     expect(styles).toContain('max-height: min(520px, calc(100vh - 32px)); overflow-y: auto;');
     expect(main).toContain('safeStorage.encryptString(JSON.stringify(connections))');
     expect(main).not.toContain('apiKey: connection.apiKey, models');

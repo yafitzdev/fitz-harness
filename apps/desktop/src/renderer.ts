@@ -868,8 +868,7 @@ function renderConsumerConnections(): void {
     const heading = document.createElement("div"); heading.className = "playbook-heading";
     const identity = document.createElement("div");
     const name = document.createElement("h3"); name.textContent = connection.displayName;
-    const url = document.createElement("small"); url.className = "connection-url"; url.textContent = connection.baseUrl;
-    identity.append(name, url);
+    identity.append(name);
     const actions = document.createElement("div"); actions.className = "playbook-actions";
     const refresh = document.createElement("button"); refresh.type = "button"; refresh.className = "quiet-button compact-button"; refresh.textContent = "Refresh"; refresh.addEventListener("click", () => void testConsumerConnection(connection, refresh));
     const edit = document.createElement("button"); edit.type = "button"; edit.className = "quiet-button compact-button"; edit.textContent = "Configure"; edit.addEventListener("click", () => openConnectionEditor(connection));
