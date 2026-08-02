@@ -9,7 +9,7 @@ type ConnectionModelView = ConsumerConnectionSummary["models"][number] & { displ
 type HostedConnectionView = Omit<ConsumerConnectionSummary, "models"> & { hosted: true; availableModels: ConnectionModelView[] };
 type SavedConnectionView = Omit<ConsumerConnectionSummary, "models"> & { hosted: false; availableModels: ConnectionModelView[]; source: ConsumerConnectionSummary };
 type ConnectionView = HostedConnectionView | SavedConnectionView;
-type PiCatalogPackage = { name: string; description: string; version: string; publisher: string; keywords: string[]; types: string[] };
+type PiCatalogPackage = { name: string; description: string; version: string; publisher: string; keywords: string[]; types: string[]; links: Record<string, string> };
 type InstalledPiPackage = { source: string; displayName: string; version?: string; description?: string; enabled: boolean; resources: Record<string, number> };
 type PiSkillSummary = { name: string; description: string; source: string; enabled: boolean; filePath: string };
 
@@ -920,7 +920,7 @@ function renderInstalledPiPackages(): void {
   installedPlugins.replaceChildren();
   if (!installedPiPackages.length) { installedPlugins.append(panelEmpty("No plugins installed")); return; }
   for (const entry of installedPiPackages) {
-    const card = piPackageCard(entry.displayName, entry.description ?? entry.source, entry.version);
+    const card = piPackageCard(entry.displayName, entry.description ?? entry.source, entry.version, piSourceWebsite(entry.source));
     const counts = Object.entries(entry.resources).filter(([, count]) => count > 0).map(([kind, count]) => `${count} ${kind}`);
     if (counts.length) card.querySelector(".plugin-meta")?.append(document.createTextNode(` · ${counts.join(" · ")}`));
     const actions = card.querySelector(".plugin-actions") as HTMLElement;
@@ -934,7 +934,7 @@ function renderPiCatalog(): void {
   const installed = new Set(installedPiPackages.map((entry) => entry.source.replace(/^npm:/, "")));
   if (!piCatalogPackages.length) { pluginCatalog.append(panelEmpty("No matching Pi packages")); }
   for (const entry of piCatalogPackages) {
-    const card = piPackageCard(entry.name, entry.description, entry.version);
+    const card = piPackageCard(entry.name, entry.description, entry.version, entry.links.homepage ?? entry.links.repository ?? entry.links.npm ?? npmPackageWebsite(entry.name));
     const actions = card.querySelector(".plugin-actions") as HTMLElement;
     if (installed.has(entry.name)) { const mark = document.createElement("span"); mark.className = "plugin-installed-mark"; mark.textContent = "✓ Installed"; actions.append(mark); }
     else actions.append(pluginInstallAction(entry.name));
@@ -949,7 +949,7 @@ function renderPiSkills(): void {
   const visible = installedPiSkills.filter((skill) => !query || `${skill.name} ${skill.description} ${skill.source}`.toLowerCase().includes(query));
   if (!visible.length) { installedSkills.append(panelEmpty("No matching skills")); return; }
   for (const skill of visible) {
-    const card = piPackageCard(skill.name, skill.description || skill.source);
+    const card = piPackageCard(skill.name, skill.description || skill.source, undefined, piSourceWebsite(skill.source));
     card.classList.add("skill-card");
     const actions = card.querySelector(".plugin-actions") as HTMLElement;
     const mark = document.createElement("span"); mark.className = "plugin-installed-mark"; mark.textContent = skill.enabled ? "✓" : "Disabled"; actions.append(mark);
@@ -957,14 +957,22 @@ function renderPiSkills(): void {
   }
 }
 
-function piPackageCard(name: string, description: string, version?: string): HTMLElement {
+function piPackageCard(name: string, description: string, version?: string, website?: string): HTMLElement {
   const card = document.createElement("article"); card.className = "plugin-card";
+  if (website) {
+    card.classList.add("plugin-card-linked"); card.tabIndex = 0; card.setAttribute("role", "link"); card.title = "Open plugin website";
+    card.addEventListener("click", (event) => { if (!(event.target as HTMLElement).closest(".plugin-actions")) void window.fitz.openExternal(website); });
+    card.addEventListener("keydown", (event) => { if ((event.key === "Enter" || event.key === " ") && !(event.target as HTMLElement).closest(".plugin-actions")) { event.preventDefault(); void window.fitz.openExternal(website); } });
+  }
   const icon = document.createElement("span"); icon.className = "plugin-icon"; icon.append(sparkIcon());
   const copy = document.createElement("div"); copy.className = "plugin-copy";
   const heading = document.createElement("strong"); heading.textContent = name;
   const meta = document.createElement("span"); meta.className = "plugin-meta"; meta.textContent = `${description}${version ? ` · ${version}` : ""}`;
   copy.append(heading, meta); const actions = document.createElement("div"); actions.className = "plugin-actions"; card.append(icon, copy, actions); return card;
 }
+
+function piSourceWebsite(source: string): string | undefined { return source.startsWith("npm:") ? npmPackageWebsite(source.slice(4).replace(/@[^@/]+$/, "")) : undefined; }
+function npmPackageWebsite(name: string): string { return `https://www.npmjs.com/package/${encodeURIComponent(name)}`; }
 
 function pluginAction(label: string, action: () => Promise<void>, danger = false): HTMLButtonElement {
   const button = document.createElement("button"); button.type = "button"; button.className = danger ? "plugin-action danger" : "plugin-action"; button.textContent = label;

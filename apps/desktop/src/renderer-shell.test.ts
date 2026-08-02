@@ -123,6 +123,8 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('id="plugin-catalog"');
     expect(renderer).toContain('/api/v1/management/pi/catalog');
     expect(renderer).toContain('/api/v1/management/pi/packages/install');
+    expect(renderer).toContain('entry.links.homepage ?? entry.links.repository ?? entry.links.npm');
+    expect(renderer).toContain('window.fitz.openExternal(website)');
     expect(renderer).toContain('Pi packages can run code with the same access as Fitz');
     expect(main).toContain('ensureBundledLocalHost');
     expect(main).toContain('join(process.resourcesPath, "host")');

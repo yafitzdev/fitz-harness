@@ -553,6 +553,9 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .plugin-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.35; }
 .plugin-copy { min-width: 0; display: grid; gap: 3px; }
 .plugin-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 590; }
+.plugin-card-linked { cursor: pointer; }
+.plugin-card-linked:hover .plugin-copy strong, .plugin-card-linked:focus-visible .plugin-copy strong { text-decoration: underline; text-underline-offset: 3px; }
+.plugin-card-linked:focus-visible { outline: 1px solid var(--muted); outline-offset: -2px; border-radius: 10px; }
 .plugin-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
 .plugin-actions { display: flex; align-items: center; gap: 5px; }
 .plugin-action { height: 28px; padding: 0 9px; border: 1px solid var(--border-soft); border-radius: 9px; background: rgba(255,255,255,.035); color: var(--text); font-size: 11px; cursor: pointer; }
