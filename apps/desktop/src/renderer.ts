@@ -910,20 +910,13 @@ function renderConsumerConnections(): void {
 
 function connectionViews(): ConnectionView[] {
   const recipes = (managementConfiguration?.recipes ?? []).filter((recipe: Json) => !String(recipe.id).startsWith("consumer-recipe--") && recipe.capabilities?.chatCompletions !== false);
-  const engines = managementConfiguration?.engines ?? [];
-  const hostedByPlaybook = new Map<string, HostedConnectionView>();
+  const hostedModels: ConnectionModelView[] = [];
   for (const recipe of recipes) {
-    const playbookId = String(recipe.playbookId);
-    const engine = engines.find((candidate: Json) => candidate.id === playbookId);
-    let connection = hostedByPlaybook.get(playbookId);
-    if (!connection) {
-      connection = { id: `hosted--${playbookId}`, displayName: engine?.displayName ?? playbookId, baseUrl: "", authType: "none", hasCredential: false, models: [], updatedAt: String(engine?.updatedAt ?? ""), hosted: true };
-      hostedByPlaybook.set(playbookId, connection);
-    }
     const route = (managementConfiguration?.routes ?? []).find((candidate: Json) => !String(candidate.id).startsWith("consumer--") && candidate.recipeId === recipe.id);
-    connection.models.push({ id: String(recipe.id), routeId: String(route?.id ?? recipe.id), recipeId: String(recipe.id), displayName: String(recipe.displayName ?? recipe.id), modelId: String(recipe.modelId ?? recipe.id), contextTokens: Number(recipe.contextTokens) });
+    hostedModels.push({ id: String(recipe.id), routeId: String(route?.id ?? recipe.id), recipeId: String(recipe.id), displayName: String(recipe.displayName ?? recipe.id), modelId: String(recipe.modelId ?? recipe.id), contextTokens: Number(recipe.contextTokens) });
   }
-  return [...hostedByPlaybook.values(), ...consumerConnectionRecords.map((connection): SavedConnectionView => ({ ...connection, hosted: false, models: connection.models.map((model) => ({ ...model })), source: connection }))];
+  const hostedConnection: HostedConnectionView | undefined = hostedModels.length ? { id: "hosted--local", displayName: String(managementConfiguration?.hostName ?? "This PC"), baseUrl: "", authType: "none", hasCredential: false, models: hostedModels, updatedAt: "", hosted: true } : undefined;
+  return [...(hostedConnection ? [hostedConnection] : []), ...consumerConnectionRecords.map((connection): SavedConnectionView => ({ ...connection, hosted: false, models: connection.models.map((model) => ({ ...model })), source: connection }))];
 }
 
 async function saveConsumerConnection(): Promise<void> {

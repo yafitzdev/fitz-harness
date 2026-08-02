@@ -18,6 +18,7 @@ describe("Fitz host", () => {
 
     expect(health.statusCode).toBe(200);
     expect(health.json().engine.state).toBe("UNLOADED");
+    expect((await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" })).json().hostName).toEqual(expect.any(String));
     expect(models.json().data.map((model: { id: string }) => model.id)).toEqual([
       "default",
       "fast",

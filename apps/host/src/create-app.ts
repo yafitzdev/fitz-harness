@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import { FakeEngineAdapter } from "@fitz/engine-fake";
@@ -370,6 +370,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         routes: routes.listRoutes(),
         recipes: routes.listRecipes(),
         engines: store.listEngines(),
+        hostName: hostname(),
         engineRoot: store.getSetting<string>("engineRoot") ?? configuredEngineRoot,
         engineFolders: scanEngineFolders(store.getSetting<string>("engineRoot") ?? configuredEngineRoot, store.listEngines()),
         recoveredInterruptedRequests,

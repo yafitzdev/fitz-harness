@@ -89,7 +89,8 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('consumerFixedRouteId');
     expect(renderer).toContain('testRecipe({ id: consumerModel.recipeId');
     expect(renderer).toContain("function connectionViews(): ConnectionView[]");
-    expect(renderer).toContain('id: `hosted--${playbookId}`');
+    expect(renderer).toContain('id: "hosted--local"');
+    expect(renderer).toContain('managementConfiguration?.hostName ?? "This PC"');
     expect(renderer).toContain('recipe.capabilities?.chatCompletions !== false');
     expect(renderer).toContain('if (!connection.hosted)');
     expect(renderer).not.toContain('url.className = "connection-url"');
