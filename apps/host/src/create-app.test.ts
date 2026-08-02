@@ -39,7 +39,8 @@ describe("Fitz host", () => {
     try {
       const saved = await runtime.app.inject({ method: "PUT", url: "/api/v1/management/connections/test-api", payload: { displayName: "Test API", baseUrl: `http://127.0.0.1:${address.port}/v1`, authType: "none" } });
       expect(saved.statusCode).toBe(200);
-      expect(saved.json().data.models).toEqual([expect.objectContaining({ id: "upstream-model" })]);
+      const consumerModel = saved.json().data.models[0];
+      expect(consumerModel).toEqual(expect.objectContaining({ id: "upstream-model", routeId: expect.any(String), recipeId: expect.any(String) }));
       expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((item: { id: string }) => item.id).sort()).toEqual(["default", "fast", "smart"]);
       await runtime.app.inject({ method: "PUT", url: "/api/v1/runtime-mode", payload: { mode: "consume" } });
       const models = await runtime.app.inject({ method: "GET", url: "/v1/models" });
@@ -47,8 +48,15 @@ describe("Fitz host", () => {
       expect(models.json().data).toEqual([expect.objectContaining({ display_name: "upstream-model" })]);
       const completion = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: routeId, stream: false, messages: [{ role: "user", content: "hello" }] } });
       expect(completion.statusCode, completion.body).toBe(200); expect(completion.json().choices[0].message.content).toBe("upstream ok");
+      const recipeTest = await runtime.app.inject({ method: "POST", url: `/api/v1/management/recipes/${consumerModel.recipeId}/test` });
+      expect(recipeTest.statusCode, recipeTest.body).toBe(200); expect(recipeTest.json().data.working).toBe(true);
+      await runtime.app.inject({ method: "PUT", url: "/api/v1/management/routes/consumer--default", payload: { displayName: "Default", recipeId: consumerModel.recipeId, enabled: true, isDefault: true } });
+      await runtime.app.inject({ method: "PUT", url: "/api/v1/management/connections/test-api", payload: { displayName: "Test API", baseUrl: `http://127.0.0.1:${address.port}/v1`, authType: "none" } });
+      const refreshedStatus = await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" });
+      expect(refreshedStatus.json().routes).toContainEqual(expect.objectContaining({ id: "consumer--default", recipeId: consumerModel.recipeId }));
       await runtime.app.inject({ method: "DELETE", url: "/api/v1/management/connections/test-api" });
       expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data).toEqual([]);
+      expect((await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" })).json().routes).not.toContainEqual(expect.objectContaining({ id: "consumer--default" }));
     } finally { await runtime.app.close(); await new Promise<void>((resolve) => upstream.close(() => resolve())); }
   });
 

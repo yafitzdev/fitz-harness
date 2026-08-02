@@ -152,6 +152,10 @@ const consumerApiKeyField = element("consumer-api-key-field");
 const connectionFormStatus = element("connection-form-status");
 const consumerConnections = element("consumer-connections");
 const cancelConnectionEdit = element("cancel-connection-edit") as HTMLButtonElement;
+const connectionListView = element("connection-list-view");
+const connectionEditor = element("connection-editor");
+const connectionEditorTitle = element("connection-editor-title");
+const connectionSearch = element("connection-search") as HTMLInputElement;
 const pairingPage = element("pairing-page");
 const pairingForm = element("pairing-form") as HTMLFormElement;
 const pairingCode = element("pairing-code") as HTMLInputElement;
@@ -241,7 +245,7 @@ document.addEventListener("keydown", (event) => {
   if (event.ctrlKey && event.key.toLowerCase() === "b") { event.preventDefault(); toggleSidebar(); }
   if (event.ctrlKey && event.altKey && event.key.toLowerCase() === "r") { event.preventDefault(); openRenameDialog(); }
   if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "a") { event.preventDefault(); void archiveCurrentTask(); }
-  if (event.key === "Escape") { if (!managementEditor.hidden) closeManagementEditor(); else closePopovers(); }
+  if (event.key === "Escape") { if (!managementEditor.hidden) closeManagementEditor(); else if (!connectionEditor.hidden) closeConnectionEditor(); else closePopovers(); }
 });
 
 element("new-project").addEventListener("click", () => openProjectDialog());
@@ -253,9 +257,12 @@ administrationButton.addEventListener("click", () => void openAdministrationPage
 element("refresh-administration").addEventListener("click", () => void loadAdministration());
 element("refresh-playbooks").addEventListener("click", () => void loadManagementConfiguration(true));
 element("refresh-connections").addEventListener("click", () => void syncAndLoadConsumerConnections(true));
+element("new-connection").addEventListener("click", () => openConnectionEditor());
+element("connection-editor-back").addEventListener("click", closeConnectionEditor);
 element("close-management-editor").addEventListener("click", closeManagementEditor);
 for (const button of document.querySelectorAll<HTMLButtonElement>("[data-close-management-editor]")) button.addEventListener("click", closeManagementEditor);
 playbookSearch.addEventListener("input", renderManagementPage);
+connectionSearch.addEventListener("input", renderConsumerConnections);
 element("sidebar-menu").addEventListener("click", toggleSidebar);
 for (const menuButton of document.querySelectorAll<HTMLButtonElement>("[data-app-menu]")) menuButton.addEventListener("click", () => { const rect = menuButton.getBoundingClientRect(); void window.fitz.showMenu(menuButton.dataset.appMenu ?? "", Math.round(rect.left), Math.round(rect.bottom)); });
 for (const windowButton of document.querySelectorAll<HTMLButtonElement>("[data-window-action]")) windowButton.addEventListener("click", () => void window.fitz.windowAction(windowButton.dataset.windowAction as "minimize" | "maximize" | "close"));
@@ -339,7 +346,7 @@ recipeForm.addEventListener("submit", (event) => { event.preventDefault(); void 
 engineForm.addEventListener("submit", (event) => { event.preventDefault(); void saveEngine(); });
 connectionForm.addEventListener("submit", (event) => { event.preventDefault(); void saveConsumerConnection(); });
 consumerConnectionAuth.addEventListener("change", updateConsumerAuthField);
-cancelConnectionEdit.addEventListener("click", resetConsumerConnectionForm);
+cancelConnectionEdit.addEventListener("click", closeConnectionEditor);
 (element("engine-folder") as HTMLSelectElement).addEventListener("change", applyEngineFolderChoice);
 (element("engine-connection") as HTMLSelectElement).addEventListener("change", updateEngineFieldVisibility);
 (element("engine-runtime") as HTMLSelectElement).addEventListener("change", updateEngineFieldVisibility);
@@ -378,10 +385,16 @@ async function initialize(): Promise<void> {
 async function loadModels(preferredRoute?: string): Promise<void> {
   const response = await api("/v1/models"); const previous = preferredRoute ?? model.value;
   model.replaceChildren();
-  for (const card of response.data ?? []) {
+  const cards = [...(response.data ?? [])];
+  if (runtimeMode === "consume") {
+    const priority = new Map([[consumerFixedRouteId("default"), 0], [consumerFixedRouteId("fast"), 1], [consumerFixedRouteId("smart"), 2]]);
+    cards.sort((left: Json, right: Json) => (priority.get(left.id) ?? 3) - (priority.get(right.id) ?? 3));
+  }
+  for (const card of cards) {
     const option = new Option(card.display_name ?? card.id, card.id);
     const connection = consumerConnectionRecords.find((item) => item.models.some((candidate) => candidate.routeId === card.id));
-    if (connection) option.dataset.group = connection.displayName;
+    if (runtimeMode === "consume" && card.id.startsWith("consumer--") && FIXED_ROUTES.some((route) => consumerFixedRouteId(route.id) === card.id)) option.dataset.group = "Routes";
+    else if (connection) option.dataset.group = connection.displayName;
     model.add(option);
   }
   if (previous && [...model.options].some((option) => option.value === previous)) model.value = previous;
@@ -813,7 +826,7 @@ async function openPlaybookPage(): Promise<void> {
   await loadManagementConfiguration(true);
 }
 
-async function openConnectionsPage(): Promise<void> { if (runtimeMode !== "consume" || !pairingPage.hidden) return; closePopovers(); setContextPanel(false); pairingPage.hidden = true; administrationPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = false; closeManagementEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); administrationButton.classList.remove("active"); connectionsButton.classList.add("active"); await syncAndLoadConsumerConnections(false); }
+async function openConnectionsPage(): Promise<void> { if (runtimeMode !== "consume" || !pairingPage.hidden) return; closePopovers(); setContextPanel(false); pairingPage.hidden = true; administrationPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = false; closeManagementEditor(); closeConnectionEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); administrationButton.classList.remove("active"); connectionsButton.classList.add("active"); await syncAndLoadConsumerConnections(false); }
 async function openAdministrationPage(): Promise<void> { if (runtimeMode !== "host" || !administrator || !pairingPage.hidden) return; closePopovers(); setContextPanel(false); pairingPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = true; administrationPage.hidden = false; closeManagementEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); connectionsButton.classList.remove("active"); administrationButton.classList.add("active"); adminUsers.replaceChildren(panelEmpty("Loading users…")); await loadAdministration(); }
 function showPairingPage(message: string): void { closePopovers(); setContextPanel(false); administrationPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = true; pairingPage.hidden = false; closeManagementEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); connectionsButton.classList.remove("active"); administrationButton.classList.remove("active"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
 function showConversationWorkspace(): void { pairingPage.hidden = true; administrationPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = true; closeManagementEditor(); setConversationInert(false); element("manage-playbooks").classList.remove("active"); connectionsButton.classList.remove("active"); administrationButton.classList.remove("active"); }
@@ -837,6 +850,7 @@ function applyRuntimeMode(): void {
 async function syncAndLoadConsumerConnections(reportFailure: boolean): Promise<void> {
   const results = await window.fitz.syncConsumerConnections();
   consumerConnectionRecords = await window.fitz.listConsumerConnections();
+  await loadManagementConfiguration(false);
   renderConsumerConnections();
   const failed = results.filter((item) => !item.connected);
   if (reportFailure && failed.length) showToast(failed[0]?.error ?? "Connection failed");
@@ -845,19 +859,43 @@ async function syncAndLoadConsumerConnections(reportFailure: boolean): Promise<v
 function renderConsumerConnections(): void {
   consumerConnections.replaceChildren();
   if (!consumerConnectionRecords.length) { const empty = document.createElement("p"); empty.className = "connections-empty"; empty.textContent = "No APIs connected yet"; consumerConnections.append(empty); return; }
-  for (const connection of consumerConnectionRecords) {
-    const card = document.createElement("article"); card.className = "consumer-connection";
-    const main = document.createElement("div"); main.className = "consumer-connection-main";
-    const name = document.createElement("strong"); name.textContent = connection.displayName;
-    const url = document.createElement("small"); url.textContent = connection.baseUrl;
-    const models = document.createElement("div"); models.className = "consumer-models";
-    for (const model of connection.models) { const label = document.createElement("span"); label.textContent = model.id; models.append(label); }
-    main.append(name, url, models);
-    const actions = document.createElement("div"); actions.className = "consumer-connection-actions";
-    const test = document.createElement("button"); test.type = "button"; test.textContent = "Test"; test.addEventListener("click", () => void testConsumerConnection(connection, test));
-    const edit = document.createElement("button"); edit.type = "button"; edit.textContent = "Edit"; edit.addEventListener("click", () => editConsumerConnection(connection));
-    const remove = document.createElement("button"); remove.type = "button"; remove.className = "danger"; remove.textContent = "Remove"; remove.addEventListener("click", () => { if (remove.dataset.confirm !== "true") { remove.dataset.confirm = "true"; remove.textContent = "Confirm remove"; return; } void removeConsumerConnection(connection.id); });
-    actions.append(test, edit, remove); card.append(main, actions); consumerConnections.append(card);
+  const query = connectionSearch.value.trim().toLowerCase();
+  const visible = consumerConnectionRecords.filter((connection) => !query || [connection.displayName, connection.baseUrl, ...connection.models.map((model) => model.id)].some((value) => value.toLowerCase().includes(query)));
+  if (!visible.length) { consumerConnections.append(panelEmpty("No matching connections")); return; }
+  const routes = managementConfiguration?.routes ?? [];
+  for (const connection of visible) {
+    const card = document.createElement("section"); card.className = "playbook-card consumer-playbook-card";
+    const heading = document.createElement("div"); heading.className = "playbook-heading";
+    const identity = document.createElement("div");
+    const name = document.createElement("h3"); name.textContent = connection.displayName;
+    const url = document.createElement("small"); url.className = "connection-url"; url.textContent = connection.baseUrl;
+    identity.append(name, url);
+    const actions = document.createElement("div"); actions.className = "playbook-actions";
+    const refresh = document.createElement("button"); refresh.type = "button"; refresh.className = "quiet-button compact-button"; refresh.textContent = "Refresh"; refresh.addEventListener("click", () => void testConsumerConnection(connection, refresh));
+    const edit = document.createElement("button"); edit.type = "button"; edit.className = "quiet-button compact-button"; edit.textContent = "Configure"; edit.addEventListener("click", () => openConnectionEditor(connection));
+    const remove = document.createElement("button"); remove.type = "button"; remove.className = "quiet-button compact-button danger"; remove.textContent = "Remove"; remove.addEventListener("click", () => { if (remove.dataset.confirm !== "true") { remove.dataset.confirm = "true"; remove.textContent = "Confirm"; return; } void removeConsumerConnection(connection.id); });
+    actions.append(refresh, edit, remove); heading.append(identity, actions); card.append(heading);
+    if (!connection.models.length) card.append(panelEmpty("No models discovered"));
+    for (const consumerModel of connection.models) {
+      const recipeCard = document.createElement("article"); recipeCard.className = "recipe-card";
+      const recipeDetails = document.createElement("div"); recipeDetails.className = "recipe-card-details";
+      const modelName = document.createElement("span"); modelName.className = "recipe-display-name"; modelName.textContent = consumerModel.id;
+      const labels = document.createElement("div"); labels.className = "recipe-card-labels";
+      const modelLabel = document.createElement("span"); modelLabel.className = "recipe-card-label"; modelLabel.textContent = "API model";
+      labels.append(modelLabel); recipeDetails.append(modelName, labels);
+      const routeToggle = document.createElement("div"); routeToggle.className = "recipe-route-toggle"; routeToggle.setAttribute("role", "group"); routeToggle.setAttribute("aria-label", `${consumerModel.id} routing`);
+      for (const definition of FIXED_ROUTES) {
+        const routeId = consumerFixedRouteId(definition.id);
+        const route = routes.find((item: Json) => item.id === routeId);
+        const button = document.createElement("button"); button.type = "button"; button.className = `route-symbol route-${definition.id}`; button.title = definition.label; button.setAttribute("aria-label", `${definition.label} route`); button.setAttribute("aria-pressed", String(route?.recipeId === consumerModel.recipeId)); button.classList.toggle("active", route?.recipeId === consumerModel.recipeId); button.append(svg(definition.icon)); button.addEventListener("click", () => void assignConsumerRoute(definition, consumerModel, button));
+        routeToggle.append(button);
+      }
+      const recipeActions = document.createElement("div"); recipeActions.className = "recipe-card-actions";
+      const testButton = document.createElement("button"); testButton.type = "button"; testButton.className = "recipe-test-button"; testButton.setAttribute("aria-live", "polite"); testButton.addEventListener("click", () => void testRecipe({ id: consumerModel.recipeId, displayName: consumerModel.id }, recipeCard, testButton));
+      recipeActions.append(routeToggle, testButton); renderRecipeTestState(consumerModel.recipeId, recipeCard, testButton);
+      recipeCard.append(recipeDetails, recipeActions); card.append(recipeCard);
+    }
+    consumerConnections.append(card);
   }
 }
 
@@ -865,15 +903,16 @@ async function saveConsumerConnection(): Promise<void> {
   setFormBusy(connectionForm, true); setConnectionFormStatus("Connecting…");
   try {
     await window.fitz.saveConsumerConnection({ ...(consumerConnectionId.value ? { id: consumerConnectionId.value } : {}), displayName: consumerConnectionName.value.trim(), baseUrl: consumerConnectionUrl.value.trim(), authType: consumerConnectionAuth.value as "none" | "bearer", ...(consumerConnectionKey.value.trim() ? { apiKey: consumerConnectionKey.value.trim() } : {}) });
-    resetConsumerConnectionForm(); consumerConnectionRecords = await window.fitz.listConsumerConnections(); renderConsumerConnections(); if (runtimeMode === "consume") await loadModels();
+    closeConnectionEditor(); consumerConnectionRecords = await window.fitz.listConsumerConnections(); await loadManagementConfiguration(false); renderConsumerConnections(); if (runtimeMode === "consume") await loadModels();
   } catch (error) { setConnectionFormStatus(errorMessage(error), true); }
   finally { setFormBusy(connectionForm, false); }
 }
 
-async function testConsumerConnection(connection: ConsumerConnectionSummary, button: HTMLButtonElement): Promise<void> { button.disabled = true; button.textContent = "Testing…"; try { await window.fitz.saveConsumerConnection({ id: connection.id, displayName: connection.displayName, baseUrl: connection.baseUrl, authType: connection.authType }); consumerConnectionRecords = await window.fitz.listConsumerConnections(); renderConsumerConnections(); if (runtimeMode === "consume") await loadModels(); } catch (error) { button.disabled = false; button.textContent = "Failed"; button.title = errorMessage(error); } }
-function editConsumerConnection(connection: ConsumerConnectionSummary): void { consumerConnectionId.value = connection.id; consumerConnectionName.value = connection.displayName; consumerConnectionUrl.value = connection.baseUrl; consumerConnectionAuth.value = connection.authType; consumerConnectionKey.value = ""; consumerConnectionKey.placeholder = connection.hasCredential ? "Leave blank to keep current key" : "API key"; cancelConnectionEdit.hidden = false; updateConsumerAuthField(); consumerConnectionName.focus(); }
-async function removeConsumerConnection(id: string): Promise<void> { try { await window.fitz.removeConsumerConnection(id); consumerConnectionRecords = await window.fitz.listConsumerConnections(); renderConsumerConnections(); if (runtimeMode === "consume") await loadModels(); } catch (error) { showToast(errorMessage(error)); } }
-function resetConsumerConnectionForm(): void { connectionForm.reset(); consumerConnectionId.value = ""; consumerConnectionAuth.value = "bearer"; consumerConnectionKey.placeholder = "Stored securely"; cancelConnectionEdit.hidden = true; setConnectionFormStatus(); updateConsumerAuthField(); }
+async function testConsumerConnection(connection: ConsumerConnectionSummary, button: HTMLButtonElement): Promise<void> { button.disabled = true; button.textContent = "Refreshing…"; try { await window.fitz.saveConsumerConnection({ id: connection.id, displayName: connection.displayName, baseUrl: connection.baseUrl, authType: connection.authType }); consumerConnectionRecords = await window.fitz.listConsumerConnections(); await loadManagementConfiguration(false); renderConsumerConnections(); if (runtimeMode === "consume") await loadModels(); } catch (error) { button.disabled = false; button.textContent = "Failed"; button.title = errorMessage(error); } }
+function openConnectionEditor(connection?: ConsumerConnectionSummary): void { resetConsumerConnectionForm(); connectionListView.hidden = true; connectionEditor.hidden = false; connectionEditorTitle.textContent = connection ? "Configure connection" : "New connection"; if (connection) { consumerConnectionId.value = connection.id; consumerConnectionName.value = connection.displayName; consumerConnectionUrl.value = connection.baseUrl; consumerConnectionAuth.value = connection.authType; consumerConnectionKey.placeholder = connection.hasCredential ? "Leave blank to keep current key" : "API key"; } updateConsumerAuthField(); consumerConnectionName.focus(); }
+function closeConnectionEditor(): void { resetConsumerConnectionForm(); connectionEditor.hidden = true; connectionListView.hidden = false; }
+async function removeConsumerConnection(id: string): Promise<void> { try { await window.fitz.removeConsumerConnection(id); consumerConnectionRecords = await window.fitz.listConsumerConnections(); await loadManagementConfiguration(false); renderConsumerConnections(); if (runtimeMode === "consume") await loadModels(); } catch (error) { showToast(errorMessage(error)); } }
+function resetConsumerConnectionForm(): void { connectionForm.reset(); consumerConnectionId.value = ""; consumerConnectionAuth.value = "bearer"; consumerConnectionKey.placeholder = "Stored securely"; setConnectionFormStatus(); updateConsumerAuthField(); }
 function updateConsumerAuthField(): void { consumerApiKeyField.hidden = consumerConnectionAuth.value === "none"; consumerConnectionKey.required = consumerConnectionAuth.value === "bearer" && !consumerConnectionId.value; }
 function setConnectionFormStatus(message?: string, error = false): void { connectionFormStatus.hidden = !message; connectionFormStatus.textContent = message ?? ""; connectionFormStatus.classList.toggle("error", error); }
 
@@ -1456,6 +1495,30 @@ async function assignFixedRoute(definition: (typeof FIXED_ROUTES)[number], recip
       isDefault: definition.id === "default",
     });
     await loadManagementConfiguration(true);
+  } catch (error) {
+    button.disabled = false;
+    showToast(errorMessage(error));
+  }
+}
+
+function consumerFixedRouteId(id: FixedRouteId): string { return `consumer--${id}`; }
+
+async function assignConsumerRoute(definition: (typeof FIXED_ROUTES)[number], consumerModel: ConsumerConnectionSummary["models"][number], button: HTMLButtonElement): Promise<void> {
+  const routeId = consumerFixedRouteId(definition.id);
+  const current = managementConfiguration?.routes?.find((route: Json) => route.id === routeId);
+  if (current?.recipeId === consumerModel.recipeId) return;
+  button.disabled = true;
+  try {
+    await api(`/api/v1/management/routes/${routeId}`, "PUT", {
+      displayName: definition.label,
+      description: definition.id === "fast" ? "Lowest-latency consumer route" : definition.id === "smart" ? "Highest-capability consumer route" : "Primary consumer route",
+      recipeId: consumerModel.recipeId,
+      enabled: true,
+      isDefault: definition.id === "default",
+    });
+    await loadManagementConfiguration(false);
+    renderConsumerConnections();
+    await loadModels(routeId);
   } catch (error) {
     button.disabled = false;
     showToast(errorMessage(error));

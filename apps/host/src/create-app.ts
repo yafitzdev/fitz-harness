@@ -423,7 +423,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
 
         const registrations = consumerConnections();
         const previous = registrations.find((item) => item.id === connectionId);
-        if (previous) removeConsumerRegistration(previous, store, routes);
+        if (previous) removeConsumerRegistration(previous, store, routes, false);
         const models = modelIds.map((modelId) => consumerModelRegistration(connectionId, modelId));
         for (const model of models) {
           const recipe: Recipe = {
@@ -826,7 +826,14 @@ function consumerModelRegistration(connectionId: string, modelId: string): Consu
   return { modelId, routeId: `${CONSUMER_ROUTE_PREFIX}${connectionId}--${suffix}`, recipeId: `consumer-recipe--${connectionId}--${suffix}` };
 }
 
-function removeConsumerRegistration(connection: ConsumerConnectionRegistration, store: SqliteStore, routes: RouteResolver): void {
+function removeConsumerRegistration(connection: ConsumerConnectionRegistration, store: SqliteStore, routes: RouteResolver, removeAssignments = true): void {
+  const recipeIds = new Set(connection.models.map((model) => model.recipeId));
+  if (removeAssignments) {
+    for (const route of routes.listRoutes()) {
+      if (!recipeIds.has(route.recipeId)) continue;
+      routes.deleteRoute(route.id); store.deleteRoute(route.id);
+    }
+  }
   for (const model of connection.models) {
     routes.deleteRoute(model.routeId); store.deleteRoute(model.routeId);
     routes.deleteRecipe(model.recipeId); store.deleteRecipe(model.recipeId);
@@ -840,7 +847,7 @@ function publicConsumerConnection(connection: ConsumerConnectionRegistration): R
     baseUrl: connection.baseUrl,
     authType: connection.authType,
     hasCredential: connection.authType === "bearer",
-    models: connection.models.map((model) => ({ id: model.modelId, routeId: model.routeId })),
+    models: connection.models.map((model) => ({ id: model.modelId, routeId: model.routeId, recipeId: model.recipeId })),
     updatedAt: connection.updatedAt,
   };
 }
