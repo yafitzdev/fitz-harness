@@ -12,6 +12,7 @@ type ConnectionView = HostedConnectionView | SavedConnectionView;
 type PiCatalogPackage = { name: string; description: string; version: string; publisher: string; keywords: string[]; types: string[]; links: Record<string, string> };
 type InstalledPiPackage = { source: string; displayName: string; version?: string; description?: string; enabled: boolean; resources: Record<string, number> };
 type PiSkillSummary = { name: string; description: string; source: string; enabled: boolean; filePath: string };
+type AppLocation = { view: "conversation"; projectId?: string; sessionId?: string; newChat?: boolean } | { view: "playbooks" | "connections" | "plugins" | "administration" };
 
 const FIXED_ROUTES: readonly { id: FixedRouteId; label: string; icon: string }[] = [
   { id: "fast", label: "Fast", icon: '<path class="route-icon-outline" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path><path class="route-icon-filled" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path>' },
@@ -63,6 +64,9 @@ let inspectedPreview: ResourcePreview | undefined;
 let inspectorSourceMode = false;
 let activeWorkSummary: { root: HTMLElement; toggle: HTMLButtonElement; details: HTMLElement; startedAt: number; lastAt: number } | undefined;
 let renameTarget: { kind: "project" | "task"; id: string } | undefined;
+let navigationIndex = -1;
+let replayingNavigation = false;
+const navigationHistory: AppLocation[] = [];
 const pinnedProjects = storedSet("fitz-pinned-projects");
 const pinnedSessions = storedSet("fitz-pinned-sessions");
 const unreadSessions = storedSet("fitz-unread-sessions");
@@ -286,6 +290,7 @@ form.addEventListener("submit", (event) => {
 });
 messages.addEventListener("scroll", updateScrollToBottom, { passive: true });
 scrollToBottom.addEventListener("click", () => messages.scrollTo({ top: messages.scrollHeight, behavior: "smooth" }));
+window.fitz.onNavigationCommand((command) => void navigateHistory(command === "back" ? -1 : 1));
 prompt.addEventListener("input", () => { resizePrompt(); updateContextMeter(); refreshComposerState(); });
 prompt.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
@@ -541,7 +546,7 @@ async function selectProject(id: string): Promise<void> {
   currentSession = projectSessions[0]?.id;
   renderProjectTree();
   if (currentSession) await selectSession(currentSession, false);
-  else { sessionTokenEstimate = 0; updateContextMeter(); showLanding(); await loadArtifacts(); }
+  else { sessionTokenEstimate = 0; updateContextMeter(); showLanding(); await loadArtifacts(); rememberLocation({ view: "conversation", projectId: id }); }
   refreshComposerState();
 }
 
@@ -603,6 +608,7 @@ async function selectSession(id: string, rerender = true, projectId?: string): P
   }
   refreshComposerState();
   prompt.focus();
+  rememberLocation({ view: "conversation", ...(currentProject ? { projectId: currentProject } : {}), sessionId: id });
 }
 
 function toggleProjectExpansion(id: string, group: HTMLElement): void {
@@ -641,6 +647,7 @@ function openNewChat(): void {
   updateContextMeter();
   refreshComposerState();
   prompt.focus();
+  rememberLocation({ view: "conversation", projectId: currentProject, newChat: true });
 }
 
 function openNewChatForProject(id: string): void { currentProject = id; expandedProjects.add(id); saveSet("fitz-expanded-projects", expandedProjects); openNewChat(); }
@@ -898,14 +905,45 @@ async function openPlaybookPage(): Promise<void> {
   administrationButton.classList.remove("active");
   playbookList.replaceChildren(panelEmpty("Loading playbooks…"));
   await loadManagementConfiguration(true);
+  rememberLocation({ view: "playbooks" });
 }
 
-async function openConnectionsPage(): Promise<void> { if (!pairingPage.hidden) return; closePopovers(); setContextPanel(false); pairingPage.hidden = true; administrationPage.hidden = true; pluginsPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = false; closeManagementEditor(); closeConnectionEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); administrationButton.classList.remove("active"); pluginsButton.classList.remove("active"); connectionsButton.classList.add("active"); await syncAndLoadConsumerConnections(false); }
-async function openPluginsPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); setContextPanel(false); pairingPage.hidden = true; administrationPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = true; pluginsPage.hidden = false; closeManagementEditor(); closeConnectionEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); connectionsButton.classList.remove("active"); administrationButton.classList.remove("active"); pluginsButton.classList.add("active"); installedPlugins.replaceChildren(panelEmpty("Loading plugins…")); await loadPiPackages(false); }
-async function openAdministrationPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); setContextPanel(false); pairingPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = true; pluginsPage.hidden = true; administrationPage.hidden = false; closeManagementEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); connectionsButton.classList.remove("active"); pluginsButton.classList.remove("active"); administrationButton.classList.add("active"); adminUsers.replaceChildren(panelEmpty("Loading users…")); await loadAdministration(); }
+async function openConnectionsPage(): Promise<void> { if (!pairingPage.hidden) return; closePopovers(); setContextPanel(false); pairingPage.hidden = true; administrationPage.hidden = true; pluginsPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = false; closeManagementEditor(); closeConnectionEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); administrationButton.classList.remove("active"); pluginsButton.classList.remove("active"); connectionsButton.classList.add("active"); await syncAndLoadConsumerConnections(false); rememberLocation({ view: "connections" }); }
+async function openPluginsPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); setContextPanel(false); pairingPage.hidden = true; administrationPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = true; pluginsPage.hidden = false; closeManagementEditor(); closeConnectionEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); connectionsButton.classList.remove("active"); administrationButton.classList.remove("active"); pluginsButton.classList.add("active"); installedPlugins.replaceChildren(panelEmpty("Loading plugins…")); await loadPiPackages(false); rememberLocation({ view: "plugins" }); }
+async function openAdministrationPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); setContextPanel(false); pairingPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = true; pluginsPage.hidden = true; administrationPage.hidden = false; closeManagementEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); connectionsButton.classList.remove("active"); pluginsButton.classList.remove("active"); administrationButton.classList.add("active"); adminUsers.replaceChildren(panelEmpty("Loading users…")); await loadAdministration(); rememberLocation({ view: "administration" }); }
 function showPairingPage(message: string): void { closePopovers(); setContextPanel(false); administrationPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = true; pluginsPage.hidden = true; pairingPage.hidden = false; closeManagementEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); connectionsButton.classList.remove("active"); pluginsButton.classList.remove("active"); administrationButton.classList.remove("active"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
 function showConversationWorkspace(): void { pairingPage.hidden = true; administrationPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = true; pluginsPage.hidden = true; closeManagementEditor(); setConversationInert(false); element("manage-playbooks").classList.remove("active"); connectionsButton.classList.remove("active"); pluginsButton.classList.remove("active"); administrationButton.classList.remove("active"); }
 function setConversationInert(inert: boolean): void { for (const area of [workspaceHeader, messages, composerDock]) { area.toggleAttribute("inert", inert); area.setAttribute("aria-hidden", String(inert)); } }
+
+function rememberLocation(location: AppLocation): void {
+  if (replayingNavigation) return;
+  const previous = navigationHistory[navigationIndex];
+  if (previous && JSON.stringify(previous) === JSON.stringify(location)) return;
+  navigationHistory.splice(navigationIndex + 1);
+  navigationHistory.push(location);
+  navigationIndex = navigationHistory.length - 1;
+}
+
+async function navigateHistory(offset: -1 | 1): Promise<void> {
+  const nextIndex = navigationIndex + offset;
+  const location = navigationHistory[nextIndex];
+  if (!location || currentRun) return;
+  navigationIndex = nextIndex;
+  replayingNavigation = true;
+  try {
+    if (location.view === "playbooks") await openPlaybookPage();
+    else if (location.view === "connections") await openConnectionsPage();
+    else if (location.view === "plugins") await openPluginsPage();
+    else if (location.view === "administration") await openAdministrationPage();
+    else if (location.view === "conversation") {
+      if (location.newChat && location.projectId) { currentProject = location.projectId; openNewChat(); }
+      else if (location.sessionId) await selectSession(location.sessionId, true, location.projectId);
+      else if (location.projectId) await selectProject(location.projectId);
+    }
+  } finally {
+    replayingNavigation = false;
+  }
+}
 
 function applyNavigation(): void {
   element("manage-playbooks").hidden = false;

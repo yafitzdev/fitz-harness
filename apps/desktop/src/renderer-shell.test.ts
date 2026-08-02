@@ -73,6 +73,19 @@ describe("desktop renderer shell", () => {
     expect(html).not.toContain('id="sidebar-restore"');
   });
 
+  it("maps mouse back and forward buttons to Fitz navigation history", () => {
+    expect(main).toContain('window.on("app-command"');
+    expect(main).toContain('command === "browser-backward"');
+    expect(main).toContain('command === "browser-forward"');
+    expect(main).toContain('window.webContents.send("fitz:navigation-command", "back")');
+    expect(preload).toContain('onNavigationCommand(listener: (command: "back" | "forward")');
+    expect(preload).toContain('ipcRenderer.on("fitz:navigation-command", handler)');
+    expect(renderer).toContain('window.fitz.onNavigationCommand((command) => void navigateHistory');
+    expect(renderer).toContain('type AppLocation = { view: "conversation"');
+    expect(renderer).toContain('navigationHistory.splice(navigationIndex + 1)');
+    expect(renderer).toContain('async function navigateHistory(offset: -1 | 1)');
+  });
+
   it("keeps every management workspace on one stable scrollbar-aware axis", () => {
     expect(styles).toContain("--management-content-width: 900px");
     expect(styles).toContain("scrollbar-gutter: stable both-edges");
