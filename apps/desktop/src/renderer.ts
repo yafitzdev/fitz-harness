@@ -1,5 +1,6 @@
 import { reconnectDelay } from "@fitz/connectivity/reconnect";
 import type { ConsumerConnectionSummary, DesktopUpdateStatus } from "./preload.js";
+import { appendMarkdown, setMarkdown } from "./markdown.js";
 
 type Json = Record<string, any>;
 type FixedRouteId = "fast" | "default" | "smart";
@@ -2017,7 +2018,7 @@ async function followRun(runId: string, activity: HTMLElement, runStartedAt: num
       if (event.type === "run.started") { queued = false; setStatus("Working", "active"); engineState.textContent = "WORKING"; setRunActivity(activity, "Loading model", runStartedAt); }
       if (event.type === "assistant.delta") {
         if (!assistant) { activity.remove(); assistant = appendMessage("assistant", ""); }
-        const delta = event.data.text ?? ""; assistant.textContent += delta; sessionTokenEstimate += estimateTokens(delta); updateContextMeter();
+        const delta = event.data.text ?? ""; appendMarkdown(assistant, delta); sessionTokenEstimate += estimateTokens(delta); updateContextMeter();
         messages.scrollTop = messages.scrollHeight;
       }
       if (event.type === "tool.approval.requested") {
@@ -2205,7 +2206,7 @@ function showConnectionFailure(detail: string): void {
 function appendMessage(role: string, text: string): HTMLElement {
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   const article = document.createElement("article"); article.className = `message ${role}`;
-  const content = document.createElement("div"); content.className = "message-body"; content.textContent = text; article.append(content); messages.append(article); messages.scrollTop = messages.scrollHeight; return content;
+  const content = document.createElement("div"); content.className = "message-body"; if (role === "assistant" || role === "commentary") setMarkdown(content, text); else content.textContent = text; article.append(content); messages.append(article); messages.scrollTop = messages.scrollHeight; return content;
 }
 
 function appendCommentary(text: string): HTMLElement {

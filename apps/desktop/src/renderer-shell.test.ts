@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 const html = readFileSync(new URL("./renderer/index.html", import.meta.url), "utf8");
 const renderer = readFileSync(new URL("./renderer.ts", import.meta.url), "utf8");
+const markdown = readFileSync(new URL("./markdown.ts", import.meta.url), "utf8");
 const styles = readFileSync(new URL("./renderer/styles.css", import.meta.url), "utf8");
 const main = readFileSync(new URL("./main.ts", import.meta.url), "utf8");
 const preload = readFileSync(new URL("./preload.ts", import.meta.url), "utf8");
@@ -230,6 +231,21 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".agent-activity.open .agent-activity-chevron { transform: rotate(90deg); }");
     expect(styles).toContain(".agent-activity-details.shell-details");
     expect(styles).toContain('.shell-command::before { content: "$ ";');
+  });
+
+  it("renders streamed assistant Markdown safely while keeping prompts plain", () => {
+    expect(renderer).toContain('import { appendMarkdown, setMarkdown } from "./markdown.js"');
+    expect(renderer).toContain("appendMarkdown(assistant, delta)");
+    expect(renderer).toContain('if (role === "assistant" || role === "commentary") setMarkdown(content, text); else content.textContent = text');
+    expect(markdown).toContain("target.replaceChildren()");
+    expect(markdown).not.toContain("innerHTML");
+    expect(markdown).toContain('url.protocol === "https:" || url.protocol === "http:"');
+    expect(markdown).toContain('container.className = "markdown-code"');
+    expect(markdown).toContain('copy.textContent = "Copy"');
+    expect(markdown).toContain('document.createElement("table")');
+    expect(styles).toContain(".message-body.markdown h1");
+    expect(styles).toContain(".markdown-code pre");
+    expect(styles).toContain(".markdown-table table");
   });
 
   it("expands Advanced model settings and sends the chosen temperature and output limit", () => {
