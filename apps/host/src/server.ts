@@ -11,6 +11,7 @@ import { createHost } from "./create-app.js";
 import { PiAgentRuntime } from "@fitz/agent-pi";
 import { createNInferPlaybook, NINFER_PLAYBOOK_ID } from "./ninfer-playbook.js";
 import { createToolApprovalRequester } from "./tool-approval-gate.js";
+import { WindowsStartupManager } from "@fitz/connectivity";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const defaultDataPath = resolve(moduleDirectory, "../../../data/fitz.db");
@@ -35,6 +36,7 @@ const runtime = createHost({
   resourcePolicy: { reserveVramMiB },
   authMode,
   localPort: port,
+  startupManager: new WindowsStartupManager(resolve(moduleDirectory, "../start-host.ps1")),
   ...(authMode === "required" ? { authPepper: requiredEnvironment("FITZ_AUTH_PEPPER") } : {}),
   ...engineOptions,
   ...(process.env.FITZ_ADMIN_TOKEN ? { adminToken: process.env.FITZ_ADMIN_TOKEN } : {}),

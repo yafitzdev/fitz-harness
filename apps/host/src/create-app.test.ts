@@ -4,7 +4,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHost } from "./create-app.js";
-import { TailscaleMonitor, TailscaleServeManager } from "@fitz/connectivity";
+import { TailscaleMonitor, TailscaleServeManager, WindowsStartupManager } from "@fitz/connectivity";
 import { SecurityService } from "@fitz/security";
 import { SqliteStore } from "@fitz/storage";
 
@@ -277,6 +277,23 @@ describe("Fitz host", () => {
       ["serve", "status", "--json"],
       ["serve", "--https=443", "off"],
     ]);
+    await runtime.app.close();
+  });
+
+  it("manages per-user Windows host startup without loading inference", async () => {
+    let configured = false;
+    const startup = new WindowsStartupManager("C:\\Fitz Host\\start-host.ps1", async (args) => {
+      if (args[0] === "add") configured = true;
+      if (args[0] === "delete") configured = false;
+      if (args[0] === "query" && !configured) throw new Error("not found");
+      return { stdout: configured ? "FitzCodexHost REG_SZ command" : "" };
+    }, "win32", () => true);
+    const runtime = createHost({ adminToken: "startup-test-token", startupManager: startup });
+    const headers = { "x-fitz-admin-token": "startup-test-token" };
+    expect((await runtime.app.inject({ method: "GET", url: "/api/v1/management/startup", headers })).json().data.configured).toBe(false);
+    expect((await runtime.app.inject({ method: "POST", url: "/api/v1/management/startup", headers })).json().data.configured).toBe(true);
+    expect((await runtime.app.inject({ method: "GET", url: "/health" })).json().engine.state).toBe("UNLOADED");
+    expect((await runtime.app.inject({ method: "DELETE", url: "/api/v1/management/startup", headers })).json().data.configured).toBe(false);
     await runtime.app.close();
   });
 

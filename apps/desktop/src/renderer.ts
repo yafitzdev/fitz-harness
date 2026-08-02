@@ -29,6 +29,7 @@ let administrationUsers: Json[] = [];
 let administrationPolicies: Json[] = [];
 let diagnosticBundle: Json | undefined;
 let pendingRemoteAction: "enable" | "disable" | undefined;
+let pendingStartupAction: "install" | "remove" | undefined;
 let managementConfiguration: Json | undefined;
 let newChatMode = false;
 let newChatProjectDetached = false;
@@ -171,6 +172,12 @@ const remoteAccessConfirmationText = element("remote-access-confirmation-text");
 const enableRemoteAccess = element("enable-remote-access") as HTMLButtonElement;
 const disableRemoteAccess = element("disable-remote-access") as HTMLButtonElement;
 const confirmRemoteAccess = element("confirm-remote-access") as HTMLButtonElement;
+const hostStartupStatus = element("host-startup-status");
+const hostStartupConfirmation = element("host-startup-confirmation");
+const hostStartupConfirmationText = element("host-startup-confirmation-text");
+const installHostStartup = element("install-host-startup") as HTMLButtonElement;
+const removeHostStartup = element("remove-host-startup") as HTMLButtonElement;
+const confirmHostStartup = element("confirm-host-startup") as HTMLButtonElement;
 const playbookList = element("playbook-list");
 const playbookSearch = element("playbook-search") as HTMLInputElement;
 const managementTitle = element("management-title");
@@ -299,6 +306,11 @@ enableRemoteAccess.addEventListener("click", () => showRemoteConfirmation("enabl
 disableRemoteAccess.addEventListener("click", () => showRemoteConfirmation("disable"));
 element("cancel-remote-access").addEventListener("click", hideRemoteConfirmation);
 confirmRemoteAccess.addEventListener("click", () => void applyRemoteAccessChange());
+element("refresh-host-startup").addEventListener("click", () => void loadHostStartup());
+installHostStartup.addEventListener("click", () => showStartupConfirmation("install"));
+removeHostStartup.addEventListener("click", () => showStartupConfirmation("remove"));
+element("cancel-host-startup").addEventListener("click", hideStartupConfirmation);
+confirmHostStartup.addEventListener("click", () => void applyStartupChange());
 recipeForm.addEventListener("submit", (event) => { event.preventDefault(); void saveRecipe(); });
 engineForm.addEventListener("submit", (event) => { event.preventDefault(); void saveEngine(); });
 (element("engine-folder") as HTMLSelectElement).addEventListener("change", applyEngineFolderChoice);
@@ -805,12 +817,13 @@ async function createAdminUser(): Promise<void> {
 async function loadAdministration(): Promise<void> {
   if (!administrator) return;
   try {
-    const [users, policies, audit, diagnostics, remote] = await Promise.all([
+    const [users, policies, audit, diagnostics, remote, startup] = await Promise.all([
       api("/api/v1/management/users"),
       api("/api/v1/management/tool-policies"),
       api("/api/v1/management/audit-events?limit=50"),
       api("/api/v1/management/diagnostics"),
       api("/api/v1/management/connectivity/status"),
+      api("/api/v1/management/startup"),
     ]);
     administrationUsers = users.data ?? [];
     administrationPolicies = policies.data ?? [];
@@ -825,6 +838,7 @@ async function loadAdministration(): Promise<void> {
     diagnosticBundle = diagnostics;
     renderDiagnostics(diagnostics);
     renderRemoteAccess(remote.data);
+    renderHostStartup(startup.data);
   }
   catch (error) { adminUsers.replaceChildren(panelEmpty(`Administration unavailable: ${errorMessage(error)}`)); }
 }
@@ -1138,6 +1152,49 @@ async function applyRemoteAccessChange(): Promise<void> {
     showToast(action === "enable" ? "Private HTTPS enabled" : "Private HTTPS disabled");
   } catch (error) { showToast(errorMessage(error)); }
   finally { confirmRemoteAccess.disabled = false; }
+}
+
+async function loadHostStartup(): Promise<void> {
+  try {
+    const response = await api("/api/v1/management/startup");
+    renderHostStartup(response.data);
+  } catch (error) { hostStartupStatus.replaceChildren(panelEmpty(`Startup status unavailable: ${errorMessage(error)}`)); }
+}
+
+function renderHostStartup(startup: Json): void {
+  hostStartupStatus.replaceChildren(
+    Object.assign(document.createElement("strong"), { textContent: startup.configured ? "Starts at sign-in" : "Does not start at sign-in" }),
+    Object.assign(document.createElement("span"), { textContent: startup.message ?? (startup.available ? "Per-user Windows startup" : "Packaged host launcher unavailable") }),
+  );
+  installHostStartup.disabled = !startup.available || startup.configured;
+  removeHostStartup.disabled = !startup.configured;
+}
+
+function showStartupConfirmation(action: "install" | "remove"): void {
+  pendingStartupAction = action;
+  hostStartupConfirmationText.textContent = action === "install"
+    ? "Start the lightweight Fitz host automatically at Windows sign-in?"
+    : "Remove Fitz host from Windows sign-in startup?";
+  confirmHostStartup.textContent = action === "install" ? "Confirm startup" : "Confirm removal";
+  hostStartupConfirmation.hidden = false;
+}
+
+function hideStartupConfirmation(): void {
+  pendingStartupAction = undefined;
+  hostStartupConfirmation.hidden = true;
+}
+
+async function applyStartupChange(): Promise<void> {
+  if (!pendingStartupAction) return;
+  const action = pendingStartupAction;
+  confirmHostStartup.disabled = true;
+  try {
+    await api("/api/v1/management/startup", action === "install" ? "POST" : "DELETE", action === "install" ? {} : undefined);
+    hideStartupConfirmation();
+    await loadAdministration();
+    showToast(action === "install" ? "Host will start at sign-in" : "Host startup removed");
+  } catch (error) { showToast(errorMessage(error)); }
+  finally { confirmHostStartup.disabled = false; }
 }
 
 async function saveToolPolicy(): Promise<void> {

@@ -282,4 +282,14 @@ describe("desktop renderer shell", () => {
     expect(main).toContain('publishUpdateStatus({ state: "development" })');
     expect(styles).toContain(".desktop-update-track");
   });
+
+  it("manages packaged host startup inline with staged confirmation", () => {
+    for (const id of ["host-startup-status", "install-host-startup", "remove-host-startup", "host-startup-confirmation", "confirm-host-startup"]) {
+      expect(html).toContain(`id="${id}"`);
+    }
+    expect(renderer).toContain('api("/api/v1/management/startup")');
+    expect(renderer).toContain('showStartupConfirmation("install")');
+    expect(renderer).toContain('action === "install" ? "POST" : "DELETE"');
+    expect(styles).toContain(".host-startup-status");
+  });
 });

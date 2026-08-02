@@ -422,6 +422,9 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .remote-access-confirmation { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; padding: 10px 11px; border-radius: var(--codex-radius-lg); background: rgba(255,255,255,.05); color: var(--codex-text-secondary); font-size: 11px; }
 .remote-access-confirmation[hidden] { display: none; }
 .remote-access-confirmation > div { display: flex; gap: 7px; }
+.host-startup-status { min-height: 50px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 11px; border-radius: var(--codex-radius-lg); background: var(--codex-gray-800); }
+.host-startup-status strong { font-size: 12px; font-weight: 520; }
+.host-startup-status span { color: var(--codex-text-tertiary); font-size: 10px; }
 .admin-users { display: grid; gap: 8px; margin-top: 18px; }
 .admin-user { border-radius: var(--codex-radius-lg); background: var(--codex-gray-800); }
 .admin-user > summary { min-height: 62px; display: grid; grid-template-columns: minmax(0,1fr) 150px auto; align-items: center; gap: 12px; padding: 10px 13px; cursor: pointer; list-style: none; }
