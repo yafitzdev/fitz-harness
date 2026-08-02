@@ -15,6 +15,7 @@ const FIXED_ROUTES: readonly { id: FixedRouteId; label: string; icon: string }[]
   { id: "default", label: "Default", icon: '<g class="route-icon-outline"><circle cx="10" cy="10" r="6"></circle><circle cx="10" cy="10" r="1.6"></circle></g><path class="route-icon-filled" fill-rule="evenodd" d="M10 3.25a6.75 6.75 0 1 0 0 13.5 6.75 6.75 0 0 0 0-13.5Zm0 4a2.75 2.75 0 1 1 0 5.5 2.75 2.75 0 0 1 0-5.5Z"></path>' },
   { id: "smart", label: "Smart", icon: '<g class="route-icon-outline"><path d="M8.75 2.75A3.25 3.25 0 0 0 4.3 5.7 3.2 3.2 0 0 0 3 8.3a3.5 3.5 0 0 0 2.1 3.2V14a3.25 3.25 0 0 0 3.65 3.2M11.25 2.75a3.25 3.25 0 0 1 4.45 2.95A3.2 3.2 0 0 1 17 8.3a3.5 3.5 0 0 1-2.1 3.2V14a3.25 3.25 0 0 1-3.65 3.2M8.75 2.75V17.2M11.25 2.75V17.2M5.1 8h3.65M11.25 8h3.65M5.1 12h3.65M11.25 12h3.65"></path></g><g class="route-icon-filled"><path d="M8.8 2.35A3.65 3.65 0 0 0 4 5.55 3.55 3.55 0 0 0 2.65 8.3c0 1.6.8 3 2.15 3.85V14a3.75 3.75 0 0 0 4 3.65V2.35Zm2.4 0v15.3A3.75 3.75 0 0 0 15.2 14v-1.85a4.35 4.35 0 0 0 2.15-3.85A3.55 3.55 0 0 0 16 5.55a3.65 3.65 0 0 0-4.8-3.2Z"></path><path class="route-icon-cut" d="M8.8 6.35H6.6l-1.15-1M8.8 10H5.9l-1.15 1M8.8 13.65H6.7l-1 1M11.2 6.35h2.2l1.15-1M11.2 10h2.9l1.15 1M11.2 13.65h2.1l1 1"></path></g>' },
 ];
+const CONSUMER_COMPOSER_ROUTE_IDS = new Set(FIXED_ROUTES.map((route) => `consumer--${route.id}`));
 
 let projectRecords: Json[] = [];
 const sessionsByProject = new Map<string, Json[]>();
@@ -396,16 +397,14 @@ async function initialize(): Promise<void> {
 async function loadModels(preferredRoute?: string): Promise<void> {
   const response = await api("/v1/models"); const previous = preferredRoute ?? model.value;
   model.replaceChildren();
-  const cards = [...(response.data ?? [])];
+  const cards = [...(response.data ?? [])].filter((card: Json) => runtimeMode !== "consume" || CONSUMER_COMPOSER_ROUTE_IDS.has(String(card.id)));
   if (runtimeMode === "consume") {
     const priority = new Map([[consumerFixedRouteId("default"), 0], [consumerFixedRouteId("fast"), 1], [consumerFixedRouteId("smart"), 2]]);
     cards.sort((left: Json, right: Json) => (priority.get(left.id) ?? 3) - (priority.get(right.id) ?? 3));
   }
   for (const card of cards) {
     const option = new Option(card.display_name ?? card.id, card.id);
-    const connection = consumerConnectionRecords.find((item) => item.models.some((candidate) => candidate.routeId === card.id));
-    if (runtimeMode === "consume" && card.id.startsWith("consumer--") && FIXED_ROUTES.some((route) => consumerFixedRouteId(route.id) === card.id)) option.dataset.group = "Routes";
-    else if (connection) option.dataset.group = connection.displayName;
+    if (runtimeMode === "consume") option.dataset.group = "Routes";
     model.add(option);
   }
   if (previous && [...model.options].some((option) => option.value === previous)) model.value = previous;

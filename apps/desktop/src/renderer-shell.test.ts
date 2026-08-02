@@ -90,6 +90,10 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('window.fitz.saveConsumerConnection');
     expect(renderer).toContain('api("/api/v1/runtime-mode", "PUT"');
     expect(renderer).toContain('consumerFixedRouteId');
+    expect(renderer).toContain('const CONSUMER_COMPOSER_ROUTE_IDS = new Set');
+    expect(renderer).toContain('runtimeMode !== "consume" || CONSUMER_COMPOSER_ROUTE_IDS.has(String(card.id))');
+    expect(renderer).toContain('if (runtimeMode === "consume") option.dataset.group = "Routes"');
+    expect(renderer).not.toContain('candidate.routeId === card.id');
     expect(renderer).toContain('testRecipe({ id: consumerModel.recipeId');
     expect(renderer).toContain("function connectionViews(): ConnectionView[]");
     expect(renderer).toContain('id: "hosted--local"');
