@@ -4,6 +4,7 @@
 .message-time { color: var(--codex-text-tertiary); font-size: 12px; line-height: 1; white-space: nowrap; }
 .message-action { width: 25px; height: 25px; display: grid; place-items: center; padding: 0; border-radius: 7px; background: transparent; color: var(--codex-text-tertiary); cursor: pointer; }
 .message-action:hover, .message-action:focus-visible { background: rgba(255,255,255,.07); color: var(--text); }
+.message-action.copied { background: rgba(255,255,255,.09); color: var(--text); }
 .message-action svg { width: 17px; height: 17px; stroke-width: 1.45; }
 .message-edit-bubble { width: 100%; padding: 11px 12px 10px; border-radius: var(--codex-radius-2xl); background: rgba(255,255,255,.07); }
 .message-inline-editor { width: 100%; min-height: 74px; padding: 0 4px; resize: vertical; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; line-height: 1.5; }

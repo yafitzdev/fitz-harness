@@ -21,6 +21,7 @@ export type PiSessionFactory = (options: {
   contextWindow: number;
   maxTokens: number;
   agentDir: string;
+  llmRoot: string;
   approveTool: (request: PiToolCall) => Promise<PiToolApprovalResult>;
 }) => Promise<PiSession>;
 export interface PiAgentRuntimeOptions {
@@ -32,6 +33,7 @@ export interface PiAgentRuntimeOptions {
   createSession?: PiSessionFactory;
   requestToolApproval?: ToolApprovalRequester;
   agentDir?: string;
+  llmRoot?: string;
 }
 
 const CODING_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"] as const;
@@ -47,6 +49,7 @@ export class PiAgentRuntime implements AgentRuntime {
   readonly #createSession: PiSessionFactory;
   readonly #requestToolApproval: ToolApprovalRequester | undefined;
   readonly #agentDir: string;
+  readonly #llmRoot: string;
   constructor(options: PiAgentRuntimeOptions = {}) {
     this.#cwd = options.cwd ?? process.cwd();
     this.#tools = options.tools ?? CODING_TOOLS;
@@ -56,6 +59,7 @@ export class PiAgentRuntime implements AgentRuntime {
     this.#createSession = options.createSession ?? createSdkSession;
     this.#requestToolApproval = options.requestToolApproval;
     this.#agentDir = options.agentDir ?? process.env.FITZ_PI_AGENT_DIR ?? `${process.cwd()}/.fitz-pi`;
+    this.#llmRoot = options.llmRoot ?? process.env.FITZ_LLM_ROOT ?? `${process.cwd()}/.llm`;
   }
   run(request: AgentRunRequest, signal?: AbortSignal): AgentRuntimeRun {
     const channel = new EventChannel(); let session: PiSession | undefined; const controller = new AbortController();
@@ -69,6 +73,7 @@ export class PiAgentRuntime implements AgentRuntime {
       contextWindow: this.#contextWindow,
       maxTokens: request.maxTokens ?? 16_384,
       agentDir: this.#agentDir,
+      llmRoot: this.#llmRoot,
       approveTool: (toolCall) => this.#approveTool(request.accessMode ?? "full", request.sessionId, toolCall, controller.signal, channel),
     }); if (controller.signal.aborted) { await session.abort(); throw abortError(); }
       let sawAssistant = false;
@@ -125,11 +130,14 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
   const resourceLoader = new sdk.DefaultResourceLoader({
     cwd: options.cwd,
     agentDir: options.agentDir,
+    appendSystemPrompt: [buildFitzSystemInstructions(options)],
     extensionFactories: [{
       name: "fitz-tool-approval",
       hidden: true,
       factory: (pi) => {
         pi.on("tool_call", async (event) => {
+          const unsafeReason = broadFilesystemScanReason(event.toolName, event.input);
+          if (unsafeReason) return { block: true, reason: unsafeReason };
           const decision = await options.approveTool({ toolCallId: event.toolCallId, toolName: event.toolName, input: event.input });
           return decision.allowed ? undefined : { block: true, reason: decision.reason ?? "Tool execution denied" };
         });
@@ -149,6 +157,37 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
     sessionManager: sdk.SessionManager.inMemory(options.cwd),
   });
   return result.session as PiSession;
+}
+
+export function buildFitzSystemInstructions(options: Pick<Parameters<PiSessionFactory>[0], "cwd" | "agentDir" | "llmRoot">): string {
+  const extensionsDir = `${options.agentDir.replace(/[\\/]$/, "")}/extensions`;
+  const enginesDir = `${options.llmRoot.replace(/[\\/]$/, "")}/engines`;
+  const modelsDir = `${options.llmRoot.replace(/[\\/]$/, "")}/models`;
+  return [
+    "You are running inside Fitz Codex. Treat the following runtime locations as authoritative; do not substitute upstream Pi defaults:",
+    `- Active project and working directory: ${options.cwd}`,
+    `- Fitz Pi runtime root: ${options.agentDir}`,
+    `- User-installed Pi extensions: ${extensionsDir}`,
+    `- Canonical local LLM root: ${options.llmRoot}`,
+    `- Inference engines: ${enginesDir}`,
+    `- Model artifacts: ${modelsDir}`,
+    `When asked about installed Pi extensions, inspect ${extensionsDir} directly. Do not inspect ~/.pi or infer installation state from upstream defaults.`,
+    "The shell tool runs in Git Bash on Windows. Prefer the exact paths above and the active project directory.",
+    "Never recursively search /, an entire drive, or the whole home directory to discover Fitz resources. Search the active project or an authoritative directory above. Ask before expanding beyond those locations.",
+    "Do not read or reveal authentication files, API keys, bearer tokens, or other secrets unless the user explicitly asks for the exact secret-bearing operation.",
+    "Keep progress updates concise, use tools only when they materially advance the task, and verify changes before reporting completion.",
+  ].join("\n");
+}
+
+export function broadFilesystemScanReason(toolName: string, input: unknown): string | undefined {
+  if (toolName !== "bash" || !input || typeof input !== "object") return undefined;
+  const command = "command" in input && typeof input.command === "string" ? input.command.trim() : "";
+  if (!command) return undefined;
+  const scansRoot = /(?:^|[;&|]\s*)find\s+(?:\/|~)(?:\s|$)/i.test(command)
+    || /Get-ChildItem\s+(?:['\"]?[A-Za-z]:\\['\"]?|['\"]?~['\"]?)\s+[^;\r\n]*-Recurse\b/i.test(command);
+  return scansRoot
+    ? "Fitz blocked an unbounded filesystem scan. Search the active project or the authoritative Fitz Pi/LLM directories supplied in the system instructions instead."
+    : undefined;
 }
 function translateEvent(event: PiEvent): AgentRuntimeEvent | undefined { if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta" && event.assistantMessageEvent.delta) return { type: "assistant.delta", text: event.assistantMessageEvent.delta }; if (event.type === "tool_execution_start") return { type: "tool.started", toolCallId: event.toolCallId, toolName: event.toolName, ...(event.args !== undefined ? { input: event.args } : {}) }; if (event.type === "tool_execution_end") return { type: "tool.completed", toolCallId: event.toolCallId, toolName: event.toolName, result: event.result, ...(event.isError !== undefined ? { isError: event.isError } : {}) }; return undefined; }
 function piFailure(event: PiEvent): Error | undefined { return event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason === "error" ? new Error(event.message.errorMessage ?? "Pi model request failed") : undefined; }

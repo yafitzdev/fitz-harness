@@ -52,6 +52,7 @@ function renderBlocks(target: HTMLElement, lines: string[]): void {
     const list = line.match(/^\s*(?:([-+*])|(\d+)[.)])\s+(.+)$/);
     if (list) {
       const ordered = Boolean(list[2]); const value = document.createElement(ordered ? "ol" : "ul");
+      if (ordered && list[2] !== "1") value.setAttribute("start", list[2]!);
       while (index < lines.length) {
         const item = (lines[index] ?? "").match(/^\s*(?:([-+*])|(\d+)[.)])\s+(.+)$/);
         if (!item || Boolean(item[2]) !== ordered) break;
@@ -59,6 +60,10 @@ function renderBlocks(target: HTMLElement, lines: string[]): void {
         if (task) { row.className = "task-list-item"; const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.disabled = true; checkbox.checked = task[1]!.toLowerCase() === "x"; row.append(checkbox); appendInline(row, task[2]!); }
         else appendInline(row, item[3]!);
         value.append(row); index += 1;
+        let nextItemIndex = index;
+        while (nextItemIndex < lines.length && !(lines[nextItemIndex] ?? "").trim()) nextItemIndex += 1;
+        const nextItem = (lines[nextItemIndex] ?? "").match(/^\s*(?:([-+*])|(\d+)[.)])\s+(.+)$/);
+        if (nextItem && Boolean(nextItem[2]) === ordered) index = nextItemIndex;
       }
       target.append(value); continue;
     }

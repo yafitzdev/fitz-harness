@@ -365,7 +365,7 @@ const pluginCatalog = new PluginCatalogController({
 const messageActions = new MessageActions({
   canEdit: () => !agentRuns.active,
   onEditBlocked: () => showToast("Wait for the current response before editing a message."),
-  copyText: (text) => copyValue(text, "Copied message"),
+  copyText: (text) => window.fitz.copyText(text),
   resend: (text, article) => sendPrompt(text, article),
 });
 const resourceInspector = new ResourceInspector({

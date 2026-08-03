@@ -343,8 +343,9 @@ describe("desktop renderer shell", () => {
 
   it("reveals compact Copy and user Edit actions on message hover", () => {
     expect(renderer).toContain("messageActions.attach(article, content");
-    expect(renderer).toContain('copyText: (text) => copyValue(text, "Copied message")');
-    expect(messageActions).toContain('this.#actionButton("Copy message"');
+    expect(renderer).toContain("copyText: (text) => window.fitz.copyText(text)");
+    expect(messageActions).toContain("this.#copyButton(content)");
+    expect(messageActions).toContain('button.classList.add("copied")');
     expect(messageActions).toContain('this.#actionButton("Edit message"');
     expect(messageActions).toContain('time.className = "message-time"');
     expect(messageActions).toContain("this.#formatTimestamp(createdAt)");

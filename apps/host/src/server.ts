@@ -69,6 +69,7 @@ const runtime = createHost({
       },
       requestToolApproval: createToolApprovalRequester(store),
       agentDir: runtimePaths.piAgentDir,
+      llmRoot: runtimePaths.llmRoot,
     }),
   } : {}),
 });

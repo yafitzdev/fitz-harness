@@ -4,9 +4,41 @@ import { once } from "node:events";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PiAgentRuntime, type PiSession } from "./pi-agent-runtime.js";
+import { broadFilesystemScanReason, buildFitzSystemInstructions, PiAgentRuntime, type PiSession } from "./pi-agent-runtime.js";
 
 describe("PiAgentRuntime", () => {
+  it("passes Fitz runtime locations to the session factory", async () => {
+    const runtime = new PiAgentRuntime({
+      cwd: "C:/projects/example",
+      agentDir: "C:/Fitz/pi",
+      llmRoot: "C:/Users/example/.llm",
+      createSession: async (options) => {
+        expect(options).toMatchObject({ cwd: "C:/projects/example", agentDir: "C:/Fitz/pi", llmRoot: "C:/Users/example/.llm" });
+        return { subscribe: (listener) => { listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "ready" } }); return () => undefined; }, prompt: async () => undefined, abort: async () => undefined, dispose: () => undefined };
+      },
+    });
+    const events = []; for await (const event of runtime.run({ model: "fast", messages: [{ role: "user", content: "where" }] })) events.push(event);
+    expect(events).toEqual([{ type: "assistant.delta", text: "ready" }]);
+  });
+
+  it("builds authoritative Fitz paths into the appended system instructions", () => {
+    const prompt = buildFitzSystemInstructions({ cwd: "C:/project", agentDir: "C:/Fitz/pi", llmRoot: "C:/Users/me/.llm" });
+    expect(prompt).toContain("C:/Fitz/pi/extensions");
+    expect(prompt).toContain("C:/Users/me/.llm/engines");
+    expect(prompt).toContain("C:/Users/me/.llm/models");
+    expect(prompt).toContain("Do not inspect ~/.pi");
+    expect(prompt).toContain("Never recursively search /");
+    expect(prompt).toContain("Do not read or reveal authentication files");
+  });
+
+  it("blocks filesystem-wide shell discovery while allowing scoped searches", () => {
+    expect(broadFilesystemScanReason("bash", { command: 'find / -maxdepth 5 -type d -name "extensions"' })).toContain("unbounded filesystem scan");
+    expect(broadFilesystemScanReason("bash", { command: "find . -type f -name '*.ts'" })).toBeUndefined();
+    expect(broadFilesystemScanReason("bash", { command: "find 'C:/Fitz/pi/extensions' -type f" })).toBeUndefined();
+    expect(broadFilesystemScanReason("bash", { command: "Get-ChildItem C:\\ -Recurse" })).toContain("unbounded filesystem scan");
+    expect(broadFilesystemScanReason("bash", { command: "Get-ChildItem C:\\Fitz\\pi -Recurse" })).toBeUndefined();
+  });
+
   it("translates Pi text and tool lifecycle events behind the Fitz boundary", async () => {
     let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined; let disposed = false;
     const runtime = new PiAgentRuntime({ cwd: "C:/project", tools: ["read"], apiKey: "private-pi-token", createSession: async (options) => { expect(options.tools).toEqual(["read"]); expect(options.apiKey).toBe("private-pi-token"); return { subscribe: (next) => { listener = next; return () => undefined; }, prompt: async (prompt) => { expect(prompt).toContain("USER: inspect this"); listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "hello" } }); listener({ type: "tool_execution_start", toolCallId: "call-1", toolName: "read", args: { path: "README.md" } }); listener({ type: "tool_execution_end", toolCallId: "call-1", toolName: "read", result: "done" }); }, abort: async () => undefined, dispose: () => { disposed = true; } }; } });
