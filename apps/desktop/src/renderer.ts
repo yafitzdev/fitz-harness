@@ -1866,7 +1866,7 @@ function appendCommentary(text: string, createdAt?: string): HTMLElement {
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   const article = document.createElement("article"); article.className = "message commentary";
   const content = document.createElement("div"); content.className = "message-body"; setMarkdown(content, text); article.append(content); messageActions.attach(article, content, "commentary", text, createdAt);
-  activityTimeline.appendWork(article, createdAt);
+  activityTimeline.appendCommentary(article, createdAt);
   return content;
 }
 

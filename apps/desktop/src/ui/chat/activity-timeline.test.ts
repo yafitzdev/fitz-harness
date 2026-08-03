@@ -1,0 +1,90 @@
+// @vitest-environment happy-dom
+
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ActivityTimeline } from "./activity-timeline.js";
+
+function setup() {
+  const messages = document.createElement("main");
+  document.body.append(messages);
+  const timeline = new ActivityTimeline({
+    messages,
+    inspectResource: vi.fn(),
+    decideApproval: vi.fn(async () => "approved" as const),
+    showToast: vi.fn(),
+  });
+  return { messages, timeline };
+}
+
+function commentary(text: string): HTMLElement {
+  const article = document.createElement("article");
+  article.className = "message commentary";
+  article.textContent = text;
+  return article;
+}
+
+beforeEach(() => document.body.replaceChildren());
+
+describe("ActivityTimeline", () => {
+  it("groups each consecutive command and edit burst between narration blocks", () => {
+    const { messages, timeline } = setup();
+    timeline.appendCommentary(commentary("First reasoning block"), "2026-08-03T08:00:00.000Z");
+
+    const first = timeline.appendTool("bash", { command: "pnpm test" }, "tool-1", true, "2026-08-03T08:00:01.000Z");
+    timeline.completeTool(first, "bash", { command: "pnpm test" }, "passed", false);
+    const second = timeline.appendTool("grep", { pattern: "TODO" }, "tool-2", true, "2026-08-03T08:00:02.000Z");
+    timeline.completeTool(second, "grep", { pattern: "TODO" }, "match", false);
+    const edit = timeline.appendTool("edit", { path: "src/app.ts" }, "tool-3", true, "2026-08-03T08:00:03.000Z");
+    timeline.completeTool(edit, "edit", { path: "src/app.ts" }, "done", false);
+
+    timeline.appendCommentary(commentary("Second reasoning block"), "2026-08-03T08:00:04.000Z");
+    const third = timeline.appendTool("bash", { command: "pnpm build" }, "tool-4", true, "2026-08-03T08:00:05.000Z");
+    timeline.completeTool(third, "bash", { command: "pnpm build" }, "passed", false);
+
+    const bursts = [...messages.querySelectorAll<HTMLElement>(".activity-burst")];
+    expect(bursts).toHaveLength(2);
+    expect(bursts[0]!.querySelector(".activity-burst-label")?.textContent).toBe("Edited files, ran commands");
+    expect(bursts[0]!.querySelectorAll(".agent-activity")).toHaveLength(3);
+    expect(bursts[1]!.querySelector(".activity-burst-label")?.textContent).toBe("Ran command");
+    expect(bursts[1]!.querySelectorAll(".agent-activity")).toHaveLength(1);
+    expect([...messages.querySelectorAll(".work-summary-details > *")].map((node) => node.textContent)).toEqual([
+      "First reasoning block",
+      expect.stringContaining("Edited files, ran commands"),
+      "Second reasoning block",
+      expect.stringContaining("Ran command"),
+    ]);
+  });
+
+  it("keeps commands hidden behind the burst summary until it is opened", () => {
+    const { messages, timeline } = setup();
+    const row = timeline.appendTool("bash", { command: "git status --short" }, "tool-1", true);
+    timeline.completeTool(row, "bash", { command: "git status --short" }, "clean", false);
+
+    const toggle = messages.querySelector<HTMLButtonElement>(".activity-burst-toggle")!;
+    const details = messages.querySelector<HTMLElement>(".activity-burst-details")!;
+    expect(details.hidden).toBe(true);
+    expect(toggle.textContent).toContain("Ran command");
+    expect(details.textContent).toContain("Ran git status --short");
+
+    toggle.click();
+    expect(details.hidden).toBe(false);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("uses running labels until every tool in a burst completes and one durable work summary", () => {
+    const { messages, timeline } = setup();
+    const command = timeline.appendTool("bash", { command: "pnpm test" }, "tool-1", true, "2026-08-03T08:00:00.000Z");
+    const edit = timeline.appendTool("write", { path: "README.md" }, "tool-2", true, "2026-08-03T08:00:02.000Z");
+    const label = messages.querySelector<HTMLElement>(".activity-burst-label")!;
+    expect(label.textContent).toBe("Editing files, running commands");
+
+    timeline.completeTool(command, "bash", { command: "pnpm test" }, "passed", false);
+    expect(label.textContent).toBe("Editing files, running commands");
+    timeline.completeTool(edit, "write", { path: "README.md" }, "done", false);
+    expect(label.textContent).toBe("Edited files, ran commands");
+
+    timeline.finishWork("2026-08-03T08:00:05.000Z");
+    expect(messages.querySelectorAll(".work-summary")).toHaveLength(1);
+    expect(messages.querySelector(".work-summary-label")?.textContent).toBe("Worked for 5s");
+    expect(messages.querySelector<HTMLElement>(".work-summary-details")?.hidden).toBe(true);
+  });
+});

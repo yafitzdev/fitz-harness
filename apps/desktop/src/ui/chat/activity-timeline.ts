@@ -2,6 +2,15 @@ import { svgIcon } from "../primitives/dom.js";
 
 type Json = Record<string, any>;
 type WorkSummary = { root: HTMLElement; toggle: HTMLButtonElement; details: HTMLElement; startedAt: number; lastAt: number };
+type ActivityBurst = {
+  root: HTMLElement;
+  toggle: HTMLButtonElement;
+  label: HTMLElement;
+  details: HTMLElement;
+  commands: number;
+  edits: number;
+  running: number;
+};
 
 export interface ActivityTimelineOptions {
   messages: HTMLElement;
@@ -14,11 +23,13 @@ export interface ActivityTimelineOptions {
 export class ActivityTimeline {
   readonly #options: ActivityTimelineOptions;
   readonly #searchRoots = new Set<string>();
+  readonly #burstsByTool = new WeakMap<HTMLElement, ActivityBurst>();
   #work: WorkSummary | undefined;
+  #burst: ActivityBurst | undefined;
 
   constructor(options: ActivityTimelineOptions) { this.#options = options; }
 
-  clear(): void { this.#work = undefined; this.#searchRoots.clear(); }
+  clear(): void { this.#work = undefined; this.#burst = undefined; this.#searchRoots.clear(); }
   searchRoots(): string[] { return [...this.#searchRoots]; }
 
   markAssistantAsCommentary(content: HTMLElement): void {
@@ -26,7 +37,13 @@ export class ActivityTimeline {
     if (!article) return;
     article.classList.remove("assistant");
     article.classList.add("commentary");
-    this.appendWork(article);
+    this.appendCommentary(article);
+  }
+
+  /** Narration is the boundary between two consecutive tool/edit bursts. */
+  appendCommentary(node: HTMLElement, createdAt?: string): void {
+    this.#burst = undefined;
+    this.appendWork(node, createdAt);
   }
 
   appendTool(toolName: string, input: unknown, toolCallId: string, running: boolean, createdAt?: string): HTMLElement {
@@ -75,11 +92,21 @@ export class ActivityTimeline {
       summary.setAttribute("aria-expanded", String(open));
     });
     row.append(summary, details);
-    this.appendWork(row, createdAt);
+    const burst = this.#ensureBurst(createdAt);
+    this.#touchWork(createdAt);
+    const kind = this.#activityKind(toolName);
+    if (kind === "edit") burst.edits += 1;
+    else burst.commands += 1;
+    if (running) burst.running += 1;
+    burst.details.append(row);
+    this.#burstsByTool.set(row, burst);
+    this.#updateBurst(burst);
+    this.#scroll();
     return row;
   }
 
   completeTool(row: HTMLElement, toolName: string, input: unknown, result: unknown, isError: boolean): void {
+    const wasRunning = row.classList.contains("running");
     row.classList.remove("running");
     row.classList.toggle("failed", isError);
     const label = row.querySelector<HTMLElement>(".agent-activity-label");
@@ -90,6 +117,8 @@ export class ActivityTimeline {
     if (shellOutput) shellOutput.textContent = this.#shellOutput(result);
     const shellStatus = row.querySelector<HTMLElement>(".shell-status");
     if (shellStatus) { shellStatus.textContent = isError ? "× Failed" : "✓ Success"; shellStatus.classList.toggle("failed", isError); }
+    const burst = this.#burstsByTool.get(row);
+    if (burst && wasRunning) { burst.running = Math.max(0, burst.running - 1); this.#updateBurst(burst); }
   }
 
   appendContext(text = "Context automatically compacted"): HTMLElement {
@@ -109,6 +138,7 @@ export class ActivityTimeline {
   }
 
   appendApproval(approval: Json): HTMLElement {
+    this.#burst = undefined;
     const row = document.createElement("section");
     row.className = "message tool-approval";
     row.dataset.approvalId = String(approval.id ?? "");
@@ -150,7 +180,7 @@ export class ActivityTimeline {
 
   appendWork(node: HTMLElement, createdAt?: string): void {
     const work = this.#ensureWork(createdAt);
-    work.lastAt = Math.max(work.lastAt, this.#timestamp(createdAt));
+    this.#touchWork(createdAt);
     work.details.append(node);
     this.#scroll();
   }
@@ -165,6 +195,7 @@ export class ActivityTimeline {
     work.root.classList.remove("open");
     work.toggle.setAttribute("aria-expanded", "false");
     this.#work = undefined;
+    this.#burst = undefined;
   }
 
   setRun(activity: HTMLElement, label: string, startedAt: number): void { activity.textContent = `${label}… ${this.#formatElapsed(Date.now() - startedAt)}`; }
@@ -183,6 +214,57 @@ export class ActivityTimeline {
     const timestamp = this.#timestamp(createdAt);
     this.#work = { root, toggle, details, startedAt: timestamp, lastAt: timestamp };
     return this.#work;
+  }
+
+  #ensureBurst(createdAt?: string): ActivityBurst {
+    if (this.#burst) return this.#burst;
+    const work = this.#ensureWork(createdAt);
+    const root = document.createElement("section");
+    root.className = "activity-burst";
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "activity-burst-toggle";
+    toggle.setAttribute("aria-expanded", "false");
+    const icon = document.createElement("span");
+    icon.className = "agent-activity-icon";
+    icon.append(this.#activityIcon("bash"));
+    const label = document.createElement("span");
+    label.className = "activity-burst-label";
+    const chevron = document.createElement("span");
+    chevron.className = "activity-burst-chevron";
+    chevron.append(svgIcon('<path d="m8 5.5 4.5 4.5L8 14.5"></path>'));
+    const details = document.createElement("div");
+    details.className = "activity-burst-details";
+    details.hidden = true;
+    toggle.append(icon, label, chevron);
+    toggle.addEventListener("click", () => {
+      const open = details.hasAttribute("hidden");
+      details.hidden = !open;
+      root.classList.toggle("open", open);
+      toggle.setAttribute("aria-expanded", String(open));
+    });
+    root.append(toggle, details);
+    work.details.append(root);
+    this.#burst = { root, toggle, label, details, commands: 0, edits: 0, running: 0 };
+    return this.#burst;
+  }
+
+  #touchWork(createdAt?: string): void {
+    if (this.#work) this.#work.lastAt = Math.max(this.#work.lastAt, this.#timestamp(createdAt));
+  }
+
+  #updateBurst(burst: ActivityBurst): void {
+    const running = burst.running > 0;
+    let text: string;
+    if (burst.edits > 0 && burst.commands > 0) text = running ? "Editing files, running commands" : "Edited files, ran commands";
+    else if (burst.edits > 0) text = running ? (burst.edits === 1 ? "Editing file" : "Editing files") : (burst.edits === 1 ? "Edited file" : "Edited files");
+    else text = running ? (burst.commands === 1 ? "Running command" : "Running commands") : (burst.commands === 1 ? "Ran command" : "Ran commands");
+    burst.label.textContent = text;
+    burst.root.classList.toggle("running", running);
+  }
+
+  #activityKind(toolName: string): "command" | "edit" {
+    return toolName === "edit" || toolName === "write" ? "edit" : "command";
   }
 
   async #decide(row: HTMLElement, decision: "approved" | "denied"): Promise<void> {
