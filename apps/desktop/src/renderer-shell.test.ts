@@ -11,6 +11,8 @@ const resizablePane = readFileSync(new URL("./ui/primitives/resizable-pane.ts", 
 const customSelect = readFileSync(new URL("./ui/primitives/custom-select.ts", import.meta.url), "utf8");
 const contextMenu = readFileSync(new URL("./ui/primitives/context-menu.ts", import.meta.url), "utf8");
 const messageActions = readFileSync(new URL("./ui/chat/message-actions.ts", import.meta.url), "utf8");
+const activityTimeline = readFileSync(new URL("./ui/chat/activity-timeline.ts", import.meta.url), "utf8");
+const resourceInspector = readFileSync(new URL("./ui/inspector/resource-inspector.ts", import.meta.url), "utf8");
 const styles = [
   readFileSync(new URL("./renderer/styles.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/theme/tokens.css", import.meta.url), "utf8"),
@@ -261,17 +263,18 @@ describe("desktop renderer shell", () => {
   });
 
   it("renders durable Codex-style agent activity with tool-specific symbols", () => {
-    expect(renderer).toContain("appendToolActivity(toolName, input, toolCallId");
-    expect(renderer).toContain('summary.type = "button"');
-    expect(renderer).toContain('toolActivityDetail("Input", input');
-    expect(renderer).toContain('toolActivityDetail("Result"');
-    expect(renderer).toContain('summary.setAttribute("aria-expanded", String(open))');
+    expect(renderer).toContain("activityTimeline.appendTool(toolName, input, toolCallId");
+    expect(renderer).toContain("activityTimeline.completeTool");
+    expect(activityTimeline).toContain('summary.type = "button"');
+    expect(activityTimeline).toContain('this.#detail("Input", input');
+    expect(activityTimeline).toContain('this.#detail("Result"');
+    expect(activityTimeline).toContain('summary.setAttribute("aria-expanded", String(open))');
     expect(renderer).toContain("entry.content?.result");
     expect(renderer).toContain("event.data?.result");
-    expect(renderer).toContain("formatToolPayload");
-    expect(renderer).toContain("markAssistantAsCommentary");
-    expect(renderer).toContain("Context automatically compacted");
-    expect(renderer).toContain('toolName === "edit" || toolName === "write"');
+    expect(activityTimeline).toContain("#formatPayload");
+    expect(renderer).toContain("activityTimeline.markAssistantAsCommentary");
+    expect(activityTimeline).toContain("Context automatically compacted");
+    expect(activityTimeline).toContain('toolName === "edit" || toolName === "write"');
     expect(styles).toContain(".agent-activity-icon");
     expect(styles).toContain(".agent-activity-details");
     expect(styles).toContain(".agent-activity.open .agent-activity-chevron");
@@ -281,24 +284,24 @@ describe("desktop renderer shell", () => {
   it("matches Codex assistant, command disclosure, and shell presentation", () => {
     expect(renderer).not.toContain('className = "assistant-mark"');
     expect(styles).not.toContain(".assistant-mark");
-    expect(renderer).toContain('toolName === "bash"');
-    expect(renderer).toContain('details.classList.add("shell-details")');
-    expect(renderer).toContain('title.textContent = "Shell"');
-    expect(renderer).toContain('status.textContent = running ? "Running…" : "✓ Success"');
+    expect(activityTimeline).toContain('toolName === "bash"');
+    expect(activityTimeline).toContain('details.classList.add("shell-details")');
+    expect(activityTimeline).toContain('title.textContent = "Shell"');
+    expect(activityTimeline).toContain('status.textContent = running ? "Running…" : "✓ Success"');
     expect(styles).toContain(".agent-activity-summary:hover .agent-activity-chevron");
     expect(styles).toContain("opacity: 0; transition: opacity 120ms ease");
     expect(styles).toContain(".agent-activity.open .agent-activity-chevron { transform: rotate(90deg); }");
     expect(styles).toContain(".agent-activity-details.shell-details");
     expect(styles).toContain('.shell-command::before { content: "$ ";');
-    expect(renderer).toContain('label.classList.add("file-target")');
+    expect(activityTimeline).toContain('label.classList.add("file-target")');
     expect(styles).toContain(".agent-activity-label.file-target");
   });
 
   it("collapses completed Pi activity behind a durable work summary", () => {
-    expect(renderer).toContain("ensureWorkSummary(createdAt)");
-    expect(renderer).toContain("finishWorkSummary(createdAt)");
-    expect(renderer).toContain('label.textContent = `Worked for ${formatElapsed(endedAt - work.startedAt)}`');
-    expect(renderer).toContain('row.className = "message context-activity"');
+    expect(renderer).toContain("activityTimeline.finishWork(createdAt)");
+    expect(activityTimeline).toContain("this.#ensureWork(createdAt)");
+    expect(activityTimeline).toContain('label.textContent = `Worked for ${this.#formatElapsed(endedAt - work.startedAt)}`');
+    expect(activityTimeline).toContain('row.className = "message context-activity"');
     expect(styles).toContain(".work-summary-toggle");
     expect(styles).toContain(".context-activity");
   });
@@ -424,7 +427,7 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('id="context-compact"');
     expect(renderer).toContain('api(`/api/v1/sessions/${currentSession}/compact`, "POST"');
     expect(renderer).toContain("estimateTranscriptContext");
-    expect(renderer).toContain('appendContextActivity("Context compacted")');
+    expect(renderer).toContain('activityTimeline.appendContext("Context compacted")');
     expect(styles).toContain(".context-usage-popover button");
   });
 
@@ -468,10 +471,10 @@ describe("desktop renderer shell", () => {
 
   it("clears the starter screen and reports unobtrusive work progress before output arrives", () => {
     expect(renderer).toContain('messages.querySelector(".landing, .new-chat-landing")');
-    expect(renderer).toContain('appendRunActivity("Working")');
-    expect(renderer).toContain('setRunActivity(activity, "Working", runStartedAt)');
-    expect(renderer).not.toContain('setRunActivity(activity, "Loading model"');
-    expect(renderer).toContain("formatElapsed(Date.now() - startedAt)");
+    expect(renderer).toContain('activityTimeline.appendRun("Working")');
+    expect(renderer).toContain('activityTimeline.setRun(activity, "Working", runStartedAt)');
+    expect(renderer).not.toContain('activityTimeline.setRun(activity, "Loading model"');
+    expect(activityTimeline).toContain("this.#formatElapsed(Date.now() - startedAt)");
     expect(renderer).toContain('api("/api/v1/management/status")');
   });
 
@@ -493,23 +496,25 @@ describe("desktop renderer shell", () => {
     for (const id of ["inspector-title", "inspector-location", "inspector-render-toggle", "inspector-open", "inspector-close"]) expect(html).toContain(`id="${id}"`);
     expect(renderer).not.toContain('item("Toggle environment"');
     expect(renderer).toContain('window.addEventListener("fitz:open-resource"');
-    expect(renderer).toContain("window.fitz.previewResource({ projectRoot, reference, searchRoots: [...resourceSearchRoots] })");
-    expect(renderer).toContain("resourcePreviewError(error, reference)");
-    expect(renderer).toContain("renderResourcePreview(inspectedPreview)");
-    expect(renderer).toContain('frame.setAttribute("sandbox", "")');
+    expect(renderer).toContain("resourceInspector.inspect(reference)");
+    expect(resourceInspector).toContain("window.fitz.previewResource({ projectRoot, reference, searchRoots: this.#options.getSearchRoots() })");
+    expect(resourceInspector).toContain("this.#resourceError(error, reference)");
+    expect(resourceInspector).toContain("this.#render(this.#preview)");
+    expect(resourceInspector).toContain('frame.setAttribute("sandbox", "")');
     expect(styles).toContain(".inspector-panel");
     expect(styles).not.toContain(".workspace.inspector-open .messages { margin-right: var(--inspector-width); }");
     expect(styles).toContain(".inspector-resizer");
     expect(renderer).toContain('storageKey: "fitz-inspector-width"');
     expect(resizablePane).toContain("restore(): void");
-    expect(renderer).toContain('import { highlightSource } from "./syntax-highlighting.js"');
+    expect(renderer).toContain('import { ResourceInspector } from "./ui/inspector/resource-inspector.js"');
+    expect(resourceInspector).toContain('import { highlightSource } from "../../syntax-highlighting.js"');
     expect(markdown).toContain('import { highlightSource } from "./syntax-highlighting.js"');
     expect(markdown).toContain("code.innerHTML = highlighted.html");
     expect(syntaxHighlighting).toContain("hljs.highlight(source, { language, ignoreIllegals: true })");
-    expect(renderer).toContain("withPreviewScrollbar(source)");
-    expect(renderer).toContain("html::-webkit-scrollbar-thumb");
-    expect(renderer).toContain('frame.addEventListener("load", () => applyPreviewScrollbar(frame))');
-    expect(renderer).toContain('frame.setAttribute("sandbox", "allow-same-origin")');
+    expect(resourceInspector).toContain("this.#withScrollbar(source)");
+    expect(resourceInspector).toContain("html::-webkit-scrollbar-thumb");
+    expect(resourceInspector).toContain('frame.addEventListener("load", () => this.#applyScrollbar(frame))');
+    expect(resourceInspector).toContain('frame.setAttribute("sandbox", "allow-same-origin")');
     expect(styles).toContain("background: var(--codex-gray-900); color-scheme: dark");
     expect(styles).toContain(":is(.inspector-source, .markdown-code) .hljs-keyword");
     expect(preload).toContain('ipcRenderer.invoke("fitz:preview-resource", input)');

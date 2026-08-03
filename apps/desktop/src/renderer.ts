@@ -1,8 +1,9 @@
 import { reconnectDelay } from "@fitz/connectivity/reconnect";
-import type { ConsumerConnectionSummary, DesktopUpdateStatus, ResourcePreview } from "./preload.js";
+import type { ConsumerConnectionSummary, DesktopUpdateStatus } from "./preload.js";
 import { appendMarkdown, setMarkdown } from "./markdown.js";
-import { highlightSource } from "./syntax-highlighting.js";
 import { MessageActions, type ActionableMessageRole } from "./ui/chat/message-actions.js";
+import { ActivityTimeline } from "./ui/chat/activity-timeline.js";
+import { ResourceInspector } from "./ui/inspector/resource-inspector.js";
 import { ConversationLayout } from "./ui/layout/conversation-layout.js";
 import { WorkspacePageController } from "./ui/layout/workspace-pages.js";
 import { CustomSelectController } from "./ui/primitives/custom-select.js";
@@ -68,11 +69,6 @@ let projectHoverHideTimer: ReturnType<typeof setTimeout> | undefined;
 let removeProjectTarget: string | undefined;
 let editingRecipe: Json | undefined;
 let accessMode: AccessMode = storedAccessMode();
-let inspectedResource: { kind: "file"; path: string } | { kind: "url"; url: string } | undefined;
-let inspectionVersion = 0;
-let inspectedPreview: ResourcePreview | undefined;
-let inspectorSourceMode = false;
-let activeWorkSummary: { root: HTMLElement; toggle: HTMLButtonElement; details: HTMLElement; startedAt: number; lastAt: number } | undefined;
 let renameTarget: { kind: "project" | "task"; id: string } | undefined;
 let navigationIndex = -1;
 let replayingNavigation = false;
@@ -81,7 +77,6 @@ const pinnedProjects = storedSet("fitz-pinned-projects");
 const pinnedSessions = storedSet("fitz-pinned-sessions");
 const unreadSessions = storedSet("fitz-unread-sessions");
 const expandedProjects = storedSet("fitz-expanded-projects");
-const resourceSearchRoots = new Set<string>();
 const recipeTestStates = new Map<string, { state: "testing" | "passed" | "failed"; detail: string }>();
 
 const shell = query(".app-shell");
@@ -320,6 +315,27 @@ const messageActions = new MessageActions({
   copyText: (text) => copyValue(text, "Copied message"),
   resend: (text, article) => sendPrompt(text, article),
 });
+const activityTimeline = new ActivityTimeline({
+  messages,
+  inspectResource: (reference) => resourceInspector.inspect(reference),
+  decideApproval: async (approvalId, decision) => {
+    const response = await api(`/api/v1/tool-approvals/${approvalId}/decision`, "POST", { decision });
+    return response.data?.status === "approved" ? "approved" : "denied";
+  },
+  showToast,
+});
+const resourceInspector = new ResourceInspector({
+  preview: artifactPreview,
+  title: inspectorTitle,
+  location: inspectorLocation,
+  icon: inspectorIcon,
+  openButton: inspectorOpen,
+  renderToggle: inspectorRenderToggle,
+  openPanel: () => setContextPanel(true),
+  getProjectRoot: () => String(activeProject()?.rootPath ?? ""),
+  getSearchRoots: () => activityTimeline.searchRoots(),
+  showToast,
+});
 renderAccessMode();
 void initialize();
 
@@ -371,11 +387,9 @@ for (const windowButton of document.querySelectorAll<HTMLButtonElement>("[data-w
 connectionStatus.addEventListener("click", () => void initialize());
 contextToggle.addEventListener("click", () => setContextPanel(contextPanel.hasAttribute("hidden")));
 inspectorClose.addEventListener("click", () => setContextPanel(false));
-inspectorOpen.addEventListener("click", () => void openInspectedResourceExternally());
-inspectorRenderToggle.addEventListener("click", () => { if (!inspectedPreview) return; inspectorSourceMode = !inspectorSourceMode; inspectorRenderToggle.setAttribute("aria-pressed", String(inspectorSourceMode)); inspectorRenderToggle.title = inspectorSourceMode ? "View rendered" : "View source"; inspectorRenderToggle.setAttribute("aria-label", inspectorRenderToggle.title); renderResourcePreview(inspectedPreview); });
 window.addEventListener("fitz:open-resource", (event) => {
   const reference = (event as CustomEvent<{ reference?: string }>).detail?.reference;
-  if (reference) void inspectResource(reference);
+  if (reference) void resourceInspector.inspect(reference);
 });
 element("context-add").addEventListener("click", chooseArtifact);
 attachButton.addEventListener("click", chooseArtifact);
@@ -606,8 +620,7 @@ async function selectSession(id: string, rerender = true, projectId?: string): P
   try {
     const transcript = await api(`/api/v1/sessions/${id}/transcript`);
     messages.replaceChildren();
-    activeWorkSummary = undefined;
-    resourceSearchRoots.clear();
+    activityTimeline.clear();
     sessionTokenEstimate = estimateTranscriptContext(transcript.data ?? []);
     const transcriptTools = new Map<string, { row: HTMLElement; toolName: string; input: unknown }>();
     for (const entry of transcript.data ?? []) {
@@ -620,18 +633,18 @@ async function selectSession(id: string, rerender = true, projectId?: string): P
         const toolCallId = String(entry.content?.toolCallId ?? entry.id);
         const toolName = String(entry.content?.toolName ?? "tool");
         const input = entry.content?.input;
-        transcriptTools.set(toolCallId, { row: appendToolActivity(toolName, input, toolCallId, true, entry.createdAt), toolName, input });
+        transcriptTools.set(toolCallId, { row: activityTimeline.appendTool(toolName, input, toolCallId, true, entry.createdAt), toolName, input });
       }
       if (entry.kind === "tool-result") {
         const toolCallId = String(entry.content?.toolCallId ?? entry.id);
         const existing = transcriptTools.get(toolCallId);
-        if (existing) completeToolActivity(existing.row, existing.toolName, existing.input, entry.content?.result, Boolean(entry.content?.isError));
-        else completeToolActivity(appendToolActivity(String(entry.content?.toolName ?? "tool"), undefined, toolCallId, true, entry.createdAt), String(entry.content?.toolName ?? "tool"), undefined, entry.content?.result, Boolean(entry.content?.isError));
+        if (existing) activityTimeline.completeTool(existing.row, existing.toolName, existing.input, entry.content?.result, Boolean(entry.content?.isError));
+        else activityTimeline.completeTool(activityTimeline.appendTool(String(entry.content?.toolName ?? "tool"), undefined, toolCallId, true, entry.createdAt), String(entry.content?.toolName ?? "tool"), undefined, entry.content?.result, Boolean(entry.content?.isError));
       }
-      if (entry.kind === "compaction") appendContextActivity(entry.content?.manual === true ? "Context compacted" : "Context automatically compacted");
+      if (entry.kind === "compaction") activityTimeline.appendContext(entry.content?.manual === true ? "Context compacted" : "Context automatically compacted");
     }
     const pendingApprovals = await api(`/api/v1/sessions/${id}/tool-approvals?status=pending`);
-    for (const approval of pendingApprovals.data ?? []) appendToolApproval(approval);
+    for (const approval of pendingApprovals.data ?? []) activityTimeline.appendApproval(approval);
     updateContextMeter();
     if (!messages.childElementCount) showLanding(true);
     messages.scrollTop = messages.scrollHeight;
@@ -689,7 +702,7 @@ function openNewChatForProject(id: string): void { currentProject = id; expanded
 
 function showNewChatLanding(): void {
   messages.replaceChildren();
-  activeWorkSummary = undefined;
+  activityTimeline.clear();
   const project = projectRecords.find((item) => item.id === currentProject);
   const landing = document.createElement("div"); landing.className = "new-chat-landing";
   const mark = document.createElement("div"); mark.className = "landing-mark"; mark.append(terminalCloudIcon());
@@ -2105,7 +2118,7 @@ async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLE
   resizePrompt();
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   if (!existingUserMessage) appendMessage("user", content);
-  const activity = appendRunActivity("Working");
+  const activity = activityTimeline.appendRun("Working");
   const runStartedAt = Date.now();
   sessionTokenEstimate += estimateTokens(content);
   updateContextMeter();
@@ -2120,7 +2133,7 @@ async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLE
       messages: [{ role: "user", content }],
     });
     const runId = String(response.data.id);
-    if (response.context?.compacted) appendContextActivity();
+    if (response.context?.compacted) activityTimeline.appendContext();
     currentRun = runId;
     lastSequence = 0;
     engineState.textContent = "QUEUED";
@@ -2171,10 +2184,10 @@ async function followRun(runId: string, activity: HTMLElement, runStartedAt: num
       lastSequence = event.sequence;
       if (event.type === "run.queue.updated") {
         queued = event.data?.status === "queued";
-        if (queued) { const position = Math.max(1, Number(event.data?.position ?? 1)); setStatus(`Queued ${position}`, "loading"); engineState.textContent = "QUEUED"; setRunActivity(activity, position === 1 ? "Queued · next" : `Queued · ${position - 1} ahead`, runStartedAt); }
+        if (queued) { const position = Math.max(1, Number(event.data?.position ?? 1)); setStatus(`Queued ${position}`, "loading"); engineState.textContent = "QUEUED"; activityTimeline.setRun(activity, position === 1 ? "Queued · next" : `Queued · ${position - 1} ahead`, runStartedAt); }
         if (!contextPanel.hidden) void loadAgentQueue();
       }
-      if (event.type === "run.started") { queued = false; setStatus("Working", "active"); engineState.textContent = "WORKING"; setRunActivity(activity, "Working", runStartedAt); }
+      if (event.type === "run.started") { queued = false; setStatus("Working", "active"); engineState.textContent = "WORKING"; activityTimeline.setRun(activity, "Working", runStartedAt); }
       if (event.type === "assistant.delta") {
         if (!assistant) { activity.remove(); assistant = appendMessage("assistant", ""); }
         const delta = event.data.text ?? ""; appendMarkdown(assistant, delta); sessionTokenEstimate += estimateTokens(delta); updateContextMeter();
@@ -2183,8 +2196,8 @@ async function followRun(runId: string, activity: HTMLElement, runStartedAt: num
       if (event.type === "tool.approval.requested") {
         const approvalId = String(event.data?.approvalId ?? "");
         activity.remove();
-        if (assistant) { markAssistantAsCommentary(assistant); assistant = undefined; }
-        approvalActivities.set(approvalId, appendToolApproval({ id: approvalId, toolName: String(event.data?.toolName ?? "tool"), request: event.data?.input ?? {}, status: "pending" }));
+        if (assistant) { activityTimeline.markAssistantAsCommentary(assistant); assistant = undefined; }
+        approvalActivities.set(approvalId, activityTimeline.appendApproval({ id: approvalId, toolName: String(event.data?.toolName ?? "tool"), request: event.data?.input ?? {}, status: "pending" }));
         setStatus("Waiting for approval", "active");
         engineState.textContent = "WAITING";
       }
@@ -2192,7 +2205,7 @@ async function followRun(runId: string, activity: HTMLElement, runStartedAt: num
         const approvalId = String(event.data?.approvalId ?? "");
         const decision = event.data?.decision === "approved" ? "approved" : "denied";
         const approval = approvalActivities.get(approvalId) ?? messages.querySelector<HTMLElement>(`[data-approval-id="${CSS.escape(approvalId)}"]`);
-        if (approval) resolveToolApprovalCard(approval, decision);
+        if (approval) activityTimeline.resolveApproval(approval, decision);
         setStatus("Working", "active");
         engineState.textContent = "WORKING";
       }
@@ -2201,15 +2214,15 @@ async function followRun(runId: string, activity: HTMLElement, runStartedAt: num
         const toolCallId = String(event.data?.toolCallId ?? `${toolName}-${event.sequence}`);
         const input = event.data?.input;
         activity.remove();
-        if (assistant) { markAssistantAsCommentary(assistant); assistant = undefined; }
-        toolActivities.set(toolCallId, { row: appendToolActivity(toolName, input, toolCallId, true), toolName, input });
+        if (assistant) { activityTimeline.markAssistantAsCommentary(assistant); assistant = undefined; }
+        toolActivities.set(toolCallId, { row: activityTimeline.appendTool(toolName, input, toolCallId, true), toolName, input });
         setStatus(`Running ${toolName}`, "active");
         engineState.textContent = toolName.toUpperCase();
       }
       if (event.type === "tool.completed") {
         const toolCallId = String(event.data?.toolCallId ?? "");
         const existing = toolActivities.get(toolCallId);
-        if (existing) completeToolActivity(existing.row, existing.toolName, existing.input, event.data?.result, Boolean(event.data?.isError));
+        if (existing) activityTimeline.completeTool(existing.row, existing.toolName, existing.input, event.data?.result, Boolean(event.data?.isError));
         setStatus("Working", "active");
         engineState.textContent = "WORKING";
       }
@@ -2229,10 +2242,10 @@ async function followRun(runId: string, activity: HTMLElement, runStartedAt: num
         const management = await api("/api/v1/management/status");
         const state = String(management.engine?.state ?? "");
         engineState.textContent = state || "WORKING";
-        if (state === "READY" || state === "BUSY") setRunActivity(activity, "Thinking", runStartedAt);
+        if (state === "READY" || state === "BUSY") activityTimeline.setRun(activity, "Thinking", runStartedAt);
         else if (state === "FAILED") activity.textContent = `Model failed: ${management.engine?.failureReason ?? "Unknown error"}`;
-        else setRunActivity(activity, "Working", runStartedAt);
-      } catch { setRunActivity(activity, "Working", runStartedAt); }
+        else activityTimeline.setRun(activity, "Working", runStartedAt);
+      } catch { activityTimeline.setRun(activity, "Working", runStartedAt); }
     }
     if (!done) await delay(350);
   }
@@ -2242,7 +2255,7 @@ async function loadArtifacts(): Promise<void> {
   artifacts.replaceChildren();
   composerAttachments.replaceChildren();
   composerAttachments.hidden = true;
-  if (contextPanel.hidden) artifactPreview.replaceChildren(inspectorEmpty("Select a file or link in the conversation to inspect it here."));
+  if (contextPanel.hidden) artifactPreview.replaceChildren(resourceInspector.empty("Select a file or link in the conversation to inspect it here."));
   if (!currentSession) { artifacts.append(panelEmpty("Artifacts appear with a task")); return; }
   const response = await api(`/api/v1/sessions/${currentSession}/artifacts`);
   if (!(response.data ?? []).length) artifacts.append(panelEmpty("No artifacts yet"));
@@ -2250,13 +2263,13 @@ async function loadArtifacts(): Promise<void> {
     const value = document.createElement("button"); value.type = "button"; value.className = "artifact-item";
     const name = document.createElement("span"); name.textContent = artifact.name;
     const size = document.createElement("small"); size.textContent = formatBytes(artifact.byteSize);
-    value.append(name, size); value.addEventListener("click", () => void previewArtifact(artifact, value)); artifacts.append(value);
+    value.append(name, size); value.addEventListener("click", () => void resourceInspector.previewArtifact(artifact, value, artifacts)); artifacts.append(value);
     const chip = document.createElement("div"); chip.className = "attachment-chip";
     const chipPreview = document.createElement("button"); chipPreview.type = "button"; chipPreview.className = "attachment-preview"; chipPreview.setAttribute("aria-label", `Preview ${artifact.name}`);
     const chipName = document.createElement("span"); chipName.textContent = artifact.name;
     const chipSize = document.createElement("small"); chipSize.textContent = formatBytes(artifact.byteSize);
     const remove = document.createElement("button"); remove.type = "button"; remove.className = "attachment-remove"; remove.title = `Remove ${artifact.name}`; remove.setAttribute("aria-label", `Remove ${artifact.name}`); remove.textContent = "×";
-    chipPreview.append(chipName, chipSize); chipPreview.addEventListener("click", () => { setContextPanel(true); void previewArtifact(artifact, value); }); remove.addEventListener("click", () => void removeArtifact(artifact)); chip.append(chipPreview, remove); composerAttachments.append(chip);
+    chipPreview.append(chipName, chipSize); chipPreview.addEventListener("click", () => void resourceInspector.previewArtifact(artifact, value, artifacts)); remove.addEventListener("click", () => void removeArtifact(artifact)); chip.append(chipPreview, remove); composerAttachments.append(chip);
   }
   composerAttachments.hidden = composerAttachments.childElementCount === 0;
 }
@@ -2311,130 +2324,9 @@ async function uploadArtifact(): Promise<void> {
   } catch (error) { showToast(errorMessage(error)); }
 }
 
-async function previewArtifact(artifact: Json, selected: HTMLButtonElement): Promise<void> {
-  for (const item of artifacts.querySelectorAll(".artifact-item")) item.classList.remove("active");
-  selected.classList.add("active");
-  setInspectorHeading(String(artifact.name ?? "Artifact"), `${formatBytes(Number(artifact.byteSize ?? 0))} · Attachment`, "file");
-  inspectedResource = undefined; inspectedPreview = undefined; inspectorOpen.hidden = true; inspectorRenderToggle.hidden = true; setContextPanel(true);
-  artifactPreview.replaceChildren(inspectorEmpty("Loading preview…"));
-  try {
-    const response = await window.fitz.request({ path: `/api/v1/artifacts/${artifact.id}/content`, responseType: "base64" });
-    if (response.status >= 400) throw new HttpError("Artifact could not be loaded", response.status);
-    artifactPreview.replaceChildren();
-    if (artifact.kind === "text" || artifact.kind === "code") {
-      const source = new TextDecoder().decode(base64Bytes(response.body));
-      if (/\.(?:md|markdown)$/i.test(String(artifact.name ?? ""))) { const markdown = document.createElement("article"); markdown.className = "inspector-markdown message-body"; setMarkdown(markdown, source); artifactPreview.append(markdown); }
-      else if (/\.html?$/i.test(String(artifact.name ?? ""))) artifactPreview.append(htmlPreviewFrame(source, String(artifact.name ?? "HTML preview")));
-      else artifactPreview.append(inspectorSource(source, String(artifact.name ?? "source")));
-      return;
-    }
-    if (["image", "audio", "video"].includes(artifact.kind)) {
-      const node = document.createElement(artifact.kind === "image" ? "img" : artifact.kind) as HTMLImageElement | HTMLMediaElement;
-      node.className = "inspector-media";
-      node.setAttribute("src", `data:${artifact.mimeType};base64,${response.body}`);
-      if (node instanceof HTMLMediaElement) node.controls = true;
-      artifactPreview.append(node); return;
-    }
-    if (artifact.kind === "pdf") {
-      const frame = document.createElement("iframe"); frame.className = "inspector-frame"; frame.setAttribute("sandbox", ""); frame.title = artifact.name; frame.src = `data:application/pdf;base64,${response.body}`; artifactPreview.append(frame); return;
-    }
-    artifactPreview.append(inspectorEmpty("Preview unavailable for this file type"));
-  } catch (error) { artifactPreview.replaceChildren(inspectorError(errorMessage(error))); }
-}
-
-async function inspectResource(reference: string): Promise<void> {
-  const version = ++inspectionVersion;
-  inspectedPreview = undefined; inspectorRenderToggle.hidden = true;
-  setContextPanel(true);
-  artifactPreview.replaceChildren(inspectorEmpty("Loading preview…"));
-  if (/^https?:\/\//i.test(reference)) {
-    try {
-      const url = new URL(reference);
-      inspectedResource = { kind: "url", url: url.toString() };
-      inspectedPreview = undefined; inspectorRenderToggle.hidden = true;
-      setInspectorHeading(url.hostname, url.toString(), "url");
-      inspectorOpen.hidden = false;
-      const frame = document.createElement("iframe"); frame.className = "inspector-frame"; frame.title = url.toString(); frame.src = url.toString(); frame.setAttribute("sandbox", "allow-scripts allow-forms allow-popups-to-escape-sandbox"); frame.referrerPolicy = "no-referrer";
-      artifactPreview.replaceChildren(frame);
-    } catch { artifactPreview.replaceChildren(inspectorError("This URL is not valid.")); }
-    return;
-  }
-  const projectRoot = String(activeProject()?.rootPath ?? "");
-  if (!projectRoot) { setInspectorHeading("File unavailable", reference, "file"); artifactPreview.replaceChildren(inspectorError("Select a project before opening a local file.")); return; }
-  setInspectorHeading(reference.split(/[\\/]/).pop() ?? reference, reference, "file");
-  inspectorOpen.hidden = true;
-  try {
-    const preview = await window.fitz.previewResource({ projectRoot, reference, searchRoots: [...resourceSearchRoots] });
-    if (version !== inspectionVersion) return;
-    inspectedResource = { kind: "file", path: preview.path };
-    inspectedPreview = preview; inspectorSourceMode = false; inspectorRenderToggle.setAttribute("aria-pressed", "false"); inspectorRenderToggle.title = "View source"; inspectorRenderToggle.setAttribute("aria-label", "View source"); inspectorRenderToggle.hidden = preview.kind !== "markdown" && preview.kind !== "html";
-    setInspectorHeading(preview.name, `${preview.path}${preview.line ? ` · line ${preview.line}` : ""}`, preview.kind);
-    inspectorOpen.hidden = false;
-    renderResourcePreview(preview);
-  } catch (error) {
-    if (version !== inspectionVersion) return;
-    inspectedResource = undefined; inspectedPreview = undefined; inspectorOpen.hidden = true; inspectorRenderToggle.hidden = true; artifactPreview.replaceChildren(inspectorError(resourcePreviewError(error, reference)));
-  }
-}
-
-function resourcePreviewError(error: unknown, reference: string): string {
-  const detail = errorMessage(error).replace(/^Error invoking remote method '[^']+':\s*Error:\s*/i, "");
-  if (/\b(?:ENOENT|File not found:)\b/i.test(detail)) return `Could not find ${reference}. The file may have moved or the agent only mentioned its name.`;
-  return detail;
-}
-
-function renderResourcePreview(preview: ResourcePreview): void {
-  artifactPreview.replaceChildren();
-  if (preview.kind === "markdown" && !inspectorSourceMode) {
-    const markdown = document.createElement("article"); markdown.className = "inspector-markdown message-body"; setMarkdown(markdown, preview.content); artifactPreview.append(markdown); return;
-  }
-  if (preview.kind === "html" && !inspectorSourceMode) { artifactPreview.append(htmlPreviewFrame(preview.content, preview.name)); return; }
-  const pre = inspectorSource(preview.content, preview.name); artifactPreview.append(pre);
-  if (preview.line) requestAnimationFrame(() => { const lineHeight = Number.parseFloat(getComputedStyle(pre).lineHeight) || 19; artifactPreview.scrollTop = Math.max(0, (preview.line! - 3) * lineHeight); });
-}
-
-function inspectorSource(content: string, name: string): HTMLPreElement {
-  const pre = document.createElement("pre"); pre.className = "inspector-source";
-  const code = document.createElement("code");
-  const highlighted = highlightSource(content, name); code.className = `hljs${highlighted.language ? ` language-${highlighted.language}` : ""}`; code.innerHTML = highlighted.html;
-  pre.append(code); return pre;
-}
-
-function htmlPreviewFrame(source: string, title: string): HTMLIFrameElement {
-  const frame = document.createElement("iframe"); frame.className = "inspector-frame"; frame.title = title; frame.setAttribute("sandbox", "allow-same-origin");
-  frame.addEventListener("load", () => applyPreviewScrollbar(frame));
-  frame.srcdoc = withPreviewScrollbar(source); return frame;
-}
-
-const PREVIEW_SCROLLBAR_CSS = 'html{color-scheme:dark!important}html,body,*{scrollbar-width:thin!important;scrollbar-color:rgba(255,255,255,.22) transparent!important}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-webkit-scrollbar{width:10px!important;height:10px!important}html::-webkit-scrollbar-track,body::-webkit-scrollbar-track,*::-webkit-scrollbar-track,html::-webkit-scrollbar-corner,body::-webkit-scrollbar-corner,*::-webkit-scrollbar-corner{background:transparent!important}html::-webkit-scrollbar-thumb,body::-webkit-scrollbar-thumb,*::-webkit-scrollbar-thumb{min-height:30px!important;border:2px solid transparent!important;border-radius:999px!important;background:rgba(255,255,255,.22)!important;background-clip:content-box!important}html::-webkit-scrollbar-thumb:hover,body::-webkit-scrollbar-thumb:hover,*::-webkit-scrollbar-thumb:hover{background-color:rgba(255,255,255,.34)!important}';
-
-function withPreviewScrollbar(source: string): string {
-  const style = `<style id="fitz-preview-scrollbar">${PREVIEW_SCROLLBAR_CSS}</style>`;
-  return /<\/body\s*>/i.test(source) ? source.replace(/<\/body\s*>/i, `${style}</body>`) : `${source}${style}`;
-}
-
-function applyPreviewScrollbar(frame: HTMLIFrameElement): void {
-  const document = frame.contentDocument;
-  if (!document?.documentElement) return;
-  document.getElementById("fitz-preview-scrollbar-runtime")?.remove();
-  const style = document.createElement("style"); style.id = "fitz-preview-scrollbar-runtime"; style.textContent = PREVIEW_SCROLLBAR_CSS;
-  (document.head ?? document.documentElement).append(style);
-}
-
-function setInspectorHeading(title: string, location: string, kind: "file" | "url" | ResourcePreview["kind"]): void {
-  inspectorTitle.textContent = title; inspectorLocation.textContent = location;
-  inspectorIcon.replaceChildren(kind === "url" ? svg('<circle cx="10" cy="10" r="7"></circle><path d="M3 10h14M10 3a11 11 0 0 1 0 14M10 3a11 11 0 0 0 0 14"></path>') : svg('<path d="M5 2.8h6l4 4v10.4H5z"></path><path d="M11 2.8v4h4"></path>'));
-}
-
-async function openInspectedResourceExternally(): Promise<void> {
-  if (!inspectedResource) return;
-  try { if (inspectedResource.kind === "url") await window.fitz.openExternal(inspectedResource.url); else await window.fitz.openPath(inspectedResource.path); }
-  catch (error) { showToast(errorMessage(error)); }
-}
-
 function showLanding(hasTask = false): void {
   messages.replaceChildren();
-  activeWorkSummary = undefined;
+  activityTimeline.clear();
   const landing = document.createElement("div"); landing.className = "landing";
   const mark = document.createElement("div"); mark.className = "landing-mark"; mark.append(sparkIcon());
   const heading = document.createElement("h1"); heading.textContent = hasTask ? "What should we work on?" : currentProject ? "Start a task" : "Bring your code. Build with Fitz.";
@@ -2459,7 +2351,7 @@ function showConnectionFailure(detail: string): void {
 
 function appendMessage(role: string, text: string, createdAt?: string): HTMLElement {
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
-  if (role !== "commentary") finishWorkSummary(createdAt);
+  if (role !== "commentary") activityTimeline.finishWork(createdAt);
   const article = document.createElement("article"); article.className = `message ${role}`;
   const content = document.createElement("div"); content.className = "message-body"; if (role === "assistant" || role === "commentary") setMarkdown(content, text); else content.textContent = text; article.append(content); if (["user", "assistant", "commentary"].includes(role)) messageActions.attach(article, content, role as ActionableMessageRole, text, createdAt); messages.append(article); messages.scrollTop = messages.scrollHeight; return content;
 }
@@ -2468,210 +2360,8 @@ function appendCommentary(text: string, createdAt?: string): HTMLElement {
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   const article = document.createElement("article"); article.className = "message commentary";
   const content = document.createElement("div"); content.className = "message-body"; setMarkdown(content, text); article.append(content); messageActions.attach(article, content, "commentary", text, createdAt);
-  appendWorkNode(article, createdAt);
+  activityTimeline.appendWork(article, createdAt);
   return content;
-}
-
-function markAssistantAsCommentary(content: HTMLElement): void {
-  const article = content.closest<HTMLElement>(".message.assistant");
-  if (!article) return;
-  article.classList.remove("assistant");
-  article.classList.add("commentary");
-  appendWorkNode(article);
-}
-
-function appendToolActivity(toolName: string, input: unknown, toolCallId: string, running: boolean, createdAt?: string): HTMLElement {
-  if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
-  const row = document.createElement("div"); row.className = `message agent-activity${running ? " running" : ""}`; row.dataset.toolCallId = toolCallId; row.dataset.toolName = toolName;
-  const summary = document.createElement("button"); summary.type = "button"; summary.className = "agent-activity-summary"; summary.setAttribute("aria-expanded", "false");
-  const icon = document.createElement("span"); icon.className = "agent-activity-icon"; icon.append(activityIcon(toolName));
-  const label = document.createElement("span"); label.className = "agent-activity-label"; label.textContent = describeToolActivity(toolName, input, running); label.title = label.textContent;
-  registerResourceSearchRoot(toolName, input);
-  const resource = toolResourceReference(toolName, input);
-  if (resource) { label.classList.add("file-target"); label.tabIndex = 0; label.setAttribute("role", "link"); label.addEventListener("click", (event) => { event.stopPropagation(); void inspectResource(resource); }); label.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); void inspectResource(resource); } }); }
-  const chevron = document.createElement("span"); chevron.className = "agent-activity-chevron"; chevron.append(svg('<path d="m8 5.5 4.5 4.5L8 14.5"></path>'));
-  summary.append(icon, label, chevron);
-  const details = document.createElement("div"); details.className = "agent-activity-details";
-  if (toolName === "bash") renderShellActivity(details, input, running);
-  else {
-    if (input !== undefined) details.append(toolActivityDetail("Input", input, "tool-activity-input"));
-    details.append(toolActivityDetail("Result", running ? undefined : null, "tool-activity-result"));
-  }
-  details.hidden = true;
-  summary.addEventListener("click", () => { const open = details.hasAttribute("hidden"); details.hidden = !open; row.classList.toggle("open", open); summary.setAttribute("aria-expanded", String(open)); });
-  row.append(summary, details); appendWorkNode(row, createdAt); return row;
-}
-
-function completeToolActivity(row: HTMLElement, toolName: string, input: unknown, result: unknown, isError: boolean): void {
-  row.classList.remove("running"); row.classList.toggle("failed", isError);
-  const label = row.querySelector<HTMLElement>(".agent-activity-label");
-  if (label) { label.textContent = isError ? `${describeToolActivity(toolName, input, false)} (failed)` : describeToolActivity(toolName, input, false); label.title = label.textContent; }
-  const resultValue = row.querySelector<HTMLElement>(".tool-activity-result .tool-activity-value");
-  if (resultValue) resultValue.textContent = formatToolPayload(result, "No result returned");
-  const shellOutput = row.querySelector<HTMLElement>(".shell-output");
-  if (shellOutput) shellOutput.textContent = shellOutputText(result);
-  const shellStatus = row.querySelector<HTMLElement>(".shell-status");
-  if (shellStatus) { shellStatus.textContent = isError ? "× Failed" : "✓ Success"; shellStatus.classList.toggle("failed", isError); }
-}
-
-function renderShellActivity(details: HTMLElement, input: unknown, running: boolean): void {
-  details.classList.add("shell-details");
-  const title = document.createElement("span"); title.className = "shell-title"; title.textContent = "Shell";
-  const command = document.createElement("pre"); command.className = "shell-command"; command.textContent = shellCommand(input);
-  const output = document.createElement("pre"); output.className = "shell-output"; output.textContent = running ? "Running…" : "No output";
-  const status = document.createElement("span"); status.className = "shell-status"; status.textContent = running ? "Running…" : "✓ Success";
-  details.append(title, command, output, status);
-}
-
-function shellCommand(input: unknown): string {
-  if (input && typeof input === "object") {
-    const value = input as Json;
-    const command = value.command ?? value.cmd;
-    if (typeof command === "string") return command;
-  }
-  return formatToolPayload(input, "Command unavailable");
-}
-
-function shellOutputText(result: unknown): string {
-  if (result && typeof result === "object") {
-    const content = (result as Json).content;
-    if (Array.isArray(content)) {
-      const text = content.filter((item) => item && typeof item === "object" && typeof item.text === "string").map((item) => item.text).join("");
-      if (text) return text.trimEnd();
-    }
-  }
-  return formatToolPayload(result, "No output");
-}
-
-function toolActivityDetail(label: string, value: unknown, className: string): HTMLElement {
-  const section = document.createElement("section"); section.className = `tool-activity-detail ${className}`;
-  const heading = document.createElement("span"); heading.className = "tool-activity-detail-label"; heading.textContent = label;
-  const content = document.createElement("pre"); content.className = "tool-activity-value"; content.textContent = formatToolPayload(value, "Waiting for result…");
-  section.append(heading, content); return section;
-}
-
-function formatToolPayload(value: unknown, emptyLabel: string): string {
-  if (value === undefined || value === null) return emptyLabel;
-  const raw = typeof value === "string" ? value : safeStringify(value);
-  const maximumCharacters = 50_000;
-  return raw.length > maximumCharacters ? `${raw.slice(0, maximumCharacters)}\n… ${raw.length - maximumCharacters} more characters` : raw;
-}
-
-function safeStringify(value: unknown): string {
-  try { return JSON.stringify(value, null, 2) ?? String(value); }
-  catch { return String(value); }
-}
-
-function appendContextActivity(text = "Context automatically compacted"): HTMLElement {
-  finishWorkSummary();
-  const row = document.createElement("div"); row.className = "message context-activity";
-  const icon = document.createElement("span"); icon.className = "agent-activity-icon"; icon.append(contextActivityIcon());
-  const label = document.createElement("span"); label.className = "agent-activity-label"; label.textContent = text;
-  row.append(icon, label); messages.append(row); messages.scrollTop = messages.scrollHeight; return row;
-}
-
-function appendToolApproval(approval: Json): HTMLElement {
-  const row = document.createElement("section"); row.className = "message tool-approval"; row.dataset.approvalId = String(approval.id ?? "");
-  const heading = document.createElement("div"); heading.className = "tool-approval-heading";
-  heading.append(activityIcon(String(approval.toolName ?? "tool")), Object.assign(document.createElement("span"), { textContent: `Allow ${String(approval.toolName ?? "tool")}?` }));
-  const request = document.createElement("pre"); request.className = "tool-approval-request"; request.textContent = formatToolPayload(approval.request, "No arguments");
-  const actions = document.createElement("div"); actions.className = "tool-approval-actions";
-  const deny = document.createElement("button"); deny.type = "button"; deny.textContent = "Deny";
-  const approve = document.createElement("button"); approve.type = "button"; approve.className = "approve-tool"; approve.textContent = "Approve";
-  deny.addEventListener("click", () => void decideToolApproval(row, "denied")); approve.addEventListener("click", () => void decideToolApproval(row, "approved"));
-  const statusText = document.createElement("span"); statusText.className = "tool-approval-status";
-  actions.append(deny, approve); row.append(heading, request, actions, statusText); messages.append(row); messages.scrollTop = messages.scrollHeight;
-  if (approval.status === "approved" || approval.status === "denied") resolveToolApprovalCard(row, approval.status);
-  return row;
-}
-
-async function decideToolApproval(row: HTMLElement, decision: "approved" | "denied"): Promise<void> {
-  const approvalId = row.dataset.approvalId; if (!approvalId) return;
-  for (const button of row.querySelectorAll<HTMLButtonElement>("button")) button.disabled = true;
-  const statusText = row.querySelector<HTMLElement>(".tool-approval-status"); if (statusText) statusText.textContent = decision === "approved" ? "Approving…" : "Denying…";
-  try { const response = await api(`/api/v1/tool-approvals/${approvalId}/decision`, "POST", { decision }); resolveToolApprovalCard(row, response.data?.status === "approved" ? "approved" : "denied"); }
-  catch (error) { for (const button of row.querySelectorAll<HTMLButtonElement>("button")) button.disabled = false; if (statusText) statusText.textContent = ""; showToast(errorMessage(error)); }
-}
-
-function resolveToolApprovalCard(row: HTMLElement, decision: "approved" | "denied"): void {
-  row.classList.add("resolved"); const statusText = row.querySelector<HTMLElement>(".tool-approval-status"); if (statusText) statusText.textContent = decision === "approved" ? "Approved" : "Denied";
-}
-
-function describeToolActivity(toolName: string, input: unknown, running: boolean): string {
-  const value = input && typeof input === "object" ? input as Json : {};
-  const target = String(value.path ?? value.file_path ?? value.filePath ?? value.command ?? value.cmd ?? value.pattern ?? value.query ?? "").trim();
-  const verb = running
-    ? ({ bash: "Running", edit: "Editing", write: "Writing", read: "Reading", grep: "Searching", find: "Finding", ls: "Listing" } as Json)[toolName] ?? "Running"
-    : ({ bash: "Ran", edit: "Edited", write: "Wrote", read: "Read", grep: "Searched", find: "Found", ls: "Listed" } as Json)[toolName] ?? "Ran";
-  return target ? `${verb} ${target}` : `${verb} ${friendlyToolName(toolName)}`;
-}
-
-function toolResourceReference(toolName: string, input: unknown): string | undefined {
-  if (!["edit", "write", "read"].includes(toolName) || !input || typeof input !== "object") return undefined;
-  const value = input as Json; const path = value.path ?? value.file_path ?? value.filePath;
-  return typeof path === "string" && path.trim() ? path.trim() : undefined;
-}
-
-function registerResourceSearchRoot(toolName: string, input: unknown): void {
-  if (!input || typeof input !== "object") return;
-  const value = input as Json; const path = value.path ?? value.file_path ?? value.filePath;
-  if (typeof path !== "string" || !/^(?:[A-Za-z]:[\\/]|\\\\)/.test(path.trim())) return;
-  const normalized = path.trim();
-  resourceSearchRoots.delete(normalized); resourceSearchRoots.add(normalized);
-  while (resourceSearchRoots.size > 32) resourceSearchRoots.delete(resourceSearchRoots.values().next().value!);
-  void toolName;
-}
-
-function friendlyToolName(toolName: string): string { return toolName.replaceAll("_", " "); }
-
-function appendRunActivity(text: string): HTMLElement { const value = document.createElement("div"); value.className = "message run-activity"; value.textContent = text; appendWorkNode(value); return value; }
-
-function appendWorkNode(node: HTMLElement, createdAt?: string): void {
-  const work = ensureWorkSummary(createdAt);
-  work.lastAt = Math.max(work.lastAt, activityTimestamp(createdAt));
-  work.details.append(node);
-  messages.scrollTop = messages.scrollHeight;
-}
-
-function ensureWorkSummary(createdAt?: string): NonNullable<typeof activeWorkSummary> {
-  if (activeWorkSummary) return activeWorkSummary;
-  const root = document.createElement("section"); root.className = "work-summary open";
-  const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "work-summary-toggle"; toggle.setAttribute("aria-expanded", "true");
-  const label = document.createElement("span"); label.className = "work-summary-label"; label.textContent = "Working…";
-  const chevron = document.createElement("span"); chevron.className = "work-summary-chevron"; chevron.append(svg('<path d="m8 5.5 4.5 4.5L8 14.5"></path>'));
-  const details = document.createElement("div"); details.className = "work-summary-details";
-  toggle.append(label, chevron);
-  toggle.addEventListener("click", () => {
-    const open = details.hasAttribute("hidden");
-    details.hidden = !open;
-    root.classList.toggle("open", open);
-    toggle.setAttribute("aria-expanded", String(open));
-  });
-  root.append(toggle, details); messages.append(root);
-  const timestamp = activityTimestamp(createdAt);
-  activeWorkSummary = { root, toggle, details, startedAt: timestamp, lastAt: timestamp };
-  return activeWorkSummary;
-}
-
-function finishWorkSummary(completedAt?: string): void {
-  const work = activeWorkSummary;
-  if (!work) return;
-  const endedAt = Math.max(work.lastAt, activityTimestamp(completedAt));
-  const label = work.toggle.querySelector<HTMLElement>(".work-summary-label");
-  if (label) label.textContent = `Worked for ${formatElapsed(endedAt - work.startedAt)}`;
-  work.details.hidden = true;
-  work.root.classList.remove("open");
-  work.toggle.setAttribute("aria-expanded", "false");
-  activeWorkSummary = undefined;
-}
-
-function activityTimestamp(value?: string): number {
-  if (value) { const timestamp = Date.parse(value); if (Number.isFinite(timestamp)) return timestamp; }
-  return Date.now();
-}
-
-function setRunActivity(activity: HTMLElement, label: string, startedAt: number): void {
-  activity.textContent = `${label}… ${formatElapsed(Date.now() - startedAt)}`;
 }
 
 function setAccessMode(mode: AccessMode): void { accessMode = mode; localStorage.setItem("fitz-access-mode", mode); renderAccessMode(); closePopovers(); }
@@ -2757,8 +2447,8 @@ function setContextPanel(open: boolean): void {
   workspace.classList.toggle("inspector-open", open);
   shell.classList.toggle("context-open", open);
   contextToggle.setAttribute("aria-expanded", String(open));
-  if (!open) inspectionVersion += 1;
-    requestAnimationFrame(() => conversationLayout?.sync());
+  if (!open) resourceInspector.cancelPending();
+  requestAnimationFrame(() => conversationLayout?.sync());
 }
 
 function toggleSidebar(): void { shell.classList.toggle("sidebar-collapsed"); closePopovers(); }
@@ -2782,7 +2472,7 @@ async function compactCurrentSession(): Promise<void> {
   contextCompactButton.disabled = true; contextCompactStatus.hidden = false; contextCompactStatus.textContent = "Compacting…";
   try {
     const response = await api(`/api/v1/sessions/${currentSession}/compact`, "POST", { model: model.value || "default" });
-    sessionTokenEstimate = Number(response.data?.estimatedContextTokens ?? sessionTokenEstimate); updateContextMeter(); appendContextActivity("Context compacted"); contextCompactStatus.textContent = `Reduced ${formatTokenCount(Number(response.data?.estimatedInputTokens ?? 0))} to ${formatTokenCount(sessionTokenEstimate)} tokens`;
+    sessionTokenEstimate = Number(response.data?.estimatedContextTokens ?? sessionTokenEstimate); updateContextMeter(); activityTimeline.appendContext("Context compacted"); contextCompactStatus.textContent = `Reduced ${formatTokenCount(Number(response.data?.estimatedInputTokens ?? 0))} to ${formatTokenCount(sessionTokenEstimate)} tokens`;
   } catch (error) { contextCompactStatus.textContent = errorMessage(error); }
   finally { contextCompactButton.disabled = false; }
 }
@@ -2792,8 +2482,6 @@ function setConnection(text: string, state: string): void { connectionDetail.tex
 function setFormBusy(formElement: HTMLFormElement, busy: boolean): void { for (const control of formElement.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>("input,button,select")) control.disabled = busy; }
 function showToast(text: string): void { if (toastTimer) clearTimeout(toastTimer); toast.textContent = text; toast.hidden = false; toastTimer = setTimeout(() => { toast.hidden = true; }, 3_200); }
 function panelEmpty(text: string): HTMLElement { return textBlock("panel-empty", text); }
-function inspectorEmpty(text: string): HTMLElement { return textBlock("inspector-empty", text); }
-function inspectorError(text: string): HTMLElement { return textBlock("inspector-error", text); }
 function loadingMessage(text: string): HTMLElement { return textBlock("panel-empty", text); }
 function treeItem(label: string, className: string, icon: SVGElement | undefined, action: () => void, menu: (toggle: HTMLButtonElement, event: MouseEvent) => void, quickAction?: () => void): HTMLElement {
   const item = document.createElement("div"); item.className = "tree-item";
@@ -2818,24 +2506,12 @@ async function api(path: string, method = "GET", body?: unknown): Promise<Json> 
 
 function folderIcon(): SVGElement { return svg('<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>', "0 0 24 24"); }
 function sparkIcon(): SVGElement { return svg('<path d="M10 2.8c.5 3.7 2.4 5.8 6.2 7.2-3.8 1.4-5.7 3.5-6.2 7.2-.5-3.7-2.4-5.8-6.2-7.2C7.6 8.6 9.5 6.5 10 2.8Z"></path>'); }
-function activityIcon(toolName: string): SVGElement {
-  if (toolName === "edit" || toolName === "write") return svg('<path d="m4.2 14.8.7-3.2 7.8-7.8a1.45 1.45 0 0 1 2.05 2.05L7 13.65z"></path><path d="m11.7 4.8 2.05 2.05"></path>');
-  if (["bash", "grep", "find", "ls", "read"].includes(toolName)) return svg('<rect x="2.8" y="3.2" width="14.4" height="13.6" rx="2.3"></rect><path d="m6 7 2.2 2L6 11M10.4 12h3.1"></path>');
-  return svg('<path d="M10 2.8c.45 3.5 2.2 5.45 5.8 7.2-3.6 1.75-5.35 3.7-5.8 7.2-.45-3.5-2.2-5.45-5.8-7.2C7.8 8.25 9.55 6.3 10 2.8Z"></path>');
-}
-function contextActivityIcon(): SVGElement { return svg('<path d="M4 3.5h8l3 3v10H4z"></path><path d="M12 3.5v3h3M6.5 10h6M6.5 13h4"></path><path d="m2.5 12-1.2 1.2L2.5 14.4"></path>'); }
 function terminalCloudIcon(): SVGElement { return svg('<path d="M6.2 16.4c-2 0-3.7-1.6-3.7-3.6 0-1.2.6-2.3 1.5-3-.4-1.8.5-3.6 2.1-4.4.7-1.7 2.4-2.8 4.2-2.8 1.5 0 2.9.7 3.8 1.9 1.8-.1 3.3 1.3 3.4 3.1 1 .7 1.7 1.9 1.7 3.2 0 1.5-.8 2.8-2.1 3.5-.5 1.8-2.1 3-4 3-.8 0-1.6-.2-2.2-.7-.7.6-1.6.9-2.5.9-.8 0-1.6-.3-2.2-.7z"></path><path d="m6.8 8 1.8 2-1.8 2M10.7 12.3h2.7"></path>'); }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function delay(milliseconds: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }
 function bytesToBase64(bytes: Uint8Array): string { let binary = ""; for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000)); return btoa(binary); }
-function base64Bytes(value: string): Uint8Array { const binary = atob(value); return Uint8Array.from(binary, (character) => character.charCodeAt(0)); }
 function formatBytes(value: number): string { return value < 1024 ? `${value} B` : `${(value / 1024).toFixed(1)} KB`; }
 
-function formatElapsed(value: number): string {
-  const seconds = Math.max(0, Math.floor(value / 1_000));
-  const minutes = Math.floor(seconds / 60);
-  return minutes > 0 ? `${minutes}m ${String(seconds % 60).padStart(2, "0")}s` : `${seconds}s`;
-}
 function estimateTokens(value: string): number { return value ? Math.max(1, Math.ceil(value.length / 4)) : 0; }
 function estimateTranscriptContext(entries: Json[]): number {
   const checkpoint = [...entries].reverse().find((entry) => entry.kind === "compaction" && entry.content?.manual === true && typeof entry.content?.summary === "string" && Number.isFinite(Number(entry.content?.throughSequence)));
