@@ -21,12 +21,13 @@
     "check": "pnpm typecheck && pnpm test",
     "desktop:pack:win": "pnpm host:pack:win && pnpm --filter @fitz/desktop pack:win",
     "desktop:dist:win": "pnpm host:pack:win && pnpm --filter @fitz/desktop dist:win",
-    "host:pack:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/package-host.ps1"
-    ,"host:smoke:packaged": "node scripts/smoke-packaged-host.mjs"
-    ,"desktop:smoke:packaged": "node scripts/smoke-packaged-desktop.mjs"
+    "host:pack:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/package-host.ps1",
+    "host:smoke:packaged": "node scripts/smoke-packaged-host.mjs",
+    "desktop:smoke:packaged": "node scripts/smoke-packaged-desktop.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",
+    "happy-dom": "20.11.1",
     "tsx": "^4.23.1",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"

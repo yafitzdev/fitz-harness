@@ -13,11 +13,13 @@ const contextMenu = readFileSync(new URL("./ui/primitives/context-menu.ts", impo
 const messageActions = readFileSync(new URL("./ui/chat/message-actions.ts", import.meta.url), "utf8");
 const activityTimeline = readFileSync(new URL("./ui/chat/activity-timeline.ts", import.meta.url), "utf8");
 const resourceInspector = readFileSync(new URL("./ui/inspector/resource-inspector.ts", import.meta.url), "utf8");
+const projectSidebar = readFileSync(new URL("./ui/sidebar/project-sidebar.ts", import.meta.url), "utf8");
 const styles = [
   readFileSync(new URL("./renderer/styles.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/theme/tokens.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/primitives/scroll-surface.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/message-actions.css", import.meta.url), "utf8"),
+  readFileSync(new URL("./ui/sidebar/project-sidebar.css", import.meta.url), "utf8"),
 ].join("\n");
 const main = readFileSync(new URL("./main.ts", import.meta.url), "utf8");
 const preload = readFileSync(new URL("./preload.ts", import.meta.url), "utf8");
@@ -114,7 +116,8 @@ describe("desktop renderer shell", () => {
   it("matches the compact Codex sidebar and new-chat project rail", () => {
     expect(html).not.toContain('class="runtime-mode-toggle"');
     expect(html).toContain('<span>Codex</span>');
-    expect(renderer).toContain('treeItem(session.title, "task-row", undefined');
+    expect(renderer).toContain("new ProjectSidebarController");
+    expect(projectSidebar).toContain('this.#treeItem(session.title, "task-row", undefined');
     expect(renderer).not.toContain("function chatIcon()");
     expect(styles).toContain("height: 42px; display: flex; align-items: center");
     expect(html).toContain('class="section-heading projects-heading"');
@@ -226,8 +229,8 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("new ResizablePane({");
     expect(resizablePane).toContain('options.divider.addEventListener("pointerdown"');
     expect(resizablePane).toContain('event.key !== "ArrowLeft" && event.key !== "ArrowRight"');
-    expect(renderer).toContain('openSidebarMenu("project"');
-    expect(renderer).toContain('openSidebarMenu("task"');
+    expect(projectSidebar).toContain('this.#openMenu("project"');
+    expect(projectSidebar).toContain('this.#openMenu("task"');
     expect(renderer).toContain('openSettingsSubmenu(row.dataset.setting');
     expect(renderer).toContain('api("/api/v1/management/status")');
     expect(renderer).toContain('/api/v1/management/recipes/${encodeURIComponent(id)}');
@@ -454,17 +457,17 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('id="hover-project-pin"');
     expect(html).toContain('id="hover-project-path"');
     expect(html).toContain('id="hover-project-edit"');
-    expect(renderer).toContain("showProjectHover(project, projectItem)");
-    expect(renderer).toContain("sessionsByProject.get(project.id)");
-    expect(renderer).toContain("openProjectRenameDialog(hoveredProjectId)");
+    expect(projectSidebar).toContain("this.#showProjectHover(project, projectItem)");
+    expect(projectSidebar).toContain("this.#state.sessionsByProject.get(project.id)");
+    expect(projectSidebar).toContain("options.editProject(this.#hoveredProjectId)");
   });
 
   it("matches the project hover controls and menu actions", () => {
-    expect(renderer).toContain('className = "tree-quick-action"');
-    expect(renderer).toContain("New chat in ${label}");
+    expect(projectSidebar).toContain('className = "tree-quick-action"');
+    expect(projectSidebar).toContain("New chat in ${label}");
     expect(styles).not.toContain(".project-group:hover > .tree-item .tree-quick-action");
     for (const label of ["Pin project", "Open in Explorer", "Create permanent worktree", "Edit project", "Archive chats", "Remove"]) {
-      expect(renderer).toContain(`"${label}"`);
+      expect(projectSidebar).toContain(`"${label}"`);
     }
     expect(renderer).toContain('api(`/api/v1/projects/${id}`, "DELETE")');
   });

@@ -1,6 +1,7 @@
 @import "../ui/theme/tokens.css";
 @import "../ui/primitives/scroll-surface.css";
 @import "../ui/chat/message-actions.css";
+@import "../ui/sidebar/project-sidebar.css";
 
 * { box-sizing: border-box; }
 html, body { width: 100%; height: 100%; }
@@ -43,32 +44,6 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .nav-action.active { background: rgba(255,255,255,.1); color: white; }
 .nav-action kbd { margin-left: auto; color: var(--subtle); font: 11px inherit; opacity: 0; }
 .nav-action:hover kbd { opacity: 1; }
-.sidebar-section { margin-top: 20px; min-height: 0; overflow: auto; }
-.section-heading { height: 32px; display: flex; align-items: center; justify-content: space-between; padding: 0 7px; color: var(--muted); font-size: 13px; }
-.projects-heading > span { color: #c8cbc5; font-weight: 650; }
-.projects-heading #new-project { opacity: 0; pointer-events: none; transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease; }
-.projects-heading:hover #new-project, .projects-heading:focus-within #new-project, #new-project:focus-visible { opacity: 1; pointer-events: auto; }
-.project-tree { display: grid; gap: 3px; }
-.project-group { display: grid; gap: 2px; }
-.project-children { display: grid; grid-template-rows: 0fr; opacity: 0; transform: translateY(-4px); transition: grid-template-rows 140ms ease, opacity 120ms ease, transform 140ms ease; }
-.project-children-inner { min-height: 0; display: grid; gap: 2px; overflow: hidden; }
-.project-group.expanded > .project-children { grid-template-rows: 1fr; opacity: 1; transform: translateY(0); }
-.tree-item { position: relative; min-width: 0; }
-.project-row, .task-row { width: 100%; display: flex; align-items: center; gap: 8px; min-width: 0; background: transparent; color: var(--muted); border-radius: var(--codex-radius-lg); cursor: pointer; text-align: left; }
-.project-row { padding: 7px 8px; color: #c8cbc5; font-weight: 500; }
-.task-row { padding: 6px 34px 6px 30px; font-size: 13.5px; }
-.tree-item:has(.project-row) .project-row { padding-right: 62px; }
-.project-row:hover, .task-row:hover { background: rgba(255,255,255,.08); color: var(--text); }
-.project-row.active, .task-row.active { background: rgba(255,255,255,.09); color: var(--text); }
-.project-row span, .task-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.project-row svg, .task-row svg { flex: 0 0 auto; width: 14px; height: 14px; }
-.task-row .activity-dot { width: 7px; height: 7px; margin-left: auto; border-radius: 50%; background: var(--muted); opacity: .65; }
-.tree-menu-toggle, .tree-quick-action { position: absolute; z-index: 2; top: 50%; width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border-radius: 7px; transform: translateY(-50%); background: transparent; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease; }
-.tree-menu-toggle { right: 4px; }.tree-quick-action { right: 31px; }
-.tree-item:hover .tree-menu-toggle, .tree-item:hover .tree-quick-action, .tree-item:focus-within .tree-menu-toggle, .tree-item:focus-within .tree-quick-action, .tree-menu-toggle[aria-expanded="true"] { opacity: 1; }
-.tree-menu-toggle:hover, .tree-quick-action:hover { background: rgba(255,255,255,.08); color: var(--text); }
-.tree-menu-toggle svg, .tree-quick-action svg { width: 15px; height: 15px; }
-.tree-empty { padding: 6px 9px 8px 30px; color: var(--subtle); font-size: 12px; }
 .sidebar-spacer { flex: 1; }
 .connection-card { display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px; border-radius: 8px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
 .connection-card:hover { background: rgba(255,255,255,.045); }
@@ -104,26 +79,6 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .select-popover .select-option { justify-content: flex-start; }
 .select-popover .select-option.selected::after { content: "✓"; margin-left: auto; color: #d9dad5; font-size: 13px; }
 .select-group-label { display: block; padding: 5px 8px 3px; color: var(--codex-text-tertiary); font-size: 9px; }
-.sidebar-context-menu { position: fixed; z-index: 40; width: 242px; }
-.chat-hover-card { position: fixed; z-index: 39; width: 300px; padding: 15px 16px; border: 0; border-radius: var(--codex-radius-2xl); background: var(--codex-control); box-shadow: var(--codex-elevation-stroke), var(--codex-shadow-xl); pointer-events: none; backdrop-filter: blur(16px); }
-.chat-hover-card header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 13px; }
-.chat-hover-card strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
-.chat-hover-card time { flex: 0 0 auto; color: var(--muted); font-size: 12px; }
-.chat-hover-card p { display: flex; align-items: center; gap: 9px; margin: 7px 0 0; color: #d2d4cf; font-size: 13px; }
-.chat-hover-card svg { width: 16px; height: 16px; color: var(--muted); }
-.project-hover-card { position: fixed; z-index: 39; width: min(420px, calc(100vw - 24px)); overflow: hidden; border: 0; border-radius: var(--codex-radius-2xl); background: var(--codex-control); box-shadow: var(--codex-elevation-stroke), var(--codex-shadow-xl); backdrop-filter: blur(16px); }
-.project-hover-card header, .project-hover-detail, .project-hover-action { min-height: 45px; display: flex; align-items: center; gap: 10px; padding: 0 14px; }
-.project-hover-card header { justify-content: space-between; }
-.project-hover-card header > span { min-width: 0; display: flex; align-items: center; gap: 10px; }
-.project-hover-card strong, .project-hover-card span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.project-hover-card svg { flex: 0 0 auto; width: 18px; height: 18px; color: #c8cbc5; }
-.project-hover-card header button { flex: 0 0 auto; width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
-.project-hover-card header button:hover, .project-hover-card header button[aria-pressed="true"] { background: rgba(255,255,255,.07); color: var(--text); }
-.project-hover-detail { border-bottom: 1px solid #484b48; color: var(--text); }
-.project-hover-action { width: 100%; border-bottom: 1px solid #484b48; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
-.project-hover-action:last-child { border-bottom: 0; }
-.project-hover-action:hover:not(:disabled) { background: rgba(255,255,255,.065); }
-.project-hover-action:disabled { color: var(--subtle); cursor: default; }
 .header-actions { display: flex; align-items: center; gap: 6px; }
 .quiet-button { padding: 7px 10px; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer; }
 .dialog-copy { margin: 0 0 18px; color: var(--muted); line-height: 1.5; }

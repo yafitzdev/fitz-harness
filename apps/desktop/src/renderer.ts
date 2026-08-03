@@ -11,6 +11,7 @@ import { ContextMenu } from "./ui/primitives/context-menu.js";
 import { requiredElement as element, requiredQuery as query, svgIcon as svg, textBlock } from "./ui/primitives/dom.js";
 import { positionNestedPopover, togglePopover as toggleManagedPopover } from "./ui/primitives/popover.js";
 import { ResizablePane } from "./ui/primitives/resizable-pane.js";
+import { ProjectSidebarController, type ProjectSidebarProject, type ProjectSidebarSession } from "./ui/sidebar/project-sidebar.js";
 
 type Json = Record<string, any>;
 type FixedRouteId = "fast" | "default" | "smart";
@@ -23,6 +24,8 @@ type PiCatalogPackage = { name: string; description: string; version: string; pu
 type InstalledPiPackage = { source: string; displayName: string; version?: string; description?: string; enabled: boolean; resources: Record<string, number> };
 type PiSkillSummary = { name: string; description: string; source: string; enabled: boolean; filePath: string };
 type AppLocation = { view: "conversation"; projectId?: string; sessionId?: string; newChat?: boolean } | { view: "playbooks" | "connections" | "plugins" | "administration" };
+type ProjectRecord = ProjectSidebarProject & Json;
+type SessionRecord = ProjectSidebarSession & Json;
 
 const FIXED_ROUTES: readonly { id: FixedRouteId; label: string; icon: string }[] = [
   { id: "fast", label: "Fast", icon: '<path class="route-icon-outline" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path><path class="route-icon-filled" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path>' },
@@ -31,8 +34,8 @@ const FIXED_ROUTES: readonly { id: FixedRouteId; label: string; icon: string }[]
 ];
 const LOCAL_CONNECTION_ID = "hosted--local";
 
-let projectRecords: Json[] = [];
-const sessionsByProject = new Map<string, Json[]>();
+let projectRecords: ProjectRecord[] = [];
+const sessionsByProject = new Map<string, SessionRecord[]>();
 let currentProject: string | undefined;
 let currentSession: string | undefined;
 let currentRun: string | undefined;
@@ -64,8 +67,6 @@ let newChatMode = false;
 let newChatProjectDetached = false;
 let currentBranch = "main";
 let availableBranches: string[] = [];
-let hoveredProjectId: string | undefined;
-let projectHoverHideTimer: ReturnType<typeof setTimeout> | undefined;
 let removeProjectTarget: string | undefined;
 let editingRecipe: Json | undefined;
 let accessMode: AccessMode = storedAccessMode();
@@ -73,16 +74,11 @@ let renameTarget: { kind: "project" | "task"; id: string } | undefined;
 let navigationIndex = -1;
 let replayingNavigation = false;
 const navigationHistory: AppLocation[] = [];
-const pinnedProjects = storedSet("fitz-pinned-projects");
-const pinnedSessions = storedSet("fitz-pinned-sessions");
-const unreadSessions = storedSet("fitz-unread-sessions");
-const expandedProjects = storedSet("fitz-expanded-projects");
 const recipeTestStates = new Map<string, { state: "testing" | "passed" | "failed"; detail: string }>();
 
 const shell = query(".app-shell");
 const workspaceHeader = query(".workspace-header");
 const composerDock = query(".composer-dock");
-const projects = element("projects");
 const messages = element("messages");
 const scrollToBottom = element("scroll-to-bottom") as HTMLButtonElement;
 const model = element("model") as HTMLSelectElement;
@@ -260,17 +256,6 @@ const managementBrowser = element("management-browser");
 const managementEditor = element("management-editor");
 const engineForm = element("engine-form") as HTMLFormElement;
 const recipeForm = element("recipe-form") as HTMLFormElement;
-const chatHoverCard = element("chat-hover-card");
-const hoverChatTitle = element("hover-chat-title");
-const hoverChatAge = element("hover-chat-age");
-const hoverProjectName = element("hover-project-name");
-const projectHoverCard = element("project-hover-card");
-const hoverProjectTitle = element("hover-project-title");
-const hoverProjectTaskCount = element("hover-project-task-count");
-const hoverProjectPath = element("hover-project-path") as HTMLButtonElement;
-const hoverProjectPathLabel = element("hover-project-path-label");
-const hoverProjectPin = element("hover-project-pin") as HTMLButtonElement;
-const hoverProjectEdit = element("hover-project-edit") as HTMLButtonElement;
 const removeProjectDialog = element("remove-project-dialog") as HTMLDialogElement;
 const removeProjectForm = element("remove-project-form") as HTMLFormElement;
 const removeProjectName = element("remove-project-name");
@@ -293,6 +278,36 @@ const inspectorPane = new ResizablePane({
 conversationLayout = new ConversationLayout({ workspace, messages, composer: composerDock, scrollButton: scrollToBottom, inspectorWidth: () => inspectorPane.value() });
 const customSelects = new CustomSelectController(selectPopover, closePopovers);
 const sidebarMenu = new ContextMenu(sidebarContextMenu, closePopovers);
+const projectSidebar = new ProjectSidebarController({
+  elements: {
+    tree: element("projects"),
+    chatHoverCard: element("chat-hover-card"),
+    chatHoverTitle: element("hover-chat-title"),
+    chatHoverAge: element("hover-chat-age"),
+    chatHoverProject: element("hover-project-name"),
+    projectHoverCard: element("project-hover-card"),
+    projectHoverTitle: element("hover-project-title"),
+    projectHoverTaskCount: element("hover-project-task-count"),
+    projectHoverPath: element("hover-project-path") as HTMLButtonElement,
+    projectHoverPathLabel: element("hover-project-path-label"),
+    projectHoverPin: element("hover-project-pin") as HTMLButtonElement,
+    projectHoverEdit: element("hover-project-edit") as HTMLButtonElement,
+  },
+  menu: sidebarMenu,
+  closePopovers,
+  selectProject: (projectId) => void selectProject(projectId),
+  selectSession: (sessionId, projectId) => void selectSession(sessionId, true, projectId),
+  newChat: openNewChatForProject,
+  openProjectPath: (path) => void openProjectPath(path),
+  createWorktree: openProjectWorktreeSetup,
+  editProject: openProjectRenameDialog,
+  archiveProjectChats: (projectId) => void archiveProjectChats(projectId),
+  removeProject: openRemoveProjectDialog,
+  renameSession: (sessionId, projectId) => { currentProject = projectId; currentSession = sessionId; openRenameDialog(); },
+  archiveSession: (sessionId, projectId) => { currentProject = projectId; currentSession = sessionId; void archiveCurrentTask(); },
+  copyValue: (value, message) => void copyValue(value, message),
+  continueSession: (session, projectId) => { currentProject = projectId; void continueInNewChat(session); },
+});
 const workspacePages = new WorkspacePageController({
   pages: {
     playbooks: playbookPage,
@@ -428,12 +443,6 @@ taskMenuToggle.addEventListener("click", (event) => { event.stopPropagation(); t
 modelMenu.addEventListener("click", (event) => event.stopPropagation());
 taskMenu.addEventListener("click", (event) => event.stopPropagation());
 sidebarContextMenu.addEventListener("click", (event) => event.stopPropagation());
-projectHoverCard.addEventListener("mouseenter", cancelProjectHoverHide);
-projectHoverCard.addEventListener("mouseleave", scheduleProjectHoverHide);
-projectHoverCard.addEventListener("click", (event) => event.stopPropagation());
-hoverProjectPin.addEventListener("click", () => { if (hoveredProjectId) toggleStored(pinnedProjects, hoveredProjectId, "fitz-pinned-projects"); });
-hoverProjectPath.addEventListener("click", () => { const path = projectRecords.find((project) => project.id === hoveredProjectId)?.rootPath; if (path) void openProjectPath(path); });
-hoverProjectEdit.addEventListener("click", () => { if (hoveredProjectId) openProjectRenameDialog(hoveredProjectId); });
 element("rename-task").addEventListener("click", openRenameDialog);
 element("archive-task").addEventListener("click", () => void archiveCurrentTask());
 renameForm.addEventListener("submit", (event) => { event.preventDefault(); void renameCurrentTask(); });
@@ -530,7 +539,7 @@ async function loadProjects(preferredProject?: string, preferredSession?: string
 
   if (preferredProject && projectRecords.some((project) => project.id === preferredProject)) currentProject = preferredProject;
   else if (!currentProject || !projectRecords.some((project) => project.id === currentProject)) currentProject = projectRecords[0]?.id;
-  if (currentProject && expandedProjects.size === 0) { expandedProjects.add(currentProject); saveSet("fitz-expanded-projects", expandedProjects); }
+  if (currentProject && !projectSidebar.hasExpandedProjects()) projectSidebar.ensureExpanded(currentProject);
 
   if (preferredSession) currentSession = preferredSession;
   const selectedSessions = currentProject ? sessionsByProject.get(currentProject) ?? [] : [];
@@ -542,46 +551,7 @@ async function loadProjects(preferredProject?: string, preferredSession?: string
 }
 
 function renderProjectTree(): void {
-  projects.replaceChildren();
-  if (projectRecords.length === 0) {
-    const emptyState = document.createElement("p");
-    emptyState.className = "tree-empty";
-    emptyState.textContent = "No projects yet";
-    projects.append(emptyState);
-    return;
-  }
-
-  const orderedProjects = [...projectRecords].sort((left, right) => Number(pinnedProjects.has(right.id)) - Number(pinnedProjects.has(left.id)));
-  for (const project of orderedProjects) {
-    const group = document.createElement("div");
-    group.className = "project-group"; group.classList.toggle("expanded", expandedProjects.has(project.id)); group.dataset.projectId = project.id;
-    const projectItem = treeItem(project.name, "project-row", folderIcon(), () => {
-      if (project.id === currentProject) toggleProjectExpansion(project.id, group);
-      else void selectProject(project.id);
-    }, (toggle, event) => openSidebarMenu("project", project.id, toggle, event), () => openNewChatForProject(project.id));
-    const projectButton = projectItem.querySelector(".project-row") as HTMLButtonElement;
-    projectButton.classList.toggle("active", project.id === currentProject && !currentSession && !newChatMode);
-    projectButton.setAttribute("aria-expanded", String(expandedProjects.has(project.id)));
-    projectItem.addEventListener("mouseenter", () => showProjectHover(project, projectItem));
-    projectItem.addEventListener("mouseleave", scheduleProjectHoverHide);
-    projectButton.addEventListener("focus", () => showProjectHover(project, projectItem));
-    projectButton.addEventListener("blur", scheduleProjectHoverHide);
-    group.append(projectItem);
-    const children = document.createElement("div"); children.className = "project-children"; const childrenInner = document.createElement("div"); childrenInner.className = "project-children-inner"; children.append(childrenInner); group.append(children);
-    const projectSessions = [...(sessionsByProject.get(project.id) ?? [])].sort((left, right) => Number(pinnedSessions.has(right.id)) - Number(pinnedSessions.has(left.id)));
-      if (projectSessions.length === 0) {
-        const emptyState = document.createElement("div"); emptyState.className = "tree-empty"; emptyState.textContent = "No chats"; childrenInner.append(emptyState);
-      }
-      for (const session of projectSessions) {
-        const sessionItem = treeItem(session.title, "task-row", undefined, () => void selectSession(session.id, true, project.id), (toggle, event) => openSidebarMenu("task", session.id, toggle, event));
-        const sessionButton = sessionItem.querySelector(".task-row") as HTMLButtonElement;
-        sessionButton.classList.toggle("active", session.id === currentSession);
-        if (unreadSessions.has(session.id)) { const dot = document.createElement("span"); dot.className = "activity-dot"; dot.setAttribute("aria-label", "Unread"); sessionButton.append(dot); }
-        sessionItem.addEventListener("mouseenter", () => showChatHover(session, project, sessionItem)); sessionItem.addEventListener("mouseleave", hideChatHover); sessionButton.addEventListener("focus", () => showChatHover(session, project, sessionItem)); sessionButton.addEventListener("blur", hideChatHover);
-        childrenInner.append(sessionItem);
-      }
-    projects.append(group);
-  }
+  projectSidebar.render({ projects: projectRecords, sessionsByProject, currentProjectId: currentProject, currentSessionId: currentSession, newChat: newChatMode });
   updateTitles();
 }
 
@@ -589,7 +559,7 @@ async function selectProject(id: string): Promise<void> {
   showConversationWorkspace();
   newChatMode = false;
   currentProject = id;
-  expandedProjects.add(id); saveSet("fitz-expanded-projects", expandedProjects);
+  projectSidebar.ensureExpanded(id);
   const projectSessions = sessionsByProject.get(id) ?? [];
   currentSession = projectSessions[0]?.id;
   renderProjectTree();
@@ -599,20 +569,20 @@ async function selectProject(id: string): Promise<void> {
 }
 
 async function selectSession(id: string, rerender = true, projectId?: string): Promise<void> {
-  hideChatHover();
+  projectSidebar.hideChatHover();
   contextCompactStatus.hidden = true; contextCompactStatus.textContent = "";
   showConversationWorkspace();
   newChatMode = false;
   workspace.classList.remove("new-chat-open");
   newChatContext.hidden = true;
   if (projectId) currentProject = projectId;
-  if (currentProject) { expandedProjects.add(currentProject); saveSet("fitz-expanded-projects", expandedProjects); }
+  if (currentProject) projectSidebar.ensureExpanded(currentProject);
   currentSession = id;
   const selectedSession = currentSessionRecord();
   selectedConnectionId = selectedSession?.connectionId ?? LOCAL_CONNECTION_ID;
   if (selectedSession?.routeId && [...model.options].some((option) => option.value === selectedSession.routeId)) model.value = selectedSession.routeId;
   updateModelControls();
-  if (unreadSessions.delete(id)) saveSet("fitz-unread-sessions", unreadSessions);
+  projectSidebar.markSessionRead(id);
   lastSequence = 0;
   if (rerender) renderProjectTree();
   updateTitles();
@@ -658,14 +628,6 @@ async function selectSession(id: string, rerender = true, projectId?: string): P
   rememberLocation({ view: "conversation", ...(currentProject ? { projectId: currentProject } : {}), sessionId: id });
 }
 
-function toggleProjectExpansion(id: string, group: HTMLElement): void {
-  const expanded = !expandedProjects.has(id);
-  if (expanded) expandedProjects.add(id); else expandedProjects.delete(id);
-  saveSet("fitz-expanded-projects", expandedProjects);
-  group.classList.toggle("expanded", expanded);
-  group.querySelector<HTMLButtonElement>(".project-row")?.setAttribute("aria-expanded", String(expanded));
-}
-
 function openNewChat(): void {
   if (currentRun) { showToast("Stop the current response before starting a new chat"); return; }
   showConversationWorkspace();
@@ -678,8 +640,7 @@ function openNewChat(): void {
   currentSession = undefined;
   sessionTokenEstimate = 0;
   contextCompactStatus.hidden = true; contextCompactStatus.textContent = "";
-  expandedProjects.add(currentProject);
-  saveSet("fitz-expanded-projects", expandedProjects);
+  projectSidebar.ensureExpanded(currentProject);
   workspace.classList.add("new-chat-open");
   newChatProject.textContent = projectRecords.find((project) => project.id === currentProject)?.name ?? "Project";
   newChatProjectControl.hidden = false;
@@ -698,7 +659,7 @@ function openNewChat(): void {
   rememberLocation({ view: "conversation", projectId: currentProject, newChat: true });
 }
 
-function openNewChatForProject(id: string): void { currentProject = id; expandedProjects.add(id); saveSet("fitz-expanded-projects", expandedProjects); openNewChat(); }
+function openNewChatForProject(id: string): void { currentProject = id; projectSidebar.ensureExpanded(id); openNewChat(); }
 
 function showNewChatLanding(): void {
   messages.replaceChildren();
@@ -844,54 +805,6 @@ function currentSessionRecord(): Json | undefined {
   return currentProject ? (sessionsByProject.get(currentProject) ?? []).find((session) => session.id === currentSession) : undefined;
 }
 
-function openSidebarMenu(kind: "project" | "task", id: string, toggle: HTMLButtonElement, event: MouseEvent): void {
-  event.preventDefault();
-  event.stopPropagation();
-  closePopovers();
-  sidebarMenu.reset();
-  if (kind === "project") buildProjectMenu(id);
-  else buildTaskMenu(id);
-  sidebarMenu.openBeside(toggle);
-  toggle.setAttribute("aria-expanded", "true");
-}
-
-function buildProjectMenu(id: string): void {
-  const project = projectRecords.find((item) => item.id === id);
-  if (!project) return;
-  const sessions = sessionsByProject.get(id) ?? [];
-  sidebarMenu.add({ label: pinnedProjects.has(id) ? "Unpin project" : "Pin project", action: () => toggleStored(pinnedProjects, id, "fitz-pinned-projects"), icon: '<path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path>' });
-  sidebarMenu.add({ label: "Open in Explorer", action: () => { if (project.rootPath) void openProjectPath(project.rootPath); }, icon: '<path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path><path d="M3.5 6.5V4h5l1.5 2"></path>', disabled: !project.rootPath });
-  sidebarMenu.add({ label: "Create permanent worktree", action: () => openProjectWorktreeSetup(id), icon: '<path d="M4 6h8M12 3l3 3-3 3M16 14H8M8 11l-3 3 3 3"></path>', disabled: !project.rootPath });
-  sidebarMenu.add({ label: "Edit project", action: () => openProjectRenameDialog(id), icon: '<circle cx="10" cy="10" r="3"></circle><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M15.3 4.7l-1.4 1.4M6.1 13.9l-1.4 1.4"></path>' });
-  sidebarMenu.separator();
-  sidebarMenu.add({ label: "Archive chats", action: () => void archiveProjectChats(id), icon: '<rect x="3" y="5" width="14" height="11" rx="2"></rect><path d="M3 8h14M8 11h4"></path>', disabled: sessions.length === 0 });
-  sidebarMenu.add({ label: "Remove", action: () => openRemoveProjectDialog(id), icon: '<path d="m5 5 10 10M15 5 5 15"></path>' });
-}
-
-function buildTaskMenu(id: string): void {
-  const session = (currentProject ? sessionsByProject.get(currentProject) : undefined)?.find((item) => item.id === id);
-  const project = projectRecords.find((item) => item.id === currentProject);
-  if (!session) return;
-  sidebarMenu.add({ label: pinnedSessions.has(id) ? "Unpin chat" : "Pin chat", action: () => toggleStored(pinnedSessions, id, "fitz-pinned-sessions"), icon: '<path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path>' });
-  sidebarMenu.add({ label: "Rename chat", action: () => { currentSession = id; openRenameDialog(); }, icon: '<path d="M4 14.5V17h2.5L15 8.5 11.5 5z"></path><path d="m10.5 6 3.5 3.5"></path>' });
-  sidebarMenu.add({ label: "Archive chat", action: () => { currentSession = id; void archiveCurrentTask(); }, danger: true, icon: '<rect x="3" y="5" width="14" height="11" rx="2"></rect><path d="M3 8h14M8 11h4"></path>' });
-  sidebarMenu.add({ label: unreadSessions.has(id) ? "Mark as read" : "Mark as unread", action: () => toggleStored(unreadSessions, id, "fitz-unread-sessions"), icon: '<path d="M4 4.5h12v9H9l-4 3v-3H4z"></path>' });
-  if (project?.rootPath) {
-    sidebarMenu.separator();
-    sidebarMenu.add({ label: "Open in Explorer", action: () => void openProjectPath(project.rootPath), icon: '<path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path><path d="M3.5 6.5V4h5l1.5 2"></path>' });
-    sidebarMenu.add({ label: "Copy working directory", action: () => void copyValue(project.rootPath, "Working directory copied"), icon: '<rect x="6" y="6" width="10" height="10" rx="2"></rect><path d="M13 6V4H4v9h2"></path>' });
-  }
-  sidebarMenu.add({ label: "Copy session ID", action: () => void copyValue(id, "Session ID copied"), icon: '<rect x="6" y="6" width="10" height="10" rx="2"></rect><path d="M13 6V4H4v9h2"></path>' });
-  sidebarMenu.add({ label: "Copy deeplink", action: () => void copyValue(`fitz://sessions/${id}`, "Deeplink copied"), icon: '<path d="m8 12 4-4"></path><path d="M6.5 13.5 5 15a3 3 0 0 1-4-4l2.5-2.5a3 3 0 0 1 4.2 0"></path><path d="M13.5 6.5 15 5a3 3 0 0 1 4 4l-2.5 2.5a3 3 0 0 1-4.2 0"></path>' });
-  sidebarMenu.separator();
-  sidebarMenu.add({ label: "Continue in new chat", action: () => void continueInNewChat(session), icon: '<path d="M4 5h7a4 4 0 0 1 4 4v6"></path><path d="m12 12 3 3 3-3"></path>' });
-}
-
-function toggleStored(values: Set<string>, id: string, key: string): void {
-  if (values.has(id)) values.delete(id); else values.add(id);
-  saveSet(key, values); closePopovers(); renderProjectTree();
-}
-
 async function editProjectFolder(id: string): Promise<void> {
   const folder = await window.fitz.chooseFolder();
   if (!folder) return;
@@ -905,7 +818,7 @@ function openRemoveProjectDialog(id: string): void { const project = projectReco
 
 async function removeProject(): Promise<void> {
   if (!removeProjectTarget) return; const id = removeProjectTarget; setFormBusy(removeProjectForm, true);
-  try { await api(`/api/v1/projects/${id}`, "DELETE"); pinnedProjects.delete(id); expandedProjects.delete(id); saveSet("fitz-pinned-projects", pinnedProjects); saveSet("fitz-expanded-projects", expandedProjects); removeProjectDialog.close(); removeProjectTarget = undefined; currentProject = currentProject === id ? undefined : currentProject; currentSession = undefined; await loadProjects(currentProject); showToast("Project removed"); }
+  try { await api(`/api/v1/projects/${id}`, "DELETE"); projectSidebar.removeProjectState(id); removeProjectDialog.close(); removeProjectTarget = undefined; currentProject = currentProject === id ? undefined : currentProject; currentSession = undefined; await loadProjects(currentProject); showToast("Project removed"); }
   catch (error) { showToast(errorMessage(error)); }
   finally { setFormBusy(removeProjectForm, false); }
 }
@@ -919,7 +832,7 @@ async function archiveProjectChats(id: string): Promise<void> {
   catch (error) { showToast(errorMessage(error)); }
 }
 
-async function continueInNewChat(session: Json): Promise<void> {
+async function continueInNewChat(session: ProjectSidebarSession): Promise<void> {
   if (!currentProject) return;
   try { const response = await api(`/api/v1/projects/${currentProject}/sessions`, "POST", { title: `Continue: ${session.title}` }); await loadProjects(currentProject, response.data.id); showToast("Created continuation chat"); }
   catch (error) { showToast(errorMessage(error)); }
@@ -2080,8 +1993,7 @@ function closePopovers(): void {
   sidebarContextMenu.hidden = true;
   newChatEnvironmentMenu.hidden = true;
   newChatBranchMenu.hidden = true;
-  hideProjectHover();
-  hideChatHover();
+  projectSidebar.hideOverlays();
   modelToggle.setAttribute("aria-expanded", "false");
   advancedSettings.setAttribute("aria-expanded", "false");
   contextMeter.setAttribute("aria-expanded", "false");
@@ -2090,7 +2002,7 @@ function closePopovers(): void {
   newChatEnvironmentControl.setAttribute("aria-expanded", "false");
   newChatBranchControl.setAttribute("aria-expanded", "false");
   for (const row of document.querySelectorAll(".setting-row")) row.classList.remove("active");
-  for (const toggle of projects.querySelectorAll(".tree-menu-toggle")) toggle.setAttribute("aria-expanded", "false");
+  projectSidebar.resetMenuToggles();
   for (const toggle of document.querySelectorAll("[data-app-menu]")) toggle.setAttribute("aria-expanded", "false");
 }
 
@@ -2402,45 +2314,6 @@ function updateTitles(): void {
   taskMenuToggle.hidden = !session;
 }
 
-function showChatHover(session: Json, project: Json, anchor: HTMLElement): void {
-  hideProjectHover();
-  const updated = new Date(session.updatedAt ?? session.createdAt ?? Date.now()).getTime();
-  const ageMilliseconds = Math.max(0, Date.now() - updated);
-  const days = Math.floor(ageMilliseconds / 86_400_000);
-  const hours = Math.floor(ageMilliseconds / 3_600_000);
-  hoverChatTitle.textContent = session.title;
-  hoverChatAge.textContent = days ? `${days}d` : hours ? `${hours}h` : "now";
-  hoverProjectName.textContent = project.name;
-  const bounds = anchor.getBoundingClientRect();
-  chatHoverCard.style.left = `${Math.min(window.innerWidth - 318, bounds.right + 10)}px`;
-  chatHoverCard.style.top = `${Math.max(52, Math.min(window.innerHeight - 145, bounds.top - 4))}px`;
-  chatHoverCard.hidden = false;
-}
-
-function hideChatHover(): void { chatHoverCard.hidden = true; }
-
-function showProjectHover(project: Json, anchor: HTMLElement): void {
-  cancelProjectHoverHide(); hideChatHover(); hoveredProjectId = project.id;
-  const taskCount = (sessionsByProject.get(project.id) ?? []).length;
-  hoverProjectTitle.textContent = project.name;
-  hoverProjectTaskCount.textContent = `${taskCount} ${taskCount === 1 ? "task" : "tasks"}`;
-  hoverProjectPathLabel.textContent = project.rootPath || "No source folder";
-  hoverProjectPath.disabled = !project.rootPath;
-  const pinned = pinnedProjects.has(project.id);
-  hoverProjectPin.setAttribute("aria-pressed", String(pinned));
-  hoverProjectPin.setAttribute("aria-label", pinned ? "Unpin project" : "Pin project");
-  hoverProjectPin.title = pinned ? "Unpin project" : "Pin project";
-  const bounds = anchor.getBoundingClientRect();
-  projectHoverCard.hidden = false;
-  const cardBounds = projectHoverCard.getBoundingClientRect();
-  projectHoverCard.style.left = `${Math.max(8, Math.min(window.innerWidth - cardBounds.width - 8, bounds.right + 10))}px`;
-  projectHoverCard.style.top = `${Math.max(52, Math.min(window.innerHeight - cardBounds.height - 8, bounds.top))}px`;
-}
-
-function cancelProjectHoverHide(): void { if (projectHoverHideTimer) clearTimeout(projectHoverHideTimer); projectHoverHideTimer = undefined; }
-function scheduleProjectHoverHide(): void { cancelProjectHoverHide(); projectHoverHideTimer = setTimeout(hideProjectHover, 120); }
-function hideProjectHover(): void { cancelProjectHoverHide(); projectHoverCard.hidden = true; hoveredProjectId = undefined; }
-
 function setContextPanel(open: boolean): void {
   contextPanel.hidden = !open;
   inspectorResizer.hidden = !open;
@@ -2483,18 +2356,7 @@ function setFormBusy(formElement: HTMLFormElement, busy: boolean): void { for (c
 function showToast(text: string): void { if (toastTimer) clearTimeout(toastTimer); toast.textContent = text; toast.hidden = false; toastTimer = setTimeout(() => { toast.hidden = true; }, 3_200); }
 function panelEmpty(text: string): HTMLElement { return textBlock("panel-empty", text); }
 function loadingMessage(text: string): HTMLElement { return textBlock("panel-empty", text); }
-function treeItem(label: string, className: string, icon: SVGElement | undefined, action: () => void, menu: (toggle: HTMLButtonElement, event: MouseEvent) => void, quickAction?: () => void): HTMLElement {
-  const item = document.createElement("div"); item.className = "tree-item";
-  const value = document.createElement("button"); value.type = "button"; value.className = className; const text = document.createElement("span"); text.textContent = label; if (icon) value.append(icon); value.append(text); value.addEventListener("click", action);
-  const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "tree-menu-toggle"; toggle.title = `${label} actions`; toggle.setAttribute("aria-label", `${label} actions`); toggle.setAttribute("aria-expanded", "false"); toggle.append(svg('<circle cx="5" cy="10" r="1"></circle><circle cx="10" cy="10" r="1"></circle><circle cx="15" cy="10" r="1"></circle>'));
-  toggle.addEventListener("click", (event) => menu(toggle, event)); value.addEventListener("contextmenu", (event) => menu(toggle, event)); item.append(value);
-  if (quickAction) { const quick = document.createElement("button"); quick.type = "button"; quick.className = "tree-quick-action"; quick.title = `New chat in ${label}`; quick.setAttribute("aria-label", `New chat in ${label}`); quick.append(svg('<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"></path>', "0 0 24 24")); quick.addEventListener("click", (event) => { event.stopPropagation(); quickAction(); }); item.append(quick); }
-  item.append(toggle); return item;
-}
-
-function storedSet(key: string): Set<string> { try { const value = JSON.parse(localStorage.getItem(key) ?? "[]"); return new Set(Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []); } catch { return new Set(); } }
 function storedAccessMode(): AccessMode { const value = localStorage.getItem("fitz-access-mode"); return value === "ask" || value === "read-only" ? value : "full"; }
-function saveSet(key: string, values: Set<string>): void { localStorage.setItem(key, JSON.stringify([...values])); }
 
 async function api(path: string, method = "GET", body?: unknown): Promise<Json> {
   const response = await window.fitz.request({ path, method, ...(body !== undefined ? { body } : {}) });
@@ -2504,7 +2366,6 @@ async function api(path: string, method = "GET", body?: unknown): Promise<Json> 
   return parsed;
 }
 
-function folderIcon(): SVGElement { return svg('<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>', "0 0 24 24"); }
 function sparkIcon(): SVGElement { return svg('<path d="M10 2.8c.5 3.7 2.4 5.8 6.2 7.2-3.8 1.4-5.7 3.5-6.2 7.2-.5-3.7-2.4-5.8-6.2-7.2C7.6 8.6 9.5 6.5 10 2.8Z"></path>'); }
 function terminalCloudIcon(): SVGElement { return svg('<path d="M6.2 16.4c-2 0-3.7-1.6-3.7-3.6 0-1.2.6-2.3 1.5-3-.4-1.8.5-3.6 2.1-4.4.7-1.7 2.4-2.8 4.2-2.8 1.5 0 2.9.7 3.8 1.9 1.8-.1 3.3 1.3 3.4 3.1 1 .7 1.7 1.9 1.7 3.2 0 1.5-.8 2.8-2.1 3.5-.5 1.8-2.1 3-4 3-.8 0-1.6-.2-2.2-.7-.7.6-1.6.9-2.5.9-.8 0-1.6-.3-2.2-.7z"></path><path d="m6.8 8 1.8 2-1.8 2M10.7 12.3h2.7"></path>'); }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
