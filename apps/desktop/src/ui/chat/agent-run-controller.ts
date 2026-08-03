@@ -11,6 +11,7 @@ export interface AgentRunActivity {
   resolveApproval(row: HTMLElement, decision: "approved" | "denied"): void;
   appendTool(toolName: string, input: unknown, toolCallId: string, running: boolean): HTMLElement;
   completeTool(row: HTMLElement, toolName: string, input: unknown, result: unknown, isError: boolean): void;
+  finishWork(completedAt?: string): void;
 }
 
 export interface AgentRunRequest {
@@ -94,6 +95,7 @@ export class AgentRunController {
       activity.remove();
       this.#options.appendSystem(this.#options.errorMessage(error));
       this.#options.setStatus("Failed", "error");
+      this.#options.activity.finishWork();
     } finally {
       this.#runId = undefined;
       this.#starting = false;
@@ -202,6 +204,7 @@ export class AgentRunController {
           activity.remove();
           if (!success && event.data?.error && event.type !== "run.cancelled") this.#options.appendSystem(String(event.data.error));
           if (success && !assistant) this.#options.appendSystem("The model completed without returning a response.");
+          this.#options.activity.finishWork();
         }
       }
       if (!done && !queued && !assistant && Date.now() >= nextEnginePoll) {

@@ -2154,7 +2154,7 @@ function showConnectionFailure(detail: string): void {
 
 function appendMessage(role: string, text: string, createdAt?: string): HTMLElement {
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
-  if (role !== "commentary") activityTimeline.finishWork(createdAt);
+  if (role !== "commentary" && !agentRuns.active) activityTimeline.finishWork(createdAt);
   const article = document.createElement("article"); article.className = `message ${role}`;
   const content = document.createElement("div"); content.className = "message-body"; if (role === "assistant" || role === "commentary") setMarkdown(content, text); else content.textContent = text; article.append(content); if (["user", "assistant", "commentary"].includes(role)) messageActions.attach(article, content, role as ActionableMessageRole, text, createdAt); messages.append(article); messages.scrollTop = messages.scrollHeight; return content;
 }

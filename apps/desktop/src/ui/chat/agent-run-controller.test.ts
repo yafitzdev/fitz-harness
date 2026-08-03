@@ -16,6 +16,7 @@ function activityMock() {
     resolveApproval: vi.fn(),
     appendTool: vi.fn(() => tool),
     completeTool: vi.fn(),
+    finishWork: vi.fn(),
   };
   return { timeline, activity, tool, approval };
 }
@@ -79,6 +80,7 @@ describe("AgentRunController", () => {
     expect(calls.addTokenEstimate).toHaveBeenCalledWith("Hello");
     expect(calls.setStatus).toHaveBeenCalledWith("Ready", "idle");
     expect(calls.setEngineState).toHaveBeenLastCalledWith("READY");
+    expect(activity.timeline.finishWork).toHaveBeenCalledOnce();
     expect(calls.refreshControls).toHaveBeenCalledTimes(2);
   });
 
@@ -103,6 +105,7 @@ describe("AgentRunController", () => {
     expect(activity.timeline.appendApproval).toHaveBeenCalledWith(expect.objectContaining({ id: "approval-1", status: "pending" }));
     expect(activity.timeline.resolveApproval).toHaveBeenCalledWith(activity.approval, "approved");
     expect(calls.setStatus).toHaveBeenCalledWith("Waiting for approval", "active");
+    expect(activity.timeline.finishWork).toHaveBeenCalledOnce();
   });
 
   it("warms once after the first character and can be reset for another model", async () => {

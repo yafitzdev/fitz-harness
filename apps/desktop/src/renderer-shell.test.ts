@@ -481,6 +481,8 @@ describe("desktop renderer shell", () => {
     expect(agentRunController).not.toContain('this.#options.activity.setRun(activity, "Loading model"');
     expect(activityTimeline).toContain("this.#formatElapsed(Date.now() - startedAt)");
     expect(agentRunController).toContain('this.#options.api("/api/v1/management/status")');
+    expect(renderer).toContain('if (role !== "commentary" && !agentRuns.active) activityTimeline.finishWork(createdAt)');
+    expect(agentRunController).toContain("this.#options.activity.finishWork()");
   });
 
   it("shows and controls the serialized native-agent request queue", () => {
