@@ -13,6 +13,7 @@ const contextMenu = readFileSync(new URL("./ui/primitives/context-menu.ts", impo
 const messageActions = readFileSync(new URL("./ui/chat/message-actions.ts", import.meta.url), "utf8");
 const activityTimeline = readFileSync(new URL("./ui/chat/activity-timeline.ts", import.meta.url), "utf8");
 const agentRunController = readFileSync(new URL("./ui/chat/agent-run-controller.ts", import.meta.url), "utf8");
+const composerControls = readFileSync(new URL("./ui/chat/composer-controls.ts", import.meta.url), "utf8");
 const resourceInspector = readFileSync(new URL("./ui/inspector/resource-inspector.ts", import.meta.url), "utf8");
 const projectSidebar = readFileSync(new URL("./ui/sidebar/project-sidebar.ts", import.meta.url), "utf8");
 const styles = [
@@ -20,6 +21,7 @@ const styles = [
   readFileSync(new URL("./ui/theme/tokens.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/primitives/scroll-surface.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/message-actions.css", import.meta.url), "utf8"),
+  readFileSync(new URL("./ui/chat/composer-controls.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/sidebar/project-sidebar.css", import.meta.url), "utf8"),
 ].join("\n");
 const main = readFileSync(new URL("./main.ts", import.meta.url), "utf8");
@@ -143,7 +145,7 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('consumerFixedRouteId');
     expect(renderer).toContain('const LOCAL_CONNECTION_ID = "hosted--local"');
     expect(renderer).toContain('connectionId: selectedConnectionId');
-    expect(renderer).toContain('routeId: model.value as FixedRouteId');
+    expect(renderer).toContain('routeId: composerControls.routeId as FixedRouteId');
     expect(renderer).not.toContain('candidate.routeId === card.id');
     expect(renderer).toContain('testRecipe({ id: consumerModel.recipeId');
     expect(renderer).toContain("function connectionViews(): ConnectionView[]");
@@ -232,12 +234,12 @@ describe("desktop renderer shell", () => {
     expect(resizablePane).toContain('event.key !== "ArrowLeft" && event.key !== "ArrowRight"');
     expect(projectSidebar).toContain('this.#openMenu("project"');
     expect(projectSidebar).toContain('this.#openMenu("task"');
-    expect(renderer).toContain('openSettingsSubmenu(row.dataset.setting');
+    expect(composerControls).toContain('this.openSettingsSubmenu(row.dataset.setting as ComposerSetting, row)');
     expect(renderer).toContain('api("/api/v1/management/status")');
     expect(renderer).toContain('/api/v1/management/recipes/${encodeURIComponent(id)}');
     expect(renderer).toContain("sessionTokenEstimate += estimateTokens");
     expect(renderer).toContain('api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" })');
-    expect(renderer).toContain("max_tokens: Number(effort.value)");
+    expect(renderer).toContain("max_tokens: composerControls.maxTokens");
     expect(renderer).toContain("if (agentRuns.active) void agentRuns.cancel()");
     expect(agentRunController).toContain('this.#options.api(`/api/v1/agent/runs/${this.#runId}`, "DELETE")');
   });
@@ -392,10 +394,10 @@ describe("desktop renderer shell", () => {
 
   it("expands Advanced model settings and sends the chosen temperature and output limit", () => {
     for (const id of ["advanced-settings-panel", "temperature", "temperature-value"]) expect(html).toContain(`id="${id}"`);
-    expect(renderer).toContain("toggleAdvancedSettings()");
-    expect(renderer).toContain('localStorage.setItem("fitz-temperature", temperature.value)');
-    expect(renderer).toContain("temperature: Number(temperature.value)");
-    expect(renderer).toContain("max_tokens: Number(effort.value)");
+    expect(composerControls).toContain("this.toggleAdvancedSettings()");
+    expect(composerControls).toContain('this.storage.setItem("fitz-temperature", this.elements.temperature.value)');
+    expect(renderer).toContain("temperature: composerControls.temperature");
+    expect(renderer).toContain("max_tokens: composerControls.maxTokens");
     expect(styles).toContain('.advanced-row[aria-expanded="true"] svg');
     expect(styles).toContain(".advanced-settings-panel");
     expect(styles).toContain(".model-menu { right: 0; bottom: 34px; width: 286px;");
@@ -407,7 +409,7 @@ describe("desktop renderer shell", () => {
   });
 
   it("silently warms the selected route after the first composer character", () => {
-    expect(renderer).toContain("agentRuns.scheduleWarmup(prompt.value, model.value, selectedConnectionId)");
+    expect(renderer).toContain("agentRuns.scheduleWarmup(prompt.value, composerControls.routeId, selectedConnectionId)");
     expect(agentRunController).toContain('this.#options.api("/api/v1/inference/warm", "POST", { model, connectionId })');
     expect(agentRunController).toContain("if (this.#composerHadText || this.active || !model) return");
     expect(agentRunController).toContain("}, 120)");

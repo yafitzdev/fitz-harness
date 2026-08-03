@@ -3,19 +3,19 @@ import { appendMarkdown, setMarkdown } from "./markdown.js";
 import { MessageActions, type ActionableMessageRole } from "./ui/chat/message-actions.js";
 import { ActivityTimeline } from "./ui/chat/activity-timeline.js";
 import { AgentRunController } from "./ui/chat/agent-run-controller.js";
+import { ComposerControls } from "./ui/chat/composer-controls.js";
 import { ResourceInspector } from "./ui/inspector/resource-inspector.js";
 import { ConversationLayout } from "./ui/layout/conversation-layout.js";
 import { WorkspacePageController } from "./ui/layout/workspace-pages.js";
 import { CustomSelectController } from "./ui/primitives/custom-select.js";
 import { ContextMenu } from "./ui/primitives/context-menu.js";
 import { requiredElement as element, requiredQuery as query, svgIcon as svg, textBlock } from "./ui/primitives/dom.js";
-import { positionNestedPopover, togglePopover as toggleManagedPopover } from "./ui/primitives/popover.js";
+import { togglePopover as toggleManagedPopover } from "./ui/primitives/popover.js";
 import { ResizablePane } from "./ui/primitives/resizable-pane.js";
 import { ProjectSidebarController, type ProjectSidebarProject, type ProjectSidebarSession } from "./ui/sidebar/project-sidebar.js";
 
 type Json = Record<string, any>;
 type FixedRouteId = "fast" | "default" | "smart";
-type AccessMode = "full" | "ask" | "read-only";
 type ConnectionModelView = ConsumerConnectionSummary["models"][number] & { displayName?: string; modelId?: string; contextTokens?: number };
 type HostedConnectionView = Omit<ConsumerConnectionSummary, "models"> & { hosted: true; availableModels: ConnectionModelView[] };
 type SavedConnectionView = Omit<ConsumerConnectionSummary, "models"> & { hosted: false; availableModels: ConnectionModelView[]; source: ConsumerConnectionSummary };
@@ -65,7 +65,6 @@ let currentBranch = "main";
 let availableBranches: string[] = [];
 let removeProjectTarget: string | undefined;
 let editingRecipe: Json | undefined;
-let accessMode: AccessMode = storedAccessMode();
 let renameTarget: { kind: "project" | "task"; id: string } | undefined;
 let navigationIndex = -1;
 let replayingNavigation = false;
@@ -77,28 +76,6 @@ const workspaceHeader = query(".workspace-header");
 const composerDock = query(".composer-dock");
 const messages = element("messages");
 const scrollToBottom = element("scroll-to-bottom") as HTMLButtonElement;
-const model = element("model") as HTMLSelectElement;
-const effort = element("effort") as HTMLSelectElement;
-const modelToggle = element("model-toggle") as HTMLButtonElement;
-const modelMenu = element("model-menu");
-const modelSummary = element("model-summary");
-const modelValue = element("model-value");
-const effortValue = element("effort-value");
-const settingsSubmenu = element("settings-submenu");
-const advancedSettings = element("advanced-settings") as HTMLButtonElement;
-const advancedSettingsPanel = element("advanced-settings-panel");
-const temperature = element("temperature") as HTMLInputElement;
-const temperatureValue = element("temperature-value");
-const contextMeter = element("context-meter");
-const contextUsagePopover = element("context-usage-popover");
-const contextPercent = element("context-percent");
-const contextTokens = element("context-tokens");
-const contextCompactButton = element("context-compact") as HTMLButtonElement;
-const contextCompactStatus = element("context-compact-status");
-const accessModeToggle = element("access-mode-toggle") as HTMLButtonElement;
-const accessModeMenu = element("access-mode-menu");
-const accessModeLabel = element("access-mode-label");
-const accessModeIcon = element("access-mode-icon") as unknown as SVGElement;
 const form = element("composer") as HTMLFormElement;
 const workspace = query(".workspace");
 const prompt = element("prompt") as HTMLTextAreaElement;
@@ -346,6 +323,36 @@ const agentRuns = new AgentRunController({
   errorMessage,
   terminalReplayError: (error) => error instanceof HttpError,
 });
+const composerControls = new ComposerControls({
+  model: element("model") as HTMLSelectElement,
+  effort: element("effort") as HTMLSelectElement,
+  modelToggle: element("model-toggle") as HTMLButtonElement,
+  modelMenu: element("model-menu"),
+  modelSummary: element("model-summary"),
+  modelValue: element("model-value"),
+  effortValue: element("effort-value"),
+  settingsSubmenu: element("settings-submenu"),
+  settingRows: [...document.querySelectorAll<HTMLButtonElement>("[data-setting]")],
+  advancedSettings: element("advanced-settings") as HTMLButtonElement,
+  advancedSettingsPanel: element("advanced-settings-panel"),
+  temperature: element("temperature") as HTMLInputElement,
+  temperatureValue: element("temperature-value"),
+  contextMeter: element("context-meter") as HTMLButtonElement,
+  contextUsagePopover: element("context-usage-popover"),
+  contextPercent: element("context-percent"),
+  contextTokens: element("context-tokens"),
+  contextCompactButton: element("context-compact") as HTMLButtonElement,
+  contextCompactStatus: element("context-compact-status"),
+  accessModeToggle: element("access-mode-toggle") as HTMLButtonElement,
+  accessModeMenu: element("access-mode-menu"),
+  accessModeLabel: element("access-mode-label"),
+  accessModeIcon: element("access-mode-icon") as unknown as SVGElement,
+  accessModeChoices: [...document.querySelectorAll<HTMLButtonElement>("[data-access-mode]")],
+}, {
+  closeAllPopovers: closePopovers,
+  onRouteChange: () => handleRouteChange(),
+  onCompact: compactCurrentSession,
+});
 const messageActions = new MessageActions({
   canEdit: () => !agentRuns.active,
   onEditBlocked: () => showToast("Wait for the current response before editing a message."),
@@ -364,7 +371,6 @@ const resourceInspector = new ResourceInspector({
   getSearchRoots: () => activityTimeline.searchRoots(),
   showToast,
 });
-renderAccessMode();
 void initialize();
 
 form.addEventListener("submit", (event) => {
@@ -373,7 +379,7 @@ form.addEventListener("submit", (event) => {
   else void sendPrompt();
 });
 window.fitz.onNavigationCommand((command) => void navigateHistory(command === "back" ? -1 : 1));
-prompt.addEventListener("input", () => { resizePrompt(); updateContextMeter(); refreshComposerState(); agentRuns.scheduleWarmup(prompt.value, model.value, selectedConnectionId); });
+prompt.addEventListener("input", () => { resizePrompt(); updateContextMeter(); refreshComposerState(); agentRuns.scheduleWarmup(prompt.value, composerControls.routeId, selectedConnectionId); });
 prompt.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
@@ -424,15 +430,6 @@ attachButton.addEventListener("click", chooseArtifact);
 addArtifactButton.addEventListener("click", chooseArtifact);
 artifactFile.addEventListener("change", () => void uploadArtifact());
 chooseProjectFolder.addEventListener("click", () => void selectProjectFolder());
-model.addEventListener("change", () => { updateModelControls(); agentRuns.resetWarmup(); agentRuns.scheduleWarmup(prompt.value, model.value, selectedConnectionId); if (currentSession) void updateSessionBinding(); });
-effort.addEventListener("change", updateModelControls);
-modelToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(modelMenu, modelToggle); });
-contextMeter.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(contextUsagePopover, contextMeter as HTMLButtonElement); });
-contextUsagePopover.addEventListener("click", (event) => event.stopPropagation());
-contextCompactButton.addEventListener("click", () => void compactCurrentSession());
-accessModeToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(accessModeMenu, accessModeToggle); });
-accessModeMenu.addEventListener("click", (event) => event.stopPropagation());
-for (const choice of document.querySelectorAll<HTMLButtonElement>("[data-access-mode]")) choice.addEventListener("click", () => setAccessMode(choice.dataset.accessMode as AccessMode));
 newChatProjectControl.addEventListener("click", (event) => { event.stopPropagation(); newChatProjectDetached = true; newChatProjectControl.hidden = true; showNewChatLanding(); });
 newChatEnvironmentControl.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(newChatEnvironmentMenu, newChatEnvironmentControl); });
 newChatBranchControl.addEventListener("click", (event) => { event.stopPropagation(); void openBranchMenu(); });
@@ -445,15 +442,8 @@ element("create-branch-submit").addEventListener("click", () => void createAndCh
 newBranchName.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); void createAndCheckoutBranch(); } });
 element("create-worktree-submit").addEventListener("click", () => void createWorktree());
 newWorktreeBranch.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); void createWorktree(); } });
-for (const row of document.querySelectorAll<HTMLButtonElement>("[data-setting]")) row.addEventListener("click", (event) => { event.stopPropagation(); openSettingsSubmenu(row.dataset.setting as "model" | "effort", row); });
-advancedSettings.addEventListener("click", (event) => { event.stopPropagation(); toggleAdvancedSettings(); });
-temperature.addEventListener("input", updateTemperature);
-const storedTemperature = Number(localStorage.getItem("fitz-temperature") ?? "0.4");
-temperature.value = String(Number.isFinite(storedTemperature) && storedTemperature >= 0 && storedTemperature <= 2 ? storedTemperature : 0.4);
-updateTemperature();
 updateConsumerAuthField();
 taskMenuToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(taskMenu, taskMenuToggle); });
-modelMenu.addEventListener("click", (event) => event.stopPropagation());
 taskMenu.addEventListener("click", (event) => event.stopPropagation());
 sidebarContextMenu.addEventListener("click", (event) => event.stopPropagation());
 element("rename-task").addEventListener("click", openRenameDialog);
@@ -509,7 +499,7 @@ async function initialize(): Promise<void> {
     applyNavigation();
     await loadModels();
     engineState.textContent = health.engine?.state ?? "UNLOADED";
-    routeState.textContent = model.selectedOptions[0]?.textContent ?? "—";
+    routeState.textContent = composerControls.routeLabel;
     setConnection(configuredHostOrigin.replace(/^https?:\/\//, ""), "active");
     setStatus(health.engine?.state ?? "Ready", "idle");
     showConversationWorkspace();
@@ -528,17 +518,11 @@ async function initialize(): Promise<void> {
 }
 
 async function loadModels(preferredRoute?: string): Promise<void> {
-  const response = await api("/v1/models"); const previous = preferredRoute ?? model.value;
-  model.replaceChildren();
+  const response = await api("/v1/models");
   const priority = new Map([["default", 0], ["fast", 1], ["smart", 2]]);
   const cards = [...(response.data ?? [])].filter((card: Json) => priority.has(String(card.id))).sort((left: Json, right: Json) => (priority.get(left.id) ?? 3) - (priority.get(right.id) ?? 3));
-  for (const card of cards) {
-    const option = new Option(card.display_name ?? card.id, card.id);
-    option.dataset.group = "Routes";
-    model.add(option);
-  }
-  if (previous && [...model.options].some((option) => option.value === previous)) model.value = previous;
-  updateModelControls();
+  composerControls.setRoutes(cards.map((card: Json) => ({ id: card.id, label: card.display_name ?? card.id, group: "Routes" })), preferredRoute);
+  syncComposerContext();
 }
 
 async function loadProjects(preferredProject?: string, preferredSession?: string): Promise<void> {
@@ -583,7 +567,7 @@ async function selectProject(id: string): Promise<void> {
 
 async function selectSession(id: string, rerender = true, projectId?: string): Promise<void> {
   projectSidebar.hideChatHover();
-  contextCompactStatus.hidden = true; contextCompactStatus.textContent = "";
+  composerControls.resetContextStatus();
   showConversationWorkspace();
   newChatMode = false;
   workspace.classList.remove("new-chat-open");
@@ -593,8 +577,8 @@ async function selectSession(id: string, rerender = true, projectId?: string): P
   currentSession = id;
   const selectedSession = currentSessionRecord();
   selectedConnectionId = selectedSession?.connectionId ?? LOCAL_CONNECTION_ID;
-  if (selectedSession?.routeId && [...model.options].some((option) => option.value === selectedSession.routeId)) model.value = selectedSession.routeId;
-  updateModelControls();
+  if (selectedSession?.routeId) composerControls.setRoute(selectedSession.routeId);
+  syncComposerContext();
   projectSidebar.markSessionRead(id);
   if (rerender) renderProjectTree();
   updateTitles();
@@ -651,7 +635,7 @@ function openNewChat(): void {
   newChatProjectDetached = false;
   currentSession = undefined;
   sessionTokenEstimate = 0;
-  contextCompactStatus.hidden = true; contextCompactStatus.textContent = "";
+  composerControls.resetContextStatus();
   projectSidebar.ensureExpanded(currentProject);
   workspace.classList.add("new-chat-open");
   newChatProject.textContent = projectRecords.find((project) => project.id === currentProject)?.name ?? "Project";
@@ -691,7 +675,7 @@ function showNewChatLanding(): void {
   const grid = document.createElement("div"); grid.className = "starter-grid";
   for (const [label, iconPath] of suggestions) {
     const button = document.createElement("button"); button.type = "button"; button.className = "starter-card"; button.append(svg(iconPath!), Object.assign(document.createElement("span"), { textContent: label }));
-    button.addEventListener("click", () => { prompt.value = label!; resizePrompt(); updateContextMeter(); refreshComposerState(); agentRuns.scheduleWarmup(prompt.value, model.value, selectedConnectionId); prompt.focus(); });
+    button.addEventListener("click", () => { prompt.value = label!; resizePrompt(); updateContextMeter(); refreshComposerState(); agentRuns.scheduleWarmup(prompt.value, composerControls.routeId, selectedConnectionId); prompt.focus(); });
     grid.append(button);
   }
   landing.append(mark, heading, grid); messages.append(landing); updateTitles();
@@ -1590,8 +1574,8 @@ async function loadManagementConfiguration(renderPage: boolean): Promise<void> {
 function syncContextLimit(): void {
   const session = currentSessionRecord();
   const connectionId = session?.connectionId ?? selectedConnectionId;
-  const executionRouteId = connectionId === LOCAL_CONNECTION_ID ? model.value : consumerFixedRouteId(connectionId, model.value as FixedRouteId);
-  const route = managementConfiguration?.routes?.find((item: Json) => item.id === executionRouteId) ?? managementConfiguration?.routes?.find((item: Json) => item.id === model.value);
+  const executionRouteId = connectionId === LOCAL_CONNECTION_ID ? composerControls.routeId : consumerFixedRouteId(connectionId, composerControls.routeId as FixedRouteId);
+  const route = managementConfiguration?.routes?.find((item: Json) => item.id === executionRouteId) ?? managementConfiguration?.routes?.find((item: Json) => item.id === composerControls.routeId);
   const recipe = managementConfiguration?.recipes?.find((item: Json) => item.id === route?.recipeId);
   if (Number.isFinite(recipe?.contextTokens) && recipe.contextTokens > 0) contextTokenLimit = recipe.contextTokens;
 }
@@ -1866,7 +1850,7 @@ async function createAndCheckoutBranch(): Promise<void> {
 async function chooseEnvironment(choice: string): Promise<void> {
   if (choice === "local") { closePopovers(); return; }
   if (choice === "worktree") { createWorktreeForm.hidden = false; newWorktreeBranch.focus(); return; }
-  if (choice === "usage") { closePopovers(); contextUsagePopover.hidden = false; contextMeter.setAttribute("aria-expanded", "true"); }
+  if (choice === "usage") composerControls.openContextUsage();
 }
 
 async function createWorktree(): Promise<void> {
@@ -1889,59 +1873,31 @@ function renderConnectionChoices(): void {
     const button = document.createElement("button"); button.type = "button"; button.dataset.connectionId = connection.id;
     button.append(svg('<circle cx="10" cy="10" r="6"></circle><path d="M7 10h6M10 7v6"></path>'), Object.assign(document.createElement("span"), { textContent: connection.displayName }));
     if (connection.id === selectedConnectionId) button.append(Object.assign(document.createElement("b"), { textContent: "✓" }));
-    button.addEventListener("click", () => { selectedConnectionId = connection.id; agentRuns.resetWarmup(); agentRuns.scheduleWarmup(prompt.value, model.value, selectedConnectionId); renderConnectionChoices(); closePopovers(); });
+    button.addEventListener("click", () => { selectedConnectionId = connection.id; agentRuns.resetWarmup(); agentRuns.scheduleWarmup(prompt.value, composerControls.routeId, selectedConnectionId); renderConnectionChoices(); closePopovers(); });
     newChatConnectionList.append(button);
   }
 }
 
 async function updateSessionBinding(): Promise<void> {
   const session = currentSessionRecord();
-  if (!session || !model.value) return;
+  if (!session || !composerControls.routeId) return;
   try {
-    const response = await api(`/api/v1/sessions/${session.id}`, "PATCH", { connectionId: session.connectionId ?? LOCAL_CONNECTION_ID, routeId: model.value });
+    const response = await api(`/api/v1/sessions/${session.id}`, "PATCH", { connectionId: session.connectionId ?? LOCAL_CONNECTION_ID, routeId: composerControls.routeId });
     Object.assign(session, response.data);
   } catch (error) { showToast(errorMessage(error)); }
 }
 
-function updateModelControls(): void {
-  routeState.textContent = model.selectedOptions[0]?.textContent ?? "—";
-  const effortLabel = effort.selectedOptions[0]?.textContent ?? "Medium";
-  modelSummary.textContent = `${model.selectedOptions[0]?.textContent ?? "Model"} · ${effortLabel}`;
-  modelValue.textContent = model.selectedOptions[0]?.textContent ?? "Model";
-  effortValue.textContent = effortLabel;
+function handleRouteChange(): void {
+  routeState.textContent = composerControls.routeLabel;
+  agentRuns.resetWarmup();
+  agentRuns.scheduleWarmup(prompt.value, composerControls.routeId, selectedConnectionId);
+  if (currentSession) void updateSessionBinding();
+  syncComposerContext();
+}
+
+function syncComposerContext(): void {
   syncContextLimit();
   updateContextMeter();
-}
-
-function toggleAdvancedSettings(): void {
-  const opening = advancedSettingsPanel.hidden;
-  settingsSubmenu.hidden = true;
-  for (const item of document.querySelectorAll(".setting-row")) item.classList.remove("active");
-  advancedSettingsPanel.hidden = !opening;
-  advancedSettings.setAttribute("aria-expanded", String(opening));
-}
-
-function updateTemperature(): void {
-  temperatureValue.textContent = Number(temperature.value).toFixed(1);
-  localStorage.setItem("fitz-temperature", temperature.value);
-}
-
-function openSettingsSubmenu(kind: "model" | "effort", row: HTMLButtonElement): void {
-  const select = kind === "model" ? model : effort;
-  advancedSettingsPanel.hidden = true;
-  advancedSettings.setAttribute("aria-expanded", "false");
-  settingsSubmenu.replaceChildren();
-  let currentGroup = "";
-  for (const option of [...select.options]) {
-    const group = kind === "model" ? option.dataset.group ?? "" : "";
-    if (group && group !== currentGroup) { const heading = document.createElement("small"); heading.className = "settings-submenu-heading"; heading.textContent = group; settingsSubmenu.append(heading); currentGroup = group; }
-    const button = document.createElement("button"); button.type = "button"; button.classList.toggle("selected", option.value === select.value);
-    const label = document.createElement("span"); label.textContent = option.textContent; button.append(label);
-    button.addEventListener("click", (event) => { event.stopPropagation(); select.value = option.value; updateModelControls(); closePopovers(); }); settingsSubmenu.append(button);
-  }
-  for (const item of document.querySelectorAll(".setting-row")) item.classList.toggle("active", item === row);
-  settingsSubmenu.hidden = false;
-  positionNestedPopover(settingsSubmenu, row);
 }
 
 function openAppMenu(name: string, toggle: HTMLButtonElement, event: MouseEvent): void {
@@ -1996,24 +1952,15 @@ function togglePopover(popover: HTMLElement, toggle: HTMLButtonElement): void {
 function closePopovers(): void {
   customSelects.close();
   appMenuPopover.hidden = true;
-  modelMenu.hidden = true;
-  settingsSubmenu.hidden = true;
-  advancedSettingsPanel.hidden = true;
-  contextUsagePopover.hidden = true;
-  accessModeMenu.hidden = true;
+  composerControls.closePopovers();
   taskMenu.hidden = true;
   sidebarContextMenu.hidden = true;
   newChatEnvironmentMenu.hidden = true;
   newChatBranchMenu.hidden = true;
   projectSidebar.hideOverlays();
-  modelToggle.setAttribute("aria-expanded", "false");
-  advancedSettings.setAttribute("aria-expanded", "false");
-  contextMeter.setAttribute("aria-expanded", "false");
-  accessModeToggle.setAttribute("aria-expanded", "false");
   taskMenuToggle.setAttribute("aria-expanded", "false");
   newChatEnvironmentControl.setAttribute("aria-expanded", "false");
   newChatBranchControl.setAttribute("aria-expanded", "false");
-  for (const row of document.querySelectorAll(".setting-row")) row.classList.remove("active");
   projectSidebar.resetMenuToggles();
   for (const toggle of document.querySelectorAll("[data-app-menu]")) toggle.setAttribute("aria-expanded", "false");
 }
@@ -2024,7 +1971,7 @@ async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLE
   if (!currentSession && newChatMode && currentProject) {
     try {
       const title = content.split(/\r?\n/, 1)[0]!.trim().slice(0, 80) || "New chat";
-      const response = await api(`/api/v1/projects/${currentProject}/sessions`, "POST", { title, connectionId: selectedConnectionId, routeId: model.value as FixedRouteId });
+      const response = await api(`/api/v1/projects/${currentProject}/sessions`, "POST", { title, connectionId: selectedConnectionId, routeId: composerControls.routeId as FixedRouteId });
       const sessions = sessionsByProject.get(currentProject) ?? [];
       sessions.unshift(response.data);
       sessionsByProject.set(currentProject, sessions);
@@ -2036,7 +1983,7 @@ async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLE
     } catch (error) { showToast(errorMessage(error)); return; }
   }
   if (!currentSession) { openNewChat(); return; }
-  if (!model.value) { showToast("No model route is available"); return; }
+  if (!composerControls.routeId) { showToast("No model route is available"); return; }
   prompt.value = "";
   agentRuns.resetWarmup();
   resizePrompt();
@@ -2045,11 +1992,11 @@ async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLE
   sessionTokenEstimate += estimateTokens(content);
   updateContextMeter();
   await agentRuns.start({
-    model: model.value,
-    max_tokens: Number(effort.value),
-    temperature: Number(temperature.value),
+    model: composerControls.routeId,
+    max_tokens: composerControls.maxTokens,
+    temperature: composerControls.temperature,
     sessionId: currentSession,
-    accessMode,
+    accessMode: composerControls.accessMode,
     messages: [{ role: "user", content }],
   });
 }
@@ -2167,30 +2114,12 @@ function appendCommentary(text: string, createdAt?: string): HTMLElement {
   return content;
 }
 
-function setAccessMode(mode: AccessMode): void { accessMode = mode; localStorage.setItem("fitz-access-mode", mode); renderAccessMode(); closePopovers(); }
-
-function renderAccessMode(): void {
-  const values: Record<AccessMode, { label: string; icon: string }> = {
-    full: { label: "Full access", icon: '<path d="M10 2.8 16 5v4.4c0 3.8-2.4 6.3-6 7.8-3.6-1.5-6-4-6-7.8V5z"></path><path d="M10 7v3.2M10 13h.01"></path>' },
-    ask: { label: "Ask first", icon: '<path d="M10 2.8 16 5v4.4c0 3.8-2.4 6.3-6 7.8-3.6-1.5-6-4-6-7.8V5z"></path><path d="M8.4 8.1a1.8 1.8 0 1 1 2.5 1.7c-.8.4-.9.8-.9 1.3M10 13.7h.01"></path>' },
-    "read-only": { label: "Read only", icon: '<rect x="4.2" y="8.5" width="11.6" height="8" rx="2"></rect><path d="M6.8 8.5V6.3a3.2 3.2 0 0 1 6.4 0v2.2"></path>' },
-  };
-  accessModeLabel.textContent = values[accessMode].label; accessModeIcon.innerHTML = values[accessMode].icon; accessModeToggle.dataset.mode = accessMode;
-  for (const choice of accessModeMenu.querySelectorAll<HTMLButtonElement>("[data-access-mode]")) choice.classList.toggle("selected", choice.dataset.accessMode === accessMode);
-}
-
 function refreshComposerState(): void {
-  const ready = Boolean((currentSession || (newChatMode && currentProject)) && model.value);
+  const ready = Boolean((currentSession || (newChatMode && currentProject)) && composerControls.routeId);
   const running = agentRuns.active;
   prompt.disabled = !ready || running;
-  model.disabled = model.options.length === 0 || running;
-  effort.disabled = running;
-  temperature.disabled = running;
-  advancedSettings.disabled = running;
-  modelToggle.disabled = model.options.length === 0 || running;
-  accessModeToggle.disabled = running;
+  composerControls.updateState({ running, hasSession: Boolean(currentSession) });
   attachButton.disabled = !currentSession || running;
-  contextCompactButton.disabled = !currentSession || running;
   addArtifactButton.disabled = !currentSession;
   sendButton.classList.toggle("running", running);
   sendButton.title = running ? "Stop task" : "Send message";
@@ -2218,16 +2147,19 @@ function setContextPanel(open: boolean): void {
 
 function toggleSidebar(): void { shell.classList.toggle("sidebar-collapsed"); closePopovers(); }
 function resizePrompt(): void { prompt.style.height = "auto"; prompt.style.height = `${Math.min(prompt.scrollHeight, 180)}px`; }
-function updateContextMeter(): void { const usedTokens = sessionTokenEstimate + estimateTokens(prompt.value); const used = Math.min(100, (usedTokens / contextTokenLimit) * 100); contextMeter.style.setProperty("--context-used", `${used}%`); contextPercent.textContent = `${Math.round(used)}% full`; contextTokens.textContent = `≈${formatTokenCount(usedTokens)} / ${formatTokenCount(contextTokenLimit)} tokens used`; contextMeter.setAttribute("aria-label", `Context window ${Math.round(used)}% full, approximately ${formatTokenCount(usedTokens)} of ${formatTokenCount(contextTokenLimit)} tokens used`); }
+function updateContextMeter(): void { composerControls.updateContext(sessionTokenEstimate + estimateTokens(prompt.value), contextTokenLimit); }
 
 async function compactCurrentSession(): Promise<void> {
   if (!currentSession || agentRuns.active) return;
-  contextCompactButton.disabled = true; contextCompactStatus.hidden = false; contextCompactStatus.textContent = "Compacting…";
+  composerControls.setContextStatus("Compacting…", true);
   try {
-    const response = await api(`/api/v1/sessions/${currentSession}/compact`, "POST", { model: model.value || "default" });
-    sessionTokenEstimate = Number(response.data?.estimatedContextTokens ?? sessionTokenEstimate); updateContextMeter(); activityTimeline.appendContext("Context compacted"); contextCompactStatus.textContent = `Reduced ${formatTokenCount(Number(response.data?.estimatedInputTokens ?? 0))} to ${formatTokenCount(sessionTokenEstimate)} tokens`;
-  } catch (error) { contextCompactStatus.textContent = errorMessage(error); }
-  finally { contextCompactButton.disabled = false; }
+    const response = await api(`/api/v1/sessions/${currentSession}/compact`, "POST", { model: composerControls.routeId || "default" });
+    sessionTokenEstimate = Number(response.data?.estimatedContextTokens ?? sessionTokenEstimate);
+    updateContextMeter();
+    activityTimeline.appendContext("Context compacted");
+    composerControls.setContextStatus(`Reduced ${formatTokenCount(Number(response.data?.estimatedInputTokens ?? 0))} to ${formatTokenCount(sessionTokenEstimate)} tokens`);
+  } catch (error) { composerControls.setContextStatus(errorMessage(error)); }
+  finally { refreshComposerState(); }
 }
 
 function setStatus(text: string, state: string): void { status.textContent = text; status.dataset.state = state; }
@@ -2236,8 +2168,6 @@ function setFormBusy(formElement: HTMLFormElement, busy: boolean): void { for (c
 function showToast(text: string): void { if (toastTimer) clearTimeout(toastTimer); toast.textContent = text; toast.hidden = false; toastTimer = setTimeout(() => { toast.hidden = true; }, 3_200); }
 function panelEmpty(text: string): HTMLElement { return textBlock("panel-empty", text); }
 function loadingMessage(text: string): HTMLElement { return textBlock("panel-empty", text); }
-function storedAccessMode(): AccessMode { const value = localStorage.getItem("fitz-access-mode"); return value === "ask" || value === "read-only" ? value : "full"; }
-
 async function api(path: string, method = "GET", body?: unknown): Promise<Json> {
   const response = await window.fitz.request({ path, method, ...(body !== undefined ? { body } : {}) });
   let parsed: Json;

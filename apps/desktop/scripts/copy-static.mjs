@@ -13,5 +13,6 @@ cpSync(new URL("../src/renderer/styles.css", import.meta.url), new URL("../dist/
 cpSync(new URL("../src/ui/theme/tokens.css", import.meta.url), new URL("../dist/ui/theme/tokens.css", import.meta.url));
 cpSync(new URL("../src/ui/primitives/scroll-surface.css", import.meta.url), new URL("../dist/ui/primitives/scroll-surface.css", import.meta.url));
 cpSync(new URL("../src/ui/chat/message-actions.css", import.meta.url), new URL("../dist/ui/chat/message-actions.css", import.meta.url));
+cpSync(new URL("../src/ui/chat/composer-controls.css", import.meta.url), new URL("../dist/ui/chat/composer-controls.css", import.meta.url));
 cpSync(new URL("../src/ui/sidebar/project-sidebar.css", import.meta.url), new URL("../dist/ui/sidebar/project-sidebar.css", import.meta.url));
 cpSync(new URL("../src/bootstrap.cjs", import.meta.url), new URL("../dist/bootstrap.cjs", import.meta.url));
