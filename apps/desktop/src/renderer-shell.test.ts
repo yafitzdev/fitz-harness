@@ -23,6 +23,7 @@ const styles = [
   readFileSync(new URL("./ui/theme/tokens.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/primitives/scroll-surface.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/message-actions.css", import.meta.url), "utf8"),
+  readFileSync(new URL("./ui/chat/activity-timeline.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/composer-controls.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/connections/connection-workspace.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/plugins/plugin-catalog.css", import.meta.url), "utf8"),
@@ -307,6 +308,9 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain('.shell-command::before { content: "$ ";');
     expect(activityTimeline).toContain('label.classList.add("file-target")');
     expect(styles).toContain(".agent-activity-label.file-target");
+    expect(styles).toContain(".activity-burst-details { min-width: 0; max-height: 380px; margin: 0 0 4px; padding: 0;");
+    expect(styles).toContain(".agent-activity-summary { width: 100%; min-width: 0; min-height: 26px;");
+    expect(styles).toContain(".work-summary-details { padding: 10px 0 0; }");
   });
 
   it("collapses completed Pi activity behind a durable work summary", () => {
