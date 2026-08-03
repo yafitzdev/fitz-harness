@@ -1,6 +1,24 @@
 import { reconnectDelay } from "@fitz/connectivity/reconnect";
 import type { ConsumerConnectionSummary, DesktopUpdateStatus, ResourcePreview } from "./preload.js";
 import { appendMarkdown, setMarkdown } from "./markdown.js";
+import hljs from "highlight.js/lib/core";
+import bash from "highlight.js/lib/languages/bash";
+import cpp from "highlight.js/lib/languages/cpp";
+import csharp from "highlight.js/lib/languages/csharp";
+import css from "highlight.js/lib/languages/css";
+import go from "highlight.js/lib/languages/go";
+import java from "highlight.js/lib/languages/java";
+import javascript from "highlight.js/lib/languages/javascript";
+import json from "highlight.js/lib/languages/json";
+import markdown from "highlight.js/lib/languages/markdown";
+import python from "highlight.js/lib/languages/python";
+import rust from "highlight.js/lib/languages/rust";
+import sql from "highlight.js/lib/languages/sql";
+import typescript from "highlight.js/lib/languages/typescript";
+import xml from "highlight.js/lib/languages/xml";
+import yaml from "highlight.js/lib/languages/yaml";
+
+for (const [language, definition] of Object.entries({ bash, cpp, csharp, css, go, java, javascript, json, markdown, python, rust, sql, typescript, xml, yaml })) hljs.registerLanguage(language, definition);
 
 type Json = Record<string, any>;
 type FixedRouteId = "fast" | "default" | "smart";
@@ -2391,7 +2409,7 @@ async function previewArtifact(artifact: Json, selected: HTMLButtonElement): Pro
       const source = new TextDecoder().decode(base64Bytes(response.body));
       if (/\.(?:md|markdown)$/i.test(String(artifact.name ?? ""))) { const markdown = document.createElement("article"); markdown.className = "inspector-markdown message-body"; setMarkdown(markdown, source); artifactPreview.append(markdown); }
       else if (/\.html?$/i.test(String(artifact.name ?? ""))) artifactPreview.append(htmlPreviewFrame(source, String(artifact.name ?? "HTML preview")));
-      else { const pre = document.createElement("pre"); pre.className = "inspector-source"; const code = document.createElement("code"); code.textContent = source; pre.append(code); artifactPreview.append(pre); }
+      else artifactPreview.append(inspectorSource(source, String(artifact.name ?? "source")));
       return;
     }
     if (["image", "audio", "video"].includes(artifact.kind)) {
@@ -2455,8 +2473,22 @@ function renderResourcePreview(preview: ResourcePreview): void {
     const markdown = document.createElement("article"); markdown.className = "inspector-markdown message-body"; setMarkdown(markdown, preview.content); artifactPreview.append(markdown); return;
   }
   if (preview.kind === "html" && !inspectorSourceMode) { artifactPreview.append(htmlPreviewFrame(preview.content, preview.name)); return; }
-  const pre = document.createElement("pre"); pre.className = "inspector-source"; const code = document.createElement("code"); code.textContent = preview.content; pre.append(code); artifactPreview.append(pre);
+  const pre = inspectorSource(preview.content, preview.name); artifactPreview.append(pre);
   if (preview.line) requestAnimationFrame(() => { const lineHeight = Number.parseFloat(getComputedStyle(pre).lineHeight) || 19; artifactPreview.scrollTop = Math.max(0, (preview.line! - 3) * lineHeight); });
+}
+
+function inspectorSource(content: string, name: string): HTMLPreElement {
+  const pre = document.createElement("pre"); pre.className = "inspector-source";
+  const code = document.createElement("code");
+  const language = sourceLanguage(name);
+  if (language) { code.className = `hljs language-${language}`; code.innerHTML = hljs.highlight(content, { language, ignoreIllegals: true }).value; }
+  else { code.className = "hljs"; code.textContent = content; }
+  pre.append(code); return pre;
+}
+
+function sourceLanguage(name: string): string | undefined {
+  const extension = name.toLowerCase().match(/\.([^.]+)$/)?.[1] ?? "";
+  return ({ c: "cpp", cc: "cpp", cpp: "cpp", cxx: "cpp", h: "cpp", hpp: "cpp", cs: "csharp", css: "css", go: "go", html: "xml", htm: "xml", java: "java", js: "javascript", jsx: "javascript", json: "json", md: "markdown", markdown: "markdown", mdx: "markdown", mjs: "javascript", py: "python", rs: "rust", sh: "bash", sql: "sql", ts: "typescript", tsx: "typescript", xml: "xml", yaml: "yaml", yml: "yaml" } as Record<string, string>)[extension];
 }
 
 function htmlPreviewFrame(source: string, title: string): HTMLIFrameElement {

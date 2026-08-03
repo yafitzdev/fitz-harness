@@ -476,10 +476,13 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("renderResourcePreview(inspectedPreview)");
     expect(renderer).toContain('frame.setAttribute("sandbox", "")');
     expect(styles).toContain(".inspector-panel");
-    expect(styles).toContain(".workspace.inspector-open .messages");
+    expect(styles).not.toContain(".workspace.inspector-open .messages { margin-right: var(--inspector-width); }");
     expect(styles).toContain(".inspector-resizer");
     expect(renderer).toContain("beginInspectorResize");
     expect(renderer).toContain("restoreInspectorWidth()");
+    expect(renderer).toContain('from "highlight.js/lib/core"');
+    expect(renderer).toContain("hljs.highlight(content, { language, ignoreIllegals: true })");
+    expect(styles).toContain(".inspector-source .hljs-keyword");
     expect(preload).toContain('ipcRenderer.invoke("fitz:preview-resource", input)');
     expect(main).toContain('ipcMain.handle("fitz:preview-resource"');
   });
