@@ -2492,7 +2492,12 @@ function sourceLanguage(name: string): string | undefined {
 }
 
 function htmlPreviewFrame(source: string, title: string): HTMLIFrameElement {
-  const frame = document.createElement("iframe"); frame.className = "inspector-frame"; frame.title = title; frame.setAttribute("sandbox", ""); frame.srcdoc = source; return frame;
+  const frame = document.createElement("iframe"); frame.className = "inspector-frame"; frame.title = title; frame.setAttribute("sandbox", ""); frame.srcdoc = withPreviewScrollbar(source); return frame;
+}
+
+function withPreviewScrollbar(source: string): string {
+  const style = '<style id="fitz-preview-scrollbar">*{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.22) transparent}*::-webkit-scrollbar{width:10px;height:10px}*::-webkit-scrollbar-track,*::-webkit-scrollbar-corner{background:transparent}*::-webkit-scrollbar-thumb{min-height:30px;border:2px solid transparent;border-radius:999px;background:rgba(255,255,255,.22);background-clip:content-box}*::-webkit-scrollbar-thumb:hover{background-color:rgba(255,255,255,.34)}</style>';
+  return /<\/head\s*>/i.test(source) ? source.replace(/<\/head\s*>/i, `${style}</head>`) : `${style}${source}`;
 }
 
 function setInspectorHeading(title: string, location: string, kind: "file" | "url" | ResourcePreview["kind"]): void {
