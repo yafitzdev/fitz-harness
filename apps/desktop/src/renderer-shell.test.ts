@@ -488,6 +488,9 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("hljs.highlight(content, { language, ignoreIllegals: true })");
     expect(renderer).toContain("withPreviewScrollbar(source)");
     expect(renderer).toContain("html::-webkit-scrollbar-thumb");
+    expect(renderer).toContain('frame.addEventListener("load", () => applyPreviewScrollbar(frame))');
+    expect(renderer).toContain('frame.setAttribute("sandbox", "allow-same-origin")');
+    expect(styles).toContain("background: var(--codex-gray-900); color-scheme: dark");
     expect(styles).toContain(".inspector-source .hljs-keyword");
     expect(preload).toContain('ipcRenderer.invoke("fitz:preview-resource", input)');
     expect(main).toContain('ipcMain.handle("fitz:preview-resource"');

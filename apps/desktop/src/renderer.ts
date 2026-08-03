@@ -2493,12 +2493,24 @@ function sourceLanguage(name: string): string | undefined {
 }
 
 function htmlPreviewFrame(source: string, title: string): HTMLIFrameElement {
-  const frame = document.createElement("iframe"); frame.className = "inspector-frame"; frame.title = title; frame.setAttribute("sandbox", ""); frame.srcdoc = withPreviewScrollbar(source); return frame;
+  const frame = document.createElement("iframe"); frame.className = "inspector-frame"; frame.title = title; frame.setAttribute("sandbox", "allow-same-origin");
+  frame.addEventListener("load", () => applyPreviewScrollbar(frame));
+  frame.srcdoc = withPreviewScrollbar(source); return frame;
 }
 
+const PREVIEW_SCROLLBAR_CSS = 'html{color-scheme:dark!important}html,body,*{scrollbar-width:thin!important;scrollbar-color:rgba(255,255,255,.22) transparent!important}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-webkit-scrollbar{width:10px!important;height:10px!important}html::-webkit-scrollbar-track,body::-webkit-scrollbar-track,*::-webkit-scrollbar-track,html::-webkit-scrollbar-corner,body::-webkit-scrollbar-corner,*::-webkit-scrollbar-corner{background:transparent!important}html::-webkit-scrollbar-thumb,body::-webkit-scrollbar-thumb,*::-webkit-scrollbar-thumb{min-height:30px!important;border:2px solid transparent!important;border-radius:999px!important;background:rgba(255,255,255,.22)!important;background-clip:content-box!important}html::-webkit-scrollbar-thumb:hover,body::-webkit-scrollbar-thumb:hover,*::-webkit-scrollbar-thumb:hover{background-color:rgba(255,255,255,.34)!important}';
+
 function withPreviewScrollbar(source: string): string {
-  const style = '<style id="fitz-preview-scrollbar">html,body,*{scrollbar-width:thin!important;scrollbar-color:rgba(255,255,255,.22) transparent!important}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-webkit-scrollbar{width:10px!important;height:10px!important}html::-webkit-scrollbar-track,body::-webkit-scrollbar-track,*::-webkit-scrollbar-track,html::-webkit-scrollbar-corner,body::-webkit-scrollbar-corner,*::-webkit-scrollbar-corner{background:transparent!important}html::-webkit-scrollbar-thumb,body::-webkit-scrollbar-thumb,*::-webkit-scrollbar-thumb{min-height:30px!important;border:2px solid transparent!important;border-radius:999px!important;background:rgba(255,255,255,.22)!important;background-clip:content-box!important}html::-webkit-scrollbar-thumb:hover,body::-webkit-scrollbar-thumb:hover,*::-webkit-scrollbar-thumb:hover{background-color:rgba(255,255,255,.34)!important}</style>';
+  const style = `<style id="fitz-preview-scrollbar">${PREVIEW_SCROLLBAR_CSS}</style>`;
   return /<\/body\s*>/i.test(source) ? source.replace(/<\/body\s*>/i, `${style}</body>`) : `${source}${style}`;
+}
+
+function applyPreviewScrollbar(frame: HTMLIFrameElement): void {
+  const document = frame.contentDocument;
+  if (!document?.documentElement) return;
+  document.getElementById("fitz-preview-scrollbar-runtime")?.remove();
+  const style = document.createElement("style"); style.id = "fitz-preview-scrollbar-runtime"; style.textContent = PREVIEW_SCROLLBAR_CSS;
+  (document.head ?? document.documentElement).append(style);
 }
 
 function setInspectorHeading(title: string, location: string, kind: "file" | "url" | ResourcePreview["kind"]): void {
