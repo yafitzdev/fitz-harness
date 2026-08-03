@@ -308,9 +308,9 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain('.shell-command::before { content: "$ ";');
     expect(activityTimeline).toContain('label.classList.add("file-target")');
     expect(styles).toContain(".agent-activity-label.file-target");
-    expect(styles).toContain(".activity-burst-details { min-width: 0; max-height: 380px; margin: 0 0 4px; padding: 0;");
+    expect(styles).toContain(".activity-burst-details { min-width: 0; max-height: 380px; margin: 0 0 2px; padding: 0;");
     expect(styles).toContain(".agent-activity-summary { width: 100%; min-width: 0; min-height: 26px;");
-    expect(styles).toContain(".work-summary-details { padding: 10px 0 0; }");
+    expect(styles).toContain(".work-summary-details { padding: 6px 0 0; }");
   });
 
   it("collapses completed Pi activity behind a durable work summary", () => {
@@ -347,7 +347,10 @@ describe("desktop renderer shell", () => {
     expect(messageActions).toContain('time.className = "message-time"');
     expect(messageActions).toContain("this.#formatTimestamp(createdAt)");
     expect(styles).toContain(".message:hover .message-actions");
-    expect(styles).toContain(".message.assistant .message-actions, .message.commentary .message-actions");
+    expect(styles).toContain(".message.assistant .message-actions");
+    expect(styles).not.toContain(".message.commentary .message-actions");
+    expect(renderer).toContain('if (["user", "assistant"].includes(role))');
+    expect(activityTimeline).toContain('article.querySelector(":scope > .message-actions")?.remove()');
     expect(styles).toContain(".message-action svg");
   });
 

@@ -1,4 +1,4 @@
-export type ActionableMessageRole = "user" | "assistant" | "commentary";
+export type ActionableMessageRole = "user" | "assistant";
 
 export interface MessageActionsOptions {
   canEdit: () => boolean;

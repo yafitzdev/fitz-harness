@@ -37,6 +37,7 @@ export class ActivityTimeline {
     if (!article) return;
     article.classList.remove("assistant");
     article.classList.add("commentary");
+    article.querySelector(":scope > .message-actions")?.remove();
     this.appendCommentary(article);
   }
 

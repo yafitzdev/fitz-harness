@@ -1859,13 +1859,13 @@ function appendMessage(role: string, text: string, createdAt?: string): HTMLElem
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   if (role !== "commentary" && !agentRuns.active) activityTimeline.finishWork(createdAt);
   const article = document.createElement("article"); article.className = `message ${role}`;
-  const content = document.createElement("div"); content.className = "message-body"; if (role === "assistant" || role === "commentary") setMarkdown(content, text); else content.textContent = text; article.append(content); if (["user", "assistant", "commentary"].includes(role)) messageActions.attach(article, content, role as ActionableMessageRole, text, createdAt); messages.append(article); messages.scrollTop = messages.scrollHeight; return content;
+  const content = document.createElement("div"); content.className = "message-body"; if (role === "assistant" || role === "commentary") setMarkdown(content, text); else content.textContent = text; article.append(content); if (["user", "assistant"].includes(role)) messageActions.attach(article, content, role as ActionableMessageRole, text, createdAt); messages.append(article); messages.scrollTop = messages.scrollHeight; return content;
 }
 
 function appendCommentary(text: string, createdAt?: string): HTMLElement {
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   const article = document.createElement("article"); article.className = "message commentary";
-  const content = document.createElement("div"); content.className = "message-body"; setMarkdown(content, text); article.append(content); messageActions.attach(article, content, "commentary", text, createdAt);
+  const content = document.createElement("div"); content.className = "message-body"; setMarkdown(content, text); article.append(content);
   activityTimeline.appendCommentary(article, createdAt);
   return content;
 }

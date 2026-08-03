@@ -25,6 +25,25 @@ function commentary(text: string): HTMLElement {
 beforeEach(() => document.body.replaceChildren());
 
 describe("ActivityTimeline", () => {
+  it("removes hover metadata when a streamed assistant message becomes reasoning", () => {
+    const { messages, timeline } = setup();
+    const article = document.createElement("article");
+    article.className = "message assistant";
+    const content = document.createElement("div");
+    content.className = "message-body";
+    content.textContent = "Reasoning";
+    const actions = document.createElement("div");
+    actions.className = "message-actions";
+    article.append(content, actions);
+    messages.append(article);
+
+    timeline.markAssistantAsCommentary(content);
+
+    expect(article.classList.contains("commentary")).toBe(true);
+    expect(article.querySelector(".message-actions")).toBeNull();
+    expect(messages.querySelector(".work-summary-details > .commentary")).toBe(article);
+  });
+
   it("groups each consecutive command and edit burst between narration blocks", () => {
     const { messages, timeline } = setup();
     timeline.appendCommentary(commentary("First reasoning block"), "2026-08-03T08:00:00.000Z");
