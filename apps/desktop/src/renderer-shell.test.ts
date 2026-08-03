@@ -14,6 +14,7 @@ const messageActions = readFileSync(new URL("./ui/chat/message-actions.ts", impo
 const activityTimeline = readFileSync(new URL("./ui/chat/activity-timeline.ts", import.meta.url), "utf8");
 const agentRunController = readFileSync(new URL("./ui/chat/agent-run-controller.ts", import.meta.url), "utf8");
 const composerControls = readFileSync(new URL("./ui/chat/composer-controls.ts", import.meta.url), "utf8");
+const pluginCatalog = readFileSync(new URL("./ui/plugins/plugin-catalog.ts", import.meta.url), "utf8");
 const resourceInspector = readFileSync(new URL("./ui/inspector/resource-inspector.ts", import.meta.url), "utf8");
 const projectSidebar = readFileSync(new URL("./ui/sidebar/project-sidebar.ts", import.meta.url), "utf8");
 const styles = [
@@ -22,6 +23,7 @@ const styles = [
   readFileSync(new URL("./ui/primitives/scroll-surface.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/message-actions.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/composer-controls.css", import.meta.url), "utf8"),
+  readFileSync(new URL("./ui/plugins/plugin-catalog.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/sidebar/project-sidebar.css", import.meta.url), "utf8"),
 ].join("\n");
 const main = readFileSync(new URL("./main.ts", import.meta.url), "utf8");
@@ -171,11 +173,11 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('id="plugins-tab"');
     expect(html).toContain('id="skills-tab"');
     expect(html).toContain('id="plugin-catalog"');
-    expect(renderer).toContain('/api/v1/management/pi/catalog');
-    expect(renderer).toContain('/api/v1/management/pi/packages/install');
-    expect(renderer).toContain('entry.links.homepage ?? entry.links.repository ?? entry.links.npm');
-    expect(renderer).toContain('window.fitz.openExternal(website)');
-    expect(renderer).toContain('Pi packages can run code with the same access as Fitz');
+    expect(pluginCatalog).toContain('/api/v1/management/pi/catalog');
+    expect(pluginCatalog).toContain('/api/v1/management/pi/packages/install');
+    expect(pluginCatalog).toContain('entry.links.homepage ?? entry.links.repository ?? entry.links.npm');
+    expect(pluginCatalog).toContain('this.options.openExternal(website)');
+    expect(pluginCatalog).toContain('Pi packages can run code with the same access as Fitz');
     expect(main).toContain('ensureBundledLocalHost');
     expect(main).toContain('join(process.resourcesPath, "host")');
   });

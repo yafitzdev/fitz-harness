@@ -12,6 +12,7 @@ import { ContextMenu } from "./ui/primitives/context-menu.js";
 import { requiredElement as element, requiredQuery as query, svgIcon as svg, textBlock } from "./ui/primitives/dom.js";
 import { togglePopover as toggleManagedPopover } from "./ui/primitives/popover.js";
 import { ResizablePane } from "./ui/primitives/resizable-pane.js";
+import { PluginCatalogController } from "./ui/plugins/plugin-catalog.js";
 import { ProjectSidebarController, type ProjectSidebarProject, type ProjectSidebarSession } from "./ui/sidebar/project-sidebar.js";
 
 type Json = Record<string, any>;
@@ -20,9 +21,6 @@ type ConnectionModelView = ConsumerConnectionSummary["models"][number] & { displ
 type HostedConnectionView = Omit<ConsumerConnectionSummary, "models"> & { hosted: true; availableModels: ConnectionModelView[] };
 type SavedConnectionView = Omit<ConsumerConnectionSummary, "models"> & { hosted: false; availableModels: ConnectionModelView[]; source: ConsumerConnectionSummary };
 type ConnectionView = HostedConnectionView | SavedConnectionView;
-type PiCatalogPackage = { name: string; description: string; version: string; publisher: string; keywords: string[]; types: string[]; links: Record<string, string> };
-type InstalledPiPackage = { source: string; displayName: string; version?: string; description?: string; enabled: boolean; resources: Record<string, number> };
-type PiSkillSummary = { name: string; description: string; source: string; enabled: boolean; filePath: string };
 type AppLocation = { view: "conversation"; projectId?: string; sessionId?: string; newChat?: boolean } | { view: "playbooks" | "connections" | "plugins" | "administration" };
 type ProjectRecord = ProjectSidebarProject & Json;
 type SessionRecord = ProjectSidebarSession & Json;
@@ -50,11 +48,6 @@ let administrationUsers: Json[] = [];
 let administrationPolicies: Json[] = [];
 let diagnosticBundle: Json | undefined;
 let consumerConnectionRecords: ConsumerConnectionSummary[] = [];
-let installedPiPackages: InstalledPiPackage[] = [];
-let piCatalogPackages: PiCatalogPackage[] = [];
-let installedPiSkills: PiSkillSummary[] = [];
-let piCatalogTotal = 0;
-let pluginSearchTimer: ReturnType<typeof setTimeout> | undefined;
 let selectedConnectionId = LOCAL_CONNECTION_ID;
 let pendingRemoteAction: "enable" | "disable" | undefined;
 let pendingStartupAction: "install" | "remove" | undefined;
@@ -153,16 +146,6 @@ const connectionsPage = element("connections-page");
 const connectionsButton = element("manage-connections") as HTMLButtonElement;
 const pluginsPage = element("plugins-page");
 const pluginsButton = element("manage-plugins") as HTMLButtonElement;
-const pluginsView = element("plugins-view");
-const skillsView = element("skills-view");
-const pluginsTab = element("plugins-tab") as HTMLButtonElement;
-const skillsTab = element("skills-tab") as HTMLButtonElement;
-const pluginSearch = element("plugin-search") as HTMLInputElement;
-const skillSearch = element("skill-search") as HTMLInputElement;
-const installedPlugins = element("installed-plugins");
-const pluginCatalog = element("plugin-catalog");
-const installedSkills = element("installed-skills");
-const loadMorePlugins = element("load-more-plugins") as HTMLButtonElement;
 const connectionForm = element("connection-form") as HTMLFormElement;
 const consumerConnectionId = element("consumer-connection-id") as HTMLInputElement;
 const consumerConnectionName = element("consumer-connection-name") as HTMLInputElement;
@@ -353,6 +336,24 @@ const composerControls = new ComposerControls({
   onRouteChange: () => handleRouteChange(),
   onCompact: compactCurrentSession,
 });
+const pluginCatalog = new PluginCatalogController({
+  pluginsView: element("plugins-view"),
+  skillsView: element("skills-view"),
+  pluginsTab: element("plugins-tab") as HTMLButtonElement,
+  skillsTab: element("skills-tab") as HTMLButtonElement,
+  pluginSearch: element("plugin-search") as HTMLInputElement,
+  skillSearch: element("skill-search") as HTMLInputElement,
+  installedPlugins: element("installed-plugins"),
+  pluginCatalog: element("plugin-catalog"),
+  installedSkills: element("installed-skills"),
+  loadMorePlugins: element("load-more-plugins") as HTMLButtonElement,
+  refresh: element("refresh-plugins") as HTMLButtonElement,
+}, {
+  api,
+  openExternal: (url) => window.fitz.openExternal(url),
+  showToast,
+  errorMessage,
+});
 const messageActions = new MessageActions({
   canEdit: () => !agentRuns.active,
   onEditBlocked: () => showToast("Wait for the current response before editing a message."),
@@ -400,12 +401,6 @@ element("manage-playbooks").addEventListener("click", () => void openPlaybookPag
 connectionsButton.addEventListener("click", () => void openConnectionsPage());
 pluginsButton.addEventListener("click", () => void openPluginsPage());
 administrationButton.addEventListener("click", () => void openAdministrationPage());
-element("refresh-plugins").addEventListener("click", () => void loadPiPackages(false));
-pluginsTab.addEventListener("click", () => setPluginView("plugins"));
-skillsTab.addEventListener("click", () => setPluginView("skills"));
-pluginSearch.addEventListener("input", () => { if (pluginSearchTimer) clearTimeout(pluginSearchTimer); pluginSearchTimer = setTimeout(() => void loadPiPackages(false), 250); });
-skillSearch.addEventListener("input", renderPiSkills);
-loadMorePlugins.addEventListener("click", () => void loadPiCatalog(true));
 element("refresh-administration").addEventListener("click", () => void loadAdministration());
 element("refresh-playbooks").addEventListener("click", () => void loadManagementConfiguration(true));
 element("refresh-connections").addEventListener("click", () => void syncAndLoadConsumerConnections(true));
@@ -846,7 +841,7 @@ async function openPlaybookPage(): Promise<void> {
 }
 
 async function openConnectionsPage(): Promise<void> { if (!pairingPage.hidden) return; closePopovers(); setContextPanel(false); closeManagementEditor(); closeConnectionEditor(); workspacePages.show("connections"); await syncAndLoadConsumerConnections(false); rememberLocation({ view: "connections" }); }
-async function openPluginsPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); setContextPanel(false); closeManagementEditor(); closeConnectionEditor(); workspacePages.show("plugins"); installedPlugins.replaceChildren(panelEmpty("Loading plugins…")); await loadPiPackages(false); rememberLocation({ view: "plugins" }); }
+async function openPluginsPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); setContextPanel(false); closeManagementEditor(); closeConnectionEditor(); workspacePages.show("plugins"); pluginCatalog.showLoading(); await pluginCatalog.load(false); rememberLocation({ view: "plugins" }); }
 async function openAdministrationPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); setContextPanel(false); closeManagementEditor(); workspacePages.show("administration"); adminUsers.replaceChildren(panelEmpty("Loading users…")); await loadAdministration(); rememberLocation({ view: "administration" }); }
 function showPairingPage(message: string): void { closePopovers(); setContextPanel(false); closeManagementEditor(); workspacePages.show("pairing"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
 function showConversationWorkspace(): void { closeManagementEditor(); workspacePages.show("conversation"); }
@@ -887,124 +882,6 @@ function applyNavigation(): void {
   connectionsButton.hidden = false;
   pluginsButton.hidden = !administrator;
   administrationButton.hidden = !administrator;
-}
-
-function setPluginView(view: "plugins" | "skills"): void {
-  const showPlugins = view === "plugins";
-  pluginsView.hidden = !showPlugins;
-  skillsView.hidden = showPlugins;
-  pluginsTab.classList.toggle("active", showPlugins);
-  skillsTab.classList.toggle("active", !showPlugins);
-  if (!showPlugins) renderPiSkills();
-}
-
-async function loadPiPackages(appendCatalog: boolean): Promise<void> {
-  try {
-    if (!appendCatalog) {
-      const [packages, skills] = await Promise.all([
-        api("/api/v1/management/pi/packages"),
-        api("/api/v1/management/pi/skills"),
-      ]);
-      installedPiPackages = packages.data ?? [];
-      installedPiSkills = skills.data ?? [];
-      renderInstalledPiPackages();
-      renderPiSkills();
-    }
-    await loadPiCatalog(appendCatalog);
-  } catch (error) {
-    installedPlugins.replaceChildren(panelEmpty(errorMessage(error)));
-    pluginCatalog.replaceChildren();
-    showToast(errorMessage(error));
-  }
-}
-
-async function loadPiCatalog(append: boolean): Promise<void> {
-  const offset = append ? piCatalogPackages.length : 0;
-  const query = encodeURIComponent(pluginSearch.value.trim());
-  const response = await api(`/api/v1/management/pi/catalog?query=${query}&offset=${offset}&limit=30`);
-  piCatalogTotal = response.data?.total ?? 0;
-  piCatalogPackages = append ? [...piCatalogPackages, ...(response.data?.packages ?? [])] : (response.data?.packages ?? []);
-  renderPiCatalog();
-}
-
-function renderInstalledPiPackages(): void {
-  installedPlugins.replaceChildren();
-  if (!installedPiPackages.length) { installedPlugins.append(panelEmpty("No plugins installed")); return; }
-  for (const entry of installedPiPackages) {
-    const card = piPackageCard(entry.displayName, entry.description ?? entry.source, entry.version, piSourceWebsite(entry.source));
-    const counts = Object.entries(entry.resources).filter(([, count]) => count > 0).map(([kind, count]) => `${count} ${kind}`);
-    if (counts.length) card.querySelector(".plugin-meta")?.append(document.createTextNode(` · ${counts.join(" · ")}`));
-    const actions = card.querySelector(".plugin-actions") as HTMLElement;
-    actions.append(pluginAction(entry.enabled ? "Disable" : "Enable", () => mutatePiPackage("PUT", "/api/v1/management/pi/packages/enabled", { source: entry.source, enabled: !entry.enabled })), pluginAction("Update", () => mutatePiPackage("POST", "/api/v1/management/pi/packages/update", { source: entry.source })), pluginAction("Remove", () => mutatePiPackage("DELETE", "/api/v1/management/pi/packages", { source: entry.source }), true));
-    installedPlugins.append(card);
-  }
-}
-
-function renderPiCatalog(): void {
-  pluginCatalog.replaceChildren();
-  const installed = new Set(installedPiPackages.map((entry) => entry.source.replace(/^npm:/, "")));
-  if (!piCatalogPackages.length) { pluginCatalog.append(panelEmpty("No matching Pi packages")); }
-  for (const entry of piCatalogPackages) {
-    const card = piPackageCard(entry.name, entry.description, entry.version, entry.links.homepage ?? entry.links.repository ?? entry.links.npm ?? npmPackageWebsite(entry.name));
-    const actions = card.querySelector(".plugin-actions") as HTMLElement;
-    if (installed.has(entry.name)) { const mark = document.createElement("span"); mark.className = "plugin-installed-mark"; mark.textContent = "✓ Installed"; actions.append(mark); }
-    else actions.append(pluginInstallAction(entry.name));
-    pluginCatalog.append(card);
-  }
-  loadMorePlugins.hidden = piCatalogPackages.length >= piCatalogTotal;
-}
-
-function renderPiSkills(): void {
-  installedSkills.replaceChildren();
-  const query = skillSearch.value.trim().toLowerCase();
-  const visible = installedPiSkills.filter((skill) => !query || `${skill.name} ${skill.description} ${skill.source}`.toLowerCase().includes(query));
-  if (!visible.length) { installedSkills.append(panelEmpty("No matching skills")); return; }
-  for (const skill of visible) {
-    const card = piPackageCard(skill.name, skill.description || skill.source, undefined, piSourceWebsite(skill.source));
-    card.classList.add("skill-card");
-    const actions = card.querySelector(".plugin-actions") as HTMLElement;
-    const mark = document.createElement("span"); mark.className = "plugin-installed-mark"; mark.textContent = skill.enabled ? "✓" : "Disabled"; actions.append(mark);
-    installedSkills.append(card);
-  }
-}
-
-function piPackageCard(name: string, description: string, version?: string, website?: string): HTMLElement {
-  const card = document.createElement("article"); card.className = "plugin-card";
-  if (website) {
-    card.classList.add("plugin-card-linked"); card.tabIndex = 0; card.setAttribute("role", "link"); card.title = "Open plugin website";
-    card.addEventListener("click", (event) => { if (!(event.target as HTMLElement).closest(".plugin-actions")) void window.fitz.openExternal(website); });
-    card.addEventListener("keydown", (event) => { if ((event.key === "Enter" || event.key === " ") && !(event.target as HTMLElement).closest(".plugin-actions")) { event.preventDefault(); void window.fitz.openExternal(website); } });
-  }
-  const icon = document.createElement("span"); icon.className = "plugin-icon"; icon.append(sparkIcon());
-  const copy = document.createElement("div"); copy.className = "plugin-copy";
-  const heading = document.createElement("strong"); heading.textContent = name;
-  const meta = document.createElement("span"); meta.className = "plugin-meta"; meta.textContent = `${description}${version ? ` · ${version}` : ""}`;
-  copy.append(heading, meta); const actions = document.createElement("div"); actions.className = "plugin-actions"; card.append(icon, copy, actions); return card;
-}
-
-function piSourceWebsite(source: string): string | undefined { return source.startsWith("npm:") ? npmPackageWebsite(source.slice(4).replace(/@[^@/]+$/, "")) : undefined; }
-function npmPackageWebsite(name: string): string { return `https://www.npmjs.com/package/${encodeURIComponent(name)}`; }
-
-function pluginAction(label: string, action: () => Promise<void>, danger = false): HTMLButtonElement {
-  const button = document.createElement("button"); button.type = "button"; button.className = danger ? "plugin-action danger" : "plugin-action"; button.textContent = label;
-  button.addEventListener("click", async () => { button.disabled = true; const old = button.textContent; button.textContent = "Working…"; try { await action(); } finally { button.disabled = false; button.textContent = old; } }); return button;
-}
-
-function pluginInstallAction(name: string): HTMLButtonElement {
-  const button = document.createElement("button"); button.type = "button"; button.className = "plugin-action"; button.textContent = "Install"; button.title = "Pi packages can run code with the same access as Fitz";
-  button.addEventListener("click", async () => {
-    if (button.dataset.confirm !== "true") { button.dataset.confirm = "true"; button.textContent = "Install?"; return; }
-    button.disabled = true; button.textContent = "Installing…";
-    try { await mutatePiPackage("POST", "/api/v1/management/pi/packages/install", { source: `npm:${name}` }); }
-    finally { button.disabled = false; button.dataset.confirm = "false"; button.textContent = "Install"; }
-  });
-  button.addEventListener("mouseleave", () => { if (!button.disabled) { button.dataset.confirm = "false"; button.textContent = "Install"; } });
-  return button;
-}
-
-async function mutatePiPackage(method: string, path: string, body: unknown): Promise<void> {
-  try { await api(path, method, body); await loadPiPackages(false); showToast("Plugin configuration updated"); }
-  catch (error) { showToast(errorMessage(error)); }
 }
 
 async function syncAndLoadConsumerConnections(reportFailure: boolean): Promise<void> {

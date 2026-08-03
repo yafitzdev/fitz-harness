@@ -1,0 +1,24 @@
+.plugin-page-tabs { justify-content: space-between; }
+.plugin-page-tabs > div { display: flex; gap: 4px; }
+.plugin-page-tabs > div button { height: 30px; padding: 0 11px; border: 0; border-radius: 9px; color: var(--muted); background: transparent; cursor: pointer; }
+.plugin-page-tabs > div button.active { color: var(--text); background: rgba(255,255,255,.08); }
+.plugin-content { width: min(var(--management-content-width), calc(100% - 48px)); }
+.plugin-section { margin-top: 34px; }
+.plugin-section h2 { margin: 0 0 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border-soft); font-size: 14px; font-weight: 600; }
+.plugin-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 34px; }
+.plugin-card { min-width: 0; display: grid; grid-template-columns: 38px minmax(0,1fr) auto; gap: 12px; align-items: center; min-height: 70px; padding: 10px 6px; border-bottom: 1px solid rgba(255,255,255,.035); }
+.plugin-icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; color: var(--muted); background: rgba(255,255,255,.045); }
+.plugin-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.35; }
+.plugin-copy { min-width: 0; display: grid; gap: 3px; }
+.plugin-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 590; }
+.plugin-card-linked { cursor: pointer; }
+.plugin-card-linked:hover .plugin-copy strong, .plugin-card-linked:focus-visible .plugin-copy strong { text-decoration: underline; text-underline-offset: 3px; }
+.plugin-card-linked:focus-visible { outline: 1px solid var(--muted); outline-offset: -2px; border-radius: 10px; }
+.plugin-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
+.plugin-actions { display: flex; align-items: center; gap: 5px; }
+.plugin-action { height: 28px; padding: 0 9px; border: 1px solid var(--border-soft); border-radius: 9px; background: rgba(255,255,255,.035); color: var(--text); font-size: 11px; cursor: pointer; }
+.plugin-action:hover { background: rgba(255,255,255,.08); }
+.plugin-action.danger { color: #f1766d; }
+.plugin-installed-mark { color: var(--muted); font-size: 11px; white-space: nowrap; }
+#load-more-plugins { margin-top: 16px; }
+@media (max-width: 900px) { .plugin-grid { grid-template-columns: 1fr; } }
