@@ -333,13 +333,13 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("--conversation-inset: clamp(48px, 8vw, 96px)");
     expect(styles).toContain("--conversation-width: min(768px, calc(var(--conversation-space) - var(--conversation-inset)))");
     expect(styles).toContain("--conversation-gutter: max(24px, calc((var(--conversation-space) - var(--conversation-width)) / 2))");
-    expect(styles).toContain("--conversation-content-inset: 1px");
-    expect(styles).toContain("grid-template-columns: minmax(0, calc(var(--conversation-width) - var(--conversation-content-inset) - var(--conversation-content-inset)))");
+    expect(styles).not.toContain("--conversation-content-inset");
+    expect(styles).toContain("grid-template-columns: minmax(0, 1fr)");
     expect(styles).toContain("justify-content: start");
-    expect(styles).toContain("calc(var(--conversation-gutter) + var(--conversation-content-inset))");
     expect(styles).toContain("width: var(--conversation-width)");
     expect(styles).toContain("--composer-height: 112px");
-    expect(styles).toContain("padding: 32px 0 calc(var(--composer-height) + 44px) calc(var(--conversation-gutter) + var(--conversation-content-inset))");
+    expect(styles).toContain("padding: 32px 0 calc(var(--composer-height) + 44px)");
+    expect(styles).toContain("top: 50px; bottom: 0; left: var(--conversation-gutter); width: var(--conversation-width)");
     expect(styles).toContain("left: var(--conversation-gutter)");
     expect(styles).toContain("bottom: 12px");
     expect(styles).toContain(".composer-dock::before");
