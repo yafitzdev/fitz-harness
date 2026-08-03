@@ -129,6 +129,7 @@ const conversationLayoutObserver = new ResizeObserver(syncConversationLayout);
 const conversationContentObserver = new MutationObserver(syncConversationLayout);
 conversationLayoutObserver.observe(messages);
 conversationLayoutObserver.observe(composerDock);
+conversationLayoutObserver.observe(workspace);
 conversationContentObserver.observe(messages, { childList: true, subtree: true });
 syncConversationLayout();
 const newChatContext = element("new-chat-context");
@@ -2496,8 +2497,8 @@ function htmlPreviewFrame(source: string, title: string): HTMLIFrameElement {
 }
 
 function withPreviewScrollbar(source: string): string {
-  const style = '<style id="fitz-preview-scrollbar">*{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.22) transparent}*::-webkit-scrollbar{width:10px;height:10px}*::-webkit-scrollbar-track,*::-webkit-scrollbar-corner{background:transparent}*::-webkit-scrollbar-thumb{min-height:30px;border:2px solid transparent;border-radius:999px;background:rgba(255,255,255,.22);background-clip:content-box}*::-webkit-scrollbar-thumb:hover{background-color:rgba(255,255,255,.34)}</style>';
-  return /<\/head\s*>/i.test(source) ? source.replace(/<\/head\s*>/i, `${style}</head>`) : `${style}${source}`;
+  const style = '<style id="fitz-preview-scrollbar">html,body,*{scrollbar-width:thin!important;scrollbar-color:rgba(255,255,255,.22) transparent!important}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-webkit-scrollbar{width:10px!important;height:10px!important}html::-webkit-scrollbar-track,body::-webkit-scrollbar-track,*::-webkit-scrollbar-track,html::-webkit-scrollbar-corner,body::-webkit-scrollbar-corner,*::-webkit-scrollbar-corner{background:transparent!important}html::-webkit-scrollbar-thumb,body::-webkit-scrollbar-thumb,*::-webkit-scrollbar-thumb{min-height:30px!important;border:2px solid transparent!important;border-radius:999px!important;background:rgba(255,255,255,.22)!important;background-clip:content-box!important}html::-webkit-scrollbar-thumb:hover,body::-webkit-scrollbar-thumb:hover,*::-webkit-scrollbar-thumb:hover{background-color:rgba(255,255,255,.34)!important}</style>';
+  return /<\/body\s*>/i.test(source) ? source.replace(/<\/body\s*>/i, `${style}</body>`) : `${source}${style}`;
 }
 
 function setInspectorHeading(title: string, location: string, kind: "file" | "url" | ResourcePreview["kind"]): void {
@@ -2528,7 +2529,18 @@ function showLanding(hasTask = false): void {
 }
 
 function syncConversationLayout(): void {
+  const workspaceWidth = workspace.clientWidth;
+  const panelWidth = workspace.classList.contains("inspector-open") ? inspectorWidth() : 0;
+  const viewportWidth = Math.max(280, workspaceWidth - panelWidth);
   const scrollbarWidth = Math.max(0, messages.offsetWidth - messages.clientWidth);
+  const compact = panelWidth > 0;
+  const minimumGutter = compact ? 18 : 24;
+  const inset = Math.max(compact ? 36 : 48, Math.min(compact ? 72 : 96, viewportWidth * (compact ? .07 : .08)));
+  const conversationWidth = Math.max(240, Math.min(768, viewportWidth - scrollbarWidth - inset));
+  const gutter = Math.max(minimumGutter, (viewportWidth - scrollbarWidth - conversationWidth) / 2);
+  workspace.style.setProperty("--conversation-viewport", `${viewportWidth}px`);
+  workspace.style.setProperty("--conversation-width", `${conversationWidth}px`);
+  workspace.style.setProperty("--conversation-gutter", `${gutter}px`);
   workspace.style.setProperty("--conversation-scrollbar", `${scrollbarWidth}px`);
   workspace.style.setProperty("--composer-height", `${composerDock.offsetHeight}px`);
   updateScrollToBottom();
@@ -2893,6 +2905,7 @@ function setContextPanel(open: boolean): void {
   shell.classList.toggle("context-open", open);
   contextToggle.setAttribute("aria-expanded", String(open));
   if (!open) inspectionVersion += 1;
+  requestAnimationFrame(syncConversationLayout);
 }
 
 function toggleSidebar(): void { shell.classList.toggle("sidebar-collapsed"); closePopovers(); }
@@ -2939,7 +2952,7 @@ function beginInspectorResize(event: PointerEvent): void {
   inspectorResizer.addEventListener("pointermove", move); inspectorResizer.addEventListener("pointerup", finish, { once: true }); inspectorResizer.addEventListener("pointercancel", finish, { once: true });
 }
 function resizeInspectorWithKeyboard(event: KeyboardEvent): void { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); setInspectorWidth(inspectorWidth() + (event.key === "ArrowLeft" ? 12 : -12)); localStorage.setItem("fitz-inspector-width", String(inspectorWidth())); }
-function setInspectorWidth(value: number): void { const maximum = Math.max(300, Math.min(760, workspace.getBoundingClientRect().width - 420)); workspace.style.setProperty("--inspector-width", `${Math.max(300, Math.min(maximum, value))}px`); inspectorResizer.setAttribute("aria-valuenow", String(Math.round(inspectorWidth()))); }
+function setInspectorWidth(value: number): void { const maximum = Math.max(300, Math.min(760, workspace.getBoundingClientRect().width - 420)); workspace.style.setProperty("--inspector-width", `${Math.max(300, Math.min(maximum, value))}px`); inspectorResizer.setAttribute("aria-valuenow", String(Math.round(inspectorWidth()))); syncConversationLayout(); }
 function inspectorWidth(): number { return Number.parseFloat(getComputedStyle(workspace).getPropertyValue("--inspector-width")) || 400; }
 function restoreInspectorWidth(): void { const saved = Number(localStorage.getItem("fitz-inspector-width")); if (Number.isFinite(saved) && saved > 0) setInspectorWidth(saved); }
 function setStatus(text: string, state: string): void { status.textContent = text; status.dataset.state = state; }

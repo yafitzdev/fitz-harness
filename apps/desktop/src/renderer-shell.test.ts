@@ -348,7 +348,11 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".workspace.inspector-open { --conversation-viewport: calc(100% - var(--inspector-width))");
     expect(renderer).toContain("new ResizeObserver(syncConversationLayout)");
     expect(renderer).toContain("conversationLayoutObserver.observe(composerDock)");
+    expect(renderer).toContain("conversationLayoutObserver.observe(workspace)");
     expect(renderer).toContain("messages.offsetWidth - messages.clientWidth");
+    expect(renderer).toContain('workspace.style.setProperty("--conversation-viewport", `${viewportWidth}px`)');
+    expect(renderer).toContain('workspace.style.setProperty("--conversation-width", `${conversationWidth}px`)');
+    expect(renderer).toContain('workspace.style.setProperty("--conversation-gutter", `${gutter}px`)');
     expect(renderer).toContain("composerDock.offsetHeight");
     expect(html).toContain('id="scroll-to-bottom"');
     expect(renderer).toContain('messages.addEventListener("scroll", updateScrollToBottom');
@@ -483,6 +487,7 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('from "highlight.js/lib/core"');
     expect(renderer).toContain("hljs.highlight(content, { language, ignoreIllegals: true })");
     expect(renderer).toContain("withPreviewScrollbar(source)");
+    expect(renderer).toContain("html::-webkit-scrollbar-thumb");
     expect(styles).toContain(".inspector-source .hljs-keyword");
     expect(preload).toContain('ipcRenderer.invoke("fitz:preview-resource", input)');
     expect(main).toContain('ipcMain.handle("fitz:preview-resource"');
