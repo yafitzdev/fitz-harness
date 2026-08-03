@@ -31,13 +31,14 @@
 .agent-activity.failed, .agent-activity.failed .agent-activity-icon { color: #d9908b; }
 @keyframes activity-pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
 
-.activity-burst { width: 100%; min-width: 0; margin: 0 0 3px; color: var(--codex-text-secondary); }
+.activity-burst { width: 100%; min-width: 0; margin: 0 0 8px; color: var(--codex-text-secondary); }
 .activity-burst-toggle { width: 100%; min-width: 0; min-height: 28px; display: flex; align-items: center; gap: 6px; padding: 2px 0; background: transparent; color: inherit; cursor: pointer; text-align: left; }
 .activity-burst-toggle:hover, .activity-burst-toggle:focus-visible, .activity-burst.open > .activity-burst-toggle { color: var(--text); }
 .activity-burst-chevron { width: 16px; height: 16px; flex: 0 0 auto; display: grid; place-items: center; color: var(--codex-text-tertiary); transition: transform 150ms cubic-bezier(.23,1,.32,1); }
 .activity-burst-chevron svg { width: 12px; height: 12px; }
 .activity-burst.open .activity-burst-chevron { transform: rotate(90deg); }
-.activity-burst-details { min-width: 0; max-height: 380px; margin: 0 0 2px; padding: 0; overflow: auto; }
+.activity-burst-details { min-width: 0; max-height: 380px; margin: 0 0 3px; padding: 0; overflow: auto; }
+.activity-burst-details > .message.agent-activity { margin: 0; }
 .activity-burst-details .agent-activity-summary { width: 100%; }
 
 .tool-approval { width: 100%; display: grid; gap: 8px; margin: 3px 0 8px; padding: 11px 12px; border: 1px solid var(--codex-border-heavy); border-radius: var(--codex-radius-xl); background: rgba(255,255,255,.035); color: var(--text); }
@@ -60,6 +61,6 @@
 .work-summary-chevron svg { width: 12px; height: 12px; }
 .work-summary.open .work-summary-chevron { transform: rotate(90deg); }
 .work-summary-details { padding: 6px 0 0; }
-.work-summary-details .message.commentary { margin-bottom: 3px; }
+.work-summary-details > .message.commentary { margin: 0 0 8px; }
 .context-activity { width: 100%; display: flex; align-items: center; gap: 6px; margin-bottom: 12px; color: var(--codex-text-secondary); }
 .context-activity .agent-activity-icon { width: 18px; height: 18px; }

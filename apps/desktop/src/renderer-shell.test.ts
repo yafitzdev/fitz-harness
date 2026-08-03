@@ -308,9 +308,11 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain('.shell-command::before { content: "$ ";');
     expect(activityTimeline).toContain('label.classList.add("file-target")');
     expect(styles).toContain(".agent-activity-label.file-target");
-    expect(styles).toContain(".activity-burst-details { min-width: 0; max-height: 380px; margin: 0 0 2px; padding: 0;");
+    expect(styles).toContain(".activity-burst-details { min-width: 0; max-height: 380px; margin: 0 0 3px; padding: 0;");
+    expect(styles).toContain(".activity-burst-details > .message.agent-activity { margin: 0; }");
     expect(styles).toContain(".agent-activity-summary { width: 100%; min-width: 0; min-height: 26px;");
     expect(styles).toContain(".work-summary-details { padding: 6px 0 0; }");
+    expect(styles).toContain(".work-summary-details > .message.commentary { margin: 0 0 8px; }");
   });
 
   it("collapses completed Pi activity behind a durable work summary", () => {
