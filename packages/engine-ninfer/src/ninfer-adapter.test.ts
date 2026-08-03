@@ -7,16 +7,17 @@ describe("NInferEngineAdapter launch contract", () => {
     const recipe = buildCurrentNInferRecipe(
       "qwen-27b",
       "qwen3.6-27b",
-      "/opt/ninfer/models/qwen3_6_27b_nvfp4.ninfer",
+      "/models/ninfer/qwen3_6_27b_nvfp4.ninfer",
       3,
+      "/engines/ninfer/build/apps/ninfer-serve",
     );
     const adapter = new NInferEngineAdapter({ validatePaths: false });
 
     expect(await adapter.validateRecipe(recipe)).toEqual({ valid: true, issues: [] });
     const spec = await adapter.buildLaunchSpec(recipe, { host: "127.0.0.1", port: 19_001 });
 
-    expect(spec.executable).toBe("/opt/ninfer/build/apps/ninfer-serve");
-    expect(spec.args).toContain("/opt/ninfer/models/qwen3_6_27b_nvfp4.ninfer");
+    expect(spec.executable).toBe("/engines/ninfer/build/apps/ninfer-serve");
+    expect(spec.args).toContain("/models/ninfer/qwen3_6_27b_nvfp4.ninfer");
     expect(spec.args).toEqual(
       expect.arrayContaining([
         "--host",
@@ -37,7 +38,7 @@ describe("NInferEngineAdapter launch contract", () => {
   });
 
   it("rejects extra arguments that override Fitz-owned process controls", () => {
-    const recipe = buildCurrentNInferRecipe("bad", "bad", "/model.ninfer", 4);
+    const recipe = buildCurrentNInferRecipe("bad", "bad", "/model.ninfer", 4, "/ninfer-serve");
     recipe.configuration = { ...recipe.configuration, extraArgs: ["--api-key=leak"] };
     expect(validateNInferConfiguration(recipe)).toEqual(
       expect.arrayContaining([expect.objectContaining({ code: "reserved_argument" })]),
@@ -45,13 +46,13 @@ describe("NInferEngineAdapter launch contract", () => {
   });
 
   it("wraps the exact launch argv for a Windows WSL host", async () => {
-    const recipe = buildCurrentNInferRecipe("qwen-27b", "qwen3.6-27b", "/opt/ninfer/models/model.ninfer", 3);
+    const recipe = buildCurrentNInferRecipe("qwen-27b", "qwen3.6-27b", "/models/ninfer/model.ninfer", 3, "/engines/ninfer/build/apps/ninfer-serve");
     const spec = await new NInferEngineAdapter({ validatePaths: false }).buildLaunchSpec(recipe, { host: "127.0.0.1", port: 19_001 });
     const launch = buildNInferProcessLaunch(spec, "generated-secret", "Ubuntu", "root");
 
     expect(launch.executable).toBe("wsl.exe");
     expect(launch.args.slice(0, 8)).toEqual(["-d", "Ubuntu", "-u", "root", "--", "sh", "-s", "--"]);
-    expect(launch.args).toContain("/opt/ninfer/build/apps/ninfer-serve");
+    expect(launch.args).toContain("/engines/ninfer/build/apps/ninfer-serve");
     expect(launch.args.slice(-2)).toEqual(["--api-key", "generated-secret"]);
     expect(launch.stdin).toContain('exec "$@"');
   });

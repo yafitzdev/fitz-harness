@@ -331,7 +331,7 @@ export function buildCurrentNInferRecipe(
   modelId: string,
   artifact: string,
   draftTokens: number,
-  executable = "/opt/ninfer/build/apps/ninfer-serve",
+  executable: string,
 ): Recipe {
   const configuration: NInferRecipeConfiguration = {
     executable,

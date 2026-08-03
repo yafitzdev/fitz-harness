@@ -14,7 +14,7 @@ export interface FitzRuntimePaths {
 
 export function resolveRuntimePaths(environment: NodeJS.ProcessEnv = process.env): FitzRuntimePaths {
   const dataRoot = resolve(environment.FITZ_DATA_ROOT ?? defaultDataRoot(environment));
-  const llmRoot = resolve(environment.FITZ_LLM_ROOT ?? join(homedir(), "llm"));
+  const llmRoot = resolve(environment.FITZ_LLM_ROOT ?? join(homedir(), ".llm"));
   return {
     dataRoot,
     databasePath: resolve(environment.FITZ_DATABASE_PATH ?? join(dataRoot, "database", "fitz.db")),

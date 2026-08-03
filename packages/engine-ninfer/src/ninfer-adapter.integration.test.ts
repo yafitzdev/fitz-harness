@@ -16,6 +16,7 @@ describe("NInferEngineAdapter process integration", () => {
       "simulated-ninfer-model",
       fakeServerPath,
       3,
+      process.execPath,
     );
     recipe.configuration = {
       ...recipe.configuration,

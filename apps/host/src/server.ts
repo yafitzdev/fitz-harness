@@ -120,8 +120,18 @@ function reconcileNInferConfiguration(store: SqliteStore): void {
     const migratedCapabilities = template && !recipe.capabilities.toolCalls
       ? { ...recipe.capabilities, toolCalls: true }
       : recipe.capabilities;
-    if (migratedPlaybookId !== recipe.playbookId || migratedLifecycle !== recipe.lifecycle || migratedCapabilities !== recipe.capabilities) {
-      store.upsertRecipe({ ...recipe, playbookId: migratedPlaybookId, lifecycle: migratedLifecycle, capabilities: migratedCapabilities });
+    const migratedConfiguration = template && recipe.adapter === "ninfer"
+      ? {
+          ...recipe.configuration,
+          executable: template.configuration.executable,
+          artifact: template.configuration.artifact,
+        }
+      : recipe.configuration;
+    const configurationChanged = migratedConfiguration !== recipe.configuration
+      && (migratedConfiguration.executable !== recipe.configuration.executable
+        || migratedConfiguration.artifact !== recipe.configuration.artifact);
+    if (migratedPlaybookId !== recipe.playbookId || migratedLifecycle !== recipe.lifecycle || migratedCapabilities !== recipe.capabilities || configurationChanged) {
+      store.upsertRecipe({ ...recipe, playbookId: migratedPlaybookId, lifecycle: migratedLifecycle, capabilities: migratedCapabilities, configuration: migratedConfiguration });
     }
   }
   const templates = playbook.routes;

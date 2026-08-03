@@ -13,7 +13,7 @@ export interface NInferPlaybook {
 }
 
 export function createNInferPlaybook(): NInferPlaybook {
-  const llmRoot = process.env.FITZ_LLM_ROOT ?? join(homedir(), "llm");
+  const llmRoot = process.env.FITZ_LLM_ROOT ?? join(homedir(), ".llm");
   const modelRoot = process.env.FITZ_NINFER_MODEL_ROOT ?? guestPath(join(llmRoot, "models", "ninfer"));
   const executable = process.env.FITZ_NINFER_EXECUTABLE
     ?? guestPath(join(llmRoot, "engines", "ninfer", "build", "apps", "ninfer-serve"));

@@ -1,4 +1,6 @@
 import { createServer } from "node:net";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   NInferEngineAdapter,
   buildCurrentNInferRecipe,
@@ -9,18 +11,22 @@ if (process.env.FITZ_ALLOW_LIVE_NINFER !== "1") {
 }
 
 const profile = process.env.FITZ_NINFER_PROFILE ?? "27b";
+const llmRoot = process.env.FITZ_LLM_ROOT ?? join(homedir(), ".llm");
+const ninferModelRoot = guestPath(join(llmRoot, "models", "ninfer"));
+const ninferExecutable = process.env.FITZ_NINFER_EXECUTABLE
+  ?? guestPath(join(llmRoot, "engines", "ninfer", "build", "apps", "ninfer-serve"));
 const selected =
   profile === "35b"
     ? {
         id: "qwen36-35b-a3b-mtp4-100k",
         modelId: "qwen3.6-35b-a3b",
-        artifact: "/opt/ninfer/models/qwen3_6_35b_a3b.ninfer",
+        artifact: `${ninferModelRoot}/qwen3_6_35b_a3b.ninfer`,
         draftTokens: 4,
       }
     : {
         id: "qwen36-27b-mtp3-100k",
         modelId: "qwen3.6-27b",
-        artifact: "/opt/ninfer/models/qwen3_6_27b_nvfp4.ninfer",
+        artifact: `${ninferModelRoot}/qwen3_6_27b_nvfp4.ninfer`,
         draftTokens: 3,
       };
 
@@ -29,6 +35,7 @@ const recipe = buildCurrentNInferRecipe(
   selected.modelId,
   selected.artifact,
   selected.draftTokens,
+  ninferExecutable,
 );
 const configuration = { ...recipe.configuration };
 delete configuration.requestLogJsonl;
@@ -95,4 +102,10 @@ async function availablePort() {
   if (!address || typeof address === "string") throw new Error("Could not allocate a TCP port");
   await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
   return address.port;
+}
+
+function guestPath(hostPath) {
+  const windowsPath = /^([A-Za-z]):[\\/](.*)$/.exec(hostPath);
+  if (!windowsPath) return hostPath.replaceAll("\\", "/");
+  return `/mnt/${windowsPath[1].toLowerCase()}/${windowsPath[2].replaceAll("\\", "/")}`;
 }

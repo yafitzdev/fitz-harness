@@ -1,7 +1,16 @@
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveRuntimePaths } from "./runtime-paths.js";
 
 describe("Fitz runtime paths", () => {
+  it("uses the hidden user LLM directory by default", () => {
+    const paths = resolveRuntimePaths({ LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local" });
+    expect(paths.llmRoot).toBe(resolve(homedir(), ".llm"));
+    expect(paths.engineRoot).toBe(resolve(homedir(), ".llm", "engines"));
+    expect(paths.modelRoot).toBe(resolve(homedir(), ".llm", "models"));
+  });
+
   it("keeps mutable host state and Pi packages outside the installation", () => {
     const paths = resolveRuntimePaths({ LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local", FITZ_LLM_ROOT: "C:\\Users\\tester\\llm" });
     expect(paths.dataRoot).toContain("Fitz Codex");
