@@ -2,6 +2,12 @@ import { reconnectDelay } from "@fitz/connectivity/reconnect";
 import type { ConsumerConnectionSummary, DesktopUpdateStatus, ResourcePreview } from "./preload.js";
 import { appendMarkdown, setMarkdown } from "./markdown.js";
 import { highlightSource } from "./syntax-highlighting.js";
+import { ConversationLayout } from "./ui/layout/conversation-layout.js";
+import { WorkspacePageController } from "./ui/layout/workspace-pages.js";
+import { CustomSelectController } from "./ui/primitives/custom-select.js";
+import { ContextMenu } from "./ui/primitives/context-menu.js";
+import { positionNestedPopover, togglePopover as toggleManagedPopover } from "./ui/primitives/popover.js";
+import { ResizablePane } from "./ui/primitives/resizable-pane.js";
 
 type Json = Record<string, any>;
 type FixedRouteId = "fast" | "default" | "smart";
@@ -60,7 +66,6 @@ let projectHoverHideTimer: ReturnType<typeof setTimeout> | undefined;
 let removeProjectTarget: string | undefined;
 let editingRecipe: Json | undefined;
 let accessMode: AccessMode = storedAccessMode();
-let activeCustomSelect: HTMLSelectElement | undefined;
 let inspectedResource: { kind: "file"; path: string } | { kind: "url"; url: string } | undefined;
 let inspectionVersion = 0;
 let inspectedPreview: ResourcePreview | undefined;
@@ -108,13 +113,6 @@ const accessModeIcon = element("access-mode-icon") as unknown as SVGElement;
 const form = element("composer") as HTMLFormElement;
 const workspace = query(".workspace");
 const prompt = element("prompt") as HTMLTextAreaElement;
-const conversationLayoutObserver = new ResizeObserver(syncConversationLayout);
-const conversationContentObserver = new MutationObserver(syncConversationLayout);
-conversationLayoutObserver.observe(messages);
-conversationLayoutObserver.observe(composerDock);
-conversationLayoutObserver.observe(workspace);
-conversationContentObserver.observe(messages, { childList: true, subtree: true });
-syncConversationLayout();
 const newChatContext = element("new-chat-context");
 const newChatProject = element("new-chat-project");
 const newChatProjectControl = element("new-chat-project-control") as HTMLButtonElement;
@@ -281,10 +279,40 @@ const removeProjectForm = element("remove-project-form") as HTMLFormElement;
 const removeProjectName = element("remove-project-name");
 const toast = element("toast");
 
-restoreSidebarWidth();
-restoreInspectorWidth();
+let conversationLayout: ConversationLayout | undefined;
+const sidebarPane = new ResizablePane({
+  divider: sidebarResizer, storageKey: "fitz-sidebar-width", defaultValue: 254, minimum: 240, maximum: 520,
+  pointerValue: (event) => event.clientX,
+  apply: (value) => shell.style.setProperty("--sidebar-width", `${value}px`),
+});
+const inspectorPane = new ResizablePane({
+  divider: inspectorResizer, storageKey: "fitz-inspector-width", defaultValue: 400, minimum: 300,
+  maximum: () => Math.max(300, Math.min(760, workspace.getBoundingClientRect().width - 420)),
+  pointerValue: (event) => workspace.getBoundingClientRect().right - event.clientX,
+  keyboardDirection: -1,
+  apply: (value) => workspace.style.setProperty("--inspector-width", `${value}px`),
+  onChange: () => conversationLayout?.sync(),
+});
+conversationLayout = new ConversationLayout({ workspace, messages, composer: composerDock, scrollButton: scrollToBottom, inspectorWidth: () => inspectorPane.value() });
+const customSelects = new CustomSelectController(selectPopover, closePopovers);
+const sidebarMenu = new ContextMenu(sidebarContextMenu, closePopovers);
+const workspacePages = new WorkspacePageController({
+  pages: {
+    playbooks: playbookPage,
+    connections: connectionsPage,
+    plugins: pluginsPage,
+    administration: administrationPage,
+    pairing: pairingPage,
+  },
+  navigation: {
+    playbooks: element("manage-playbooks"),
+    connections: connectionsButton,
+    plugins: pluginsButton,
+    administration: administrationButton,
+  },
+  setConversationInert,
+});
 renderAccessMode();
-initializeCustomSelects();
 void initialize();
 
 form.addEventListener("submit", (event) => {
@@ -292,8 +320,6 @@ form.addEventListener("submit", (event) => {
   if (currentRun) void cancelRun();
   else void sendPrompt();
 });
-messages.addEventListener("scroll", updateScrollToBottom, { passive: true });
-scrollToBottom.addEventListener("click", () => messages.scrollTo({ top: messages.scrollHeight, behavior: "smooth" }));
 window.fitz.onNavigationCommand((command) => void navigateHistory(command === "back" ? -1 : 1));
 prompt.addEventListener("input", () => { resizePrompt(); updateContextMeter(); refreshComposerState(); scheduleModelWarmup(); });
 prompt.addEventListener("keydown", (event) => {
@@ -334,10 +360,6 @@ connectionSearch.addEventListener("input", renderConsumerConnections);
 element("sidebar-menu").addEventListener("click", toggleSidebar);
 for (const menuButton of document.querySelectorAll<HTMLButtonElement>("[data-app-menu]")) menuButton.addEventListener("click", (event) => openAppMenu(menuButton.dataset.appMenu ?? "", menuButton, event));
 for (const windowButton of document.querySelectorAll<HTMLButtonElement>("[data-window-action]")) windowButton.addEventListener("click", () => void window.fitz.windowAction(windowButton.dataset.windowAction as "minimize" | "maximize" | "close"));
-sidebarResizer.addEventListener("pointerdown", beginSidebarResize);
-sidebarResizer.addEventListener("keydown", resizeSidebarWithKeyboard);
-inspectorResizer.addEventListener("pointerdown", beginInspectorResize);
-inspectorResizer.addEventListener("keydown", resizeInspectorWithKeyboard);
 connectionStatus.addEventListener("click", () => void initialize());
 contextToggle.addEventListener("click", () => setContextPanel(contextPanel.hasAttribute("hidden")));
 inspectorClose.addEventListener("click", () => setContextPanel(false));
@@ -805,14 +827,10 @@ function openSidebarMenu(kind: "project" | "task", id: string, toggle: HTMLButto
   event.preventDefault();
   event.stopPropagation();
   closePopovers();
-  sidebarContextMenu.replaceChildren();
+  sidebarMenu.reset();
   if (kind === "project") buildProjectMenu(id);
   else buildTaskMenu(id);
-  const rect = toggle.getBoundingClientRect();
-  sidebarContextMenu.hidden = false;
-  const menuRect = sidebarContextMenu.getBoundingClientRect();
-  sidebarContextMenu.style.left = `${Math.min(rect.right + 4, window.innerWidth - menuRect.width - 8)}px`;
-  sidebarContextMenu.style.top = `${Math.min(rect.top, window.innerHeight - menuRect.height - 8)}px`;
+  sidebarMenu.openBeside(toggle);
   toggle.setAttribute("aria-expanded", "true");
 }
 
@@ -820,41 +838,33 @@ function buildProjectMenu(id: string): void {
   const project = projectRecords.find((item) => item.id === id);
   if (!project) return;
   const sessions = sessionsByProject.get(id) ?? [];
-  addMenuItem(pinnedProjects.has(id) ? "Unpin project" : "Pin project", () => toggleStored(pinnedProjects, id, "fitz-pinned-projects"), false, '<path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path>');
-  addMenuItem("Open in Explorer", () => { if (project.rootPath) void openProjectPath(project.rootPath); }, false, '<path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path><path d="M3.5 6.5V4h5l1.5 2"></path>', !project.rootPath);
-  addMenuItem("Create permanent worktree", () => openProjectWorktreeSetup(id), false, '<path d="M4 6h8M12 3l3 3-3 3M16 14H8M8 11l-3 3 3 3"></path>', !project.rootPath);
-  addMenuItem("Edit project", () => openProjectRenameDialog(id), false, '<circle cx="10" cy="10" r="3"></circle><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M15.3 4.7l-1.4 1.4M6.1 13.9l-1.4 1.4"></path>');
-  addMenuSeparator();
-  addMenuItem("Archive chats", () => void archiveProjectChats(id), false, '<rect x="3" y="5" width="14" height="11" rx="2"></rect><path d="M3 8h14M8 11h4"></path>', sessions.length === 0);
-  addMenuItem("Remove", () => openRemoveProjectDialog(id), false, '<path d="m5 5 10 10M15 5 5 15"></path>');
+  sidebarMenu.add({ label: pinnedProjects.has(id) ? "Unpin project" : "Pin project", action: () => toggleStored(pinnedProjects, id, "fitz-pinned-projects"), icon: '<path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path>' });
+  sidebarMenu.add({ label: "Open in Explorer", action: () => { if (project.rootPath) void openProjectPath(project.rootPath); }, icon: '<path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path><path d="M3.5 6.5V4h5l1.5 2"></path>', disabled: !project.rootPath });
+  sidebarMenu.add({ label: "Create permanent worktree", action: () => openProjectWorktreeSetup(id), icon: '<path d="M4 6h8M12 3l3 3-3 3M16 14H8M8 11l-3 3 3 3"></path>', disabled: !project.rootPath });
+  sidebarMenu.add({ label: "Edit project", action: () => openProjectRenameDialog(id), icon: '<circle cx="10" cy="10" r="3"></circle><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M15.3 4.7l-1.4 1.4M6.1 13.9l-1.4 1.4"></path>' });
+  sidebarMenu.separator();
+  sidebarMenu.add({ label: "Archive chats", action: () => void archiveProjectChats(id), icon: '<rect x="3" y="5" width="14" height="11" rx="2"></rect><path d="M3 8h14M8 11h4"></path>', disabled: sessions.length === 0 });
+  sidebarMenu.add({ label: "Remove", action: () => openRemoveProjectDialog(id), icon: '<path d="m5 5 10 10M15 5 5 15"></path>' });
 }
 
 function buildTaskMenu(id: string): void {
   const session = (currentProject ? sessionsByProject.get(currentProject) : undefined)?.find((item) => item.id === id);
   const project = projectRecords.find((item) => item.id === currentProject);
   if (!session) return;
-  addMenuItem(pinnedSessions.has(id) ? "Unpin chat" : "Pin chat", () => toggleStored(pinnedSessions, id, "fitz-pinned-sessions"), false, '<path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path>');
-  addMenuItem("Rename chat", () => { currentSession = id; openRenameDialog(); }, false, '<path d="M4 14.5V17h2.5L15 8.5 11.5 5z"></path><path d="m10.5 6 3.5 3.5"></path>');
-  addMenuItem("Archive chat", () => { currentSession = id; void archiveCurrentTask(); }, true, '<rect x="3" y="5" width="14" height="11" rx="2"></rect><path d="M3 8h14M8 11h4"></path>');
-  addMenuItem(unreadSessions.has(id) ? "Mark as read" : "Mark as unread", () => toggleStored(unreadSessions, id, "fitz-unread-sessions"), false, '<path d="M4 4.5h12v9H9l-4 3v-3H4z"></path>');
+  sidebarMenu.add({ label: pinnedSessions.has(id) ? "Unpin chat" : "Pin chat", action: () => toggleStored(pinnedSessions, id, "fitz-pinned-sessions"), icon: '<path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path>' });
+  sidebarMenu.add({ label: "Rename chat", action: () => { currentSession = id; openRenameDialog(); }, icon: '<path d="M4 14.5V17h2.5L15 8.5 11.5 5z"></path><path d="m10.5 6 3.5 3.5"></path>' });
+  sidebarMenu.add({ label: "Archive chat", action: () => { currentSession = id; void archiveCurrentTask(); }, danger: true, icon: '<rect x="3" y="5" width="14" height="11" rx="2"></rect><path d="M3 8h14M8 11h4"></path>' });
+  sidebarMenu.add({ label: unreadSessions.has(id) ? "Mark as read" : "Mark as unread", action: () => toggleStored(unreadSessions, id, "fitz-unread-sessions"), icon: '<path d="M4 4.5h12v9H9l-4 3v-3H4z"></path>' });
   if (project?.rootPath) {
-    addMenuSeparator();
-    addMenuItem("Open in Explorer", () => void openProjectPath(project.rootPath), false, '<path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path><path d="M3.5 6.5V4h5l1.5 2"></path>');
-    addMenuItem("Copy working directory", () => void copyValue(project.rootPath, "Working directory copied"), false, '<rect x="6" y="6" width="10" height="10" rx="2"></rect><path d="M13 6V4H4v9h2"></path>');
+    sidebarMenu.separator();
+    sidebarMenu.add({ label: "Open in Explorer", action: () => void openProjectPath(project.rootPath), icon: '<path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path><path d="M3.5 6.5V4h5l1.5 2"></path>' });
+    sidebarMenu.add({ label: "Copy working directory", action: () => void copyValue(project.rootPath, "Working directory copied"), icon: '<rect x="6" y="6" width="10" height="10" rx="2"></rect><path d="M13 6V4H4v9h2"></path>' });
   }
-  addMenuItem("Copy session ID", () => void copyValue(id, "Session ID copied"), false, '<rect x="6" y="6" width="10" height="10" rx="2"></rect><path d="M13 6V4H4v9h2"></path>');
-  addMenuItem("Copy deeplink", () => void copyValue(`fitz://sessions/${id}`, "Deeplink copied"), false, '<path d="m8 12 4-4"></path><path d="M6.5 13.5 5 15a3 3 0 0 1-4-4l2.5-2.5a3 3 0 0 1 4.2 0"></path><path d="M13.5 6.5 15 5a3 3 0 0 1 4 4l-2.5 2.5a3 3 0 0 1-4.2 0"></path>');
-  addMenuSeparator();
-  addMenuItem("Continue in new chat", () => void continueInNewChat(session), false, '<path d="M4 5h7a4 4 0 0 1 4 4v6"></path><path d="m12 12 3 3 3-3"></path>');
+  sidebarMenu.add({ label: "Copy session ID", action: () => void copyValue(id, "Session ID copied"), icon: '<rect x="6" y="6" width="10" height="10" rx="2"></rect><path d="M13 6V4H4v9h2"></path>' });
+  sidebarMenu.add({ label: "Copy deeplink", action: () => void copyValue(`fitz://sessions/${id}`, "Deeplink copied"), icon: '<path d="m8 12 4-4"></path><path d="M6.5 13.5 5 15a3 3 0 0 1-4-4l2.5-2.5a3 3 0 0 1 4.2 0"></path><path d="M13.5 6.5 15 5a3 3 0 0 1 4 4l-2.5 2.5a3 3 0 0 1-4.2 0"></path>' });
+  sidebarMenu.separator();
+  sidebarMenu.add({ label: "Continue in new chat", action: () => void continueInNewChat(session), icon: '<path d="M4 5h7a4 4 0 0 1 4 4v6"></path><path d="m12 12 3 3 3-3"></path>' });
 }
-
-function addMenuItem(label: string, action: () => void, danger = false, icon?: string, disabled = false): void {
-  const button = document.createElement("button"); button.type = "button"; button.classList.toggle("danger", danger); button.disabled = disabled;
-  const text = document.createElement("span"); text.className = "menu-label"; text.textContent = label; if (icon) button.append(svg(icon)); button.append(text);
-  button.addEventListener("click", () => { closePopovers(); action(); }); sidebarContextMenu.append(button);
-}
-
-function addMenuSeparator(): void { sidebarContextMenu.append(document.createElement("hr")); }
 
 function toggleStored(values: Set<string>, id: string, key: string): void {
   if (values.has(id)) values.delete(id); else values.add(id);
@@ -898,26 +908,18 @@ async function openPlaybookPage(): Promise<void> {
   if (!pairingPage.hidden) { pairingCode.focus(); return; }
   closePopovers();
   setContextPanel(false);
-  administrationPage.hidden = true;
-  pluginsPage.hidden = true;
-  connectionsPage.hidden = true;
-  playbookPage.hidden = false;
   closeManagementEditor();
-  setConversationInert(true);
-  element("manage-playbooks").classList.add("active");
-  connectionsButton.classList.remove("active");
-  pluginsButton.classList.remove("active");
-  administrationButton.classList.remove("active");
+  workspacePages.show("playbooks");
   playbookList.replaceChildren(panelEmpty("Loading playbooks…"));
   await loadManagementConfiguration(true);
   rememberLocation({ view: "playbooks" });
 }
 
-async function openConnectionsPage(): Promise<void> { if (!pairingPage.hidden) return; closePopovers(); setContextPanel(false); pairingPage.hidden = true; administrationPage.hidden = true; pluginsPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = false; closeManagementEditor(); closeConnectionEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); administrationButton.classList.remove("active"); pluginsButton.classList.remove("active"); connectionsButton.classList.add("active"); await syncAndLoadConsumerConnections(false); rememberLocation({ view: "connections" }); }
-async function openPluginsPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); setContextPanel(false); pairingPage.hidden = true; administrationPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = true; pluginsPage.hidden = false; closeManagementEditor(); closeConnectionEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); connectionsButton.classList.remove("active"); administrationButton.classList.remove("active"); pluginsButton.classList.add("active"); installedPlugins.replaceChildren(panelEmpty("Loading plugins…")); await loadPiPackages(false); rememberLocation({ view: "plugins" }); }
-async function openAdministrationPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); setContextPanel(false); pairingPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = true; pluginsPage.hidden = true; administrationPage.hidden = false; closeManagementEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); connectionsButton.classList.remove("active"); pluginsButton.classList.remove("active"); administrationButton.classList.add("active"); adminUsers.replaceChildren(panelEmpty("Loading users…")); await loadAdministration(); rememberLocation({ view: "administration" }); }
-function showPairingPage(message: string): void { closePopovers(); setContextPanel(false); administrationPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = true; pluginsPage.hidden = true; pairingPage.hidden = false; closeManagementEditor(); setConversationInert(true); element("manage-playbooks").classList.remove("active"); connectionsButton.classList.remove("active"); pluginsButton.classList.remove("active"); administrationButton.classList.remove("active"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
-function showConversationWorkspace(): void { pairingPage.hidden = true; administrationPage.hidden = true; playbookPage.hidden = true; connectionsPage.hidden = true; pluginsPage.hidden = true; closeManagementEditor(); setConversationInert(false); element("manage-playbooks").classList.remove("active"); connectionsButton.classList.remove("active"); pluginsButton.classList.remove("active"); administrationButton.classList.remove("active"); }
+async function openConnectionsPage(): Promise<void> { if (!pairingPage.hidden) return; closePopovers(); setContextPanel(false); closeManagementEditor(); closeConnectionEditor(); workspacePages.show("connections"); await syncAndLoadConsumerConnections(false); rememberLocation({ view: "connections" }); }
+async function openPluginsPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); setContextPanel(false); closeManagementEditor(); closeConnectionEditor(); workspacePages.show("plugins"); installedPlugins.replaceChildren(panelEmpty("Loading plugins…")); await loadPiPackages(false); rememberLocation({ view: "plugins" }); }
+async function openAdministrationPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); setContextPanel(false); closeManagementEditor(); workspacePages.show("administration"); adminUsers.replaceChildren(panelEmpty("Loading users…")); await loadAdministration(); rememberLocation({ view: "administration" }); }
+function showPairingPage(message: string): void { closePopovers(); setContextPanel(false); closeManagementEditor(); workspacePages.show("pairing"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
+function showConversationWorkspace(): void { closeManagementEditor(); workspacePages.show("conversation"); }
 function setConversationInert(inert: boolean): void { for (const area of [workspaceHeader, messages, composerDock]) { area.toggleAttribute("inert", inert); area.setAttribute("aria-hidden", String(inert)); } }
 
 function rememberLocation(location: AppLocation): void {
@@ -1992,81 +1994,8 @@ function openSettingsSubmenu(kind: "model" | "effort", row: HTMLButtonElement): 
     button.addEventListener("click", (event) => { event.stopPropagation(); select.value = option.value; updateModelControls(); closePopovers(); }); settingsSubmenu.append(button);
   }
   for (const item of document.querySelectorAll(".setting-row")) item.classList.toggle("active", item === row);
-  settingsSubmenu.style.top = `${Math.max(-8, row.offsetTop - 8)}px`;
-  settingsSubmenu.classList.remove("open-left");
   settingsSubmenu.hidden = false;
-  let bounds = settingsSubmenu.getBoundingClientRect();
-  if (bounds.right > window.innerWidth - 16) { settingsSubmenu.classList.add("open-left"); bounds = settingsSubmenu.getBoundingClientRect(); }
-  if (bounds.bottom > window.innerHeight - 16) settingsSubmenu.style.top = `${Number.parseFloat(settingsSubmenu.style.top) - (bounds.bottom - window.innerHeight + 16)}px`;
-}
-
-function initializeCustomSelects(): void {
-  const enhance = (select: HTMLSelectElement) => {
-    if (select.hidden || select.dataset.customMenu === "true") return;
-    select.dataset.customMenu = "true";
-    select.setAttribute("aria-haspopup", "listbox");
-    select.setAttribute("aria-expanded", "false");
-    select.addEventListener("pointerdown", (event) => {
-      if (select.disabled || event.button !== 0) return;
-      event.preventDefault();
-      event.stopPropagation();
-      select.focus();
-      openCustomSelect(select);
-    });
-    select.addEventListener("click", (event) => { if (!select.disabled) { event.preventDefault(); event.stopPropagation(); } });
-    select.addEventListener("keydown", (event) => {
-      if (select.disabled || !["Enter", " ", "ArrowDown", "ArrowUp"].includes(event.key)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      openCustomSelect(select, true);
-    });
-  };
-  document.querySelectorAll<HTMLSelectElement>("select").forEach(enhance);
-  new MutationObserver((records) => {
-    for (const record of records) for (const node of record.addedNodes) {
-      if (!(node instanceof HTMLElement)) continue;
-      if (node instanceof HTMLSelectElement) enhance(node);
-      node.querySelectorAll<HTMLSelectElement>("select").forEach(enhance);
-    }
-  }).observe(document.body, { childList: true, subtree: true });
-  selectPopover.addEventListener("click", (event) => event.stopPropagation());
-  selectPopover.addEventListener("keydown", (event) => {
-    const choices = [...selectPopover.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
-    const current = choices.indexOf(document.activeElement as HTMLButtonElement);
-    if (event.key === "Escape") { event.preventDefault(); activeCustomSelect?.focus(); closePopovers(); return; }
-    const next = event.key === "ArrowDown" ? Math.min(current + 1, choices.length - 1) : event.key === "ArrowUp" ? Math.max(current - 1, 0) : event.key === "Home" ? 0 : event.key === "End" ? choices.length - 1 : -1;
-    if (next >= 0) { event.preventDefault(); choices[next]?.focus(); }
-  });
-}
-
-function openCustomSelect(select: HTMLSelectElement, focusSelection = false): void {
-  const reopening = activeCustomSelect === select && !selectPopover.hidden;
-  closePopovers();
-  if (reopening) return;
-  activeCustomSelect = select;
-  select.setAttribute("aria-expanded", "true");
-  selectPopover.replaceChildren();
-  let currentGroup = "";
-  let selectedButton: HTMLButtonElement | undefined;
-  for (const option of [...select.options]) {
-    const group = option.parentElement instanceof HTMLOptGroupElement ? option.parentElement.label : "";
-    if (group && group !== currentGroup) {
-      const heading = document.createElement("small"); heading.className = "select-group-label"; heading.textContent = group; selectPopover.append(heading); currentGroup = group;
-    }
-    const button = document.createElement("button"); button.type = "button"; button.className = "select-option"; button.disabled = option.disabled; button.dataset.value = option.value; button.setAttribute("role", "option"); button.setAttribute("aria-selected", String(option.selected));
-    button.classList.toggle("selected", option.selected); button.textContent = option.textContent ?? option.value;
-    if (option.selected) selectedButton = button;
-    button.addEventListener("click", (event) => { event.stopPropagation(); select.value = option.value; select.dispatchEvent(new Event("change", { bubbles: true })); closePopovers(); select.focus(); });
-    selectPopover.append(button);
-  }
-  const rect = select.getBoundingClientRect();
-  selectPopover.style.width = `${Math.max(150, rect.width)}px`;
-  selectPopover.style.left = `${Math.min(rect.left, window.innerWidth - Math.max(150, rect.width) - 8)}px`;
-  selectPopover.style.top = `${rect.bottom + 5}px`;
-  selectPopover.hidden = false;
-  const menuRect = selectPopover.getBoundingClientRect();
-  if (menuRect.bottom > window.innerHeight - 8 && rect.top > menuRect.height + 12) selectPopover.style.top = `${Math.max(8, rect.top - menuRect.height - 5)}px`;
-  if (focusSelection) queueMicrotask(() => (selectedButton ?? selectPopover.querySelector<HTMLButtonElement>("button:not(:disabled)"))?.focus());
+  positionNestedPopover(settingsSubmenu, row);
 }
 
 function openAppMenu(name: string, toggle: HTMLButtonElement, event: MouseEvent): void {
@@ -2115,16 +2044,11 @@ function openAppMenu(name: string, toggle: HTMLButtonElement, event: MouseEvent)
 }
 
 function togglePopover(popover: HTMLElement, toggle: HTMLButtonElement): void {
-  const opening = popover.hidden;
-  closePopovers();
-  popover.hidden = !opening;
-  toggle.setAttribute("aria-expanded", String(opening));
+  toggleManagedPopover(popover, toggle, closePopovers);
 }
 
 function closePopovers(): void {
-  if (activeCustomSelect) activeCustomSelect.setAttribute("aria-expanded", "false");
-  activeCustomSelect = undefined;
-  selectPopover.hidden = true;
+  customSelects.close();
   appMenuPopover.hidden = true;
   modelMenu.hidden = true;
   settingsSubmenu.hidden = true;
@@ -2516,29 +2440,6 @@ function showLanding(hasTask = false): void {
   updateTitles();
 }
 
-function syncConversationLayout(): void {
-  const workspaceWidth = workspace.clientWidth;
-  const panelWidth = workspace.classList.contains("inspector-open") ? inspectorWidth() : 0;
-  const viewportWidth = Math.max(280, workspaceWidth - panelWidth);
-  const scrollbarWidth = Math.max(0, messages.offsetWidth - messages.clientWidth);
-  const compact = panelWidth > 0;
-  const minimumGutter = compact ? 18 : 24;
-  const inset = Math.max(compact ? 36 : 48, Math.min(compact ? 72 : 96, viewportWidth * (compact ? .07 : .08)));
-  const conversationWidth = Math.max(240, Math.min(768, viewportWidth - scrollbarWidth - inset));
-  const gutter = Math.max(minimumGutter, (viewportWidth - scrollbarWidth - conversationWidth) / 2);
-  workspace.style.setProperty("--conversation-viewport", `${viewportWidth}px`);
-  workspace.style.setProperty("--conversation-width", `${conversationWidth}px`);
-  workspace.style.setProperty("--conversation-gutter", `${gutter}px`);
-  workspace.style.setProperty("--conversation-scrollbar", `${scrollbarWidth}px`);
-  workspace.style.setProperty("--composer-height", `${composerDock.offsetHeight}px`);
-  updateScrollToBottom();
-}
-
-function updateScrollToBottom(): void {
-  const distanceFromBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight;
-  scrollToBottom.hidden = distanceFromBottom < 48 || Boolean(messages.querySelector(".landing, .new-chat-landing"));
-}
-
 function showConnectionFailure(detail: string): void {
   messages.replaceChildren();
   const landing = document.createElement("div"); landing.className = "landing";
@@ -2893,7 +2794,7 @@ function setContextPanel(open: boolean): void {
   shell.classList.toggle("context-open", open);
   contextToggle.setAttribute("aria-expanded", String(open));
   if (!open) inspectionVersion += 1;
-  requestAnimationFrame(syncConversationLayout);
+    requestAnimationFrame(() => conversationLayout?.sync());
 }
 
 function toggleSidebar(): void { shell.classList.toggle("sidebar-collapsed"); closePopovers(); }
@@ -2922,27 +2823,6 @@ async function compactCurrentSession(): Promise<void> {
   finally { contextCompactButton.disabled = false; }
 }
 
-function beginSidebarResize(event: PointerEvent): void {
-  event.preventDefault(); sidebarResizer.classList.add("dragging"); sidebarResizer.setPointerCapture(event.pointerId);
-  const move = (moveEvent: PointerEvent) => setSidebarWidth(moveEvent.clientX);
-  const finish = () => { sidebarResizer.classList.remove("dragging"); sidebarResizer.removeEventListener("pointermove", move); localStorage.setItem("fitz-sidebar-width", String(sidebarWidth())); };
-  sidebarResizer.addEventListener("pointermove", move); sidebarResizer.addEventListener("pointerup", finish, { once: true }); sidebarResizer.addEventListener("pointercancel", finish, { once: true });
-}
-
-function resizeSidebarWithKeyboard(event: KeyboardEvent): void { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); setSidebarWidth(sidebarWidth() + (event.key === "ArrowRight" ? 12 : -12)); localStorage.setItem("fitz-sidebar-width", String(sidebarWidth())); }
-function setSidebarWidth(value: number): void { shell.style.setProperty("--sidebar-width", `${Math.max(240, Math.min(520, value))}px`); sidebarResizer.setAttribute("aria-valuenow", String(Math.round(sidebarWidth()))); }
-function sidebarWidth(): number { return Number.parseFloat(getComputedStyle(shell).getPropertyValue("--sidebar-width")) || 254; }
-function restoreSidebarWidth(): void { const saved = Number(localStorage.getItem("fitz-sidebar-width")); if (Number.isFinite(saved) && saved > 0) setSidebarWidth(saved); }
-function beginInspectorResize(event: PointerEvent): void {
-  event.preventDefault(); inspectorResizer.classList.add("dragging"); inspectorResizer.setPointerCapture(event.pointerId);
-  const move = (moveEvent: PointerEvent) => setInspectorWidth(workspace.getBoundingClientRect().right - moveEvent.clientX);
-  const finish = () => { inspectorResizer.classList.remove("dragging"); inspectorResizer.removeEventListener("pointermove", move); localStorage.setItem("fitz-inspector-width", String(inspectorWidth())); };
-  inspectorResizer.addEventListener("pointermove", move); inspectorResizer.addEventListener("pointerup", finish, { once: true }); inspectorResizer.addEventListener("pointercancel", finish, { once: true });
-}
-function resizeInspectorWithKeyboard(event: KeyboardEvent): void { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); setInspectorWidth(inspectorWidth() + (event.key === "ArrowLeft" ? 12 : -12)); localStorage.setItem("fitz-inspector-width", String(inspectorWidth())); }
-function setInspectorWidth(value: number): void { const maximum = Math.max(300, Math.min(760, workspace.getBoundingClientRect().width - 420)); workspace.style.setProperty("--inspector-width", `${Math.max(300, Math.min(maximum, value))}px`); inspectorResizer.setAttribute("aria-valuenow", String(Math.round(inspectorWidth()))); syncConversationLayout(); }
-function inspectorWidth(): number { return Number.parseFloat(getComputedStyle(workspace).getPropertyValue("--inspector-width")) || 400; }
-function restoreInspectorWidth(): void { const saved = Number(localStorage.getItem("fitz-inspector-width")); if (Number.isFinite(saved) && saved > 0) setInspectorWidth(saved); }
 function setStatus(text: string, state: string): void { status.textContent = text; status.dataset.state = state; }
 function setConnection(text: string, state: string): void { connectionDetail.textContent = text; connectionStatus.dataset.state = state; }
 function setFormBusy(formElement: HTMLFormElement, busy: boolean): void { for (const control of formElement.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>("input,button,select")) control.disabled = busy; }

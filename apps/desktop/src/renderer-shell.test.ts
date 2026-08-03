@@ -5,7 +5,16 @@ const html = readFileSync(new URL("./renderer/index.html", import.meta.url), "ut
 const renderer = readFileSync(new URL("./renderer.ts", import.meta.url), "utf8");
 const markdown = readFileSync(new URL("./markdown.ts", import.meta.url), "utf8");
 const syntaxHighlighting = readFileSync(new URL("./syntax-highlighting.ts", import.meta.url), "utf8");
-const styles = readFileSync(new URL("./renderer/styles.css", import.meta.url), "utf8");
+const conversationLayout = readFileSync(new URL("./ui/layout/conversation-layout.ts", import.meta.url), "utf8");
+const workspacePages = readFileSync(new URL("./ui/layout/workspace-pages.ts", import.meta.url), "utf8");
+const resizablePane = readFileSync(new URL("./ui/primitives/resizable-pane.ts", import.meta.url), "utf8");
+const customSelect = readFileSync(new URL("./ui/primitives/custom-select.ts", import.meta.url), "utf8");
+const contextMenu = readFileSync(new URL("./ui/primitives/context-menu.ts", import.meta.url), "utf8");
+const styles = [
+  readFileSync(new URL("./renderer/styles.css", import.meta.url), "utf8"),
+  readFileSync(new URL("./ui/theme/tokens.css", import.meta.url), "utf8"),
+  readFileSync(new URL("./ui/primitives/scroll-surface.css", import.meta.url), "utf8"),
+].join("\n");
 const main = readFileSync(new URL("./main.ts", import.meta.url), "utf8");
 const preload = readFileSync(new URL("./preload.ts", import.meta.url), "utf8");
 
@@ -91,7 +100,9 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("--management-content-width: 900px");
     expect(styles).toContain("scrollbar-gutter: stable both-edges");
     expect(styles).toContain("width: min(var(--management-content-width), calc(100% - 48px))");
-    expect(styles).toContain("*::-webkit-scrollbar { width: 10px; height: 10px; }");
+    expect(styles).toContain("--codex-scrollbar-size: 10px");
+    expect(styles).toContain("width: var(--codex-scrollbar-size)");
+    expect(styles).toContain("height: var(--codex-scrollbar-size)");
     expect(styles).toContain("background-clip: content-box");
     expect(styles).not.toContain(".management-page-content { width: min(820px");
   });
@@ -208,7 +219,9 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("window.fitz.chooseFolder()");
     expect(renderer).toContain("window.fitz.openPath(path)");
     expect(renderer).toContain("window.fitz.copyText(value)");
-    expect(renderer).toContain("beginSidebarResize");
+    expect(renderer).toContain("new ResizablePane({");
+    expect(resizablePane).toContain('options.divider.addEventListener("pointerdown"');
+    expect(resizablePane).toContain('event.key !== "ArrowLeft" && event.key !== "ArrowRight"');
     expect(renderer).toContain('openSidebarMenu("project"');
     expect(renderer).toContain('openSidebarMenu("task"');
     expect(renderer).toContain('openSettingsSubmenu(row.dataset.setting');
@@ -348,21 +361,21 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("inset: var(--codex-radius-3xl) 0 -12px");
     expect(styles).toContain("--conversation-scrollbar: 0px");
     expect(styles).toContain(".workspace.inspector-open { --conversation-viewport: calc(100% - var(--inspector-width))");
-    expect(renderer).toContain("new ResizeObserver(syncConversationLayout)");
-    expect(renderer).toContain("conversationLayoutObserver.observe(composerDock)");
-    expect(renderer).toContain("conversationLayoutObserver.observe(workspace)");
-    expect(renderer).toContain("messages.offsetWidth - messages.clientWidth");
-    expect(renderer).toContain('workspace.style.setProperty("--conversation-viewport", `${viewportWidth}px`)');
-    expect(renderer).toContain('workspace.style.setProperty("--conversation-width", `${conversationWidth}px`)');
-    expect(renderer).toContain('workspace.style.setProperty("--conversation-gutter", `${gutter}px`)');
-    expect(renderer).toContain("composerDock.offsetHeight");
+    expect(renderer).toContain("new ConversationLayout({");
+    expect(conversationLayout).toContain("new ResizeObserver(this.sync)");
+    expect(conversationLayout).toContain("this.#resizeObserver.observe(target)");
+    expect(conversationLayout).toContain("messages.offsetWidth - messages.clientWidth");
+    expect(conversationLayout).toContain('workspace.style.setProperty("--conversation-viewport", `${viewportWidth}px`)');
+    expect(conversationLayout).toContain('workspace.style.setProperty("--conversation-width", `${conversationWidth}px`)');
+    expect(conversationLayout).toContain('workspace.style.setProperty("--conversation-gutter", `${gutter}px`)');
+    expect(conversationLayout).toContain("composer.offsetHeight");
     expect(html).toContain('id="scroll-to-bottom"');
-    expect(renderer).toContain('messages.addEventListener("scroll", updateScrollToBottom');
-    expect(renderer).toContain('messages.scrollTo({ top: messages.scrollHeight, behavior: "smooth" })');
+    expect(conversationLayout).toContain('options.messages.addEventListener("scroll", this.updateScrollButton');
+    expect(conversationLayout).toContain('messages.scrollTo({ top: this.#options.messages.scrollHeight, behavior: "smooth" })');
     expect(styles).not.toContain("scroll-behavior: smooth");
     expect(renderer).toContain("if (!messages.childElementCount) showLanding(true)");
     expect(renderer).toContain("messages.scrollTop = messages.scrollHeight");
-    expect(renderer).toContain("distanceFromBottom < 48");
+    expect(conversationLayout).toContain("distanceFromBottom < 48");
     expect(styles).toContain(".scroll-to-bottom");
     expect(styles).toContain("bottom: calc(100% + 12px)");
   });
@@ -426,7 +439,8 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("max-width: 100%");
     expect(styles).toContain("backdrop-filter: blur(16px)");
     expect(styles).toContain("--codex-elevation-prominent:");
-    expect(renderer).toContain("Math.max(240, Math.min(520, value))");
+    expect(renderer).toContain('storageKey: "fitz-sidebar-width"');
+    expect(renderer).toContain("minimum: 240, maximum: 520");
     expect(html).toContain('d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"');
   });
 
@@ -484,8 +498,8 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".inspector-panel");
     expect(styles).not.toContain(".workspace.inspector-open .messages { margin-right: var(--inspector-width); }");
     expect(styles).toContain(".inspector-resizer");
-    expect(renderer).toContain("beginInspectorResize");
-    expect(renderer).toContain("restoreInspectorWidth()");
+    expect(renderer).toContain('storageKey: "fitz-inspector-width"');
+    expect(resizablePane).toContain("restore(): void");
     expect(renderer).toContain('import { highlightSource } from "./syntax-highlighting.js"');
     expect(markdown).toContain('import { highlightSource } from "./syntax-highlighting.js"');
     expect(markdown).toContain("code.innerHTML = highlighted.html");
@@ -534,10 +548,26 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".administration-content");
     expect(styles).toContain(".tool-policy");
     expect(html).toContain('id="select-popover"');
-    expect(renderer).toContain("function initializeCustomSelects()");
-    expect(renderer).toContain("function openCustomSelect(");
+    expect(renderer).toContain("new CustomSelectController(selectPopover, closePopovers)");
+    expect(customSelect).toContain('document.querySelectorAll<HTMLSelectElement>("select").forEach(this.enhance)');
+    expect(customSelect).toContain("open(select: HTMLSelectElement");
     expect(styles).toContain(".select-popover .select-option.selected::after");
     expect(styles).toContain("background-position: right 9px center");
+  });
+
+  it("keeps shared shell behavior behind reusable component boundaries", () => {
+    expect(renderer).toContain('import { ResizablePane } from "./ui/primitives/resizable-pane.js"');
+    expect(renderer).toContain('import { ConversationLayout } from "./ui/layout/conversation-layout.js"');
+    expect(renderer).toContain('import { WorkspacePageController } from "./ui/layout/workspace-pages.js"');
+    expect(renderer).toContain('import { CustomSelectController } from "./ui/primitives/custom-select.js"');
+    expect(renderer).toContain('import { ContextMenu } from "./ui/primitives/context-menu.js"');
+    expect(workspacePages).toContain('element.hidden = name !== page');
+    expect(workspacePages).toContain('classList.toggle("active", name === page)');
+    expect(workspacePages).toContain('setConversationInert(page !== "conversation")');
+    expect(resizablePane).toContain('localStorage.setItem(this.#options.storageKey');
+    expect(resizablePane).toContain('setAttribute("aria-valuenow"');
+    expect(contextMenu).toContain("openBeside(anchor: HTMLElement");
+    expect(contextMenu).toContain('button.classList.toggle("danger"');
   });
 
   it("renders and exports host-redacted diagnostics from the administration workspace", () => {
