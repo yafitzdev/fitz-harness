@@ -1,0 +1,145 @@
+// @vitest-environment happy-dom
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { AgentRunController, type AgentRunActivity, type AgentRunControllerOptions, type AgentRunRequest } from "./agent-run-controller.js";
+
+function activityMock() {
+  const activity = document.createElement("div");
+  const tool = document.createElement("div");
+  const approval = document.createElement("div");
+  const timeline: AgentRunActivity = {
+    appendRun: vi.fn(() => activity),
+    setRun: vi.fn(),
+    appendContext: vi.fn(() => document.createElement("div")),
+    markAssistantAsCommentary: vi.fn(),
+    appendApproval: vi.fn(() => approval),
+    resolveApproval: vi.fn(),
+    appendTool: vi.fn(() => tool),
+    completeTool: vi.fn(),
+  };
+  return { timeline, activity, tool, approval };
+}
+
+function request(): AgentRunRequest {
+  return { model: "default", max_tokens: 2048, temperature: 0.2, sessionId: "session-1", accessMode: "full", messages: [{ role: "user", content: "hello" }] };
+}
+
+function setup(api: AgentRunControllerOptions["api"]) {
+  const messages = document.createElement("main");
+  document.body.append(messages);
+  const activity = activityMock();
+  const assistant = document.createElement("div");
+  const calls = {
+    appendAssistant: vi.fn(() => assistant),
+    appendAssistantDelta: vi.fn(),
+    appendSystem: vi.fn(),
+    addTokenEstimate: vi.fn(),
+    setStatus: vi.fn(),
+    setEngineState: vi.fn(),
+    refreshControls: vi.fn(),
+    refreshQueue: vi.fn(),
+    showToast: vi.fn(),
+  };
+  const controller = new AgentRunController({
+    messages,
+    activity: activity.timeline,
+    api,
+    ...calls,
+    queueVisible: () => true,
+    errorMessage: (error) => error instanceof Error ? error.message : String(error),
+    terminalReplayError: () => false,
+  });
+  return { controller, activity, assistant, calls };
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+  document.body.replaceChildren();
+});
+
+describe("AgentRunController", () => {
+  it("owns submission, streaming, status transitions, and completion", async () => {
+    const api = vi.fn(async (path: string) => path === "/api/v1/agent/runs"
+      ? { data: { id: "run-1" }, context: { compacted: true } }
+      : { events: [
+        { sequence: 1, type: "run.started", data: {} },
+        { sequence: 2, type: "assistant.delta", data: { text: "Hello" } },
+        { sequence: 3, type: "run.completed", data: {} },
+      ] });
+    const { controller, activity, assistant, calls } = setup(api);
+
+    await controller.start(request());
+
+    expect(controller.active).toBe(false);
+    expect(api).toHaveBeenNthCalledWith(1, "/api/v1/agent/runs", "POST", request());
+    expect(api).toHaveBeenNthCalledWith(2, "/api/v1/agent/runs/run-1/events?after=0");
+    expect(activity.timeline.appendContext).toHaveBeenCalled();
+    expect(calls.appendAssistant).toHaveBeenCalledOnce();
+    expect(calls.appendAssistantDelta).toHaveBeenCalledWith(assistant, "Hello");
+    expect(calls.addTokenEstimate).toHaveBeenCalledWith("Hello");
+    expect(calls.setStatus).toHaveBeenCalledWith("Ready", "idle");
+    expect(calls.setEngineState).toHaveBeenLastCalledWith("READY");
+    expect(calls.refreshControls).toHaveBeenCalledTimes(2);
+  });
+
+  it("routes tool and approval events through the activity timeline", async () => {
+    const api = vi.fn(async (path: string) => path === "/api/v1/agent/runs"
+      ? { data: { id: "run-tools" } }
+      : { events: [
+        { sequence: 1, type: "run.started", data: {} },
+        { sequence: 2, type: "tool.started", data: { toolName: "bash", toolCallId: "tool-1", input: { command: "pwd" } } },
+        { sequence: 3, type: "tool.completed", data: { toolCallId: "tool-1", result: "C:/code", isError: false } },
+        { sequence: 4, type: "tool.approval.requested", data: { approvalId: "approval-1", toolName: "write", input: { path: "a.txt" } } },
+        { sequence: 5, type: "tool.approval.resolved", data: { approvalId: "approval-1", decision: "approved" } },
+        { sequence: 6, type: "assistant.delta", data: { text: "Done" } },
+        { sequence: 7, type: "run.completed", data: {} },
+      ] });
+    const { controller, activity, calls } = setup(api);
+
+    await controller.start(request());
+
+    expect(activity.timeline.appendTool).toHaveBeenCalledWith("bash", { command: "pwd" }, "tool-1", true);
+    expect(activity.timeline.completeTool).toHaveBeenCalledWith(activity.tool, "bash", { command: "pwd" }, "C:/code", false);
+    expect(activity.timeline.appendApproval).toHaveBeenCalledWith(expect.objectContaining({ id: "approval-1", status: "pending" }));
+    expect(activity.timeline.resolveApproval).toHaveBeenCalledWith(activity.approval, "approved");
+    expect(calls.setStatus).toHaveBeenCalledWith("Waiting for approval", "active");
+  });
+
+  it("warms once after the first character and can be reset for another model", async () => {
+    vi.useFakeTimers();
+    const api = vi.fn(async () => ({ data: {} }));
+    const { controller } = setup(api);
+
+    controller.scheduleWarmup("h", "fast", "connection-1");
+    controller.scheduleWarmup("he", "fast", "connection-1");
+    await vi.advanceTimersByTimeAsync(120);
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(api).toHaveBeenCalledWith("/api/v1/inference/warm", "POST", { model: "fast", connectionId: "connection-1" });
+
+    controller.resetWarmup();
+    controller.scheduleWarmup("x", "smart", "connection-2");
+    await vi.advanceTimersByTimeAsync(120);
+    expect(api).toHaveBeenLastCalledWith("/api/v1/inference/warm", "POST", { model: "smart", connectionId: "connection-2" });
+  });
+
+  it("remembers cancellation while run creation is still in flight", async () => {
+    let resolveStart!: (value: Record<string, unknown>) => void;
+    const start = new Promise<Record<string, unknown>>((resolve) => { resolveStart = resolve; });
+    const api = vi.fn(async (path: string, method?: string) => {
+      if (path === "/api/v1/agent/runs" && method === "POST") return start;
+      if (method === "DELETE") return { data: {} };
+      return { events: [{ sequence: 1, type: "run.cancelled", data: {} }] };
+    });
+    const { controller, calls } = setup(api);
+
+    const running = controller.start(request());
+    expect(controller.active).toBe(true);
+    await controller.cancel();
+    resolveStart({ data: { id: "run-late" } });
+    await running;
+
+    expect(api).toHaveBeenCalledWith("/api/v1/agent/runs/run-late", "DELETE");
+    expect(calls.setStatus).toHaveBeenCalledWith("Stopping", "loading");
+    expect(controller.active).toBe(false);
+  });
+});

@@ -12,6 +12,7 @@ const customSelect = readFileSync(new URL("./ui/primitives/custom-select.ts", im
 const contextMenu = readFileSync(new URL("./ui/primitives/context-menu.ts", import.meta.url), "utf8");
 const messageActions = readFileSync(new URL("./ui/chat/message-actions.ts", import.meta.url), "utf8");
 const activityTimeline = readFileSync(new URL("./ui/chat/activity-timeline.ts", import.meta.url), "utf8");
+const agentRunController = readFileSync(new URL("./ui/chat/agent-run-controller.ts", import.meta.url), "utf8");
 const resourceInspector = readFileSync(new URL("./ui/inspector/resource-inspector.ts", import.meta.url), "utf8");
 const projectSidebar = readFileSync(new URL("./ui/sidebar/project-sidebar.ts", import.meta.url), "utf8");
 const styles = [
@@ -237,7 +238,8 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("sessionTokenEstimate += estimateTokens");
     expect(renderer).toContain('api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" })');
     expect(renderer).toContain("max_tokens: Number(effort.value)");
-    expect(renderer).toContain('api(`/api/v1/agent/runs/${currentRun}`, "DELETE")');
+    expect(renderer).toContain("if (agentRuns.active) void agentRuns.cancel()");
+    expect(agentRunController).toContain('this.#options.api(`/api/v1/agent/runs/${this.#runId}`, "DELETE")');
   });
 
   it("makes the new-chat project, environment, and branch controls functional", () => {
@@ -266,16 +268,16 @@ describe("desktop renderer shell", () => {
   });
 
   it("renders durable Codex-style agent activity with tool-specific symbols", () => {
-    expect(renderer).toContain("activityTimeline.appendTool(toolName, input, toolCallId");
-    expect(renderer).toContain("activityTimeline.completeTool");
+    expect(agentRunController).toContain("this.#options.activity.appendTool(toolName, input, toolCallId");
+    expect(agentRunController).toContain("this.#options.activity.completeTool");
     expect(activityTimeline).toContain('summary.type = "button"');
     expect(activityTimeline).toContain('this.#detail("Input", input');
     expect(activityTimeline).toContain('this.#detail("Result"');
     expect(activityTimeline).toContain('summary.setAttribute("aria-expanded", String(open))');
     expect(renderer).toContain("entry.content?.result");
-    expect(renderer).toContain("event.data?.result");
+    expect(agentRunController).toContain("event.data?.result");
     expect(activityTimeline).toContain("#formatPayload");
-    expect(renderer).toContain("activityTimeline.markAssistantAsCommentary");
+    expect(agentRunController).toContain("this.#options.activity.markAssistantAsCommentary");
     expect(activityTimeline).toContain("Context automatically compacted");
     expect(activityTimeline).toContain('toolName === "edit" || toolName === "write"');
     expect(styles).toContain(".agent-activity-icon");
@@ -311,7 +313,7 @@ describe("desktop renderer shell", () => {
 
   it("renders streamed assistant Markdown safely while keeping prompts plain", () => {
     expect(renderer).toContain('import { appendMarkdown, setMarkdown } from "./markdown.js"');
-    expect(renderer).toContain("appendMarkdown(assistant, delta)");
+    expect(renderer).toContain("appendAssistantDelta: (target, delta) => appendMarkdown(target, delta)");
     expect(renderer).toContain('if (role === "assistant" || role === "commentary") setMarkdown(content, text); else content.textContent = text');
     expect(markdown).toContain("target.replaceChildren()");
     expect(markdown).not.toContain("target.innerHTML");
@@ -405,10 +407,10 @@ describe("desktop renderer shell", () => {
   });
 
   it("silently warms the selected route after the first composer character", () => {
-    expect(renderer).toContain("scheduleModelWarmup()");
-    expect(renderer).toContain('api("/api/v1/inference/warm", "POST", { model: model.value, connectionId: selectedConnectionId })');
-    expect(renderer).toContain("if (composerHadText || currentRun || !model.value) return");
-    expect(renderer).toContain("}, 120)");
+    expect(renderer).toContain("agentRuns.scheduleWarmup(prompt.value, model.value, selectedConnectionId)");
+    expect(agentRunController).toContain('this.#options.api("/api/v1/inference/warm", "POST", { model, connectionId })');
+    expect(agentRunController).toContain("if (this.#composerHadText || this.active || !model) return");
+    expect(agentRunController).toContain("}, 120)");
     expect(renderer).toContain("idleTtlSeconds: 600");
     expect(renderer).not.toContain('contextMeter.classList.toggle("model-loading", loading)');
     expect(styles).toContain("@keyframes run-activity-spinner");
@@ -474,18 +476,18 @@ describe("desktop renderer shell", () => {
 
   it("clears the starter screen and reports unobtrusive work progress before output arrives", () => {
     expect(renderer).toContain('messages.querySelector(".landing, .new-chat-landing")');
-    expect(renderer).toContain('activityTimeline.appendRun("Working")');
-    expect(renderer).toContain('activityTimeline.setRun(activity, "Working", runStartedAt)');
-    expect(renderer).not.toContain('activityTimeline.setRun(activity, "Loading model"');
+    expect(agentRunController).toContain('this.#options.activity.appendRun("Working")');
+    expect(agentRunController).toContain('this.#options.activity.setRun(activity, "Working", startedAt)');
+    expect(agentRunController).not.toContain('this.#options.activity.setRun(activity, "Loading model"');
     expect(activityTimeline).toContain("this.#formatElapsed(Date.now() - startedAt)");
-    expect(renderer).toContain('api("/api/v1/management/status")');
+    expect(agentRunController).toContain('this.#options.api("/api/v1/management/status")');
   });
 
   it("shows and controls the serialized native-agent request queue", () => {
     expect(html).toContain('id="request-queue"');
     expect(html).toContain('id="queue-count"');
     expect(renderer).toContain('api("/api/v1/agent/queue")');
-    expect(renderer).toContain('event.type === "run.queue.updated"');
+    expect(agentRunController).toContain('event.type === "run.queue.updated"');
     expect(renderer).toContain('cancelQueuedRun(String(item.runId), cancel)');
     expect(renderer).toContain('setTimeout(scheduleQueueRefresh, 1_000)');
     expect(styles).toContain(".queue-item");

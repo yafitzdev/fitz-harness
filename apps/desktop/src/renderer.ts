@@ -1,8 +1,8 @@
-import { reconnectDelay } from "@fitz/connectivity/reconnect";
 import type { ConsumerConnectionSummary, DesktopUpdateStatus } from "./preload.js";
 import { appendMarkdown, setMarkdown } from "./markdown.js";
 import { MessageActions, type ActionableMessageRole } from "./ui/chat/message-actions.js";
 import { ActivityTimeline } from "./ui/chat/activity-timeline.js";
+import { AgentRunController } from "./ui/chat/agent-run-controller.js";
 import { ResourceInspector } from "./ui/inspector/resource-inspector.js";
 import { ConversationLayout } from "./ui/layout/conversation-layout.js";
 import { WorkspacePageController } from "./ui/layout/workspace-pages.js";
@@ -38,8 +38,6 @@ let projectRecords: ProjectRecord[] = [];
 const sessionsByProject = new Map<string, SessionRecord[]>();
 let currentProject: string | undefined;
 let currentSession: string | undefined;
-let currentRun: string | undefined;
-let lastSequence = 0;
 let pendingTaskAfterProject = false;
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 let queueRefreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -57,8 +55,6 @@ let piCatalogPackages: PiCatalogPackage[] = [];
 let installedPiSkills: PiSkillSummary[] = [];
 let piCatalogTotal = 0;
 let pluginSearchTimer: ReturnType<typeof setTimeout> | undefined;
-let modelWarmupTimer: ReturnType<typeof setTimeout> | undefined;
-let composerHadText = false;
 let selectedConnectionId = LOCAL_CONNECTION_ID;
 let pendingRemoteAction: "enable" | "disable" | undefined;
 let pendingStartupAction: "install" | "remove" | undefined;
@@ -324,12 +320,6 @@ const workspacePages = new WorkspacePageController({
   },
   setConversationInert,
 });
-const messageActions = new MessageActions({
-  canEdit: () => !currentRun,
-  onEditBlocked: () => showToast("Wait for the current response before editing a message."),
-  copyText: (text) => copyValue(text, "Copied message"),
-  resend: (text, article) => sendPrompt(text, article),
-});
 const activityTimeline = new ActivityTimeline({
   messages,
   inspectResource: (reference) => resourceInspector.inspect(reference),
@@ -338,6 +328,29 @@ const activityTimeline = new ActivityTimeline({
     return response.data?.status === "approved" ? "approved" : "denied";
   },
   showToast,
+});
+const agentRuns = new AgentRunController({
+  messages,
+  activity: activityTimeline,
+  api,
+  appendAssistant: () => appendMessage("assistant", ""),
+  appendAssistantDelta: (target, delta) => appendMarkdown(target, delta),
+  appendSystem: (message) => { appendMessage("system", message); },
+  addTokenEstimate: (text) => { sessionTokenEstimate += estimateTokens(text); updateContextMeter(); },
+  setStatus,
+  setEngineState: (state) => { engineState.textContent = state; },
+  refreshControls: refreshComposerState,
+  queueVisible: () => !contextPanel.hidden,
+  refreshQueue: loadAgentQueue,
+  showToast,
+  errorMessage,
+  terminalReplayError: (error) => error instanceof HttpError,
+});
+const messageActions = new MessageActions({
+  canEdit: () => !agentRuns.active,
+  onEditBlocked: () => showToast("Wait for the current response before editing a message."),
+  copyText: (text) => copyValue(text, "Copied message"),
+  resend: (text, article) => sendPrompt(text, article),
 });
 const resourceInspector = new ResourceInspector({
   preview: artifactPreview,
@@ -356,11 +369,11 @@ void initialize();
 
 form.addEventListener("submit", (event) => {
   event.preventDefault();
-  if (currentRun) void cancelRun();
+  if (agentRuns.active) void agentRuns.cancel();
   else void sendPrompt();
 });
 window.fitz.onNavigationCommand((command) => void navigateHistory(command === "back" ? -1 : 1));
-prompt.addEventListener("input", () => { resizePrompt(); updateContextMeter(); refreshComposerState(); scheduleModelWarmup(); });
+prompt.addEventListener("input", () => { resizePrompt(); updateContextMeter(); refreshComposerState(); agentRuns.scheduleWarmup(prompt.value, model.value, selectedConnectionId); });
 prompt.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
@@ -411,7 +424,7 @@ attachButton.addEventListener("click", chooseArtifact);
 addArtifactButton.addEventListener("click", chooseArtifact);
 artifactFile.addEventListener("change", () => void uploadArtifact());
 chooseProjectFolder.addEventListener("click", () => void selectProjectFolder());
-model.addEventListener("change", () => { updateModelControls(); resetComposerWarmup(); scheduleModelWarmup(); if (currentSession) void updateSessionBinding(); });
+model.addEventListener("change", () => { updateModelControls(); agentRuns.resetWarmup(); agentRuns.scheduleWarmup(prompt.value, model.value, selectedConnectionId); if (currentSession) void updateSessionBinding(); });
 effort.addEventListener("change", updateModelControls);
 modelToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(modelMenu, modelToggle); });
 contextMeter.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(contextUsagePopover, contextMeter as HTMLButtonElement); });
@@ -583,7 +596,6 @@ async function selectSession(id: string, rerender = true, projectId?: string): P
   if (selectedSession?.routeId && [...model.options].some((option) => option.value === selectedSession.routeId)) model.value = selectedSession.routeId;
   updateModelControls();
   projectSidebar.markSessionRead(id);
-  lastSequence = 0;
   if (rerender) renderProjectTree();
   updateTitles();
   messages.replaceChildren(loadingMessage("Loading conversation…"));
@@ -629,7 +641,7 @@ async function selectSession(id: string, rerender = true, projectId?: string): P
 }
 
 function openNewChat(): void {
-  if (currentRun) { showToast("Stop the current response before starting a new chat"); return; }
+  if (agentRuns.active) { showToast("Stop the current response before starting a new chat"); return; }
   showConversationWorkspace();
   setContextPanel(false);
   if (projectRecords.length === 0) { openProjectDialog(true); return; }
@@ -647,7 +659,7 @@ function openNewChat(): void {
   renderConnectionChoices();
   newChatContext.hidden = false;
   prompt.value = "";
-  resetComposerWarmup();
+  agentRuns.resetWarmup();
   composerAttachments.replaceChildren();
   composerAttachments.hidden = true;
   renderProjectTree();
@@ -679,7 +691,7 @@ function showNewChatLanding(): void {
   const grid = document.createElement("div"); grid.className = "starter-grid";
   for (const [label, iconPath] of suggestions) {
     const button = document.createElement("button"); button.type = "button"; button.className = "starter-card"; button.append(svg(iconPath!), Object.assign(document.createElement("span"), { textContent: label }));
-    button.addEventListener("click", () => { prompt.value = label!; resizePrompt(); updateContextMeter(); refreshComposerState(); scheduleModelWarmup(); prompt.focus(); });
+    button.addEventListener("click", () => { prompt.value = label!; resizePrompt(); updateContextMeter(); refreshComposerState(); agentRuns.scheduleWarmup(prompt.value, model.value, selectedConnectionId); prompt.focus(); });
     grid.append(button);
   }
   landing.append(mark, heading, grid); messages.append(landing); updateTitles();
@@ -868,7 +880,7 @@ function rememberLocation(location: AppLocation): void {
 async function navigateHistory(offset: -1 | 1): Promise<void> {
   const nextIndex = navigationIndex + offset;
   const location = navigationHistory[nextIndex];
-  if (!location || currentRun) return;
+  if (!location || agentRuns.active) return;
   navigationIndex = nextIndex;
   replayingNavigation = true;
   try {
@@ -1877,7 +1889,7 @@ function renderConnectionChoices(): void {
     const button = document.createElement("button"); button.type = "button"; button.dataset.connectionId = connection.id;
     button.append(svg('<circle cx="10" cy="10" r="6"></circle><path d="M7 10h6M10 7v6"></path>'), Object.assign(document.createElement("span"), { textContent: connection.displayName }));
     if (connection.id === selectedConnectionId) button.append(Object.assign(document.createElement("b"), { textContent: "✓" }));
-    button.addEventListener("click", () => { selectedConnectionId = connection.id; resetComposerWarmup(); scheduleModelWarmup(); renderConnectionChoices(); closePopovers(); });
+    button.addEventListener("click", () => { selectedConnectionId = connection.id; agentRuns.resetWarmup(); agentRuns.scheduleWarmup(prompt.value, model.value, selectedConnectionId); renderConnectionChoices(); closePopovers(); });
     newChatConnectionList.append(button);
   }
 }
@@ -2026,141 +2038,20 @@ async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLE
   if (!currentSession) { openNewChat(); return; }
   if (!model.value) { showToast("No model route is available"); return; }
   prompt.value = "";
-  resetComposerWarmup();
+  agentRuns.resetWarmup();
   resizePrompt();
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   if (!existingUserMessage) appendMessage("user", content);
-  const activity = activityTimeline.appendRun("Working");
-  const runStartedAt = Date.now();
   sessionTokenEstimate += estimateTokens(content);
   updateContextMeter();
-  setStatus("Queued", "loading");
-  try {
-    const response = await api("/api/v1/agent/runs", "POST", {
-      model: model.value,
-      max_tokens: Number(effort.value),
-      temperature: Number(temperature.value),
-      sessionId: currentSession,
-      accessMode,
-      messages: [{ role: "user", content }],
-    });
-    const runId = String(response.data.id);
-    if (response.context?.compacted) activityTimeline.appendContext();
-    currentRun = runId;
-    lastSequence = 0;
-    engineState.textContent = "QUEUED";
-    refreshComposerState();
-    await followRun(runId, activity, runStartedAt);
-  } catch (error) {
-    activity.remove();
-    appendMessage("system", errorMessage(error));
-    setStatus("Failed", "error");
-  } finally {
-    currentRun = undefined;
-    refreshComposerState();
-  }
-}
-
-async function cancelRun(): Promise<void> {
-  if (!currentRun) return;
-  sendButton.disabled = true;
-  setStatus("Stopping", "loading");
-  try {
-    await api(`/api/v1/agent/runs/${currentRun}`, "DELETE");
-  } catch (error) {
-    showToast(errorMessage(error));
-    sendButton.disabled = false;
-  }
-}
-
-async function followRun(runId: string, activity: HTMLElement, runStartedAt: number): Promise<void> {
-  let assistant: HTMLElement | undefined;
-  const toolActivities = new Map<string, { row: HTMLElement; toolName: string; input: unknown }>();
-  const approvalActivities = new Map<string, HTMLElement>();
-  let done = false;
-  let queued = true;
-  let reconnectAttempt = 0;
-  let nextEnginePoll = 0;
-  while (!done && currentRun === runId) {
-    let replay: Json;
-    try {
-      replay = await api(`/api/v1/agent/runs/${runId}/events?after=${lastSequence}`);
-      reconnectAttempt = 0;
-    } catch (error) {
-      if (error instanceof HttpError || reconnectAttempt >= 12) throw error;
-      setStatus(`Reconnecting ${reconnectAttempt + 1}`, "loading");
-      await delay(reconnectDelay(reconnectAttempt++));
-      continue;
-    }
-    for (const event of replay.events ?? []) {
-      lastSequence = event.sequence;
-      if (event.type === "run.queue.updated") {
-        queued = event.data?.status === "queued";
-        if (queued) { const position = Math.max(1, Number(event.data?.position ?? 1)); setStatus(`Queued ${position}`, "loading"); engineState.textContent = "QUEUED"; activityTimeline.setRun(activity, position === 1 ? "Queued · next" : `Queued · ${position - 1} ahead`, runStartedAt); }
-        if (!contextPanel.hidden) void loadAgentQueue();
-      }
-      if (event.type === "run.started") { queued = false; setStatus("Working", "active"); engineState.textContent = "WORKING"; activityTimeline.setRun(activity, "Working", runStartedAt); }
-      if (event.type === "assistant.delta") {
-        if (!assistant) { activity.remove(); assistant = appendMessage("assistant", ""); }
-        const delta = event.data.text ?? ""; appendMarkdown(assistant, delta); sessionTokenEstimate += estimateTokens(delta); updateContextMeter();
-        messages.scrollTop = messages.scrollHeight;
-      }
-      if (event.type === "tool.approval.requested") {
-        const approvalId = String(event.data?.approvalId ?? "");
-        activity.remove();
-        if (assistant) { activityTimeline.markAssistantAsCommentary(assistant); assistant = undefined; }
-        approvalActivities.set(approvalId, activityTimeline.appendApproval({ id: approvalId, toolName: String(event.data?.toolName ?? "tool"), request: event.data?.input ?? {}, status: "pending" }));
-        setStatus("Waiting for approval", "active");
-        engineState.textContent = "WAITING";
-      }
-      if (event.type === "tool.approval.resolved") {
-        const approvalId = String(event.data?.approvalId ?? "");
-        const decision = event.data?.decision === "approved" ? "approved" : "denied";
-        const approval = approvalActivities.get(approvalId) ?? messages.querySelector<HTMLElement>(`[data-approval-id="${CSS.escape(approvalId)}"]`);
-        if (approval) activityTimeline.resolveApproval(approval, decision);
-        setStatus("Working", "active");
-        engineState.textContent = "WORKING";
-      }
-      if (event.type === "tool.started") {
-        const toolName = String(event.data?.toolName ?? "tool");
-        const toolCallId = String(event.data?.toolCallId ?? `${toolName}-${event.sequence}`);
-        const input = event.data?.input;
-        activity.remove();
-        if (assistant) { activityTimeline.markAssistantAsCommentary(assistant); assistant = undefined; }
-        toolActivities.set(toolCallId, { row: activityTimeline.appendTool(toolName, input, toolCallId, true), toolName, input });
-        setStatus(`Running ${toolName}`, "active");
-        engineState.textContent = toolName.toUpperCase();
-      }
-      if (event.type === "tool.completed") {
-        const toolCallId = String(event.data?.toolCallId ?? "");
-        const existing = toolActivities.get(toolCallId);
-        if (existing) activityTimeline.completeTool(existing.row, existing.toolName, existing.input, event.data?.result, Boolean(event.data?.isError));
-        setStatus("Working", "active");
-        engineState.textContent = "WORKING";
-      }
-      if (["run.completed", "run.failed", "run.cancelled", "run.interrupted"].includes(event.type)) {
-        done = true;
-        const success = event.type === "run.completed";
-        setStatus(success ? "Ready" : event.type.slice(4), success ? "idle" : "error");
-        engineState.textContent = success || event.type === "run.cancelled" ? "READY" : event.type.slice(4).toUpperCase();
-        activity.remove();
-        if (!success && event.data?.error && event.type !== "run.cancelled") appendMessage("system", event.data.error);
-        if (success && !assistant) appendMessage("system", "The model completed without returning a response.");
-      }
-    }
-    if (!done && !queued && !assistant && Date.now() >= nextEnginePoll) {
-      nextEnginePoll = Date.now() + 1_000;
-      try {
-        const management = await api("/api/v1/management/status");
-        const state = String(management.engine?.state ?? "");
-        engineState.textContent = state || "WORKING";
-        if (state === "READY" || state === "BUSY") activityTimeline.setRun(activity, "Thinking", runStartedAt);
-        else if (state === "FAILED") activity.textContent = `Model failed: ${management.engine?.failureReason ?? "Unknown error"}`;
-        else activityTimeline.setRun(activity, "Working", runStartedAt);
-      } catch { activityTimeline.setRun(activity, "Working", runStartedAt); }
-    }
-    if (!done) await delay(350);
-  }
+  await agentRuns.start({
+    model: model.value,
+    max_tokens: Number(effort.value),
+    temperature: Number(temperature.value),
+    sessionId: currentSession,
+    accessMode,
+    messages: [{ role: "user", content }],
+  });
 }
 
 async function loadArtifacts(): Promise<void> {
@@ -2290,20 +2181,21 @@ function renderAccessMode(): void {
 
 function refreshComposerState(): void {
   const ready = Boolean((currentSession || (newChatMode && currentProject)) && model.value);
-  prompt.disabled = !ready || Boolean(currentRun);
-  model.disabled = model.options.length === 0 || Boolean(currentRun);
-  effort.disabled = Boolean(currentRun);
-  temperature.disabled = Boolean(currentRun);
-  advancedSettings.disabled = Boolean(currentRun);
-  modelToggle.disabled = model.options.length === 0 || Boolean(currentRun);
-  accessModeToggle.disabled = Boolean(currentRun);
-  attachButton.disabled = !currentSession || Boolean(currentRun);
-  contextCompactButton.disabled = !currentSession || Boolean(currentRun);
+  const running = agentRuns.active;
+  prompt.disabled = !ready || running;
+  model.disabled = model.options.length === 0 || running;
+  effort.disabled = running;
+  temperature.disabled = running;
+  advancedSettings.disabled = running;
+  modelToggle.disabled = model.options.length === 0 || running;
+  accessModeToggle.disabled = running;
+  attachButton.disabled = !currentSession || running;
+  contextCompactButton.disabled = !currentSession || running;
   addArtifactButton.disabled = !currentSession;
-  sendButton.classList.toggle("running", Boolean(currentRun));
-  sendButton.title = currentRun ? "Stop task" : "Send message";
+  sendButton.classList.toggle("running", running);
+  sendButton.title = running ? "Stop task" : "Send message";
   sendButton.setAttribute("aria-label", sendButton.title);
-  sendButton.disabled = currentRun ? false : !ready || prompt.value.trim().length === 0;
+  sendButton.disabled = running ? false : !ready || prompt.value.trim().length === 0;
 }
 
 function updateTitles(): void {
@@ -2326,22 +2218,10 @@ function setContextPanel(open: boolean): void {
 
 function toggleSidebar(): void { shell.classList.toggle("sidebar-collapsed"); closePopovers(); }
 function resizePrompt(): void { prompt.style.height = "auto"; prompt.style.height = `${Math.min(prompt.scrollHeight, 180)}px`; }
-function resetComposerWarmup(): void { composerHadText = false; if (modelWarmupTimer) clearTimeout(modelWarmupTimer); modelWarmupTimer = undefined; }
-function scheduleModelWarmup(): void {
-  const hasText = prompt.value.length > 0;
-  if (!hasText) { resetComposerWarmup(); return; }
-  if (composerHadText || currentRun || !model.value) return;
-  composerHadText = true;
-  modelWarmupTimer = setTimeout(() => {
-    modelWarmupTimer = undefined;
-    void api("/api/v1/inference/warm", "POST", { model: model.value, connectionId: selectedConnectionId })
-      .catch(() => { composerHadText = false; });
-  }, 120);
-}
 function updateContextMeter(): void { const usedTokens = sessionTokenEstimate + estimateTokens(prompt.value); const used = Math.min(100, (usedTokens / contextTokenLimit) * 100); contextMeter.style.setProperty("--context-used", `${used}%`); contextPercent.textContent = `${Math.round(used)}% full`; contextTokens.textContent = `≈${formatTokenCount(usedTokens)} / ${formatTokenCount(contextTokenLimit)} tokens used`; contextMeter.setAttribute("aria-label", `Context window ${Math.round(used)}% full, approximately ${formatTokenCount(usedTokens)} of ${formatTokenCount(contextTokenLimit)} tokens used`); }
 
 async function compactCurrentSession(): Promise<void> {
-  if (!currentSession || currentRun) return;
+  if (!currentSession || agentRuns.active) return;
   contextCompactButton.disabled = true; contextCompactStatus.hidden = false; contextCompactStatus.textContent = "Compacting…";
   try {
     const response = await api(`/api/v1/sessions/${currentSession}/compact`, "POST", { model: model.value || "default" });
@@ -2369,7 +2249,6 @@ async function api(path: string, method = "GET", body?: unknown): Promise<Json> 
 function sparkIcon(): SVGElement { return svg('<path d="M10 2.8c.5 3.7 2.4 5.8 6.2 7.2-3.8 1.4-5.7 3.5-6.2 7.2-.5-3.7-2.4-5.8-6.2-7.2C7.6 8.6 9.5 6.5 10 2.8Z"></path>'); }
 function terminalCloudIcon(): SVGElement { return svg('<path d="M6.2 16.4c-2 0-3.7-1.6-3.7-3.6 0-1.2.6-2.3 1.5-3-.4-1.8.5-3.6 2.1-4.4.7-1.7 2.4-2.8 4.2-2.8 1.5 0 2.9.7 3.8 1.9 1.8-.1 3.3 1.3 3.4 3.1 1 .7 1.7 1.9 1.7 3.2 0 1.5-.8 2.8-2.1 3.5-.5 1.8-2.1 3-4 3-.8 0-1.6-.2-2.2-.7-.7.6-1.6.9-2.5.9-.8 0-1.6-.3-2.2-.7z"></path><path d="m6.8 8 1.8 2-1.8 2M10.7 12.3h2.7"></path>'); }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
-function delay(milliseconds: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }
 function bytesToBase64(bytes: Uint8Array): string { let binary = ""; for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000)); return btoa(binary); }
 function formatBytes(value: number): string { return value < 1024 ? `${value} B` : `${(value / 1024).toFixed(1)} KB`; }
 

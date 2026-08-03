@@ -1,0 +1,223 @@
+import { reconnectDelay } from "@fitz/connectivity/reconnect";
+
+type Json = Record<string, any>;
+
+export interface AgentRunActivity {
+  appendRun(label: string): HTMLElement;
+  setRun(activity: HTMLElement, label: string, startedAt: number): void;
+  appendContext(label?: string): HTMLElement;
+  markAssistantAsCommentary(content: HTMLElement): void;
+  appendApproval(approval: Json): HTMLElement;
+  resolveApproval(row: HTMLElement, decision: "approved" | "denied"): void;
+  appendTool(toolName: string, input: unknown, toolCallId: string, running: boolean): HTMLElement;
+  completeTool(row: HTMLElement, toolName: string, input: unknown, result: unknown, isError: boolean): void;
+}
+
+export interface AgentRunRequest {
+  model: string;
+  max_tokens: number;
+  temperature: number;
+  sessionId: string;
+  accessMode: string;
+  messages: Array<{ role: string; content: string }>;
+}
+
+export interface AgentRunControllerOptions {
+  messages: HTMLElement;
+  activity: AgentRunActivity;
+  api: (path: string, method?: string, body?: unknown) => Promise<Json>;
+  appendAssistant: () => HTMLElement;
+  appendAssistantDelta: (target: HTMLElement, delta: string) => void;
+  appendSystem: (message: string) => void;
+  addTokenEstimate: (text: string) => void;
+  setStatus: (label: string, state: string) => void;
+  setEngineState: (state: string) => void;
+  refreshControls: () => void;
+  queueVisible: () => boolean;
+  refreshQueue: () => void | Promise<void>;
+  showToast: (message: string) => void;
+  errorMessage: (error: unknown) => string;
+  terminalReplayError: (error: unknown) => boolean;
+}
+
+/** Owns agent-run submission, event replay, reconnect, cancellation, and model warmup state. */
+export class AgentRunController {
+  readonly #options: AgentRunControllerOptions;
+  #runId: string | undefined;
+  #starting = false;
+  #cancelPending = false;
+  #lastSequence = 0;
+  #warmupTimer: ReturnType<typeof setTimeout> | undefined;
+  #composerHadText = false;
+
+  constructor(options: AgentRunControllerOptions) { this.#options = options; }
+
+  get active(): boolean { return this.#starting || Boolean(this.#runId); }
+  get runId(): string | undefined { return this.#runId; }
+
+  resetWarmup(): void {
+    this.#composerHadText = false;
+    if (this.#warmupTimer) clearTimeout(this.#warmupTimer);
+    this.#warmupTimer = undefined;
+  }
+
+  scheduleWarmup(prompt: string, model: string, connectionId: string): void {
+    if (!prompt.length) { this.resetWarmup(); return; }
+    if (this.#composerHadText || this.active || !model) return;
+    this.#composerHadText = true;
+    this.#warmupTimer = setTimeout(() => {
+      this.#warmupTimer = undefined;
+      void this.#options.api("/api/v1/inference/warm", "POST", { model, connectionId })
+        .catch(() => { this.#composerHadText = false; });
+    }, 120);
+  }
+
+  async start(request: AgentRunRequest): Promise<void> {
+    if (this.active) return;
+    this.resetWarmup();
+    const activity = this.#options.activity.appendRun("Working");
+    const startedAt = Date.now();
+    this.#starting = true;
+    this.#cancelPending = false;
+    this.#lastSequence = 0;
+    this.#options.setStatus("Queued", "loading");
+    this.#options.setEngineState("QUEUED");
+    this.#options.refreshControls();
+    try {
+      const response = await this.#options.api("/api/v1/agent/runs", "POST", request);
+      this.#runId = String(response.data.id);
+      this.#starting = false;
+      if (response.context?.compacted) this.#options.activity.appendContext();
+      if (this.#cancelPending) await this.#options.api(`/api/v1/agent/runs/${this.#runId}`, "DELETE");
+      await this.#follow(this.#runId, activity, startedAt);
+    } catch (error) {
+      activity.remove();
+      this.#options.appendSystem(this.#options.errorMessage(error));
+      this.#options.setStatus("Failed", "error");
+    } finally {
+      this.#runId = undefined;
+      this.#starting = false;
+      this.#cancelPending = false;
+      this.#options.refreshControls();
+    }
+  }
+
+  async cancel(): Promise<void> {
+    if (!this.active) return;
+    this.#cancelPending = true;
+    this.#options.setStatus("Stopping", "loading");
+    this.#options.refreshControls();
+    if (!this.#runId) return;
+    try {
+      await this.#options.api(`/api/v1/agent/runs/${this.#runId}`, "DELETE");
+    } catch (error) {
+      this.#cancelPending = false;
+      this.#options.showToast(this.#options.errorMessage(error));
+      this.#options.refreshControls();
+    }
+  }
+
+  async #follow(runId: string, activity: HTMLElement, startedAt: number): Promise<void> {
+    let assistant: HTMLElement | undefined;
+    const tools = new Map<string, { row: HTMLElement; toolName: string; input: unknown }>();
+    const approvals = new Map<string, HTMLElement>();
+    let done = false;
+    let queued = true;
+    let reconnectAttempt = 0;
+    let nextEnginePoll = 0;
+    while (!done && this.#runId === runId) {
+      let replay: Json;
+      try {
+        replay = await this.#options.api(`/api/v1/agent/runs/${runId}/events?after=${this.#lastSequence}`);
+        reconnectAttempt = 0;
+      } catch (error) {
+        if (this.#options.terminalReplayError(error) || reconnectAttempt >= 12) throw error;
+        this.#options.setStatus(`Reconnecting ${reconnectAttempt + 1}`, "loading");
+        await this.#delay(reconnectDelay(reconnectAttempt++));
+        continue;
+      }
+      for (const event of replay.events ?? []) {
+        this.#lastSequence = Number(event.sequence ?? this.#lastSequence);
+        if (event.type === "run.queue.updated") {
+          queued = event.data?.status === "queued";
+          if (queued) {
+            const position = Math.max(1, Number(event.data?.position ?? 1));
+            this.#options.setStatus(`Queued ${position}`, "loading");
+            this.#options.setEngineState("QUEUED");
+            this.#options.activity.setRun(activity, position === 1 ? "Queued · next" : `Queued · ${position - 1} ahead`, startedAt);
+          }
+          if (this.#options.queueVisible()) void this.#options.refreshQueue();
+        }
+        if (event.type === "run.started") {
+          queued = false;
+          this.#options.setStatus("Working", "active");
+          this.#options.setEngineState("WORKING");
+          this.#options.activity.setRun(activity, "Working", startedAt);
+        }
+        if (event.type === "assistant.delta") {
+          if (!assistant) { activity.remove(); assistant = this.#options.appendAssistant(); }
+          const delta = String(event.data?.text ?? "");
+          this.#options.appendAssistantDelta(assistant, delta);
+          this.#options.addTokenEstimate(delta);
+          this.#options.messages.scrollTop = this.#options.messages.scrollHeight;
+        }
+        if (event.type === "tool.approval.requested") {
+          const approvalId = String(event.data?.approvalId ?? "");
+          activity.remove();
+          if (assistant) { this.#options.activity.markAssistantAsCommentary(assistant); assistant = undefined; }
+          approvals.set(approvalId, this.#options.activity.appendApproval({ id: approvalId, toolName: String(event.data?.toolName ?? "tool"), request: event.data?.input ?? {}, status: "pending" }));
+          this.#options.setStatus("Waiting for approval", "active");
+          this.#options.setEngineState("WAITING");
+        }
+        if (event.type === "tool.approval.resolved") {
+          const approvalId = String(event.data?.approvalId ?? "");
+          const decision = event.data?.decision === "approved" ? "approved" : "denied";
+          const approval = approvals.get(approvalId) ?? this.#options.messages.querySelector<HTMLElement>(`[data-approval-id="${CSS.escape(approvalId)}"]`);
+          if (approval) this.#options.activity.resolveApproval(approval, decision);
+          this.#options.setStatus("Working", "active");
+          this.#options.setEngineState("WORKING");
+        }
+        if (event.type === "tool.started") {
+          const toolName = String(event.data?.toolName ?? "tool");
+          const toolCallId = String(event.data?.toolCallId ?? `${toolName}-${event.sequence}`);
+          const input = event.data?.input;
+          activity.remove();
+          if (assistant) { this.#options.activity.markAssistantAsCommentary(assistant); assistant = undefined; }
+          tools.set(toolCallId, { row: this.#options.activity.appendTool(toolName, input, toolCallId, true), toolName, input });
+          this.#options.setStatus(`Running ${toolName}`, "active");
+          this.#options.setEngineState(toolName.toUpperCase());
+        }
+        if (event.type === "tool.completed") {
+          const toolCallId = String(event.data?.toolCallId ?? "");
+          const existing = tools.get(toolCallId);
+          if (existing) this.#options.activity.completeTool(existing.row, existing.toolName, existing.input, event.data?.result, Boolean(event.data?.isError));
+          this.#options.setStatus("Working", "active");
+          this.#options.setEngineState("WORKING");
+        }
+        if (["run.completed", "run.failed", "run.cancelled", "run.interrupted"].includes(event.type)) {
+          done = true;
+          const success = event.type === "run.completed";
+          this.#options.setStatus(success ? "Ready" : event.type.slice(4), success ? "idle" : "error");
+          this.#options.setEngineState(success || event.type === "run.cancelled" ? "READY" : event.type.slice(4).toUpperCase());
+          activity.remove();
+          if (!success && event.data?.error && event.type !== "run.cancelled") this.#options.appendSystem(String(event.data.error));
+          if (success && !assistant) this.#options.appendSystem("The model completed without returning a response.");
+        }
+      }
+      if (!done && !queued && !assistant && Date.now() >= nextEnginePoll) {
+        nextEnginePoll = Date.now() + 1_000;
+        try {
+          const management = await this.#options.api("/api/v1/management/status");
+          const state = String(management.engine?.state ?? "");
+          this.#options.setEngineState(state || "WORKING");
+          if (state === "READY" || state === "BUSY") this.#options.activity.setRun(activity, "Thinking", startedAt);
+          else if (state === "FAILED") activity.textContent = `Model failed: ${management.engine?.failureReason ?? "Unknown error"}`;
+          else this.#options.activity.setRun(activity, "Working", startedAt);
+        } catch { this.#options.activity.setRun(activity, "Working", startedAt); }
+      }
+      if (!done) await this.#delay(350);
+    }
+  }
+
+  #delay(milliseconds: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }
+}
