@@ -35,10 +35,11 @@ function renderBlocks(target: HTMLElement, lines: string[]): void {
       continue;
     }
 
+    // Headings are flattened to plain text — we prefer readable prose over big headers.
     const heading = line.match(/^(#{1,6})\s+(.+)$/);
     if (heading) {
-      const value = document.createElement(`h${heading[1]!.length}`);
-      appendInline(value, heading[2]!.trim()); target.append(value); index += 1; continue;
+      const paragraph = document.createElement("p");
+      appendInline(paragraph, heading[2]!.trim()); target.append(paragraph); index += 1; continue;
     }
 
     if (/^\s*(?:---+|___+|\*\*\*+)\s*$/.test(line)) { target.append(document.createElement("hr")); index += 1; continue; }
@@ -101,7 +102,7 @@ function appendInline(target: HTMLElement, source: string): void {
     const start = match.index ?? 0; if (start > cursor) appendPlainText(target, source.slice(cursor, start));
     const token = match[0];
     if (token.startsWith("`")) { const value = token.slice(1, -1); const code = document.createElement("code"); code.textContent = value; const reference = resourceTarget(value); if (reference) { const link = resourceLink("", reference); link.classList.add("inline-code-resource"); link.append(code); target.append(link); } else target.append(code); }
-    else if (token.startsWith("**") || token.startsWith("__")) { const strong = document.createElement("strong"); appendInline(strong, token.slice(2, -2)); target.append(strong); }
+    else if (token.startsWith("**") || token.startsWith("__")) { appendPlainText(target, token.slice(2, -2)); }
     else if (token.startsWith("~~")) { const strike = document.createElement("del"); appendInline(strike, token.slice(2, -2)); target.append(strike); }
     else if (token.startsWith("[")) appendLink(target, token);
     else { const emphasis = document.createElement("em"); appendInline(emphasis, token.slice(1, -1)); target.append(emphasis); }
