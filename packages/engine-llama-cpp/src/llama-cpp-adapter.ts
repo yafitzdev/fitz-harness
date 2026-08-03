@@ -1,4 +1,4 @@
-import { access } from "node:fs/promises";
+import { access, open } from "node:fs/promises";
 import { randomBytes, randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Readable } from "node:stream";
@@ -65,6 +65,12 @@ export class LlamaCppEngineAdapter implements EngineAdapter<LlamaCppHandle> {
     this.#pollIntervalMs = options.pollIntervalMs ?? 250;
     this.#readinessTimeoutMs = options.readinessTimeoutMs ?? 120_000;
     this.#stopTimeoutMs = options.stopTimeoutMs ?? 10_000;
+  }
+
+  async prepare(recipe: Recipe, signal: AbortSignal): Promise<void> {
+    const config = readLlamaCppConfiguration(recipe);
+    await access(config.executable);
+    await warmFileCache(config.modelPath, signal);
   }
 
   async validateRecipe(recipe: Recipe): Promise<ValidationReport> {
@@ -171,6 +177,20 @@ export class LlamaCppEngineAdapter implements EngineAdapter<LlamaCppHandle> {
       return { healthy: false, modelId: instance.modelId, detail: errorMessage(error) };
     }
   }
+}
+
+async function warmFileCache(path: string, signal: AbortSignal): Promise<void> {
+  const file = await open(path, "r");
+  const buffer = Buffer.allocUnsafe(8 * 1024 * 1024);
+  try {
+    let position = 0;
+    while (true) {
+      if (signal.aborted) throw abortError();
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, position);
+      if (bytesRead === 0) return;
+      position += bytesRead;
+    }
+  } finally { await file.close(); }
 }
 
 export function readLlamaCppConfiguration(recipe: Recipe): LlamaCppConfiguration {

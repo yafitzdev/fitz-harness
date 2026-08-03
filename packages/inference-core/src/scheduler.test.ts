@@ -44,7 +44,7 @@ describe("InferenceScheduler", () => {
   });
 
   it("shares a speculative warm-up load with the first generation", async () => {
-    const adapter = new FakeEngineAdapter({ loadDelayMs: 10 });
+    const adapter = new FakeEngineAdapter({ prepareDelayMs: 10, loadDelayMs: 10 });
     const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]) });
     const selectedRecipe = recipe("best", 600);
     const scheduler = new InferenceScheduler(new RouteResolver([route("default", "best")], [selectedRecipe]), lifecycle);
@@ -54,7 +54,23 @@ describe("InferenceScheduler", () => {
     await Promise.all([warmup, output]);
 
     expect(adapter.starts).toHaveLength(1);
+    expect(adapter.preparations).toEqual(["best"]);
     expect(lifecycle.snapshot().state).toBe("READY");
+  });
+
+  it("prepares a recipe without starting its model and reuses that work on activation", async () => {
+    const adapter = new FakeEngineAdapter();
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]) });
+    const selectedRecipe = recipe("best", 600);
+
+    await Promise.all([lifecycle.prepare(selectedRecipe), lifecycle.prepare(selectedRecipe)]);
+    expect(lifecycle.snapshot().state).toBe("UNLOADED");
+    expect(adapter.preparations).toEqual(["best"]);
+    expect(adapter.starts).toHaveLength(0);
+
+    await lifecycle.warm(selectedRecipe);
+    expect(adapter.preparations).toEqual(["best"]);
+    expect(adapter.starts).toHaveLength(1);
   });
 
   it("serializes requests and switches recipes safely", async () => {

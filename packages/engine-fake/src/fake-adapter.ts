@@ -18,6 +18,7 @@ import type {
 } from "@fitz/protocol";
 
 export interface FakeEngineOptions {
+  prepareDelayMs?: number;
   loadDelayMs?: number;
   tokenDelayMs?: number;
   responseFactory?: (request: InferenceRequest, recipe: Recipe) => string;
@@ -33,13 +34,15 @@ export interface FakeInstanceHandle extends EngineInstanceHandle {
 export class FakeEngineAdapter implements EngineAdapter<FakeInstanceHandle> {
   readonly id = "fake";
   readonly starts: FakeInstanceHandle[] = [];
+  readonly preparations: string[] = [];
   readonly stops: Array<{ instanceId: string; mode: StopMode }> = [];
   readonly requests: InferenceRequest[] = [];
-  readonly #options: Required<Pick<FakeEngineOptions, "loadDelayMs" | "tokenDelayMs">> &
-    Omit<FakeEngineOptions, "loadDelayMs" | "tokenDelayMs">;
+  readonly #options: Required<Pick<FakeEngineOptions, "prepareDelayMs" | "loadDelayMs" | "tokenDelayMs">> &
+    Omit<FakeEngineOptions, "prepareDelayMs" | "loadDelayMs" | "tokenDelayMs">;
 
   constructor(options: FakeEngineOptions = {}) {
     this.#options = {
+      prepareDelayMs: options.prepareDelayMs ?? 0,
       loadDelayMs: options.loadDelayMs ?? 0,
       tokenDelayMs: options.tokenDelayMs ?? 0,
       ...(options.responseFactory ? { responseFactory: options.responseFactory } : {}),
@@ -48,6 +51,11 @@ export class FakeEngineAdapter implements EngineAdapter<FakeInstanceHandle> {
         ? { failWhenPromptIncludes: options.failWhenPromptIncludes }
         : {}),
     };
+  }
+
+  async prepare(recipe: Recipe, signal: AbortSignal): Promise<void> {
+    await abortableDelay(this.#options.prepareDelayMs, signal);
+    this.preparations.push(recipe.id);
   }
 
   async validateRecipe(recipe: Recipe): Promise<ValidationReport> {

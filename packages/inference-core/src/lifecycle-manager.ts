@@ -39,6 +39,7 @@ export class LifecycleManager {
   #failureReason: string | undefined;
   #evictionTask: ScheduledTask | undefined;
   #readinessTask: { recipeId: string; promise: Promise<void> } | undefined;
+  readonly #preparationTasks = new Map<string, { promise: Promise<void>; controller: AbortController }>();
 
   constructor(options: LifecycleManagerOptions) {
     this.#adapters = options.adapters;
@@ -102,6 +103,24 @@ export class LifecycleManager {
     return this.snapshot();
   }
 
+  async prepare(recipe: Recipe): Promise<void> {
+    const key = preparationKey(recipe);
+    const existing = this.#preparationTasks.get(key);
+    if (existing) return existing.promise;
+    const controller = new AbortController();
+    const task = this.#prepareRecipe(recipe, controller.signal);
+    this.#preparationTasks.set(key, { promise: task, controller });
+    try { await task; }
+    catch (error) { this.#preparationTasks.delete(key); throw error; }
+  }
+
+  async cancelPreparations(): Promise<void> {
+    const tasks = [...this.#preparationTasks.values()];
+    for (const task of tasks) task.controller.abort();
+    await Promise.allSettled(tasks.map((task) => task.promise));
+    this.#preparationTasks.clear();
+  }
+
   async stop(reason = "manual-stop", mode: "graceful" | "force" = "graceful"): Promise<void> {
     this.#cancelEviction();
     if (this.#state === "UNLOADED") return;
@@ -137,6 +156,7 @@ export class LifecycleManager {
   }
 
   async #loadRecipe(recipe: Recipe, signal: AbortSignal): Promise<void> {
+    await this.prepare(recipe);
     if (this.#state !== "UNLOADED" && this.#state !== "FAILED") {
       await this.stop("recipe-switch");
     } else if (this.#state === "FAILED") {
@@ -153,10 +173,6 @@ export class LifecycleManager {
     this.#transition("PREPARING", "load-requested");
 
     try {
-      const validation = await this.#adapter.validateRecipe(recipe);
-      if (!validation.valid) {
-        throw new Error(validation.issues.map((issue) => issue.message).join("; "));
-      }
       const estimate = await this.#adapter.estimateResources(recipe);
       await this.resources.assertCanLoad(recipe, estimate);
       const allocation = { host: "127.0.0.1", port: this.#allocatePort() };
@@ -180,6 +196,13 @@ export class LifecycleManager {
       if (this.#state !== "FAILED") this.#transition("FAILED", "load-failed");
       throw error;
     }
+  }
+
+  async #prepareRecipe(recipe: Recipe, signal: AbortSignal): Promise<void> {
+    const adapter = this.#adapters.get(recipe.adapter);
+    const validation = await adapter.validateRecipe(recipe);
+    if (!validation.valid) throw new Error(validation.issues.map((issue) => issue.message).join("; "));
+    await adapter.prepare?.(recipe, signal);
   }
 
   #scheduleEviction(): void {
@@ -237,4 +260,8 @@ function isAbortError(error: unknown): boolean {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function preparationKey(recipe: Recipe): string {
+  return JSON.stringify({ id: recipe.id, adapter: recipe.adapter, modelId: recipe.modelId, configuration: recipe.configuration });
 }

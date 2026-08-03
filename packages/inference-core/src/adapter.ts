@@ -39,6 +39,8 @@ export interface StopReport {
 
 export interface EngineAdapter<THandle extends EngineInstanceHandle = EngineInstanceHandle> {
   readonly id: string;
+  /** Prepare host/runtime state without starting a model-bearing process or occupying model VRAM. */
+  prepare?(recipe: Recipe, signal: AbortSignal): Promise<void>;
   validateRecipe(recipe: Recipe): Promise<ValidationReport>;
   estimateResources(recipe: Recipe): Promise<ResourceEstimate>;
   buildLaunchSpec(recipe: Recipe, allocation: PortAllocation): Promise<LaunchSpec>;

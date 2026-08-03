@@ -149,6 +149,11 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     options.resourcePolicy,
   );
   const lifecycle = new LifecycleManager({ adapters, events, resources });
+  const localRecipes = [...new Map(routes.listRoutes().filter((route) => PUBLIC_ROUTE_IDS.has(route.id)).map((route) => {
+    const recipe = routes.resolve(route.id).recipe;
+    return [recipe.id, recipe] as const;
+  })).values()].filter((recipe) => recipe.adapter !== "openai-compatible");
+  void Promise.allSettled(localRecipes.map((recipe) => lifecycle.prepare(recipe)));
   const scheduler = new InferenceScheduler(routes, lifecycle, events);
   const agentRuns = new AgentRunCoordinator(store, scheduler, options.agentRuntime);
   const context = options.contextManager ?? new ContextManager(store);
@@ -734,6 +739,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   app.get("/api/v1/management/audit-events", { preHandler: administratorGuard }, async (request) => { const query = request.query as { limit?: string }; return { data: store.listAuditEvents(Math.min(toNonNegativeInteger(query.limit, 100), 1000)) }; });
 
   app.addHook("onClose", async () => {
+    await lifecycle.cancelPreparations();
     await scheduler.shutdown();
     unsubscribeMetrics();
     unsubscribePersistence();

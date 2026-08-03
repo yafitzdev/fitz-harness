@@ -74,6 +74,20 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
     this.#wslUser = options.wslUser ?? "root";
   }
 
+  async prepare(recipe: Recipe, signal: AbortSignal): Promise<void> {
+    const config = readNInferConfiguration(recipe);
+    if (!this.#wslDistribution) {
+      await access(config.executable);
+      await access(config.artifact);
+      return;
+    }
+    await execFileAsync("wsl.exe", [
+      "-d", this.#wslDistribution, "-u", this.#wslUser, "--", "sh", "-c",
+      'test -x "$1" && if [ -f "$2" ]; then cat "$2" >/dev/null; elif [ -d "$2" ]; then find "$2" -type f -exec cat {} + >/dev/null; else exit 1; fi',
+      "fitz-prepare", config.executable, config.artifact,
+    ], { windowsHide: true, signal });
+  }
+
   async validateRecipe(recipe: Recipe): Promise<ValidationReport> {
     const issues = validateNInferConfiguration(recipe);
     if (issues.length === 0 && this.#validatePaths) {
