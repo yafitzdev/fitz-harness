@@ -262,7 +262,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         return reply.code(403).send(openAIError(new SecurityPolicyError("Route access denied"), "permission_error"));
       }
       if (principal) {
-        const promptChars = body.messages.reduce((total, message) => total + JSON.stringify(message.content).length, 0);
+        const promptChars = body.messages.reduce((total, message) => total + contentTextLength(message.content), 0);
         security?.enforceQuota(principal, promptChars, body.max_tokens ?? principal.quota.maxOutputTokens, scheduler.queueDepth);
       }
       if (!resolved.recipe.capabilities.chatCompletions) {
@@ -361,7 +361,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       const session = body.sessionId ? store.getSession(body.sessionId) : undefined;
       if (body.sessionId) { if (!session) return reply.code(404).send({ error: "Session not found" }); if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); }
       if (principal && !security?.authorizeRoute(principal, body.model)) return reply.code(403).send({ error: "Route access denied" });
-      if (principal) { const promptChars = body.messages.reduce((total, message) => total + message.content.length, 0); security?.enforceQuota(principal, promptChars, body.maxTokens ?? principal.quota.maxOutputTokens, agentRuns.queue().length); }
+      if (principal) { const promptChars = body.messages.reduce((total, message) => total + contentTextLength(message.content), 0); security?.enforceQuota(principal, promptChars, body.maxTokens ?? principal.quota.maxOutputTokens, agentRuns.queue().length); }
       const executionRouteId = resolveSessionRouteId(session, body.model);
       const resolved = resolveActiveRoute(executionRouteId); const prepared = await context.prepare({ ...body, model: executionRouteId }, resolved.recipe.contextTokens); const run = agentRuns.start(prepared.request, principal?.user.id, body.messages); security?.audit("agent-run.created", principal?.user.id, "agent-run", run.id, { routeId: run.routeId, connectionId: session?.connectionId, publicRouteId: body.model, compacted: prepared.compacted });
       return reply.code(202).send({ protocolVersion: PROTOCOL_VERSION, data: run, queue: agentRuns.queue(principal?.user.role === "administrator" ? undefined : principal?.user.id).find((item) => item.runId === run.id), context: { compacted: prepared.compacted, estimatedInputTokens: prepared.estimatedInputTokens, budgetTokens: prepared.budgetTokens } });
@@ -1049,6 +1049,7 @@ function parseRecipe(value: unknown, recipeId: string): Recipe {
 }
 
 function nonNegativeInteger(value: unknown, name: string): number { if (!Number.isInteger(value) || (value as number) < 0) throw new TypeError(`${name} must be a non-negative integer`); return value as number; }
+function contentTextLength(content: string | Array<{ type: string; text?: string }>): number { if (typeof content === "string") return content.length; return content.reduce((total, part) => total + (part.type === "text" ? (part.text ?? "").length : 0), 0); }
 
 function parseAgentRunRequest(value: unknown): AgentRunRequest { const parsed = parseChatCompletionRequest(value); const source = requireRecord(value); const accessMode = source.accessMode === "ask" || source.accessMode === "read-only" ? source.accessMode : "full"; return { model: parsed.model, messages: parsed.messages, ...(parsed.max_tokens !== undefined ? { maxTokens: parsed.max_tokens } : {}), ...(parsed.temperature !== undefined ? { temperature: parsed.temperature } : {}), ...(typeof source.sessionId === "string" ? { sessionId: source.sessionId } : {}), accessMode }; }
 function canAccessRun(principal: AuthenticatedPrincipal | undefined, ownerUserId: string | undefined): boolean { return !principal || principal.user.role === "administrator" || principal.user.id === ownerUserId; }

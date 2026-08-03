@@ -28,9 +28,13 @@ export type ChatToolChoice = "none" | "auto" | "required" | {
   function: { name: string };
 };
 
+export type ChatContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 export interface ChatMessage {
   role: ChatRole;
-  content: string;
+  content: string | ChatContentPart[];
   name?: string;
   tool_call_id?: string;
   tool_calls?: ChatToolCall[];
@@ -169,18 +173,24 @@ function parseMessage(value: unknown, index: number): ChatMessage {
   return message;
 }
 
-function parseMessageContent(value: unknown, index: number): string {
+function parseMessageContent(value: unknown, index: number): string | ChatContentPart[] {
   if (typeof value === "string") return value;
   if (value === null) return "";
   if (Array.isArray(value) && value.length > 0) {
-    return value.map((part, partIndex) => {
-      if (!isRecord(part) || (part.type !== "text" && part.type !== "input_text") || typeof part.text !== "string") {
-        throw new TypeError(`messages[${index}].content[${partIndex}] must be a text part`);
+    const parts: ChatContentPart[] = value.map((part, partIndex) => {
+      if (isRecord(part) && (part.type === "text" || part.type === "input_text") && typeof part.text === "string") {
+        return { type: "text" as const, text: part.text };
       }
-      return part.text;
-    }).join("");
+      if (isRecord(part) && part.type === "image_url" && isRecord(part.image_url) && typeof part.image_url.url === "string") {
+        return { type: "image_url" as const, image_url: { url: part.image_url.url } };
+      }
+      throw new TypeError(`messages[${index}].content[${partIndex}] must be a text or image_url part`);
+    });
+    // Normalize: if all parts are text, collapse into a single string
+    if (parts.every((p) => p.type === "text")) return parts.map((p) => p.text).join("");
+    return parts;
   }
-  throw new TypeError(`messages[${index}].content must be a string or text parts`);
+  throw new TypeError(`messages[${index}].content must be a string or content parts array`);
 }
 
 function parseTools(value: unknown): ChatCompletionTool[] {

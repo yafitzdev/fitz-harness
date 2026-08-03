@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgentRunRequest, ChatMessage, TranscriptEntryRecord } from "@fitz/protocol";
+import type { AgentRunRequest, ChatContentPart, ChatMessage, TranscriptEntryRecord } from "@fitz/protocol";
 import type { SqliteStore } from "@fitz/storage";
 
 export interface ContextBudgetPolicy { compactionThreshold: number; reserveOutputTokens: number; recentTokenFraction: number }
@@ -11,7 +11,7 @@ export const DEFAULT_CONTEXT_POLICY: ContextBudgetPolicy = { compactionThreshold
 export class ContextManager {
   readonly #policy: ContextBudgetPolicy;
   constructor(private readonly store: SqliteStore, private readonly summarizer: ContextSummarizer = new DeterministicSummarizer(), policy: Partial<ContextBudgetPolicy> = {}) { this.#policy = { ...DEFAULT_CONTEXT_POLICY, ...policy }; validatePolicy(this.#policy); }
-  estimate(messages: readonly ChatMessage[]): number { return messages.reduce((total, message) => total + 4 + Math.ceil(message.content.length / 4), 2); }
+  estimate(messages: readonly ChatMessage[]): number { return messages.reduce((total, message) => total + 4 + Math.ceil(contentCharLength(message.content) / 4), 2); }
   async prepare(request: AgentRunRequest, contextTokens: number): Promise<ContextPreparation> {
     const canonical = request.sessionId ? [...sessionContextMessages(allTranscriptEntries(this.store, request.sessionId)), ...request.messages] : [...request.messages];
     const outputReserve = Math.max(request.maxTokens ?? this.#policy.reserveOutputTokens, this.#policy.reserveOutputTokens); const budgetTokens = Math.max(128, Math.floor(contextTokens * this.#policy.compactionThreshold) - outputReserve); const estimatedInputTokens = this.estimate(canonical);
@@ -31,7 +31,15 @@ export class ContextManager {
   }
 }
 
-export class DeterministicSummarizer implements ContextSummarizer { async summarize(messages: readonly ChatMessage[], maxTokens: number): Promise<string> { const text = messages.map((message) => `[${message.role}] ${message.content}`).join("\n"); const maxChars = maxTokens * 4; return text.length <= maxChars ? text : `${text.slice(0, Math.max(0, maxChars - 16))}\n[truncated]`; } }
+export class DeterministicSummarizer implements ContextSummarizer { async summarize(messages: readonly ChatMessage[], maxTokens: number): Promise<string> { const text = messages.map((message) => `[${message.role}] ${extractText(message.content)}`).join("\n"); const maxChars = maxTokens * 4; return text.length <= maxChars ? text : `${text.slice(0, Math.max(0, maxChars - 16))}\n[truncated]`; } }
+function extractText(content: string | ChatContentPart[]): string {
+  if (typeof content === "string") return content;
+  return content.filter((p) => p.type === "text").map((p) => p.text).join(" ");
+}
+function contentCharLength(content: string | ChatContentPart[]): number {
+  if (typeof content === "string") return content.length;
+  return content.filter((p) => p.type === "text").reduce((t, p) => t + (p.text ?? "").length, 0);
+}
 function transcriptMessages(entries: readonly TranscriptEntryRecord[]): ChatMessage[] { return entries.filter((entry) => entry.kind === "message" && entry.role && typeof entry.content.text === "string").map((entry) => ({ role: entry.role!, content: entry.content.text as string })); }
 function allTranscriptEntries(store: SqliteStore, sessionId: string): TranscriptEntryRecord[] { const entries: TranscriptEntryRecord[] = []; let after = 0; while (true) { const page = store.transcriptAfter(sessionId, after, 1000); entries.push(...page); if (page.length < 1000) return entries; after = page.at(-1)!.sequence; } }
 function sessionContextMessages(entries: readonly TranscriptEntryRecord[]): ChatMessage[] {
