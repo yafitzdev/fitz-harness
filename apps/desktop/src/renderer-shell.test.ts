@@ -10,10 +10,12 @@ const workspacePages = readFileSync(new URL("./ui/layout/workspace-pages.ts", im
 const resizablePane = readFileSync(new URL("./ui/primitives/resizable-pane.ts", import.meta.url), "utf8");
 const customSelect = readFileSync(new URL("./ui/primitives/custom-select.ts", import.meta.url), "utf8");
 const contextMenu = readFileSync(new URL("./ui/primitives/context-menu.ts", import.meta.url), "utf8");
+const messageActions = readFileSync(new URL("./ui/chat/message-actions.ts", import.meta.url), "utf8");
 const styles = [
   readFileSync(new URL("./renderer/styles.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/theme/tokens.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/primitives/scroll-surface.css", import.meta.url), "utf8"),
+  readFileSync(new URL("./ui/chat/message-actions.css", import.meta.url), "utf8"),
 ].join("\n");
 const main = readFileSync(new URL("./main.ts", import.meta.url), "utf8");
 const preload = readFileSync(new URL("./preload.ts", import.meta.url), "utf8");
@@ -319,25 +321,25 @@ describe("desktop renderer shell", () => {
   });
 
   it("reveals compact Copy and user Edit actions on message hover", () => {
-    expect(renderer).toContain("appendMessageActions(article, content, role, text, createdAt)");
-    expect(renderer).toContain('copy.title = "Copy message"');
-    expect(renderer).toContain('edit.title = "Edit message"');
-    expect(renderer).toContain("startInlineMessageEdit(article, content, actions, originalText)");
-    expect(renderer).toContain('copyValue(content.innerText, "Copied message")');
-    expect(renderer).toContain('time.className = "message-time"');
-    expect(renderer).toContain("formatMessageTimestamp(createdAt)");
+    expect(renderer).toContain("messageActions.attach(article, content");
+    expect(renderer).toContain('copyText: (text) => copyValue(text, "Copied message")');
+    expect(messageActions).toContain('this.#actionButton("Copy message"');
+    expect(messageActions).toContain('this.#actionButton("Edit message"');
+    expect(messageActions).toContain('time.className = "message-time"');
+    expect(messageActions).toContain("this.#formatTimestamp(createdAt)");
     expect(styles).toContain(".message:hover .message-actions");
     expect(styles).toContain(".message.assistant .message-actions, .message.commentary .message-actions");
     expect(styles).toContain(".message-action svg");
   });
 
   it("edits user prompts inline with Cancel and Send controls", () => {
-    expect(renderer).toContain('editor.className = "message-inline-editor"');
-    expect(renderer).toContain('cancel.textContent = "Cancel"');
-    expect(renderer).toContain('send.textContent = "Send"');
-    expect(renderer).toContain("void sendPrompt(revised, article)");
-    expect(renderer).toContain('event.key === "Enter" && (event.ctrlKey || event.metaKey)');
-    expect(renderer).toContain('bubble.className = "message-edit-bubble"');
+    expect(renderer).toContain('resend: (text, article) => sendPrompt(text, article)');
+    expect(messageActions).toContain('editor.className = "message-inline-editor"');
+    expect(messageActions).toContain('this.#textButton("Cancel"');
+    expect(messageActions).toContain('this.#textButton("Send"');
+    expect(messageActions).toContain("void this.#options.resend(revised, article)");
+    expect(messageActions).toContain('event.key === "Enter" && (event.ctrlKey || event.metaKey)');
+    expect(messageActions).toContain('bubble.className = "message-edit-bubble"');
     expect(styles).toContain(".message-inline-editor");
     expect(styles).toContain(".message-edit-bubble");
     expect(styles).toContain(".message-edit-controls");

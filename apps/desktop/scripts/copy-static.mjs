@@ -6,8 +6,10 @@ await build({ entryPoints: [fileURLToPath(new URL("../src/renderer.ts", import.m
 mkdirSync(new URL("../dist/renderer/", import.meta.url), { recursive: true });
 mkdirSync(new URL("../dist/ui/theme/", import.meta.url), { recursive: true });
 mkdirSync(new URL("../dist/ui/primitives/", import.meta.url), { recursive: true });
+mkdirSync(new URL("../dist/ui/chat/", import.meta.url), { recursive: true });
 cpSync(new URL("../src/renderer/index.html", import.meta.url), new URL("../dist/renderer/index.html", import.meta.url));
 cpSync(new URL("../src/renderer/styles.css", import.meta.url), new URL("../dist/renderer/styles.css", import.meta.url));
 cpSync(new URL("../src/ui/theme/tokens.css", import.meta.url), new URL("../dist/ui/theme/tokens.css", import.meta.url));
 cpSync(new URL("../src/ui/primitives/scroll-surface.css", import.meta.url), new URL("../dist/ui/primitives/scroll-surface.css", import.meta.url));
+cpSync(new URL("../src/ui/chat/message-actions.css", import.meta.url), new URL("../dist/ui/chat/message-actions.css", import.meta.url));
 cpSync(new URL("../src/bootstrap.cjs", import.meta.url), new URL("../dist/bootstrap.cjs", import.meta.url));

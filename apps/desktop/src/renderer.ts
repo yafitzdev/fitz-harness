@@ -2,10 +2,12 @@ import { reconnectDelay } from "@fitz/connectivity/reconnect";
 import type { ConsumerConnectionSummary, DesktopUpdateStatus, ResourcePreview } from "./preload.js";
 import { appendMarkdown, setMarkdown } from "./markdown.js";
 import { highlightSource } from "./syntax-highlighting.js";
+import { MessageActions, type ActionableMessageRole } from "./ui/chat/message-actions.js";
 import { ConversationLayout } from "./ui/layout/conversation-layout.js";
 import { WorkspacePageController } from "./ui/layout/workspace-pages.js";
 import { CustomSelectController } from "./ui/primitives/custom-select.js";
 import { ContextMenu } from "./ui/primitives/context-menu.js";
+import { requiredElement as element, requiredQuery as query, svgIcon as svg, textBlock } from "./ui/primitives/dom.js";
 import { positionNestedPopover, togglePopover as toggleManagedPopover } from "./ui/primitives/popover.js";
 import { ResizablePane } from "./ui/primitives/resizable-pane.js";
 
@@ -311,6 +313,12 @@ const workspacePages = new WorkspacePageController({
     administration: administrationButton,
   },
   setConversationInert,
+});
+const messageActions = new MessageActions({
+  canEdit: () => !currentRun,
+  onEditBlocked: () => showToast("Wait for the current response before editing a message."),
+  copyText: (text) => copyValue(text, "Copied message"),
+  resend: (text, article) => sendPrompt(text, article),
 });
 renderAccessMode();
 void initialize();
@@ -2453,59 +2461,15 @@ function appendMessage(role: string, text: string, createdAt?: string): HTMLElem
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   if (role !== "commentary") finishWorkSummary(createdAt);
   const article = document.createElement("article"); article.className = `message ${role}`;
-  const content = document.createElement("div"); content.className = "message-body"; if (role === "assistant" || role === "commentary") setMarkdown(content, text); else content.textContent = text; article.append(content); appendMessageActions(article, content, role, text, createdAt); messages.append(article); messages.scrollTop = messages.scrollHeight; return content;
+  const content = document.createElement("div"); content.className = "message-body"; if (role === "assistant" || role === "commentary") setMarkdown(content, text); else content.textContent = text; article.append(content); if (["user", "assistant", "commentary"].includes(role)) messageActions.attach(article, content, role as ActionableMessageRole, text, createdAt); messages.append(article); messages.scrollTop = messages.scrollHeight; return content;
 }
 
 function appendCommentary(text: string, createdAt?: string): HTMLElement {
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   const article = document.createElement("article"); article.className = "message commentary";
-  const content = document.createElement("div"); content.className = "message-body"; setMarkdown(content, text); article.append(content); appendMessageActions(article, content, "commentary", text, createdAt);
+  const content = document.createElement("div"); content.className = "message-body"; setMarkdown(content, text); article.append(content); messageActions.attach(article, content, "commentary", text, createdAt);
   appendWorkNode(article, createdAt);
   return content;
-}
-
-function appendMessageActions(article: HTMLElement, content: HTMLElement, role: string, originalText: string, createdAt?: string): void {
-  if (!["user", "assistant", "commentary"].includes(role)) return;
-  const actions = document.createElement("div"); actions.className = "message-actions";
-  const time = document.createElement("time"); time.className = "message-time"; time.dateTime = createdAt ?? new Date().toISOString(); time.textContent = formatMessageTimestamp(createdAt); actions.append(time);
-  const copy = document.createElement("button"); copy.type = "button"; copy.className = "message-action"; copy.title = "Copy message"; copy.setAttribute("aria-label", "Copy message");
-  copy.append(svg('<rect x="7" y="7" width="9" height="9" rx="1.6"></rect><path d="M5.8 13.4H5A2 2 0 0 1 3 11.4V5a2 2 0 0 1 2-2h6.4a2 2 0 0 1 2 2v.8"></path>'));
-  copy.addEventListener("click", () => void copyValue(content.innerText, "Copied message"));
-  actions.append(copy);
-  if (role === "user") {
-    const edit = document.createElement("button"); edit.type = "button"; edit.className = "message-action"; edit.title = "Edit message"; edit.setAttribute("aria-label", "Edit message");
-    edit.append(svg('<path d="m4.2 14.8.7-3.2 7.8-7.8a1.45 1.45 0 0 1 2.05 2.05L7 13.65z"></path><path d="m11.7 4.8 2.05 2.05"></path>'));
-    edit.addEventListener("click", () => startInlineMessageEdit(article, content, actions, originalText));
-    actions.append(edit);
-  }
-  article.append(actions);
-}
-
-function formatMessageTimestamp(value?: string): string {
-  const date = value ? new Date(value) : new Date();
-  const weekday = new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(date);
-  const time = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(date);
-  return `${weekday} ${time}`;
-}
-
-function startInlineMessageEdit(article: HTMLElement, content: HTMLElement, actions: HTMLElement, originalText: string): void {
-  if (currentRun) { showToast("Wait for the current response before editing a message."); return; }
-  const bubble = document.createElement("div"); bubble.className = "message-edit-bubble";
-  const editor = document.createElement("textarea"); editor.className = "message-inline-editor"; editor.value = originalText; editor.setAttribute("aria-label", "Edit message");
-  const controls = document.createElement("div"); controls.className = "message-edit-controls";
-  const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "message-edit-cancel"; cancel.textContent = "Cancel";
-  const send = document.createElement("button"); send.type = "button"; send.className = "message-edit-send"; send.textContent = "Send";
-  const restore = () => { bubble.replaceWith(content); actions.hidden = false; article.classList.remove("editing"); };
-  const submit = () => {
-    const revised = editor.value.trim();
-    if (!revised) { editor.focus(); return; }
-    content.textContent = revised;
-    restore();
-    void sendPrompt(revised, article);
-  };
-  cancel.addEventListener("click", restore); send.addEventListener("click", submit);
-  editor.addEventListener("keydown", (event) => { if (event.key === "Escape") { event.preventDefault(); restore(); } if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); submit(); } });
-  controls.append(cancel, send); bubble.append(editor, controls); actions.hidden = true; article.classList.add("editing"); content.replaceWith(bubble); editor.focus(); editor.setSelectionRange(editor.value.length, editor.value.length);
 }
 
 function markAssistantAsCommentary(content: HTMLElement): void {
@@ -2827,10 +2791,10 @@ function setStatus(text: string, state: string): void { status.textContent = tex
 function setConnection(text: string, state: string): void { connectionDetail.textContent = text; connectionStatus.dataset.state = state; }
 function setFormBusy(formElement: HTMLFormElement, busy: boolean): void { for (const control of formElement.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>("input,button,select")) control.disabled = busy; }
 function showToast(text: string): void { if (toastTimer) clearTimeout(toastTimer); toast.textContent = text; toast.hidden = false; toastTimer = setTimeout(() => { toast.hidden = true; }, 3_200); }
-function panelEmpty(text: string): HTMLElement { const value = document.createElement("div"); value.className = "panel-empty"; value.textContent = text; return value; }
-function inspectorEmpty(text: string): HTMLElement { const value = document.createElement("div"); value.className = "inspector-empty"; value.textContent = text; return value; }
-function inspectorError(text: string): HTMLElement { const value = document.createElement("div"); value.className = "inspector-error"; value.textContent = text; return value; }
-function loadingMessage(text: string): HTMLElement { const value = document.createElement("div"); value.className = "panel-empty"; value.textContent = text; return value; }
+function panelEmpty(text: string): HTMLElement { return textBlock("panel-empty", text); }
+function inspectorEmpty(text: string): HTMLElement { return textBlock("inspector-empty", text); }
+function inspectorError(text: string): HTMLElement { return textBlock("inspector-error", text); }
+function loadingMessage(text: string): HTMLElement { return textBlock("panel-empty", text); }
 function treeItem(label: string, className: string, icon: SVGElement | undefined, action: () => void, menu: (toggle: HTMLButtonElement, event: MouseEvent) => void, quickAction?: () => void): HTMLElement {
   const item = document.createElement("div"); item.className = "tree-item";
   const value = document.createElement("button"); value.type = "button"; value.className = className; const text = document.createElement("span"); text.textContent = label; if (icon) value.append(icon); value.append(text); value.addEventListener("click", action);
@@ -2852,7 +2816,6 @@ async function api(path: string, method = "GET", body?: unknown): Promise<Json> 
   return parsed;
 }
 
-function svg(path: string, viewBox = "0 0 20 20"): SVGElement { const value = document.createElementNS("http://www.w3.org/2000/svg", "svg"); value.setAttribute("viewBox", viewBox); value.setAttribute("aria-hidden", "true"); value.innerHTML = path; return value; }
 function folderIcon(): SVGElement { return svg('<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>', "0 0 24 24"); }
 function sparkIcon(): SVGElement { return svg('<path d="M10 2.8c.5 3.7 2.4 5.8 6.2 7.2-3.8 1.4-5.7 3.5-6.2 7.2-.5-3.7-2.4-5.8-6.2-7.2C7.6 8.6 9.5 6.5 10 2.8Z"></path>'); }
 function activityIcon(toolName: string): SVGElement {
@@ -2862,8 +2825,6 @@ function activityIcon(toolName: string): SVGElement {
 }
 function contextActivityIcon(): SVGElement { return svg('<path d="M4 3.5h8l3 3v10H4z"></path><path d="M12 3.5v3h3M6.5 10h6M6.5 13h4"></path><path d="m2.5 12-1.2 1.2L2.5 14.4"></path>'); }
 function terminalCloudIcon(): SVGElement { return svg('<path d="M6.2 16.4c-2 0-3.7-1.6-3.7-3.6 0-1.2.6-2.3 1.5-3-.4-1.8.5-3.6 2.1-4.4.7-1.7 2.4-2.8 4.2-2.8 1.5 0 2.9.7 3.8 1.9 1.8-.1 3.3 1.3 3.4 3.1 1 .7 1.7 1.9 1.7 3.2 0 1.5-.8 2.8-2.1 3.5-.5 1.8-2.1 3-4 3-.8 0-1.6-.2-2.2-.7-.7.6-1.6.9-2.5.9-.8 0-1.6-.3-2.2-.7z"></path><path d="m6.8 8 1.8 2-1.8 2M10.7 12.3h2.7"></path>'); }
-function element(id: string): HTMLElement { const value = document.getElementById(id); if (!value) throw new Error(`Missing #${id}`); return value; }
-function query(selector: string): HTMLElement { const value = document.querySelector<HTMLElement>(selector); if (!value) throw new Error(`Missing ${selector}`); return value; }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function delay(milliseconds: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }
 function bytesToBase64(bytes: Uint8Array): string { let binary = ""; for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000)); return btoa(binary); }
