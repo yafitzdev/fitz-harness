@@ -116,6 +116,18 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .message.assistant { display: block; }
 .message.commentary { color: var(--text); line-height: 1.62; }
 .message.commentary .message-body { color: var(--text); }
+
+/* Change Summary Card */
+.message.change-summary { padding: 0; }
+.change-summary-body { padding: 14px 16px; border: 1px solid var(--codex-border-heavy); border-radius: var(--codex-radius-xl); background: rgba(255,255,255,.03); }
+.change-summary-header { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 10px; }
+.change-summary-list { display: flex; flex-direction: column; gap: 2px; }
+.change-summary-row { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: var(--codex-radius-md); font-size: 13px; }
+.change-summary-row:hover { background: rgba(255,255,255,.05); }
+.change-summary-icon { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 4px; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+.change-summary-row.created .change-summary-icon { background: rgba(104,203,168,.15); color: #68cba8; }
+.change-summary-row.edited .change-summary-icon { background: rgba(138,180,229,.15); color: #8ab4e5; }
+.change-summary-path { font-family: Consolas, "Cascadia Mono", monospace; color: var(--codex-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .message-body { min-width: 0; white-space: pre-wrap; word-break: break-word; color: var(--text); }
 .message-body.markdown { white-space: normal; overflow-wrap: anywhere; line-height: 1.62; }
 .message-body.markdown > :first-child { margin-top: 0; }

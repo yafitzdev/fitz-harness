@@ -20,7 +20,7 @@ type Json = Record<string, any>;
 type AppLocation = { view: "conversation"; projectId?: string; sessionId?: string; newChat?: boolean } | { view: "playbooks" | "connections" | "plugins" | "administration" };
 type ProjectRecord = ProjectSidebarProject & Json;
 type SessionRecord = ProjectSidebarSession & Json;
-
+type PastedImage = { dataUrl: string; mimeType: string; chip: HTMLElement };
 
 let projectRecords: ProjectRecord[] = [];
 const sessionsByProject = new Map<string, SessionRecord[]>();
@@ -101,6 +101,7 @@ const queueCount = element("queue-count");
 const artifactPreview = element("artifact-preview");
 const artifactFile = element("artifact-file") as HTMLInputElement;
 const composerAttachments = element("composer-attachments");
+const pastedImages: PastedImage[] = [];
 const addArtifactButton = element("add-artifact") as HTMLButtonElement;
 const updateButton = element("update") as HTMLButtonElement;
 const checkDesktopUpdate = element("check-desktop-update") as HTMLButtonElement;
@@ -270,6 +271,7 @@ const agentRuns = new AgentRunController({
   appendAssistant: () => appendMessage("assistant", ""),
   appendAssistantDelta: (target, delta) => appendMarkdown(target, delta),
   appendSystem: (message) => { appendMessage("system", message); },
+  appendChangeSummary: (files) => appendChangeSummary(files),
   addTokenEstimate: (text) => { sessionTokenEstimate += estimateTokens(text); updateContextMeter(); },
   setStatus,
   setEngineState: (state) => { engineState.textContent = state; },
@@ -389,6 +391,7 @@ form.addEventListener("submit", (event) => {
 });
 window.fitz.onNavigationCommand((command) => void navigateHistory(command === "back" ? -1 : 1));
 prompt.addEventListener("input", () => { resizePrompt(); updateContextMeter(); refreshComposerState(); agentRuns.scheduleWarmup(prompt.value, composerControls.routeId, connectionWorkspace.selectedConnectionId); });
+prompt.addEventListener("paste", handlePaste);
 prompt.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
@@ -1723,7 +1726,7 @@ function closePopovers(): void {
 
 async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLElement): Promise<void> {
   const content = (submittedContent ?? prompt.value).trim();
-  if (!content) return;
+  if (!content && pastedImages.length === 0) return;
   if (!currentSession && newChatMode && currentProject) {
     try {
       const title = content.split(/\r?\n/, 1)[0]!.trim().slice(0, 80) || "New chat";
@@ -1743,26 +1746,47 @@ async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLE
   prompt.value = "";
   agentRuns.resetWarmup();
   resizePrompt();
+  // Upload pasted images as artifacts and collect image URLs
+  const imageParts: Array<{ type: "image_url"; image_url: { url: string } }> = [];
+  for (const img of pastedImages) {
+    try {
+      const response = await api(`/api/v1/sessions/${currentSession}/artifacts`, "POST", {
+        name: `screenshot-${Date.now()}.png`,
+        mimeType: img.mimeType,
+        contentBase64: img.dataUrl.split(",")[1]!,
+      });
+      imageParts.push({ type: "image_url" as const, image_url: { url: `/api/v1/artifacts/${response.data.id}` } });
+    } catch (error) { showToast(errorMessage(error)); }
+  }
+  const capturedImages = pastedImages.splice(0);
+  capturedImages.forEach((img) => img.chip.remove());
+  refreshComposerAttachments();
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   if (!existingUserMessage) appendMessage("user", content);
   sessionTokenEstimate += estimateTokens(content);
   updateContextMeter();
+  // Build multi-modal message content
+  const messageContent = imageParts.length > 0
+    ? [{ type: "text" as const, text: content }, ...imageParts]
+    : content;
   await agentRuns.start({
     model: composerControls.routeId,
     max_tokens: composerControls.maxTokens,
     temperature: composerControls.temperature,
     sessionId: currentSession,
     accessMode: composerControls.accessMode,
-    messages: [{ role: "user", content }],
+    messages: [{ role: "user", content: messageContent }],
   });
 }
 
 async function loadArtifacts(): Promise<void> {
   artifacts.replaceChildren();
+  // Preserve pasted image chips; only remove artifact chips
+  const pastedChips = pastedImages.map((img) => img.chip);
   composerAttachments.replaceChildren();
-  composerAttachments.hidden = true;
+  pastedChips.forEach((chip) => composerAttachments.append(chip));
   if (contextPanel.hidden) artifactPreview.replaceChildren(resourceInspector.empty("Select a file or link in the conversation to inspect it here."));
-  if (!currentSession) { artifacts.append(panelEmpty("Artifacts appear with a task")); return; }
+  if (!currentSession) { artifacts.append(panelEmpty("Artifacts appear with a task")); refreshComposerAttachments(); return; }
   const response = await api(`/api/v1/sessions/${currentSession}/artifacts`);
   if (!(response.data ?? []).length) artifacts.append(panelEmpty("No artifacts yet"));
   for (const artifact of response.data ?? []) {
@@ -1777,7 +1801,7 @@ async function loadArtifacts(): Promise<void> {
     const remove = document.createElement("button"); remove.type = "button"; remove.className = "attachment-remove"; remove.title = `Remove ${artifact.name}`; remove.setAttribute("aria-label", `Remove ${artifact.name}`); remove.textContent = "×";
     chipPreview.append(chipName, chipSize); chipPreview.addEventListener("click", () => void resourceInspector.previewArtifact(artifact, value, artifacts)); remove.addEventListener("click", () => void removeArtifact(artifact)); chip.append(chipPreview, remove); composerAttachments.append(chip);
   }
-  composerAttachments.hidden = composerAttachments.childElementCount === 0;
+  refreshComposerAttachments();
 }
 
 async function loadAgentQueue(): Promise<void> {
@@ -1830,6 +1854,67 @@ async function uploadArtifact(): Promise<void> {
   } catch (error) { showToast(errorMessage(error)); }
 }
 
+// --- Image paste handling ---
+
+function handlePaste(event: ClipboardEvent): void {
+  const items = event.clipboardData?.items;
+  if (!items) return;
+  for (const item of items) {
+    if (!item.type.startsWith("image/")) continue;
+    event.preventDefault();
+    const file = item.getAsFile();
+    if (!file) continue;
+    if (file.size > 5_000_000) { showToast("Pasted image is too large (max 5 MB)"); return; }
+    readPastedImage(file);
+    break;
+  }
+}
+
+function readPastedImage(file: File): void {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = reader.result as string;
+    const chip = createImageChip(dataUrl, file.type, () => removePastedImage(chip));
+    composerAttachments.append(chip);
+    pastedImages.push({ dataUrl, mimeType: file.type, chip });
+    refreshComposerAttachments();
+  };
+  reader.readAsDataURL(file);
+}
+
+function createImageChip(dataUrl: string, mimeType: string, onRemove: () => void): HTMLElement {
+  const chip = document.createElement("div");
+  chip.className = "attachment-chip";
+  chip.style.width = "96px";
+  chip.style.height = "96px";
+  chip.style.minWidth = "96px";
+
+  const preview = document.createElement("img");
+  preview.src = dataUrl;
+  preview.style.cssText = "width:100%;height:100%;object-fit:cover;border-radius:11px;pointer-events:none;";
+  preview.setAttribute("alt", "Pasted image");
+
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "attachment-remove";
+  remove.textContent = "\u00d7";
+  remove.addEventListener("click", () => { onRemove(); });
+
+  chip.append(preview, remove);
+  return chip;
+}
+
+function removePastedImage(chip: HTMLElement): void {
+  const index = pastedImages.findIndex((img) => img.chip === chip);
+  if (index >= 0) pastedImages.splice(index, 1);
+  chip.remove();
+  refreshComposerAttachments();
+}
+
+function refreshComposerAttachments(): void {
+  composerAttachments.hidden = composerAttachments.childElementCount === 0;
+}
+
 function showLanding(hasTask = false): void {
   messages.replaceChildren();
   activityTimeline.clear();
@@ -1868,6 +1953,38 @@ function appendCommentary(text: string, createdAt?: string): HTMLElement {
   const content = document.createElement("div"); content.className = "message-body"; setMarkdown(content, text); article.append(content);
   activityTimeline.appendCommentary(article, createdAt);
   return content;
+}
+
+function appendChangeSummary(files: Array<{ path: string; action: "edited" | "created" }>): void {
+  if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
+  const article = document.createElement("article"); article.className = "message change-summary";
+  const content = document.createElement("div"); content.className = "message-body change-summary-body";
+
+  const createdFiles = files.filter((f) => f.action === "created");
+  const editedFiles = files.filter((f) => f.action === "edited");
+
+  const summaryHeader = document.createElement("div"); summaryHeader.className = "change-summary-header";
+  const total = files.length;
+  const parts: string[] = [];
+  if (createdFiles.length) parts.push(`${createdFiles.length} created`);
+  if (editedFiles.length) parts.push(`${editedFiles.length} edited`);
+  summaryHeader.textContent = `${total} file${total === 1 ? "" : "s"}: ${parts.join(", ")}`;
+  content.append(summaryHeader);
+
+  const fileList = document.createElement("div"); fileList.className = "change-summary-list";
+  for (const file of files) {
+    const row = document.createElement("div"); row.className = `change-summary-row ${file.action}`;
+    const icon = document.createElement("span"); icon.className = "change-summary-icon";
+    icon.textContent = file.action === "created" ? "+" : "~";
+    const filePath = document.createElement("span"); filePath.className = "change-summary-path";
+    filePath.textContent = file.path;
+    row.append(icon, filePath);
+    fileList.append(row);
+  }
+  content.append(fileList);
+  article.append(content);
+  messages.append(article);
+  messages.scrollTop = messages.scrollHeight;
 }
 
 function refreshComposerState(): void {

@@ -20,7 +20,7 @@ export interface AgentRunRequest {
   temperature: number;
   sessionId: string;
   accessMode: string;
-  messages: Array<{ role: string; content: string }>;
+  messages: Array<{ role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> }>;
 }
 
 export interface AgentRunControllerOptions {
@@ -30,6 +30,7 @@ export interface AgentRunControllerOptions {
   appendAssistant: () => HTMLElement;
   appendAssistantDelta: (target: HTMLElement, delta: string) => void;
   appendSystem: (message: string) => void;
+  appendChangeSummary: (files: Array<{ path: string; action: "edited" | "created" }>) => void;
   addTokenEstimate: (text: string) => void;
   setStatus: (label: string, state: string) => void;
   setEngineState: (state: string) => void;
@@ -123,6 +124,7 @@ export class AgentRunController {
     let assistant: HTMLElement | undefined;
     const tools = new Map<string, { row: HTMLElement; toolName: string; input: unknown }>();
     const approvals = new Map<string, HTMLElement>();
+    const changedFiles = new Map<string, "edited" | "created">();
     let done = false;
     let queued = true;
     let reconnectAttempt = 0;
@@ -193,6 +195,13 @@ export class AgentRunController {
           const toolCallId = String(event.data?.toolCallId ?? "");
           const existing = tools.get(toolCallId);
           if (existing) this.#options.activity.completeTool(existing.row, existing.toolName, existing.input, event.data?.result, Boolean(event.data?.isError));
+          // Track file changes from write/edit tools (updated)
+          if (existing && (existing.toolName === "write" || existing.toolName === "edit") && !Boolean(event.data?.isError)) {
+            const input = existing.input;
+            if (input && typeof input === "object" && "path" in input && typeof input.path === "string") {
+              changedFiles.set(input.path, existing.toolName === "write" ? "created" : "edited");
+            }
+          }
           this.#options.setStatus("Working", "active");
           this.#options.setEngineState("WORKING");
         }
@@ -204,6 +213,10 @@ export class AgentRunController {
           activity.remove();
           if (!success && event.data?.error && event.type !== "run.cancelled") this.#options.appendSystem(String(event.data.error));
           if (success && !assistant) this.#options.appendSystem("The model completed without returning a response.");
+          // Show change summary if files were modified
+          if (success && changedFiles.size > 0) {
+            this.#options.appendChangeSummary([...changedFiles.entries()].map(([path, action]) => ({ path, action })));
+          }
           this.#options.activity.finishWork();
         }
       }
