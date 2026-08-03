@@ -23,6 +23,7 @@ export interface FakeEngineOptions {
   tokenDelayMs?: number;
   responseFactory?: (request: InferenceRequest, recipe: Recipe) => string;
   failStart?: boolean;
+  failPrepare?: boolean;
   failWhenPromptIncludes?: string;
 }
 
@@ -47,6 +48,7 @@ export class FakeEngineAdapter implements EngineAdapter<FakeInstanceHandle> {
       tokenDelayMs: options.tokenDelayMs ?? 0,
       ...(options.responseFactory ? { responseFactory: options.responseFactory } : {}),
       ...(options.failStart !== undefined ? { failStart: options.failStart } : {}),
+      ...(options.failPrepare !== undefined ? { failPrepare: options.failPrepare } : {}),
       ...(options.failWhenPromptIncludes
         ? { failWhenPromptIncludes: options.failWhenPromptIncludes }
         : {}),
@@ -55,6 +57,7 @@ export class FakeEngineAdapter implements EngineAdapter<FakeInstanceHandle> {
 
   async prepare(recipe: Recipe, signal: AbortSignal): Promise<void> {
     await abortableDelay(this.#options.prepareDelayMs, signal);
+    if (this.#options.failPrepare) throw new Error("Fake engine configured preparation failure");
     this.preparations.push(recipe.id);
   }
 

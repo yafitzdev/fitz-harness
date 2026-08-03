@@ -156,7 +156,11 @@ export class LifecycleManager {
   }
 
   async #loadRecipe(recipe: Recipe, signal: AbortSignal): Promise<void> {
-    await this.prepare(recipe);
+    try { await this.prepare(recipe); }
+    catch {
+      // Preparation is a latency optimization. A failed cache/runtime warm-up must
+      // never prevent the adapter's normal cold activation path from running.
+    }
     if (this.#state !== "UNLOADED" && this.#state !== "FAILED") {
       await this.stop("recipe-switch");
     } else if (this.#state === "FAILED") {
@@ -173,6 +177,8 @@ export class LifecycleManager {
     this.#transition("PREPARING", "load-requested");
 
     try {
+      const validation = await this.#adapter.validateRecipe(recipe);
+      if (!validation.valid) throw new Error(validation.issues.map((issue) => issue.message).join("; "));
       const estimate = await this.#adapter.estimateResources(recipe);
       await this.resources.assertCanLoad(recipe, estimate);
       const allocation = { host: "127.0.0.1", port: this.#allocatePort() };

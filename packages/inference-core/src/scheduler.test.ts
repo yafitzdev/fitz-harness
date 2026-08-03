@@ -73,6 +73,18 @@ describe("InferenceScheduler", () => {
     expect(adapter.starts).toHaveLength(1);
   });
 
+  it("falls back to ordinary cold activation when optional preparation fails", async () => {
+    const adapter = new FakeEngineAdapter({ failPrepare: true });
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]) });
+    const selectedRecipe = recipe("best", 600);
+
+    await expect(lifecycle.prepare(selectedRecipe)).rejects.toThrow("preparation failure");
+    await lifecycle.warm(selectedRecipe);
+
+    expect(adapter.starts).toHaveLength(1);
+    expect(lifecycle.snapshot().state).toBe("READY");
+  });
+
   it("serializes requests and switches recipes safely", async () => {
     const adapter = new FakeEngineAdapter({ tokenDelayMs: 1 });
     const events = new LifecycleEventBus();
