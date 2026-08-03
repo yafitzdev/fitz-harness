@@ -1,9 +1,10 @@
-import type { ConsumerConnectionSummary, DesktopUpdateStatus } from "./preload.js";
+import type { DesktopUpdateStatus } from "./preload.js";
 import { appendMarkdown, setMarkdown } from "./markdown.js";
 import { MessageActions, type ActionableMessageRole } from "./ui/chat/message-actions.js";
 import { ActivityTimeline } from "./ui/chat/activity-timeline.js";
 import { AgentRunController } from "./ui/chat/agent-run-controller.js";
 import { ComposerControls } from "./ui/chat/composer-controls.js";
+import { ConnectionWorkspaceController, FIXED_ROUTES, LOCAL_CONNECTION_ID, type FixedRouteId } from "./ui/connections/connection-workspace.js";
 import { ResourceInspector } from "./ui/inspector/resource-inspector.js";
 import { ConversationLayout } from "./ui/layout/conversation-layout.js";
 import { WorkspacePageController } from "./ui/layout/workspace-pages.js";
@@ -16,21 +17,10 @@ import { PluginCatalogController } from "./ui/plugins/plugin-catalog.js";
 import { ProjectSidebarController, type ProjectSidebarProject, type ProjectSidebarSession } from "./ui/sidebar/project-sidebar.js";
 
 type Json = Record<string, any>;
-type FixedRouteId = "fast" | "default" | "smart";
-type ConnectionModelView = ConsumerConnectionSummary["models"][number] & { displayName?: string; modelId?: string; contextTokens?: number };
-type HostedConnectionView = Omit<ConsumerConnectionSummary, "models"> & { hosted: true; availableModels: ConnectionModelView[] };
-type SavedConnectionView = Omit<ConsumerConnectionSummary, "models"> & { hosted: false; availableModels: ConnectionModelView[]; source: ConsumerConnectionSummary };
-type ConnectionView = HostedConnectionView | SavedConnectionView;
 type AppLocation = { view: "conversation"; projectId?: string; sessionId?: string; newChat?: boolean } | { view: "playbooks" | "connections" | "plugins" | "administration" };
 type ProjectRecord = ProjectSidebarProject & Json;
 type SessionRecord = ProjectSidebarSession & Json;
 
-const FIXED_ROUTES: readonly { id: FixedRouteId; label: string; icon: string }[] = [
-  { id: "fast", label: "Fast", icon: '<path class="route-icon-outline" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path><path class="route-icon-filled" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path>' },
-  { id: "default", label: "Default", icon: '<g class="route-icon-outline"><circle cx="10" cy="10" r="6"></circle><circle cx="10" cy="10" r="1.6"></circle></g><path class="route-icon-filled" fill-rule="evenodd" d="M10 3.25a6.75 6.75 0 1 0 0 13.5 6.75 6.75 0 0 0 0-13.5Zm0 4a2.75 2.75 0 1 1 0 5.5 2.75 2.75 0 0 1 0-5.5Z"></path>' },
-  { id: "smart", label: "Smart", icon: '<g class="route-icon-outline"><path d="M8.75 2.75A3.25 3.25 0 0 0 4.3 5.7 3.2 3.2 0 0 0 3 8.3a3.5 3.5 0 0 0 2.1 3.2V14a3.25 3.25 0 0 0 3.65 3.2M11.25 2.75a3.25 3.25 0 0 1 4.45 2.95A3.2 3.2 0 0 1 17 8.3a3.5 3.5 0 0 1-2.1 3.2V14a3.25 3.25 0 0 1-3.65 3.2M8.75 2.75V17.2M11.25 2.75V17.2M5.1 8h3.65M11.25 8h3.65M5.1 12h3.65M11.25 12h3.65"></path></g><g class="route-icon-filled"><path d="M8.8 2.35A3.65 3.65 0 0 0 4 5.55 3.55 3.55 0 0 0 2.65 8.3c0 1.6.8 3 2.15 3.85V14a3.75 3.75 0 0 0 4 3.65V2.35Zm2.4 0v15.3A3.75 3.75 0 0 0 15.2 14v-1.85a4.35 4.35 0 0 0 2.15-3.85A3.55 3.55 0 0 0 16 5.55a3.65 3.65 0 0 0-4.8-3.2Z"></path><path class="route-icon-cut" d="M8.8 6.35H6.6l-1.15-1M8.8 10H5.9l-1.15 1M8.8 13.65H6.7l-1 1M11.2 6.35h2.2l1.15-1M11.2 10h2.9l1.15 1M11.2 13.65h2.1l1 1"></path></g>' },
-];
-const LOCAL_CONNECTION_ID = "hosted--local";
 
 let projectRecords: ProjectRecord[] = [];
 const sessionsByProject = new Map<string, SessionRecord[]>();
@@ -47,8 +37,6 @@ let currentUserId: string | undefined;
 let administrationUsers: Json[] = [];
 let administrationPolicies: Json[] = [];
 let diagnosticBundle: Json | undefined;
-let consumerConnectionRecords: ConsumerConnectionSummary[] = [];
-let selectedConnectionId = LOCAL_CONNECTION_ID;
 let pendingRemoteAction: "enable" | "disable" | undefined;
 let pendingStartupAction: "install" | "remove" | undefined;
 let managementConfiguration: Json | undefined;
@@ -146,20 +134,6 @@ const connectionsPage = element("connections-page");
 const connectionsButton = element("manage-connections") as HTMLButtonElement;
 const pluginsPage = element("plugins-page");
 const pluginsButton = element("manage-plugins") as HTMLButtonElement;
-const connectionForm = element("connection-form") as HTMLFormElement;
-const consumerConnectionId = element("consumer-connection-id") as HTMLInputElement;
-const consumerConnectionName = element("consumer-connection-name") as HTMLInputElement;
-const consumerConnectionUrl = element("consumer-connection-url") as HTMLInputElement;
-const consumerConnectionAuth = element("consumer-connection-auth") as HTMLSelectElement;
-const consumerConnectionKey = element("consumer-connection-key") as HTMLInputElement;
-const consumerApiKeyField = element("consumer-api-key-field");
-const connectionFormStatus = element("connection-form-status");
-const consumerConnections = element("consumer-connections");
-const cancelConnectionEdit = element("cancel-connection-edit") as HTMLButtonElement;
-const connectionListView = element("connection-list-view");
-const connectionEditor = element("connection-editor");
-const connectionEditorTitle = element("connection-editor-title");
-const connectionSearch = element("connection-search") as HTMLInputElement;
 const pairingPage = element("pairing-page");
 const pairingForm = element("pairing-form") as HTMLFormElement;
 const pairingCode = element("pairing-code") as HTMLInputElement;
@@ -336,6 +310,40 @@ const composerControls = new ComposerControls({
   onRouteChange: () => handleRouteChange(),
   onCompact: compactCurrentSession,
 });
+const connectionWorkspace = new ConnectionWorkspaceController({
+  form: element("connection-form") as HTMLFormElement,
+  id: element("consumer-connection-id") as HTMLInputElement,
+  name: element("consumer-connection-name") as HTMLInputElement,
+  url: element("consumer-connection-url") as HTMLInputElement,
+  auth: element("consumer-connection-auth") as HTMLSelectElement,
+  apiKey: element("consumer-connection-key") as HTMLInputElement,
+  apiKeyField: element("consumer-api-key-field"),
+  formStatus: element("connection-form-status"),
+  connections: element("consumer-connections"),
+  listView: element("connection-list-view"),
+  editor: element("connection-editor"),
+  editorTitle: element("connection-editor-title"),
+  search: element("connection-search") as HTMLInputElement,
+  refresh: element("refresh-connections") as HTMLButtonElement,
+  newConnection: element("new-connection") as HTMLButtonElement,
+  editorBack: element("connection-editor-back") as HTMLButtonElement,
+  cancelEdit: element("cancel-connection-edit") as HTMLButtonElement,
+  environmentLabel: newChatEnvironmentLabel,
+  connectionChoices: newChatConnectionList,
+}, {
+  bridge: window.fitz,
+  api,
+  reloadConfiguration: () => loadManagementConfiguration(false),
+  testRecipe,
+  renderRecipeTestState,
+  onSelectionChange: (connectionId) => {
+    agentRuns.resetWarmup();
+    agentRuns.scheduleWarmup(prompt.value, composerControls.routeId, connectionId);
+  },
+  closePopovers,
+  showToast,
+  errorMessage,
+});
 const pluginCatalog = new PluginCatalogController({
   pluginsView: element("plugins-view"),
   skillsView: element("skills-view"),
@@ -380,7 +388,7 @@ form.addEventListener("submit", (event) => {
   else void sendPrompt();
 });
 window.fitz.onNavigationCommand((command) => void navigateHistory(command === "back" ? -1 : 1));
-prompt.addEventListener("input", () => { resizePrompt(); updateContextMeter(); refreshComposerState(); agentRuns.scheduleWarmup(prompt.value, composerControls.routeId, selectedConnectionId); });
+prompt.addEventListener("input", () => { resizePrompt(); updateContextMeter(); refreshComposerState(); agentRuns.scheduleWarmup(prompt.value, composerControls.routeId, connectionWorkspace.selectedConnectionId); });
 prompt.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
@@ -392,7 +400,7 @@ document.addEventListener("keydown", (event) => {
   if (event.ctrlKey && event.key.toLowerCase() === "b") { event.preventDefault(); toggleSidebar(); }
   if (event.ctrlKey && event.altKey && event.key.toLowerCase() === "r") { event.preventDefault(); openRenameDialog(); }
   if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "a") { event.preventDefault(); void archiveCurrentTask(); }
-  if (event.key === "Escape") { if (!managementEditor.hidden) closeManagementEditor(); else if (!connectionEditor.hidden) closeConnectionEditor(); else closePopovers(); }
+  if (event.key === "Escape") { if (!managementEditor.hidden) closeManagementEditor(); else if (connectionWorkspace.editorOpen) connectionWorkspace.closeEditor(); else closePopovers(); }
 });
 
 element("new-project").addEventListener("click", () => openProjectDialog());
@@ -403,13 +411,9 @@ pluginsButton.addEventListener("click", () => void openPluginsPage());
 administrationButton.addEventListener("click", () => void openAdministrationPage());
 element("refresh-administration").addEventListener("click", () => void loadAdministration());
 element("refresh-playbooks").addEventListener("click", () => void loadManagementConfiguration(true));
-element("refresh-connections").addEventListener("click", () => void syncAndLoadConsumerConnections(true));
-element("new-connection").addEventListener("click", () => openConnectionEditor());
-element("connection-editor-back").addEventListener("click", closeConnectionEditor);
 element("close-management-editor").addEventListener("click", closeManagementEditor);
 for (const button of document.querySelectorAll<HTMLButtonElement>("[data-close-management-editor]")) button.addEventListener("click", closeManagementEditor);
 playbookSearch.addEventListener("input", renderManagementPage);
-connectionSearch.addEventListener("input", renderConsumerConnections);
 element("sidebar-menu").addEventListener("click", toggleSidebar);
 for (const menuButton of document.querySelectorAll<HTMLButtonElement>("[data-app-menu]")) menuButton.addEventListener("click", (event) => openAppMenu(menuButton.dataset.appMenu ?? "", menuButton, event));
 for (const windowButton of document.querySelectorAll<HTMLButtonElement>("[data-window-action]")) windowButton.addEventListener("click", () => void window.fitz.windowAction(windowButton.dataset.windowAction as "minimize" | "maximize" | "close"));
@@ -437,7 +441,6 @@ element("create-branch-submit").addEventListener("click", () => void createAndCh
 newBranchName.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); void createAndCheckoutBranch(); } });
 element("create-worktree-submit").addEventListener("click", () => void createWorktree());
 newWorktreeBranch.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); void createWorktree(); } });
-updateConsumerAuthField();
 taskMenuToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(taskMenu, taskMenuToggle); });
 taskMenu.addEventListener("click", (event) => event.stopPropagation());
 sidebarContextMenu.addEventListener("click", (event) => event.stopPropagation());
@@ -471,9 +474,6 @@ element("cancel-host-startup").addEventListener("click", hideStartupConfirmation
 confirmHostStartup.addEventListener("click", () => void applyStartupChange());
 recipeForm.addEventListener("submit", (event) => { event.preventDefault(); void saveRecipe(); });
 engineForm.addEventListener("submit", (event) => { event.preventDefault(); void saveEngine(); });
-connectionForm.addEventListener("submit", (event) => { event.preventDefault(); void saveConsumerConnection(); });
-consumerConnectionAuth.addEventListener("change", updateConsumerAuthField);
-cancelConnectionEdit.addEventListener("click", closeConnectionEditor);
 (element("engine-folder") as HTMLSelectElement).addEventListener("change", applyEngineFolderChoice);
 (element("engine-connection") as HTMLSelectElement).addEventListener("change", updateEngineFieldVisibility);
 (element("engine-runtime") as HTMLSelectElement).addEventListener("change", updateEngineFieldVisibility);
@@ -489,7 +489,7 @@ async function initialize(): Promise<void> {
   try {
     setConnection("Connecting…", "loading");
     setStatus("Connecting", "loading");
-    await syncAndLoadConsumerConnections(false);
+    await connectionWorkspace.sync(false);
     const [health, connection, identity] = await Promise.all([api("/health"), window.fitz.connectionInfo(), api("/api/v1/me")]); configuredHostOrigin = connection.origin; currentUserId = identity.data?.user?.id; administrator = identity.data?.authMode === "disabled" || identity.data?.user?.role === "administrator";
     applyNavigation();
     await loadModels();
@@ -571,7 +571,7 @@ async function selectSession(id: string, rerender = true, projectId?: string): P
   if (currentProject) projectSidebar.ensureExpanded(currentProject);
   currentSession = id;
   const selectedSession = currentSessionRecord();
-  selectedConnectionId = selectedSession?.connectionId ?? LOCAL_CONNECTION_ID;
+  connectionWorkspace.setSelectedConnection(selectedSession?.connectionId ?? LOCAL_CONNECTION_ID);
   if (selectedSession?.routeId) composerControls.setRoute(selectedSession.routeId);
   syncComposerContext();
   projectSidebar.markSessionRead(id);
@@ -635,7 +635,7 @@ function openNewChat(): void {
   workspace.classList.add("new-chat-open");
   newChatProject.textContent = projectRecords.find((project) => project.id === currentProject)?.name ?? "Project";
   newChatProjectControl.hidden = false;
-  renderConnectionChoices();
+  connectionWorkspace.setConfiguration(managementConfiguration);
   newChatContext.hidden = false;
   prompt.value = "";
   agentRuns.resetWarmup();
@@ -670,7 +670,7 @@ function showNewChatLanding(): void {
   const grid = document.createElement("div"); grid.className = "starter-grid";
   for (const [label, iconPath] of suggestions) {
     const button = document.createElement("button"); button.type = "button"; button.className = "starter-card"; button.append(svg(iconPath!), Object.assign(document.createElement("span"), { textContent: label }));
-    button.addEventListener("click", () => { prompt.value = label!; resizePrompt(); updateContextMeter(); refreshComposerState(); agentRuns.scheduleWarmup(prompt.value, composerControls.routeId, selectedConnectionId); prompt.focus(); });
+    button.addEventListener("click", () => { prompt.value = label!; resizePrompt(); updateContextMeter(); refreshComposerState(); agentRuns.scheduleWarmup(prompt.value, composerControls.routeId, connectionWorkspace.selectedConnectionId); prompt.focus(); });
     grid.append(button);
   }
   landing.append(mark, heading, grid); messages.append(landing); updateTitles();
@@ -840,8 +840,8 @@ async function openPlaybookPage(): Promise<void> {
   rememberLocation({ view: "playbooks" });
 }
 
-async function openConnectionsPage(): Promise<void> { if (!pairingPage.hidden) return; closePopovers(); setContextPanel(false); closeManagementEditor(); closeConnectionEditor(); workspacePages.show("connections"); await syncAndLoadConsumerConnections(false); rememberLocation({ view: "connections" }); }
-async function openPluginsPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); setContextPanel(false); closeManagementEditor(); closeConnectionEditor(); workspacePages.show("plugins"); pluginCatalog.showLoading(); await pluginCatalog.load(false); rememberLocation({ view: "plugins" }); }
+async function openConnectionsPage(): Promise<void> { if (!pairingPage.hidden) return; closePopovers(); setContextPanel(false); closeManagementEditor(); connectionWorkspace.closeEditor(); workspacePages.show("connections"); await connectionWorkspace.sync(false); rememberLocation({ view: "connections" }); }
+async function openPluginsPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); setContextPanel(false); closeManagementEditor(); connectionWorkspace.closeEditor(); workspacePages.show("plugins"); pluginCatalog.showLoading(); await pluginCatalog.load(false); rememberLocation({ view: "plugins" }); }
 async function openAdministrationPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); setContextPanel(false); closeManagementEditor(); workspacePages.show("administration"); adminUsers.replaceChildren(panelEmpty("Loading users…")); await loadAdministration(); rememberLocation({ view: "administration" }); }
 function showPairingPage(message: string): void { closePopovers(); setContextPanel(false); closeManagementEditor(); workspacePages.show("pairing"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
 function showConversationWorkspace(): void { closeManagementEditor(); workspacePages.show("conversation"); }
@@ -883,90 +883,6 @@ function applyNavigation(): void {
   pluginsButton.hidden = !administrator;
   administrationButton.hidden = !administrator;
 }
-
-async function syncAndLoadConsumerConnections(reportFailure: boolean): Promise<void> {
-  const results = await window.fitz.syncConsumerConnections();
-  consumerConnectionRecords = await window.fitz.listConsumerConnections();
-  await loadManagementConfiguration(false);
-  renderConsumerConnections();
-  renderConnectionChoices();
-  const failed = results.filter((item) => !item.connected);
-  if (reportFailure && failed.length) showToast(failed[0]?.error ?? "Connection failed");
-}
-
-function renderConsumerConnections(): void {
-  consumerConnections.replaceChildren();
-  const connectionRecords = connectionViews();
-  if (!connectionRecords.length) { const empty = document.createElement("p"); empty.className = "connections-empty"; empty.textContent = "No APIs connected yet"; consumerConnections.append(empty); return; }
-  const query = connectionSearch.value.trim().toLowerCase();
-  const visible = connectionRecords.filter((connection) => !query || [connection.displayName, ...connection.availableModels.flatMap((model) => [model.id, model.displayName, model.modelId])].some((value) => String(value ?? "").toLowerCase().includes(query)));
-  if (!visible.length) { consumerConnections.append(panelEmpty("No matching connections")); return; }
-  const routes = managementConfiguration?.routes ?? [];
-  for (const connection of visible) {
-    const card = document.createElement("section"); card.className = "playbook-card consumer-playbook-card";
-    const heading = document.createElement("div"); heading.className = "playbook-heading";
-    const identity = document.createElement("div");
-    const name = document.createElement("h3"); name.textContent = connection.displayName;
-    identity.append(name);
-    const actions = document.createElement("div"); actions.className = "playbook-actions";
-    if (!connection.hosted) {
-      const refresh = document.createElement("button"); refresh.type = "button"; refresh.className = "quiet-button compact-button"; refresh.textContent = "Refresh"; refresh.addEventListener("click", () => void testConsumerConnection(connection.source, refresh));
-      const manage = document.createElement("button"); manage.type = "button"; manage.className = "quiet-button compact-button"; manage.textContent = "Edit"; manage.addEventListener("click", () => openConnectionEditor(connection.source));
-      const remove = document.createElement("button"); remove.type = "button"; remove.className = "quiet-button compact-button danger"; remove.textContent = "Remove"; remove.addEventListener("click", () => { if (remove.dataset.confirm !== "true") { remove.dataset.confirm = "true"; remove.textContent = "Confirm"; return; } void removeConsumerConnection(connection.id); });
-      actions.append(refresh, manage, remove);
-    }
-    heading.append(identity, actions); card.append(heading);
-    if (!connection.availableModels.length) card.append(panelEmpty("No chat models available"));
-    for (const consumerModel of connection.availableModels) {
-      const recipeCard = document.createElement("article"); recipeCard.className = "recipe-card";
-      const recipeDetails = document.createElement("div"); recipeDetails.className = "recipe-card-details";
-      const modelName = document.createElement("span"); modelName.className = "recipe-display-name"; modelName.textContent = consumerModel.displayName ?? consumerModel.id;
-      const labels = document.createElement("div"); labels.className = "recipe-card-labels";
-      const modelLabel = document.createElement("span"); modelLabel.className = "recipe-card-label"; modelLabel.textContent = consumerModel.modelId ?? "API model";
-      labels.append(modelLabel);
-      if (consumerModel.contextTokens) { const contextLabel = document.createElement("span"); contextLabel.className = "recipe-card-label recipe-context-label"; contextLabel.textContent = `${formatTokenCount(consumerModel.contextTokens)} ctx`; labels.append(contextLabel); }
-      recipeDetails.append(modelName, labels);
-      const recipeActions = document.createElement("div"); recipeActions.className = "recipe-card-actions";
-      const testButton = document.createElement("button"); testButton.type = "button"; testButton.className = "recipe-test-button"; testButton.setAttribute("aria-live", "polite"); testButton.addEventListener("click", () => void testRecipe({ id: consumerModel.recipeId, displayName: consumerModel.id }, recipeCard, testButton));
-      const routeToggle = document.createElement("div"); routeToggle.className = "recipe-route-toggle"; routeToggle.setAttribute("role", "group"); routeToggle.setAttribute("aria-label", `${consumerModel.id} routing`);
-      for (const definition of FIXED_ROUTES) {
-        const routeId = connection.hosted ? definition.id : consumerFixedRouteId(connection.id, definition.id);
-        const route = routes.find((item: Json) => item.id === routeId) ?? (!connection.hosted ? routes.find((item: Json) => item.id === `consumer--${definition.id}` && item.recipeId === consumerModel.recipeId) : undefined);
-        const button = document.createElement("button"); button.type = "button"; button.className = `route-symbol route-${definition.id}`; button.title = definition.label; button.setAttribute("aria-label", `${definition.label} route`); button.setAttribute("aria-pressed", String(route?.recipeId === consumerModel.recipeId)); button.classList.toggle("active", route?.recipeId === consumerModel.recipeId); button.append(svg(definition.icon)); button.addEventListener("click", () => void assignConnectionRoute(connection, definition, consumerModel, button));
-        routeToggle.append(button);
-      }
-      recipeActions.append(routeToggle, testButton); renderRecipeTestState(consumerModel.recipeId, recipeCard, testButton);
-      recipeCard.append(recipeDetails, recipeActions); card.append(recipeCard);
-    }
-    consumerConnections.append(card);
-  }
-}
-
-function connectionViews(): ConnectionView[] {
-  const recipes = managementConfiguration?.recipes ?? [];
-  const hostedModels = recipes
-    .filter((recipe: Json) => !String(recipe.id).startsWith("consumer-recipe--") && recipe.capabilities?.chatCompletions !== false)
-    .map((recipe: Json): ConnectionModelView => ({ id: String(recipe.id), routeId: "", recipeId: String(recipe.id), displayName: String(recipe.displayName ?? recipe.modelId ?? recipe.id), modelId: String(recipe.modelId ?? recipe.id), contextTokens: Number(recipe.contextTokens) }));
-  const hostedConnection: HostedConnectionView = { id: LOCAL_CONNECTION_ID, displayName: String(managementConfiguration?.hostName ?? "This PC"), baseUrl: "", authType: "none", hasCredential: false, availableModels: hostedModels, updatedAt: "", hosted: true };
-  return [hostedConnection, ...consumerConnectionRecords.map((connection): SavedConnectionView => ({ ...connection, hosted: false, availableModels: connection.models.map((model) => ({ ...model })), source: connection }))];
-}
-
-async function saveConsumerConnection(): Promise<void> {
-  setFormBusy(connectionForm, true); setConnectionFormStatus("Connecting…");
-  try {
-    await window.fitz.saveConsumerConnection({ ...(consumerConnectionId.value ? { id: consumerConnectionId.value } : {}), displayName: consumerConnectionName.value.trim(), baseUrl: consumerConnectionUrl.value.trim(), authType: consumerConnectionAuth.value as "none" | "bearer", ...(consumerConnectionKey.value.trim() ? { apiKey: consumerConnectionKey.value.trim() } : {}) });
-    closeConnectionEditor(); consumerConnectionRecords = await window.fitz.listConsumerConnections(); await loadManagementConfiguration(false); renderConsumerConnections(); renderConnectionChoices();
-  } catch (error) { setConnectionFormStatus(errorMessage(error), true); }
-  finally { setFormBusy(connectionForm, false); }
-}
-
-async function testConsumerConnection(connection: ConsumerConnectionSummary, button: HTMLButtonElement): Promise<void> { button.disabled = true; button.textContent = "Refreshing…"; try { await window.fitz.saveConsumerConnection({ id: connection.id, displayName: connection.displayName, baseUrl: connection.baseUrl, authType: connection.authType }); consumerConnectionRecords = await window.fitz.listConsumerConnections(); await loadManagementConfiguration(false); renderConsumerConnections(); renderConnectionChoices(); } catch (error) { button.disabled = false; button.textContent = "Failed"; button.title = errorMessage(error); } }
-function openConnectionEditor(connection?: ConsumerConnectionSummary): void { resetConsumerConnectionForm(); connectionListView.hidden = true; connectionEditor.hidden = false; connectionEditorTitle.textContent = connection ? "Configure connection" : "New connection"; if (connection) { consumerConnectionId.value = connection.id; consumerConnectionName.value = connection.displayName; consumerConnectionUrl.value = connection.baseUrl; consumerConnectionAuth.value = connection.authType; consumerConnectionKey.placeholder = connection.hasCredential ? "Leave blank to keep current key" : "API key"; } updateConsumerAuthField(); consumerConnectionName.focus(); }
-function closeConnectionEditor(): void { resetConsumerConnectionForm(); connectionEditor.hidden = true; connectionListView.hidden = false; }
-async function removeConsumerConnection(id: string): Promise<void> { try { await window.fitz.removeConsumerConnection(id); consumerConnectionRecords = await window.fitz.listConsumerConnections(); if (selectedConnectionId === id) selectedConnectionId = LOCAL_CONNECTION_ID; await loadManagementConfiguration(false); renderConsumerConnections(); renderConnectionChoices(); } catch (error) { showToast(errorMessage(error)); } }
-function resetConsumerConnectionForm(): void { connectionForm.reset(); consumerConnectionId.value = ""; consumerConnectionAuth.value = "bearer"; consumerConnectionKey.placeholder = "Stored securely"; setConnectionFormStatus(); updateConsumerAuthField(); }
-function updateConsumerAuthField(): void { consumerApiKeyField.hidden = consumerConnectionAuth.value === "none"; consumerConnectionKey.required = consumerConnectionAuth.value === "bearer" && !consumerConnectionId.value; }
-function setConnectionFormStatus(message?: string, error = false): void { connectionFormStatus.hidden = !message; connectionFormStatus.textContent = message ?? ""; connectionFormStatus.classList.toggle("error", error); }
 
 async function pairDevice(): Promise<void> {
   setFormBusy(pairingForm, true); pairingError.hidden = true; pairingError.textContent = "";
@@ -1436,22 +1352,23 @@ async function saveAdminAccess(userId: string, card: HTMLElement, button: HTMLBu
   finally { button.disabled = false; }
 }
 
-async function loadManagementConfiguration(renderPage: boolean): Promise<void> {
+async function loadManagementConfiguration(renderPage: boolean): Promise<Json | undefined> {
   try {
     managementConfiguration = await api("/api/v1/management/status");
     syncContextLimit();
     updateContextMeter();
-    renderConnectionChoices();
+    connectionWorkspace.setConfiguration(managementConfiguration);
     if (renderPage) renderManagementPage();
   } catch (error) {
     if (renderPage) playbookList.replaceChildren(panelEmpty(`Management data is unavailable: ${errorMessage(error)}`));
   }
+  return managementConfiguration;
 }
 
 function syncContextLimit(): void {
   const session = currentSessionRecord();
-  const connectionId = session?.connectionId ?? selectedConnectionId;
-  const executionRouteId = connectionId === LOCAL_CONNECTION_ID ? composerControls.routeId : consumerFixedRouteId(connectionId, composerControls.routeId as FixedRouteId);
+  const connectionId = session?.connectionId ?? connectionWorkspace.selectedConnectionId;
+  const executionRouteId = connectionWorkspace.routeIdFor(composerControls.routeId as FixedRouteId, connectionId);
   const route = managementConfiguration?.routes?.find((item: Json) => item.id === executionRouteId) ?? managementConfiguration?.routes?.find((item: Json) => item.id === composerControls.routeId);
   const recipe = managementConfiguration?.recipes?.find((item: Json) => item.id === route?.recipeId);
   if (Number.isFinite(recipe?.contextTokens) && recipe.contextTokens > 0) contextTokenLimit = recipe.contextTokens;
@@ -1529,29 +1446,6 @@ function renderRecipeTestState(recipeId: string, card: HTMLElement, button: HTML
   button.textContent = state === "testing" ? "Testing…" : state === "passed" ? "✓ Working" : state === "failed" ? "Retry" : "Test";
   button.title = result?.detail ?? "Send “Say hi.” directly to this recipe";
   button.setAttribute("aria-label", state === "passed" ? "Recipe test passed" : state === "failed" ? `Recipe test failed: ${result?.detail ?? "Unknown error"}. Retry` : state === "testing" ? "Testing recipe" : "Test recipe");
-}
-
-function consumerFixedRouteId(connectionId: string, id: FixedRouteId): string { return `consumer--${connectionId}--route--${id}`; }
-
-async function assignConnectionRoute(connection: ConnectionView, definition: (typeof FIXED_ROUTES)[number], consumerModel: ConnectionModelView, button: HTMLButtonElement): Promise<void> {
-  const routeId = connection.hosted ? definition.id : consumerFixedRouteId(connection.id, definition.id);
-  const current = managementConfiguration?.routes?.find((route: Json) => route.id === routeId);
-  if (current?.recipeId === consumerModel.recipeId) return;
-  button.disabled = true;
-  try {
-    await api(`/api/v1/management/routes/${routeId}`, "PUT", {
-      displayName: definition.label,
-      description: definition.id === "fast" ? "Lowest-latency route" : definition.id === "smart" ? "Highest-capability route" : "Primary route",
-      recipeId: consumerModel.recipeId,
-      enabled: true,
-      isDefault: definition.id === "default",
-    });
-    await loadManagementConfiguration(false);
-    renderConsumerConnections();
-  } catch (error) {
-    button.disabled = false;
-    showToast(errorMessage(error));
-  }
 }
 
 function openEngineEditor(folder?: Json): void {
@@ -1740,21 +1634,6 @@ async function createWorktree(): Promise<void> {
   } catch (error) { showToast(errorMessage(error)); }
 }
 
-function renderConnectionChoices(): void {
-  const views = connectionViews();
-  if (!views.some((connection) => connection.id === selectedConnectionId)) selectedConnectionId = LOCAL_CONNECTION_ID;
-  const selected = views.find((connection) => connection.id === selectedConnectionId) ?? views[0];
-  newChatEnvironmentLabel.textContent = selected?.displayName ?? "This PC";
-  newChatConnectionList.replaceChildren();
-  for (const connection of views) {
-    const button = document.createElement("button"); button.type = "button"; button.dataset.connectionId = connection.id;
-    button.append(svg('<circle cx="10" cy="10" r="6"></circle><path d="M7 10h6M10 7v6"></path>'), Object.assign(document.createElement("span"), { textContent: connection.displayName }));
-    if (connection.id === selectedConnectionId) button.append(Object.assign(document.createElement("b"), { textContent: "✓" }));
-    button.addEventListener("click", () => { selectedConnectionId = connection.id; agentRuns.resetWarmup(); agentRuns.scheduleWarmup(prompt.value, composerControls.routeId, selectedConnectionId); renderConnectionChoices(); closePopovers(); });
-    newChatConnectionList.append(button);
-  }
-}
-
 async function updateSessionBinding(): Promise<void> {
   const session = currentSessionRecord();
   if (!session || !composerControls.routeId) return;
@@ -1767,7 +1646,7 @@ async function updateSessionBinding(): Promise<void> {
 function handleRouteChange(): void {
   routeState.textContent = composerControls.routeLabel;
   agentRuns.resetWarmup();
-  agentRuns.scheduleWarmup(prompt.value, composerControls.routeId, selectedConnectionId);
+  agentRuns.scheduleWarmup(prompt.value, composerControls.routeId, connectionWorkspace.selectedConnectionId);
   if (currentSession) void updateSessionBinding();
   syncComposerContext();
 }
@@ -1848,7 +1727,7 @@ async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLE
   if (!currentSession && newChatMode && currentProject) {
     try {
       const title = content.split(/\r?\n/, 1)[0]!.trim().slice(0, 80) || "New chat";
-      const response = await api(`/api/v1/projects/${currentProject}/sessions`, "POST", { title, connectionId: selectedConnectionId, routeId: composerControls.routeId as FixedRouteId });
+      const response = await api(`/api/v1/projects/${currentProject}/sessions`, "POST", { title, connectionId: connectionWorkspace.selectedConnectionId, routeId: composerControls.routeId as FixedRouteId });
       const sessions = sessionsByProject.get(currentProject) ?? [];
       sessions.unshift(response.data);
       sessionsByProject.set(currentProject, sessions);

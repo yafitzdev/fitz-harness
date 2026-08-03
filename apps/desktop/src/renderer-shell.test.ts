@@ -14,6 +14,7 @@ const messageActions = readFileSync(new URL("./ui/chat/message-actions.ts", impo
 const activityTimeline = readFileSync(new URL("./ui/chat/activity-timeline.ts", import.meta.url), "utf8");
 const agentRunController = readFileSync(new URL("./ui/chat/agent-run-controller.ts", import.meta.url), "utf8");
 const composerControls = readFileSync(new URL("./ui/chat/composer-controls.ts", import.meta.url), "utf8");
+const connectionWorkspace = readFileSync(new URL("./ui/connections/connection-workspace.ts", import.meta.url), "utf8");
 const pluginCatalog = readFileSync(new URL("./ui/plugins/plugin-catalog.ts", import.meta.url), "utf8");
 const resourceInspector = readFileSync(new URL("./ui/inspector/resource-inspector.ts", import.meta.url), "utf8");
 const projectSidebar = readFileSync(new URL("./ui/sidebar/project-sidebar.ts", import.meta.url), "utf8");
@@ -23,6 +24,7 @@ const styles = [
   readFileSync(new URL("./ui/primitives/scroll-surface.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/message-actions.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/composer-controls.css", import.meta.url), "utf8"),
+  readFileSync(new URL("./ui/connections/connection-workspace.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/plugins/plugin-catalog.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/sidebar/project-sidebar.css", import.meta.url), "utf8"),
 ].join("\n");
@@ -142,24 +144,25 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('id="consumer-connection-url"');
     expect(html).toContain('id="connection-search"');
     expect(html).toContain('id="connection-editor"');
-    expect(renderer).toContain('window.fitz.saveConsumerConnection');
+    expect(renderer).toContain("new ConnectionWorkspaceController");
+    expect(connectionWorkspace).toContain('this.options.bridge.saveConsumerConnection');
     expect(renderer).not.toContain('/api/v1/runtime-mode');
-    expect(renderer).toContain('consumerFixedRouteId');
-    expect(renderer).toContain('const LOCAL_CONNECTION_ID = "hosted--local"');
-    expect(renderer).toContain('connectionId: selectedConnectionId');
+    expect(connectionWorkspace).toContain('consumerFixedRouteId');
+    expect(connectionWorkspace).toContain('const LOCAL_CONNECTION_ID = "hosted--local"');
+    expect(renderer).toContain('connectionId: connectionWorkspace.selectedConnectionId');
     expect(renderer).toContain('routeId: composerControls.routeId as FixedRouteId');
     expect(renderer).not.toContain('candidate.routeId === card.id');
-    expect(renderer).toContain('testRecipe({ id: consumerModel.recipeId');
-    expect(renderer).toContain("function connectionViews(): ConnectionView[]");
-    expect(renderer).toContain('id: LOCAL_CONNECTION_ID');
-    expect(renderer).toContain('managementConfiguration?.hostName ?? "This PC"');
+    expect(connectionWorkspace).toContain('testRecipe({ id: model.recipeId');
+    expect(connectionWorkspace).toContain("private views(): ConnectionView[]");
+    expect(connectionWorkspace).toContain('id: LOCAL_CONNECTION_ID');
+    expect(connectionWorkspace).toContain('this.configuration?.hostName ?? "This PC"');
     expect(renderer).not.toContain('configuredConnectionId');
     expect(renderer).not.toContain('edit.textContent = configuredConnectionId');
-    expect(renderer).toContain('for (const consumerModel of connection.availableModels)');
-    expect(renderer).toContain('connection.hosted ? definition.id : consumerFixedRouteId');
-    expect(renderer).toContain('assignConnectionRoute(connection, definition, consumerModel, button)');
-    expect(renderer).toContain('if (!connection.hosted)');
-    expect(renderer).not.toContain('url.className = "connection-url"');
+    expect(connectionWorkspace).toContain('for (const model of connection.availableModels)');
+    expect(connectionWorkspace).toContain('connection.hosted ? definition.id : consumerFixedRouteId');
+    expect(connectionWorkspace).toContain('this.assignRoute(connection, definition, model, button)');
+    expect(connectionWorkspace).toContain('if (!connection.hosted)');
+    expect(connectionWorkspace).not.toContain('url.className = "connection-url"');
     expect(html).toContain("Provider and self-hosted OpenAI-compatible APIs.");
     expect(html).toContain("http://127.0.0.1:8000/v1");
     expect(styles).toContain('max-height: min(440px, calc(100vh - 32px)); overflow-y: auto;');
@@ -201,8 +204,8 @@ describe("desktop renderer shell", () => {
     expect(renderer).not.toContain("${folder.rootPath}");
     expect(styles).toContain(".recipe-card-actions { align-self: center; display: flex; align-items: center;");
     expect(styles).toContain(".recipe-route-toggle { display: flex; align-items: center; gap: 1px; padding: 2px; border: 0;");
-    expect(renderer).toContain('class="route-icon-cut"');
-    expect(renderer).toContain('class="route-icon-filled" fill-rule="evenodd"');
+    expect(connectionWorkspace).toContain('class="route-icon-cut"');
+    expect(connectionWorkspace).toContain('class="route-icon-filled" fill-rule="evenodd"');
     expect(html).not.toContain("NiNfer");
     expect(html).not.toContain("llama.cpp");
     expect(html).not.toContain("vLLM");
@@ -411,7 +414,7 @@ describe("desktop renderer shell", () => {
   });
 
   it("silently warms the selected route after the first composer character", () => {
-    expect(renderer).toContain("agentRuns.scheduleWarmup(prompt.value, composerControls.routeId, selectedConnectionId)");
+    expect(renderer).toContain("agentRuns.scheduleWarmup(prompt.value, composerControls.routeId, connectionWorkspace.selectedConnectionId)");
     expect(agentRunController).toContain('this.#options.api("/api/v1/inference/warm", "POST", { model, connectionId })');
     expect(agentRunController).toContain("if (this.#composerHadText || this.active || !model) return");
     expect(agentRunController).toContain("}, 120)");

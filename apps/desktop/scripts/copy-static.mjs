@@ -7,6 +7,7 @@ mkdirSync(new URL("../dist/renderer/", import.meta.url), { recursive: true });
 mkdirSync(new URL("../dist/ui/theme/", import.meta.url), { recursive: true });
 mkdirSync(new URL("../dist/ui/primitives/", import.meta.url), { recursive: true });
 mkdirSync(new URL("../dist/ui/chat/", import.meta.url), { recursive: true });
+mkdirSync(new URL("../dist/ui/connections/", import.meta.url), { recursive: true });
 mkdirSync(new URL("../dist/ui/plugins/", import.meta.url), { recursive: true });
 mkdirSync(new URL("../dist/ui/sidebar/", import.meta.url), { recursive: true });
 cpSync(new URL("../src/renderer/index.html", import.meta.url), new URL("../dist/renderer/index.html", import.meta.url));
@@ -15,6 +16,7 @@ cpSync(new URL("../src/ui/theme/tokens.css", import.meta.url), new URL("../dist/
 cpSync(new URL("../src/ui/primitives/scroll-surface.css", import.meta.url), new URL("../dist/ui/primitives/scroll-surface.css", import.meta.url));
 cpSync(new URL("../src/ui/chat/message-actions.css", import.meta.url), new URL("../dist/ui/chat/message-actions.css", import.meta.url));
 cpSync(new URL("../src/ui/chat/composer-controls.css", import.meta.url), new URL("../dist/ui/chat/composer-controls.css", import.meta.url));
+cpSync(new URL("../src/ui/connections/connection-workspace.css", import.meta.url), new URL("../dist/ui/connections/connection-workspace.css", import.meta.url));
 cpSync(new URL("../src/ui/plugins/plugin-catalog.css", import.meta.url), new URL("../dist/ui/plugins/plugin-catalog.css", import.meta.url));
 cpSync(new URL("../src/ui/sidebar/project-sidebar.css", import.meta.url), new URL("../dist/ui/sidebar/project-sidebar.css", import.meta.url));
 cpSync(new URL("../src/bootstrap.cjs", import.meta.url), new URL("../dist/bootstrap.cjs", import.meta.url));
