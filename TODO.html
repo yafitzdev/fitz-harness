@@ -110,6 +110,8 @@
       if (titlebarSection) titlebarSection.automated = ["pass", "The complete 32px File/Edit/View/Help strip is the window drag surface, while actual controls remain clickable. Windows mouse Back and Forward commands now traverse Fitz's internal history across chats, new-chat state, Playbooks, Connections, Plugins, and Administration without navigating the Electron renderer away from the app."];
       const pluginsSection = sections.find((section) => section.id === "plugins");
       if (pluginsSection) pluginsSection.automated = ["pass", "Plugin discovery now reconciles genuine Pi packages installed directly by an agent into Fitz's managed npm workspace. Direct dependencies with Pi package metadata are persisted into Pi settings before resolution, so they appear as Installed and load on the next agent session; unrelated npm dependencies are ignored."];
+      const conversationSection = sections.find((section) => section.id === "conversation");
+      if (conversationSection) conversationSection.automated.push("pass", "Fenced chat code shares the Inspector's Highlight.js registry and dark language-aware palette while retaining the existing Copy action. Inline code remains neutral like Codex.");
       const lifecycleSection = sections.find((section) => section.id === "engine-load");
       if (lifecycleSection) lifecycleSection.automated = ["pass", "Local model eviction is ten idle minutes and the first composer character silently warms the selected route. The context-window donut remains a static usage meter; after submission, the circular indicator beside the live Working activity rotates until Pi begins returning the answer."];
 

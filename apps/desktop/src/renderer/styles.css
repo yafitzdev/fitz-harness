@@ -449,14 +449,14 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .inspector-error { color: #e3a4a1; }
 .inspector-source { min-height: 100%; margin: 0; padding: 18px 20px 36px; overflow: auto; background: transparent; color: #d8dad5; tab-size: 2; white-space: pre-wrap; word-break: break-word; font: 12px/1.6 "Cascadia Mono", Consolas, monospace; }
 .inspector-source code { font: inherit; }
-.inspector-source .hljs-comment, .inspector-source .hljs-quote { color: #7f848e; font-style: italic; }
-.inspector-source .hljs-keyword, .inspector-source .hljs-selector-tag, .inspector-source .hljs-literal, .inspector-source .hljs-type { color: #c678dd; }
-.inspector-source .hljs-title, .inspector-source .hljs-title.class_, .inspector-source .hljs-title.function_, .inspector-source .hljs-section { color: #61afef; }
-.inspector-source .hljs-string, .inspector-source .hljs-attr, .inspector-source .hljs-attribute, .inspector-source .hljs-template-tag, .inspector-source .hljs-template-variable { color: #98c379; }
-.inspector-source .hljs-number, .inspector-source .hljs-symbol, .inspector-source .hljs-bullet, .inspector-source .hljs-variable, .inspector-source .hljs-variable.constant_ { color: #d19a66; }
-.inspector-source .hljs-tag, .inspector-source .hljs-name, .inspector-source .hljs-selector-id, .inspector-source .hljs-selector-class { color: #e06c75; }
-.inspector-source .hljs-built_in, .inspector-source .hljs-meta, .inspector-source .hljs-link { color: #56b6c2; }
-.inspector-source .hljs-property, .inspector-source .hljs-params { color: #e5c07b; }
+:is(.inspector-source, .markdown-code) .hljs-comment, :is(.inspector-source, .markdown-code) .hljs-quote { color: #7f848e; font-style: italic; }
+:is(.inspector-source, .markdown-code) .hljs-keyword, :is(.inspector-source, .markdown-code) .hljs-selector-tag, :is(.inspector-source, .markdown-code) .hljs-literal, :is(.inspector-source, .markdown-code) .hljs-type { color: #c678dd; }
+:is(.inspector-source, .markdown-code) .hljs-title, :is(.inspector-source, .markdown-code) .hljs-title.class_, :is(.inspector-source, .markdown-code) .hljs-title.function_, :is(.inspector-source, .markdown-code) .hljs-section { color: #61afef; }
+:is(.inspector-source, .markdown-code) .hljs-string, :is(.inspector-source, .markdown-code) .hljs-attr, :is(.inspector-source, .markdown-code) .hljs-attribute, :is(.inspector-source, .markdown-code) .hljs-template-tag, :is(.inspector-source, .markdown-code) .hljs-template-variable { color: #98c379; }
+:is(.inspector-source, .markdown-code) .hljs-number, :is(.inspector-source, .markdown-code) .hljs-symbol, :is(.inspector-source, .markdown-code) .hljs-bullet, :is(.inspector-source, .markdown-code) .hljs-variable, :is(.inspector-source, .markdown-code) .hljs-variable.constant_ { color: #d19a66; }
+:is(.inspector-source, .markdown-code) .hljs-tag, :is(.inspector-source, .markdown-code) .hljs-name, :is(.inspector-source, .markdown-code) .hljs-selector-id, :is(.inspector-source, .markdown-code) .hljs-selector-class { color: #e06c75; }
+:is(.inspector-source, .markdown-code) .hljs-built_in, :is(.inspector-source, .markdown-code) .hljs-meta, :is(.inspector-source, .markdown-code) .hljs-link { color: #56b6c2; }
+:is(.inspector-source, .markdown-code) .hljs-property, :is(.inspector-source, .markdown-code) .hljs-params { color: #e5c07b; }
 .inspector-markdown { padding: 20px 24px 42px; color: #e8e9e5; font-size: 13px; }
 .inspector-frame { width: 100%; height: 100%; display: block; border: 0; background: var(--codex-gray-900); color-scheme: dark; }
 .inspector-media { max-width: 100%; display: block; margin: 0 auto; }

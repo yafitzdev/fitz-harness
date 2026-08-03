@@ -1,3 +1,5 @@
+import { highlightSource } from "./syntax-highlighting.js";
+
 const markdownSources = new WeakMap<HTMLElement, string>();
 
 export function setMarkdown(target: HTMLElement, source: string): void {
@@ -84,7 +86,7 @@ function codeBlock(source: string, language: string): HTMLElement {
   const container = document.createElement("section"); container.className = "markdown-code";
   const header = document.createElement("header"); const label = document.createElement("span"); label.textContent = language || "Code";
   const copy = document.createElement("button"); copy.type = "button"; copy.textContent = "Copy"; copy.addEventListener("click", async () => { await window.fitz.copyText(source); copy.textContent = "Copied"; window.setTimeout(() => { copy.textContent = "Copy"; }, 1_200); });
-  const pre = document.createElement("pre"); const code = document.createElement("code"); if (language) code.className = `language-${language.toLowerCase().replace(/[^a-z0-9_-]/g, "")}`; code.textContent = source; pre.append(code); header.append(label, copy); container.append(header, pre); return container;
+  const pre = document.createElement("pre"); const code = document.createElement("code"); const highlighted = highlightSource(source, language); code.className = `hljs${highlighted.language ? ` language-${highlighted.language}` : ""}`; code.innerHTML = highlighted.html; pre.append(code); header.append(label, copy); container.append(header, pre); return container;
 }
 
 function appendInline(target: HTMLElement, source: string): void {
