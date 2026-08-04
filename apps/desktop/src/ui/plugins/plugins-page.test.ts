@@ -15,8 +15,8 @@ function buildPage(): HTMLElement {
       <div id="plugins-view">
         <h1>Plugins</h1>
         <input id="plugin-search" type="search">
-        <section><div id="installed-plugins" class="plugin-grid"></div></section>
-        <section><div id="plugin-catalog" class="plugin-grid"></div><button id="load-more-plugins" type="button" hidden>Load more</button></section>
+        <section class="plugin-section"><button id="installed-plugins-toggle" type="button" aria-expanded="true"></button><div id="installed-plugins" class="plugin-grid"></div></section>
+        <section class="plugin-section"><button id="plugin-catalog-toggle" type="button" aria-expanded="true"></button><div id="plugin-catalog" class="plugin-grid"></div><button id="load-more-plugins" type="button" hidden>Load more</button></section>
       </div>
       <div id="skills-view" hidden>
         <h1>Skills</h1>
@@ -42,7 +42,23 @@ function setup(api: (path: string, method?: string, body?: unknown) => Promise<R
 
 function click(target: Element): void { target.dispatchEvent(new MouseEvent("click", { bubbles: true })); }
 
-beforeEach(() => document.body.replaceChildren());
+function memoryStorage(initial: Record<string, string> = {}): Storage {
+  const values = new Map(Object.entries(initial));
+  return {
+    get length() { return values.size; },
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => [...values.keys()][index] ?? null,
+    removeItem: (key) => values.delete(key),
+    setItem: (key, value) => values.set(key, String(value)),
+  } as Storage;
+}
+
+beforeEach(() => {
+  // happy-dom ships an empty localStorage stub without working methods; install a real one.
+  globalThis.localStorage = memoryStorage();
+  document.body.replaceChildren();
+});
 afterEach(() => vi.useRealTimers());
 
 describe("PluginsPageController", () => {
@@ -102,6 +118,23 @@ describe("PluginsPageController", () => {
     search.value = "docs";
     search.dispatchEvent(new Event("input", { bubbles: true }));
     expect(page.querySelector("#installed-skills")?.textContent).toContain("Docs");
+  });
+
+  it("collapses and expands the Installed and Discover sections", () => {
+    const { page } = setup(vi.fn(async () => ({ data: {} })));
+
+    const installedToggle = page.querySelector<HTMLButtonElement>("#installed-plugins-toggle")!;
+    const installedSection = installedToggle.closest(".plugin-section")!;
+    click(installedToggle);
+    expect(installedSection.classList.contains("collapsed")).toBe(true);
+    expect(installedToggle.getAttribute("aria-expanded")).toBe("false");
+    click(installedToggle);
+    expect(installedSection.classList.contains("collapsed")).toBe(false);
+    expect(installedToggle.getAttribute("aria-expanded")).toBe("true");
+
+    const catalogToggle = page.querySelector<HTMLButtonElement>("#plugin-catalog-toggle")!;
+    click(catalogToggle);
+    expect(catalogToggle.closest(".plugin-section")?.classList.contains("collapsed")).toBe(true);
   });
 
   it("fails loudly when the page is missing a required catalog control", () => {

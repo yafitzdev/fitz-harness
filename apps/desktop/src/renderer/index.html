@@ -155,8 +155,8 @@
             <div id="plugins-view">
               <h1>Plugins</h1><p>Extend Pi with packages from the community catalog.</p>
               <label class="management-search"><svg viewBox="0 0 20 20"><circle cx="9" cy="9" r="5.5"></circle><path d="m13 13 4 4"></path></svg><input id="plugin-search" type="search" placeholder="Search plugins" autocomplete="off"></label>
-              <section class="plugin-section"><h2>Installed</h2><div id="installed-plugins" class="plugin-grid"></div></section>
-              <section class="plugin-section"><h2>Discover</h2><div id="plugin-catalog" class="plugin-grid"></div><button id="load-more-plugins" class="quiet-button" type="button" hidden>Load more</button></section>
+              <section class="plugin-section"><button class="plugin-section-toggle" id="installed-plugins-toggle" type="button" aria-expanded="true" aria-controls="installed-plugins-body"><svg class="plugin-section-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m7 5 5 5-5 5"></path></svg><h2>Installed</h2></button><div id="installed-plugins-body" class="plugin-section-body"><div id="installed-plugins" class="plugin-grid"></div></div></section>
+              <section class="plugin-section"><button class="plugin-section-toggle" id="plugin-catalog-toggle" type="button" aria-expanded="true" aria-controls="plugin-catalog-body"><svg class="plugin-section-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m7 5 5 5-5 5"></path></svg><h2>Discover</h2></button><div id="plugin-catalog-body" class="plugin-section-body"><div id="plugin-catalog" class="plugin-grid"></div><button id="load-more-plugins" class="quiet-button" type="button" hidden>Load more</button></div></section>
             </div>
             <div id="skills-view" hidden>
               <h1>Skills</h1><p>Task-specific guidance currently available to Pi.</p>

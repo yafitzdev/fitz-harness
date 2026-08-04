@@ -192,6 +192,9 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('id="plugins-tab"');
     expect(html).toContain('id="skills-tab"');
     expect(html).toContain('id="plugin-catalog"');
+    expect(html).toContain('id="installed-plugins-toggle"');
+    expect(html).toContain('id="plugin-catalog-toggle"');
+    expect(pluginCatalog).toContain('fitz-collapsed-plugin-sections');
     expect(pluginCatalog).toContain('/api/v1/management/pi/catalog');
     expect(pluginCatalog).toContain('/api/v1/management/pi/packages/install');
     expect(pluginCatalog).toContain('entry.links.homepage ?? entry.links.repository ?? entry.links.npm');
