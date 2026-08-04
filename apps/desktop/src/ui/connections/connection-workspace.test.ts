@@ -3,6 +3,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectionWorkspaceController, type ConnectionWorkspaceBridge } from "./connection-workspace.js";
 
+function memoryStorage(initial: Record<string, string> = {}): Storage {
+  const values = new Map(Object.entries(initial));
+  return {
+    get length() { return values.size; },
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => [...values.keys()][index] ?? null,
+    removeItem: (key) => values.delete(key),
+    setItem: (key, value) => values.set(key, String(value)),
+  } as Storage;
+}
+
 function node<T extends HTMLElement>(tag: string): T {
   const element = document.createElement(tag) as T;
   document.body.append(element);
@@ -39,7 +51,11 @@ function setup(overrides: Partial<ConnectionWorkspaceBridge> = {}) {
 
 function click(target: Element): void { target.dispatchEvent(new MouseEvent("click", { bubbles: true })); }
 
-beforeEach(() => document.body.replaceChildren());
+beforeEach(() => {
+  // happy-dom ships an empty localStorage stub without a working clear(); install a real one.
+  globalThis.localStorage = memoryStorage();
+  document.body.replaceChildren();
+});
 
 describe("ConnectionWorkspaceController", () => {
   it("syncs hosted and remote models, reports failures, and filters the workspace", async () => {
@@ -108,5 +124,51 @@ describe("ConnectionWorkspaceController", () => {
     click(remove);
     await vi.waitFor(() => expect(bridge.removeConsumerConnection).toHaveBeenCalledWith("remote-1"));
     await vi.waitFor(() => expect(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")).toHaveLength(1));
+  });
+
+  it("collapses and expands a connection without losing state across re-renders", async () => {
+    const { controller, elements } = setup();
+    await controller.sync(false);
+    let cards = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card");
+    expect(cards).toHaveLength(2);
+    const remoteToggle = cards[1]!.querySelector<HTMLButtonElement>(".connection-collapse-toggle")!;
+    expect(remoteToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(cards[1]!.querySelectorAll(".recipe-card").length).toBeGreaterThan(0);
+
+    click(remoteToggle);
+    cards = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card");
+    expect(cards[1]!.classList.contains("collapsed")).toBe(true);
+    expect(cards[1]!.querySelectorAll(".recipe-card")).toHaveLength(0);
+    expect(cards[1]!.querySelector<HTMLButtonElement>(".connection-collapse-toggle")!.getAttribute("aria-expanded")).toBe("false");
+
+    // A re-render (search filtering) keeps the collapsed connection collapsed.
+    elements.search.value = "remote";
+    elements.search.dispatchEvent(new Event("input", { bubbles: true }));
+    cards = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card");
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.classList.contains("collapsed")).toBe(true);
+
+    click(cards[0]!.querySelector<HTMLButtonElement>(".connection-collapse-toggle")!);
+    cards = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card");
+    expect(cards[0]!.classList.contains("collapsed")).toBe(false);
+    expect(cards[0]!.querySelectorAll(".recipe-card").length).toBeGreaterThan(0);
+    expect(cards[0]!.querySelector<HTMLButtonElement>(".connection-collapse-toggle")!.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("persists collapsed connections across syncs and leaves route actions untouched", async () => {
+    const { controller, elements, calls } = setup();
+    await controller.sync(false);
+    const remoteCard = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[1]!;
+    click(remoteCard.querySelector<HTMLButtonElement>(".connection-collapse-toggle")!);
+    expect(JSON.parse(localStorage.getItem("fitz-collapsed-connections") ?? "[]")).toContain("remote-1");
+
+    await controller.sync(false);
+    const cards = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card");
+    expect(cards[1]!.classList.contains("collapsed")).toBe(true);
+
+    // Route assignment still works on an expanded card without collapsing it.
+    click(cards[0]!.querySelector<HTMLButtonElement>(".route-fast")!);
+    await vi.waitFor(() => expect(calls.api).toHaveBeenCalledWith("/api/v1/management/routes/fast", "PUT", expect.objectContaining({ recipeId: "local-recipe" })));
+    expect(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[0]!.classList.contains("collapsed")).toBe(false);
   });
 });

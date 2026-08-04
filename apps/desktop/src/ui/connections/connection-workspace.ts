@@ -91,6 +91,7 @@ export class ConnectionWorkspaceController {
   private readonly options: ConnectionWorkspaceOptions;
   private records: ConsumerConnectionSummary[] = [];
   private configuration: Json | undefined;
+  private readonly collapsedConnections: Set<string> = this.storedSet("fitz-collapsed-connections");
 
   constructor(options: ConnectionWorkspaceOptions) {
     this.options = options;
@@ -161,6 +162,24 @@ export class ConnectionWorkspaceController {
     for (const connection of visible) this.elements.connections.append(this.connectionCard(connection, routes));
   }
 
+  private toggleConnection(id: string): void {
+    if (this.collapsedConnections.has(id)) this.collapsedConnections.delete(id);
+    else this.collapsedConnections.add(id);
+    this.saveSet("fitz-collapsed-connections", this.collapsedConnections);
+    this.render();
+  }
+
+  private storedSet(key: string): Set<string> {
+    try {
+      const value = JSON.parse(localStorage.getItem(key) ?? "[]");
+      return new Set(Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
+    } catch { return new Set(); }
+  }
+
+  private saveSet(key: string, values: Set<string>): void {
+    localStorage.setItem(key, JSON.stringify([...values]));
+  }
+
   openEditor(connection?: ConsumerConnectionSummary): void {
     this.resetForm();
     this.elements.listView.hidden = true;
@@ -207,10 +226,19 @@ export class ConnectionWorkspaceController {
     card.className = "playbook-card consumer-playbook-card";
     const heading = document.createElement("div");
     heading.className = "playbook-heading";
-    const identity = document.createElement("div");
+    const collapsed = this.collapsedConnections.has(connection.id);
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "connection-collapse-toggle";
+    toggle.setAttribute("aria-expanded", String(!collapsed));
+    toggle.setAttribute("aria-label", `${collapsed ? "Expand" : "Collapse"} ${connection.displayName}`);
+    toggle.addEventListener("click", () => this.toggleConnection(connection.id));
+    const chevron = document.createElement("span");
+    chevron.className = "connection-collapse-chevron";
+    chevron.append(svgIcon('<path d="m6 8 4 4 4-4"></path>'));
     const name = document.createElement("h3");
     name.textContent = connection.displayName;
-    identity.append(name);
+    toggle.append(chevron, name);
     const actions = document.createElement("div");
     actions.className = "playbook-actions";
     if (!connection.hosted) {
@@ -220,8 +248,12 @@ export class ConnectionWorkspaceController {
         this.removeButton(connection.id),
       );
     }
-    heading.append(identity, actions);
+    heading.append(toggle, actions);
     card.append(heading);
+    if (collapsed) {
+      card.classList.add("collapsed");
+      return card;
+    }
     if (!connection.availableModels.length) card.append(emptyState("No chat models available"));
     for (const model of connection.availableModels) card.append(this.modelCard(model, routes));
     return card;

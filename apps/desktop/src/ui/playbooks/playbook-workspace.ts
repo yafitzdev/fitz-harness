@@ -1,3 +1,5 @@
+import { svgIcon } from "../primitives/dom.js";
+
 type Json = Record<string, any>;
 
 export interface PlaybookWorkspaceElements {
@@ -48,6 +50,7 @@ export class PlaybookWorkspaceController {
   readonly elements: PlaybookWorkspaceElements;
   private readonly options: PlaybookWorkspaceOptions;
   private configuration: Json | undefined;
+  private readonly collapsedPlaybooks: Set<string> = this.storedSet("fitz-collapsed-playbooks");
   private readonly recipeTestStates = new Map<string, { state: "testing" | "passed" | "failed"; detail: string }>();
   private editingRecipe: Json | undefined;
 
@@ -88,6 +91,24 @@ export class PlaybookWorkspaceController {
     });
     if (!visibleFolders.length) { this.elements.list.append(emptyState(`No engine folders found in ${configuration.engineRoot ?? "the configured root"}`)); return; }
     for (const folder of visibleFolders) this.elements.list.append(this.renderFolderCard(folder, recipes));
+  }
+
+  private togglePlaybook(id: string): void {
+    if (this.collapsedPlaybooks.has(id)) this.collapsedPlaybooks.delete(id);
+    else this.collapsedPlaybooks.add(id);
+    this.saveSet("fitz-collapsed-playbooks", this.collapsedPlaybooks);
+    this.render();
+  }
+
+  private storedSet(key: string): Set<string> {
+    try {
+      const value = JSON.parse(localStorage.getItem(key) ?? "[]");
+      return new Set(Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
+    } catch { return new Set(); }
+  }
+
+  private saveSet(key: string, values: Set<string>): void {
+    localStorage.setItem(key, JSON.stringify([...values]));
   }
 
   async testRecipe(recipe: Json, card: HTMLElement, button: HTMLButtonElement): Promise<void> {
@@ -185,15 +206,22 @@ export class PlaybookWorkspaceController {
     const playbookRecipes = recipes.filter((recipe: Json) => recipe.playbookId === playbookId);
     const card = document.createElement("section"); card.className = "playbook-card";
     const heading = document.createElement("div"); heading.className = "playbook-heading";
-    const identity = document.createElement("div");
+    const collapsed = this.collapsedPlaybooks.has(playbookId);
+    const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "playbook-collapse-toggle";
+    toggle.setAttribute("aria-expanded", String(!collapsed));
+    toggle.setAttribute("aria-label", `${collapsed ? "Expand" : "Collapse"} ${engine?.displayName ?? playbookId}`);
+    toggle.addEventListener("click", () => this.togglePlaybook(playbookId));
+    const chevron = document.createElement("span"); chevron.className = "playbook-collapse-chevron";
+    chevron.append(svgIcon('<path d="m6 8 4 4 4-4"></path>'));
     const title = document.createElement("h3"); title.textContent = engine?.displayName ?? playbookId;
-    identity.append(title);
+    toggle.append(chevron, title);
     const headingActions = document.createElement("div"); headingActions.className = "playbook-actions";
     const configure = document.createElement("button"); configure.type = "button"; configure.className = "quiet-button compact-button"; configure.textContent = engine ? "Configure" : "Set up"; configure.addEventListener("click", () => this.openEngineEditor(folder)); headingActions.append(configure);
     if (engine) {
       const addRecipe = document.createElement("button"); addRecipe.type = "button"; addRecipe.className = "quiet-button compact-button"; addRecipe.textContent = "Add recipe"; addRecipe.addEventListener("click", () => this.openRecipeEditor(undefined, { ...engine, rootPath: folder.rootPath })); headingActions.append(addRecipe);
     }
-    heading.append(identity, headingActions); card.append(heading);
+    heading.append(toggle, headingActions); card.append(heading);
+    if (collapsed) { card.classList.add("collapsed"); return card; }
     if (engine && !playbookRecipes.length) card.append(emptyState("No recipes yet"));
     if (!engine) return card;
     for (const recipe of playbookRecipes) {
