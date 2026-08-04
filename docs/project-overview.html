@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fitz Codex — Project Overview</title>
+<style>
+  :root {
+    --bg: #0d1117; --bg-elev: #161b22; --bg-elev-2: #1c2129;
+    --border: #2d333b; --text: #e6edf3; --text-dim: #8b949e; --text-faint: #6e7681;
+    --accent: #f78166; --accent-soft: #d29922; --green: #3fb950; --blue: #58a6ff;
+    --purple: #bc8cff; --cyan: #39c5cf;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); line-height: 1.6; padding-bottom: 6rem; }
+  header {
+    position: sticky; top: 0; z-index: 50; background: rgba(13,17,23,.92);
+    backdrop-filter: blur(8px); border-bottom: 1px solid var(--border);
+    padding: .8rem 2rem; display: flex; align-items: center; gap: 1rem;
+  }
+  header .logo { width: 28px; height: 28px; border-radius: 6px; background: linear-gradient(135deg, var(--accent), var(--accent-soft)); display: grid; place-items: center; font-weight: 700; color: #0d1117; font-size: 15px; }
+  header h1 { font-size: 1.05rem; font-weight: 600; }
+  header .tag { font-size: .72rem; color: var(--text-dim); border: 1px solid var(--border); border-radius: 999px; padding: .15rem .6rem; background: var(--bg-elev); font-family: var(--mono); }
+  header nav { margin-left: auto; display: flex; gap: .4rem; flex-wrap: wrap; }
+  header nav a { color: var(--text-dim); text-decoration: none; font-size: .78rem; padding: .3rem .6rem; border-radius: 6px; }
+  header nav a:hover { color: var(--text); background: var(--bg-elev-2); }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 2.5rem 2rem 0; }
+  .hero { margin-bottom: 3rem; }
+  .hero h2 { font-size: 2.2rem; font-weight: 700; line-height: 1.2; background: linear-gradient(120deg, var(--text) 30%, var(--accent)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .hero p.lead { color: var(--text-dim); font-size: 1.1rem; margin-top: .8rem; max-width: 70ch; }
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: .8rem; margin-top: 1.8rem; }
+  .stat { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.2rem; }
+  .stat .num { font-size: 1.5rem; font-weight: 700; font-family: var(--mono); color: var(--accent); }
+  .stat .lbl { font-size: .78rem; color: var(--text-dim); margin-top: .2rem; }
+  section { margin-bottom: 3.5rem; scroll-margin-top: 4.5rem; }
+  h3.section-title { font-size: 1.25rem; font-weight: 650; margin-bottom: .3rem; display: flex; align-items: center; gap: .6rem; }
+  h3.section-title::before { content: ""; width: 4px; height: 1.1em; border-radius: 2px; background: var(--accent); }
+  .section-sub { color: var(--text-faint); font-size: .85rem; margin-bottom: 1.4rem; }
+  h4 { font-size: 1rem; font-weight: 600; margin: 1.6rem 0 .6rem; }
+  p.body { color: var(--text-dim); max-width: 80ch; margin-bottom: .6rem; }
+  p.body code, li code, td code { font-family: var(--mono); font-size: .82em; background: var(--bg-elev-2); border: 1px solid var(--border); border-radius: 4px; padding: .1em .35em; color: var(--cyan); }
+  a { color: var(--blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  ul, ol { color: var(--text-dim); padding-left: 1.3rem; }
+  li { margin-bottom: .35rem; }
+  li strong { color: var(--text); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+  .card { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 12px; padding: 1.2rem 1.3rem; transition: border-color .15s, transform .15s; }
+  .card:hover { border-color: #3d444d; transform: translateY(-1px); }
+  .card .mono { font-family: var(--mono); font-size: .78rem; color: var(--accent); display: block; margin-bottom: .4rem; }
+  .card h5 { font-size: .95rem; margin: 0 0 .3rem; }
+  .card p { font-size: .85rem; color: var(--text-dim); }
+  .arch { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 12px; padding: 1.6rem; overflow-x: auto; }
+  .arch svg { display: block; margin: 0 auto; min-width: 720px; }
+  .arch text { font-family: var(--mono); font-size: 12px; fill: var(--text-dim); }
+  .arch .box { fill: var(--bg-elev-2); stroke: var(--border); stroke-width: 1.2; rx: 8; }
+  .arch .box.hot { stroke: var(--accent); stroke-width: 1.6; }
+  .arch .t-accent { fill: var(--accent); font-weight: 700; }
+  .arch .t-title { fill: var(--text); font-size: 13px; font-weight: 650; }
+  .arch .edge { stroke: var(--text-faint); stroke-width: 1.4; marker-end: url(#arrow); fill: none; }
+  .arch .lbl { fill: var(--text-faint); font-size: 10.5px; }
+  table { width: 100%; border-collapse: collapse; font-size: .85rem; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  th { text-align: left; font-weight: 600; color: var(--text); background: var(--bg-elev-2); padding: .65rem 1rem; border-bottom: 1px solid var(--border); font-size: .78rem; text-transform: uppercase; letter-spacing: .5px; }
+  td { padding: .6rem 1rem; border-bottom: 1px solid var(--border); color: var(--text-dim); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--bg-elev-2); }
+  td:first-child { color: var(--text); font-family: var(--mono); font-size: .82rem; white-space: nowrap; }
+  .badge { display: inline-block; font-size: .7rem; font-weight: 600; padding: .12rem .55rem; border-radius: 999px; margin-left: .35rem; vertical-align: middle; letter-spacing: .3px; }
+  .b-green { background: rgba(63,185,80,.15); color: var(--green); border: 1px solid rgba(63,185,80,.35); }
+  .b-blue { background: rgba(88,166,255,.15); color: var(--blue); border: 1px solid rgba(88,166,255,.35); }
+  .b-orange { background: rgba(247,129,102,.15); color: var(--accent); border: 1px solid rgba(247,129,102,.35); }
+  .b-purple { background: rgba(188,140,255,.15); color: var(--purple); border: 1px solid rgba(188,140,255,.35); }
+  .b-cyan { background: rgba(57,197,207,.12); color: var(--cyan); border: 1px solid rgba(57,197,207,.3); }
+  pre { background: #0a0e13; border: 1px solid var(--border); border-radius: 10px; padding: 1.1rem 1.3rem; overflow-x: auto; font-size: .8rem; font-family: var(--mono); line-height: 1.55; margin: .8rem 0 1.2rem; }
+  pre code { color: var(--text-dim); background: none; border: none; padding: 0; font-size: inherit; }
+  .tok-c { color: #6e7681; } .tok-k { color: var(--purple); } .tok-s { color: var(--green); } .tok-f { color: var(--blue); } .tok-n { color: var(--accent); }
+  footer { border-top: 1px solid var(--border); margin-top: 4rem; padding-top: 1.5rem; color: var(--text-faint); font-size: .8rem; text-align: center; }
+  .toc { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 12px; padding: 1.3rem 1.6rem; margin-bottom: 3rem; columns: 2; column-gap: 2rem; }
+  .toc a { display: block; color: var(--text-dim); padding: .28rem 0; font-size: .88rem; }
+  .toc a:hover { color: var(--accent); text-decoration: none; }
+  .toc .n { color: var(--text-faint); font-family: var(--mono); font-size: .75rem; margin-right: .5rem; }
+  .kbd { font-family: var(--mono); font-size: .75rem; color: var(--text); background: var(--bg-elev-2); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; padding: .1em .45em; }
+  @media (max-width: 700px) { .toc { columns: 1; } .wrap { padding: 1.5rem 1rem 0; } }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">F</div>
+  <h1>Fitz Codex</h1>
+  <span class="tag">local-first</span>
+  <span class="tag">pnpm monorepo</span>
+  <nav>
+    <a href="#overview">Overview</a>
+    <a href="#architecture">Architecture</a>
+    <a href="#packages">Packages</a>
+    <a href="#inference">Inference</a>
+    <a href="#agent">Agent</a>
+    <a href="#security">Security</a>
+    <a href="#status">Status</a>
+    <a href="#quickstart">Quickstart</a>
+  </nav>
+</header>
+
+<div class="wrap">
+
+  <div class="hero">
+    <h2>Fitz Codex</h2>
+    <p class="lead">A local-first, Codex-style agent desktop application with an inference control plane — an LLM engine manager that owns model loading, routing, queueing, security, and durable agent sessions, all on your own hardware.</p>
+    <div class="stat-grid">
+      <div class="stat"><div class="num">14</div><div class="lbl">packages</div></div>
+      <div class="stat"><div class="num">120+</div><div class="lbl">source files</div></div>
+      <div class="stat"><div class="num">36</div><div class="lbl">test files</div></div>
+      <div class="stat"><div class="num">185</div><div class="lbl">passing tests</div></div>
+      <div class="stat"><div class="num">131</div><div class="lbl">commits on main</div></div>
+      <div class="stat"><div class="num">M1–M4</div><div class="lbl">milestones shipped</div></div>
+    </div>
+  </div>
+
+  <div class="toc">
+    <a href="#overview"><span class="n">01</span>What it is</a>
+    <a href="#architecture"><span class="n">02</span>Architecture</a>
+    <a href="#packages"><span class="n">03</span>Package map</a>
+    <a href="#inference"><span class="n">04</span>Inference engine &amp; routing</a>
+    <a href="#agent"><span class="n">05</span>Agent runtime &amp; sessions</a>
+    <a href="#security"><span class="n">06</span>Security model</a>
+    <a href="#desktop"><span class="n">07</span>Desktop experience</a>
+    <a href="#status"><span class="n">08</span>Status &amp; conventions</a>
+    <a href="#quickstart"><span class="n">09</span>Quickstart</a>
+  </div>
+
+  <section id="overview">
+    <h3 class="section-title">01 · What it is</h3>
+    <p class="section-sub">One sentence each for the three things this project actually is.</p>
+    <div class="grid">
+      <div class="card">
+        <span class="mono">apps/desktop</span>
+        <h5>🖥️ A Codex-style agent desktop app</h5>
+        <p>Electron shell with a sandboxed renderer: three-pane layout, floating composer, project sidebar, activity timeline with tool disclosures, and a right-hand Inspector. Vanilla TypeScript DOM — no React.</p>
+      </div>
+      <div class="card">
+        <span class="mono">apps/host</span>
+        <h5>⚙️ An inference control plane</h5>
+        <p>Long-running local service (<span class="kbd">127.0.0.1:8787</span>) that owns model lifecycle, routing, queueing, security, quotas, and telemetry. The desktop window is just a client — closing it doesn't stop the host.</p>
+      </div>
+      <div class="card">
+        <span class="mono">packages/*</span>
+        <h5>📦 A framework of packages</h5>
+        <p>Fourteen TypeScript packages separated by responsibility: protocol, inference-core, engine adapters, agent-core, context, storage, security, connectivity, media, and observability.</p>
+      </div>
+    </div>
+    <h4>Design principles</h4>
+    <ul>
+      <li><strong>Local-first</strong> — everything runs on your machine; models live under <code>C:\Users\yanfi\.llm</code>, engines under <code>.llm/engines</code>.</li>
+      <li><strong>Process separation</strong> — host, desktop renderer, engine processes, and WSL inference are independent, individually restartable processes.</li>
+      <li><strong>Secret-safe by default</strong> — HMAC bearer tokens, redaction of secrets in every log/event path, safeStorage for device credentials.</li>
+      <li><strong>Resumable everything</strong> — SSE with <code>Last-Event-ID</code>, durable transcripts, crash recovery, deterministic compaction.</li>
+      <li><strong>No shell-concatenated launch commands</strong> — engines are always spawned as executable + argv arrays.</li>
+    </ul>
+  </section>
+
+  <section id="architecture">
+    <h3 class="section-title">02 · Architecture</h3>
+    <p class="section-sub">Three tiers, cleanly separated: a control-plane host, an Electron desktop shell, and 14 framework packages.</p>
+
+    <div class="arch">
+      <svg viewBox="0 0 780 520" width="780" height="520" role="img" aria-label="Architecture diagram">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#6e7681"/>
+          </marker>
+        </defs>
+        <rect class="box" x="20" y="20" width="740" height="150"/>
+        <text x="40" y="46" class="t-title">apps/desktop — Electron 43 shell</text>
+        <text x="40" y="70" class="lbl">sandboxed renderer · context isolation · safeStorage</text>
+        <rect class="box" x="40" y="88" width="160" height="58"/>
+        <text x="55" y="110" class="t-accent">UI controllers</text>
+        <text x="55" y="128" class="lbl">AgentRun · Timeline · Sidebar</text>
+        <rect class="box" x="220" y="88" width="160" height="58"/>
+        <text x="235" y="110" class="t-accent">Composer</text>
+        <text x="235" y="128" class="lbl">model · effort · temperature</text>
+        <rect class="box" x="400" y="88" width="160" height="58"/>
+        <text x="415" y="110" class="t-accent">Inspector</text>
+        <text x="415" y="128" class="lbl">files · markdown · media</text>
+        <rect class="box" x="580" y="88" width="160" height="58"/>
+        <text x="595" y="110" class="t-accent">Connection WS</text>
+        <text x="595" y="128" class="lbl">tailscale · pairing</text>
+        <path class="edge" d="M 400 150 L 400 205"/>
+        <rect class="box hot" x="20" y="210" width="740" height="160"/>
+        <text x="40" y="236" class="t-title" fill="#f78166">apps/host — local control plane · 127.0.0.1:8787</text>
+        <rect class="box" x="40" y="256" width="130" height="96"/>
+        <text x="55" y="278" class="t-accent">Security</text>
+        <text x="55" y="296" class="lbl">HMAC tokens · roles</text>
+        <text x="55" y="312" class="lbl">quotas · audit log</text>
+        <rect class="box" x="186" y="256" width="130" height="96"/>
+        <text x="201" y="278" class="t-accent">Scheduler</text>
+        <text x="201" y="296" class="lbl">routes &amp; recipes</text>
+        <text x="201" y="312" class="lbl">FIFO queue · budgets</text>
+        <rect class="box" x="332" y="256" width="130" height="96"/>
+        <text x="347" y="278" class="t-accent">Agent runtime</text>
+        <text x="347" y="296" class="lbl">Pi SDK sessions</text>
+        <text x="347" y="312" class="lbl">approvals · recovery</text>
+        <rect class="box" x="478" y="256" width="130" height="96"/>
+        <text x="493" y="278" class="t-accent">Storage</text>
+        <text x="493" y="296" class="lbl">SQLite · WAL</text>
+        <text x="493" y="312" class="lbl">transcripts · artifacts</text>
+        <rect class="box" x="624" y="256" width="116" height="96"/>
+        <text x="639" y="278" class="t-accent">Management</text>
+        <text x="639" y="296" class="lbl">engines · projects</text>
+        <text x="639" y="312" class="lbl">pairing · telemetry</text>
+        <path class="edge" d="M 270 370 L 270 405"/>
+        <path class="edge" d="M 515 370 L 515 405"/>
+        <rect class="box" x="20" y="410" width="740" height="90"/>
+        <text x="40" y="436" class="t-title">packages/inference-core + adapters — engine processes</text>
+        <rect class="box" x="40" y="450" width="165" height="34"/>
+        <text x="55" y="472" class="lbl">ninfer (WSL · Qwen 3.6)</text>
+        <rect class="box" x="225" y="450" width="165" height="34"/>
+        <text x="240" y="472" class="lbl">llama.cpp · Gemma GGUF</text>
+        <rect class="box" x="410" y="450" width="165" height="34"/>
+        <text x="425" y="472" class="lbl">openai-compatible</text>
+        <rect class="box" x="595" y="450" width="145" height="34"/>
+        <text x="610" y="472" class="lbl">fake (dev/test)</text>
+      </svg>
+    </div>
+
+    <h4>Key properties</h4>
+    <ul>
+      <li><strong>The host is the owner.</strong> Engine lifecycle, queues, and security live in the service, not the window. Any number of UI clients can attach.</li>
+      <li><strong>The renderer is a client.</strong> It talks to the host over a typed, versioned protocol (<code>@fitzcodex/protocol</code>) — requests, events, and SSE streams.</li>
+      <li><strong>Adapters are the boundary.</strong> <code>inference-core</code> defines the adapter contract; each engine (ninfer, llama.cpp, openai-compatible, fake) implements it behind the same state machine.</li>
+      <li><strong>Pi is behind a Fitz-owned boundary.</strong> <code>agent-pi</code> wraps the Pi SDK (0.83.0) so upgrades don't leak into the rest of the codebase.</li>
+    </ul>
+  </section>
+
+  <section id="packages">
+    <h3 class="section-title">03 · Package map</h3>
+    <p class="section-sub">Fourteen packages under <code>packages/</code>, wired together with <code>workspace:*</code> injection.</p>
+    <table>
+      <thead>
+        <tr><th>Package</th><th>Responsibility</th><th>Highlights</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>protocol</td><td>Versioned DTOs and event types shared by host + clients</td><td>typed requests, events, SSE shapes</td></tr>
+        <tr><td>inference-core</td><td>Adapter contract, lifecycle state machine, scheduler, route resolver, resource governor</td><td><span class="badge b-cyan">core</span></td></tr>
+        <tr><td>inference-ninfer</td><td>NInfer engine adapter (WSL)</td><td>Qwen 3.6 · 35B MTP4 / 27B recipes</td></tr>
+        <tr><td>inference-llama-cpp</td><td>llama.cpp adapter</td><td>Gemma GGUF</td></tr>
+        <tr><td>inference-openai-compatible</td><td>Adapter for external OpenAI-compatible endpoints</td><td>remote connections</td></tr>
+        <tr><td>inference-fake</td><td>Deterministic fake engine for tests/dev</td><td><span class="badge b-green">tests</span></td></tr>
+        <tr><td>agent-core</td><td>Agent run model, tool access modes, event translation</td><td><code>full</code> · <code>ask</code> · <code>read-only</code></td></tr>
+        <tr><td>agent-pi</td><td>Pi SDK boundary (v0.83.0), allowlisted tools, approvals, recovery</td><td><span class="badge b-purple">boundary</span></td></tr>
+        <tr><td>context</td><td>Codex-style context compaction</td><td>80% threshold · deterministic summarizer</td></tr>
+        <tr><td>storage</td><td>SQLite persistence (node:sqlite, WAL)</td><td>projects · sessions · transcripts · artifacts</td></tr>
+        <tr><td>security</td><td>Authn/authz, secrets, audit</td><td>HMAC bearer · roles · pairing codes</td></tr>
+        <tr><td>connectivity</td><td>Tailscale-based remote access</td><td>pairing flow</td></tr>
+        <tr><td>media</td><td>Media handling (screenshots, images, uploads)</td><td>artifact support</td></tr>
+        <tr><td>observability</td><td>Telemetry, metrics, logging with redaction</td><td><span class="badge b-blue">ops</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="inference">
+    <h3 class="section-title">04 · Inference engine &amp; routing</h3>
+    <p class="section-sub">The control plane's core: stable routes that resolve to concrete engine recipes.</p>
+    <h4>Stable routes</h4>
+    <table>
+      <thead>
+        <tr><th>Route</th><th>Resolution</th><th>Notes</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>fast</td><td>Qwen 3.6 · 27B on NInfer (WSL)</td><td>low-latency turns</td></tr>
+        <tr><td>default</td><td>Qwen 3.6 · 35B MTP4 on NInfer (WSL)</td><td>primary model</td></tr>
+        <tr><td>smart</td><td>External OpenAI-compatible connection</td><td>when a remote is configured</td></tr>
+        <tr><td>—</td><td>Gemma GGUF via llama.cpp</td><td>local fallback / research</td></tr>
+      </tbody>
+    </table>
+    <h4>Lifecycle &amp; operations</h4>
+    <ul>
+      <li><strong>On-demand loading</strong> — models are loaded only when first requested, then served from memory.</li>
+      <li><strong>Idle eviction</strong> — a 600s idle TTL unloads models that aren't being used.</li>
+      <li><strong>VRAM governance</strong> — a 2&nbsp;GiB reserve policy prevents overcommitting GPU memory.</li>
+      <li><strong>Single-generation queue</strong> — one generation at a time, FIFO, with route-based budgets.</li>
+      <li><strong>State machine</strong> — <code>UNLOADED → PREPARING → LOADING → READY → BUSY → …</code>, with explicit failure and eviction states, surfaced as typed events to clients.</li>
+    </ul>
+    <pre><code><span class="tok-c">// Lifecycle states exposed over the protocol</span>
+<span class="tok-k">type</span> <span class="tok-f">ModelState</span> =
+  <span class="tok-s">"unloaded"</span> | <span class="tok-s">"preparing"</span> | <span class="tok-s">"loading"</span> |
+  <span class="tok-s">"ready"</span>    | <span class="tok-s">"busy"</span>     | <span class="tok-s">"evicting"</span> |
+  <span class="tok-s">"failed"</span>   | <span class="tok-s">"terminated"</span>;</code></pre>
+  </section>
+
+  <section id="agent">
+    <h3 class="section-title">05 · Agent runtime &amp; sessions</h3>
+    <p class="section-sub">Pi SDK sessions behind a Fitz-owned boundary, with durable approvals and crash recovery.</p>
+    <h4>Capabilities</h4>
+    <ul>
+      <li><strong>Allowlisted coding tools</strong> — only the sanctioned toolset is exposed to the agent.</li>
+      <li><strong>Access modes</strong> — <code>full</code>, <code>ask</code>, and <code>read-only</code> constrain what the agent may do per session.</li>
+      <li><strong>Durable pre-execution approvals</strong> — tool executions are gated until approved; decisions persist across restarts.</li>
+      <li><strong>Event translation</strong> — Pi's internal events are translated into sequenced Fitz events for the UI and consumers.</li>
+      <li><strong>Resumable SSE</strong> — clients reconnect with <code>Last-Event-ID</code> and never lose progress.</li>
+      <li><strong>Crash recovery</strong> — interrupted runs are detected and resumed from durable state.</li>
+    </ul>
+    <h4>Context &amp; compaction (<code>context</code> package)</h4>
+    <p class="body">Token budgets are enforced at an <strong>80% threshold</strong>. The canonical transcript is always preserved while a deterministic summarizer compacts the working context; both automatic and manual compaction are supported. Because compaction is deterministic, the same input always yields the same summary — runs stay reproducible.</p>
+  </section>
+
+  <section id="security">
+    <h3 class="section-title">06 · Security model</h3>
+    <p class="section-sub">Defense-in-depth for a service that can execute code on your behalf.</p>
+    <table>
+      <thead>
+        <tr><th>Layer</th><th>Mechanism</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Authentication</td><td>HMAC device bearer tokens; bootstrap only on loopback</td></tr>
+        <tr><td>Authorization</td><td>Roles: <code>admin</code>, <code>agent</code>, <code>consumer</code>; per-route grants</td></tr>
+        <tr><td>Abuse control</td><td>Per-user quotas on generation and agent activity</td></tr>
+        <tr><td>Onboarding</td><td>Pairing codes (used with Tailscale connectivity) to enroll new devices</td></tr>
+        <tr><td>Secrets</td><td>Credential redaction in every log and event; device credentials in Electron safeStorage</td></tr>
+        <tr><td>Accountability</td><td>Audit log of security-relevant actions</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="desktop">
+    <h3 class="section-title">07 · Desktop experience</h3>
+    <p class="section-sub">Codex-styled UI, built from extracted vanilla-TypeScript controllers.</p>
+    <ul>
+      <li><strong>Three-pane layout</strong> — sidebar (projects/sessions) · conversation · right Inspector.</li>
+      <li><strong>Floating composer</strong> — model, effort, and temperature controls inline with the input.</li>
+      <li><strong>Activity timeline</strong> — every tool execution is disclosed in sequence with its result.</li>
+      <li><strong>Inspector</strong> — file diffs, rendered markdown, sandboxed HTML previews, and media artifacts.</li>
+      <li><strong>Connection workspace</strong> — Tailscale pairing and remote-device management.</li>
+      <li><strong>Message actions</strong> — copy, retry, and per-turn controls on messages.</li>
+    </ul>
+    <p class="body">UI is composed from extracted controllers (<code>AgentRunController</code>, <code>ActivityTimeline</code>, <code>ProjectSidebarController</code>, <code>ComposerControls</code>, <code>ConnectionWorkspaceController</code>, <code>PluginCatalogController</code>, <code>ResourceInspector</code>) plus layout and popover primitives — all plain DOM, no framework.</p>
+  </section>
+
+  <section id="status">
+    <h3 class="section-title">08 · Status &amp; conventions</h3>
+    <p class="section-sub">Where the project stands and the rules it codes by.</p>
+    <h4>Milestones</h4>
+    <table>
+      <thead><tr><th>Milestone</th><th>Focus</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>M1</td><td>Foundation: monorepo, protocol, storage</td><td><span class="badge b-green">shipped</span></td></tr>
+        <tr><td>M2</td><td>Inference control plane: adapters, lifecycle, scheduler</td><td><span class="badge b-green">shipped</span></td></tr>
+        <tr><td>M3</td><td>Security &amp; authn/authz</td><td><span class="badge b-green">shipped</span></td></tr>
+        <tr><td>M4</td><td>Agent runtime &amp; desktop UI</td><td><span class="badge b-green">shipped</span></td></tr>
+        <tr><td>M5+</td><td>Operational hardening, packaging, remote flows</td><td><span class="badge b-orange">in progress</span></td></tr>
+      </tbody>
+    </table>
+    <p class="body">The interactive tracker <code>docs/TODO.html</code> tracks refinement items; <code>docs/implementation-status.md</code> records the official status. Most refinement sections are marked ready/pass.</p>
+    <h4>Conventions</h4>
+    <ul>
+      <li><strong>Strict <code>.js</code> extension imports</strong> everywhere (NodeNext resolution).</li>
+      <li><strong>No shell-concatenated launch commands</strong> — spawn executables with argv arrays only.</li>
+      <li><strong>Secret redaction</strong> in every logging and event path.</li>
+      <li><strong><code>workspace:*</code> package injection</strong> across the monorepo.</li>
+      <li><strong><code>pnpm check</code></strong> = typecheck + tests (185 passing).</li>
+      <li><strong>No toasts</strong> — inline checkmarks and inline status instead of toast notifications.</li>
+    </ul>
+    <h4>Repository shape</h4>
+    <ul>
+      <li><code>main</code> — 131 commits, current architecture.</li>
+      <li><code>agent/ninfer-parity-and-operations</code> — early 2-commit branch, predates the route/pick model and the <code>.llm</code> migration; likely abandoned in favor of <code>main</code>.</li>
+    </ul>
+  </section>
+
+  <section id="quickstart">
+    <h3 class="section-title">09 · Quickstart</h3>
+    <p class="section-sub">Getting from a fresh clone to a running system.</p>
+    <pre><code><span class="tok-c"># 1 · install workspace dependencies</span>
+pnpm install
+
+<span class="tok-c"># 2 · typecheck + run the full test suite</span>
+pnpm check
+
+<span class="tok-c"># 3 · start the local control plane (host)</span>
+pnpm --filter @fitzcodex/host start
+
+<span class="tok-c"># 4 · launch the desktop shell in another terminal</span>
+pnpm --filter @fitzcodex/desktop start</code></pre>
+    <p class="body">The host binds <span class="kbd">127.0.0.1:8787</span>; the desktop attaches as a client over the typed protocol. Models are loaded on demand from <code>C:\Users\yanfi\.llm</code>.</p>
+  </section>
+
+  <footer>Fitz Codex · docs/project-overview.html · generated from the live codebase — numbers reflect the current tree.</footer>
+
+</div>
+</body>
+</html>
