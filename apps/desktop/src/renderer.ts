@@ -27,7 +27,6 @@ const sessionsByProject = new Map<string, SessionRecord[]>();
 let currentProject: string | undefined;
 let currentSession: string | undefined;
 let pendingTaskAfterProject = false;
-let toastTimer: ReturnType<typeof setTimeout> | undefined;
 let queueRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let sessionTokenEstimate = 0;
 let contextTokenLimit = 131_072;
@@ -192,7 +191,6 @@ const recipeForm = element("recipe-form") as HTMLFormElement;
 const removeProjectDialog = element("remove-project-dialog") as HTMLDialogElement;
 const removeProjectForm = element("remove-project-form") as HTMLFormElement;
 const removeProjectName = element("remove-project-name");
-const toast = element("toast");
 
 let conversationLayout: ConversationLayout | undefined;
 const sidebarPane = new ResizablePane({
@@ -2106,7 +2104,8 @@ async function compactCurrentSession(): Promise<void> {
 function setStatus(text: string, state: string): void { status.textContent = text; status.dataset.state = state; }
 function setConnection(text: string, state: string): void { connectionDetail.textContent = text; connectionStatus.dataset.state = state; }
 function setFormBusy(formElement: HTMLFormElement, busy: boolean): void { for (const control of formElement.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>("input,button,select")) control.disabled = busy; }
-function showToast(text: string): void { if (toastTimer) clearTimeout(toastTimer); toast.textContent = text; toast.hidden = false; toastTimer = setTimeout(() => { toast.hidden = true; }, 3_200); }
+// Toast notifications are intentionally removed; this no-op keeps the call sites intact.
+function showToast(_text: string): void { }
 function panelEmpty(text: string): HTMLElement { return textBlock("panel-empty", text); }
 function loadingMessage(text: string): HTMLElement { return textBlock("panel-empty", text); }
 async function api(path: string, method = "GET", body?: unknown): Promise<Json> {
