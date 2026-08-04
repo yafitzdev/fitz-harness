@@ -177,6 +177,16 @@ export class InspectorPanel {
     return this.#inspector.previewArtifact(artifact, selected, artifactList);
   }
 
+  /** Previews a locally pasted image (data URL) in the Inspector. */
+  previewImage(dataUrl: string, mimeType: string, name: string): void {
+    this.#inspector.previewImage(dataUrl, mimeType, name);
+  }
+
+  /** Previews a locally pasted PDF (data URL) in the Inspector. */
+  previewPdf(dataUrl: string, mimeType: string, name: string): void {
+    this.#inspector.previewPdf(dataUrl, mimeType, name);
+  }
+
   empty(message: string): HTMLElement { return this.#inspector.empty(message); }
 
   /** Restores the "select a resource" hint while the panel is closed. */

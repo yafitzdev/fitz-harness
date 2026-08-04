@@ -3,7 +3,7 @@ import { appendMarkdown, setMarkdown } from "./markdown.js";
 import { MessageActions, type ActionableMessageRole } from "./ui/chat/message-actions.js";
 import { ActivityTimeline } from "./ui/chat/activity-timeline.js";
 import { AgentRunController } from "./ui/chat/agent-run-controller.js";
-import { ComposerControls } from "./ui/chat/composer-controls.js";
+import { Composer } from "./ui/chat/composer.js";
 import { ConnectionWorkspaceController, FIXED_ROUTES, type FixedRouteId } from "./ui/connections/connection-workspace.js";
 import { InspectorPanel } from "./ui/inspector/inspector-panel.js";
 import { ConversationLayout } from "./ui/layout/conversation-layout.js";
@@ -20,7 +20,6 @@ type Json = Record<string, any>;
 type AppLocation = { view: "conversation"; projectId?: string; sessionId?: string; newChat?: boolean } | { view: "playbooks" | "connections" | "plugins" | "administration" };
 type ProjectRecord = ProjectSidebarProject & Json;
 type SessionRecord = ProjectSidebarSession & Json;
-type PastedImage = { dataUrl: string; mimeType: string; chip: HTMLElement };
 
 let projectRecords: ProjectRecord[] = [];
 const sessionsByProject = new Map<string, SessionRecord[]>();
@@ -41,8 +40,6 @@ let pendingStartupAction: "install" | "remove" | undefined;
 let managementConfiguration: Json | undefined;
 let newChatMode = false;
 let newChatProjectDetached = false;
-let currentBranch = "main";
-let availableBranches: string[] = [];
 let removeProjectTarget: string | undefined;
 let editingRecipe: Json | undefined;
 let renameTarget: { kind: "project" | "task"; id: string } | undefined;
@@ -51,36 +48,11 @@ let replayingNavigation = false;
 const navigationHistory: AppLocation[] = [];
 const recipeTestStates = new Map<string, { state: "testing" | "passed" | "failed"; detail: string }>();
 let routeCards: Json[] = [];
-let promptHistory: string[] = [];
-let promptHistoryIndex = -1;
-let promptDraft = "";
 
 const shell = query(".app-shell");
 const workspaceHeader = query(".workspace-header");
-const composerDock = query(".composer-dock");
 const messages = element("messages");
-const scrollToBottom = element("scroll-to-bottom") as HTMLButtonElement;
-const form = element("composer") as HTMLFormElement;
 const workspace = query(".workspace");
-const prompt = element("prompt") as HTMLTextAreaElement;
-const newChatContext = element("new-chat-context");
-const newChatProject = element("new-chat-project");
-const newChatProjectControl = element("new-chat-project-control") as HTMLButtonElement;
-const newChatEnvironmentControl = element("new-chat-environment-control") as HTMLButtonElement;
-const newChatEnvironmentMenu = element("new-chat-environment-menu");
-const createWorktreeForm = element("create-worktree-form");
-const newWorktreeBranch = element("new-worktree-branch") as HTMLInputElement;
-const newChatBranchControl = element("new-chat-branch-control") as HTMLButtonElement;
-const newChatBranchLabel = element("new-chat-branch-label");
-const newChatBranchMenu = element("new-chat-branch-menu");
-const branchSearch = element("branch-search") as HTMLInputElement;
-const branchList = element("branch-list");
-const createBranchForm = element("create-branch-form");
-const newBranchName = element("new-branch-name") as HTMLInputElement;
-const showCreateBranch = element("show-create-branch") as HTMLButtonElement;
-const status = element("status");
-const sendButton = element("send") as HTMLButtonElement;
-const attachButton = element("attach") as HTMLButtonElement;
 const connectionStatus = element("connection-status") as HTMLButtonElement;
 const connectionDetail = element("connection-detail");
 const projectTitle = element("project-title");
@@ -92,8 +64,6 @@ const artifacts = element("artifacts");
 const requestQueue = element("request-queue");
 const queueCount = element("queue-count");
 const artifactFile = element("artifact-file") as HTMLInputElement;
-const composerAttachments = element("composer-attachments");
-const pastedImages: PastedImage[] = [];
 const addArtifactButton = element("add-artifact") as HTMLButtonElement;
 const updateButton = element("update") as HTMLButtonElement;
 const checkDesktopUpdate = element("check-desktop-update") as HTMLButtonElement;
@@ -196,7 +166,41 @@ const inspectorPanel = new InspectorPanel({
   showToast,
   onLayoutChange: () => conversationLayout?.sync(),
 });
-conversationLayout = new ConversationLayout({ workspace, messages, composer: composerDock, scrollButton: scrollToBottom, inspectorWidth: () => inspectorPanel.width() });
+const composer = new Composer({
+  mount: workspace,
+  getProjectRoot: () => String(activeProject()?.rootPath ?? "") || undefined,
+  bridge: window.fitz,
+  closeAllPopovers: closePopovers,
+  onRouteChange: () => handleRouteChange(),
+  onCompact: compactCurrentSession,
+  onSubmit: (content) => {
+    if (agentRuns.active) {
+      if (content.trim().length > 0) void steerPrompt(content);
+      else void agentRuns.cancel();
+    } else void sendPrompt(content);
+  },
+  onInput: (text) => {
+    updateContextMeter();
+    refreshComposerState();
+    agentRuns.scheduleWarmup(text, composer.controls.routeId);
+  },
+  onValueChange: () => { updateContextMeter(); refreshComposerState(); },
+  onAttach: () => chooseArtifact(),
+  onDismissProject: () => { newChatProjectDetached = true; showNewChatLanding(); },
+  onPreviewPasted: (kind, dataUrl, mimeType, name) => {
+    if (kind === "pdf") inspectorPanel.previewPdf(dataUrl, mimeType, name);
+    else inspectorPanel.previewImage(dataUrl, mimeType, name);
+  },
+  onWorktreeCreated: async (path) => {
+    const project = activeProject();
+    if (!project) return;
+    await api(`/api/v1/projects/${project.id}`, "PATCH", { rootPath: path });
+    project.rootPath = path;
+  },
+  onError: showToast,
+  isRunning: () => agentRuns.active,
+});
+conversationLayout = new ConversationLayout({ workspace, messages, composer: composer.root, scrollButton: composer.scrollButton, inspectorWidth: () => inspectorPanel.width() });
 const customSelects = new CustomSelectController(selectPopover, closePopovers);
 const sidebarMenu = new ContextMenu(sidebarContextMenu, closePopovers);
 const projectSidebar = new ProjectSidebarController({
@@ -272,36 +276,6 @@ const agentRuns = new AgentRunController({
   errorMessage,
   terminalReplayError: (error) => error instanceof HttpError,
 });
-const composerControls = new ComposerControls({
-  model: element("model") as HTMLSelectElement,
-  effort: element("effort") as HTMLSelectElement,
-  modelToggle: element("model-toggle") as HTMLButtonElement,
-  modelMenu: element("model-menu"),
-  modelSummary: element("model-summary"),
-  modelValue: element("model-value"),
-  effortValue: element("effort-value"),
-  settingsSubmenu: element("settings-submenu"),
-  settingRows: [...document.querySelectorAll<HTMLButtonElement>("[data-setting]")],
-  advancedSettings: element("advanced-settings") as HTMLButtonElement,
-  advancedSettingsPanel: element("advanced-settings-panel"),
-  temperature: element("temperature") as HTMLInputElement,
-  temperatureValue: element("temperature-value"),
-  contextMeter: element("context-meter") as HTMLButtonElement,
-  contextUsagePopover: element("context-usage-popover"),
-  contextPercent: element("context-percent"),
-  contextTokens: element("context-tokens"),
-  contextCompactButton: element("context-compact") as HTMLButtonElement,
-  contextCompactStatus: element("context-compact-status"),
-  accessModeToggle: element("access-mode-toggle") as HTMLButtonElement,
-  accessModeMenu: element("access-mode-menu"),
-  accessModeLabel: element("access-mode-label"),
-  accessModeIcon: element("access-mode-icon") as unknown as SVGElement,
-  accessModeChoices: [...document.querySelectorAll<HTMLButtonElement>("[data-access-mode]")],
-}, {
-  closeAllPopovers: closePopovers,
-  onRouteChange: () => handleRouteChange(),
-  onCompact: compactCurrentSession,
-});
 const connectionWorkspace = new ConnectionWorkspaceController({
   form: element("connection-form") as HTMLFormElement,
   id: element("consumer-connection-id") as HTMLInputElement,
@@ -356,30 +330,7 @@ const messageActions = new MessageActions({
 });
 void initialize();
 
-form.addEventListener("submit", (event) => {
-  event.preventDefault();
-  if (agentRuns.active) {
-    if (prompt.value.trim().length > 0) void steerPrompt();
-    else void agentRuns.cancel();
-  } else void sendPrompt();
-});
 window.fitz.onNavigationCommand((command) => void navigateHistory(command === "back" ? -1 : 1));
-prompt.addEventListener("input", () => { if (promptHistoryIndex !== -1) { promptHistoryIndex = -1; promptDraft = ""; } resizePrompt(); updateContextMeter(); refreshComposerState(); agentRuns.scheduleWarmup(prompt.value, composerControls.routeId); });
-prompt.addEventListener("paste", handlePaste);
-prompt.addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
-    event.preventDefault();
-    form.requestSubmit();
-    return;
-  }
-  if ((event.key === "ArrowUp" || event.key === "ArrowDown") && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !event.isComposing) {
-    const browsing = promptHistoryIndex !== -1;
-    const atStart = prompt.selectionStart === 0;
-    if (event.key === "ArrowUp" ? browsing || atStart : browsing) {
-      if (navigatePromptHistory(event.key === "ArrowUp" ? -1 : 1)) event.preventDefault();
-    }
-  }
-});
 document.addEventListener("keydown", (event) => {
   if (event.ctrlKey && event.key.toLowerCase() === "n") { event.preventDefault(); openNewChat(); }
   if (event.ctrlKey && event.key.toLowerCase() === "b") { event.preventDefault(); toggleSidebar(); }
@@ -387,53 +338,6 @@ document.addEventListener("keydown", (event) => {
   if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "a") { event.preventDefault(); void archiveCurrentTask(); }
   if (event.key === "Escape") { if (!managementEditor.hidden) closeManagementEditor(); else if (connectionWorkspace.editorOpen) connectionWorkspace.closeEditor(); else closePopovers(); }
 });
-
-// Recall the current session's own messages in the composer with the up/down
-// arrow keys, shell-style: up walks older, down walks newer and restores the
-// draft the user was typing before they started browsing.
-function navigatePromptHistory(direction: -1 | 1): boolean {
-  if (!promptHistory.length) return false;
-  if (direction === -1) {
-    if (promptHistoryIndex === -1) {
-      promptDraft = prompt.value;
-      promptHistoryIndex = promptHistory.length - 1;
-    } else if (promptHistoryIndex > 0) {
-      promptHistoryIndex--;
-    } else {
-      return false; // already at the oldest entry
-    }
-  } else {
-    if (promptHistoryIndex === -1) return false; // not browsing
-    if (promptHistoryIndex < promptHistory.length - 1) {
-      promptHistoryIndex++;
-    } else {
-      // Past the newest entry: restore the draft the user was typing.
-      promptHistoryIndex = -1;
-      prompt.value = promptDraft;
-      promptDraft = "";
-      afterPromptHistoryChange();
-      return true;
-    }
-  }
-  prompt.value = promptHistory[promptHistoryIndex] ?? "";
-  afterPromptHistoryChange();
-  return true;
-}
-
-function afterPromptHistoryChange(): void {
-  resizePrompt();
-  updateContextMeter();
-  refreshComposerState();
-  prompt.selectionStart = prompt.selectionEnd = prompt.value.length;
-}
-
-function rebuildPromptHistory(transcript: Json[]): void {
-  promptHistory = transcript
-    .filter((entry: Json) => entry.kind === "message" && entry.role === "user" && typeof entry.content?.text === "string" && entry.content.text.length > 0)
-    .map((entry: Json) => entry.content.text as string);
-  promptHistoryIndex = -1;
-  promptDraft = "";
-}
 
 element("new-project").addEventListener("click", () => openProjectDialog());
 element("new-session").addEventListener("click", openNewChat);
@@ -456,22 +360,9 @@ window.addEventListener("fitz:open-resource", (event) => {
   if (reference) void inspectorPanel.inspect(reference);
 });
 element("context-add").addEventListener("click", chooseArtifact);
-attachButton.addEventListener("click", chooseArtifact);
 addArtifactButton.addEventListener("click", chooseArtifact);
 artifactFile.addEventListener("change", () => void uploadArtifact());
 chooseProjectFolder.addEventListener("click", () => void selectProjectFolder());
-newChatProjectControl.addEventListener("click", (event) => { event.stopPropagation(); newChatProjectDetached = true; newChatProjectControl.hidden = true; showNewChatLanding(); });
-newChatEnvironmentControl.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(newChatEnvironmentMenu, newChatEnvironmentControl); });
-newChatBranchControl.addEventListener("click", (event) => { event.stopPropagation(); void openBranchMenu(); });
-newChatEnvironmentMenu.addEventListener("click", (event) => event.stopPropagation());
-newChatBranchMenu.addEventListener("click", (event) => event.stopPropagation());
-for (const choice of document.querySelectorAll<HTMLButtonElement>("[data-environment-choice]")) choice.addEventListener("click", () => void chooseEnvironment(choice.dataset.environmentChoice ?? ""));
-branchSearch.addEventListener("input", renderBranchList);
-showCreateBranch.addEventListener("click", () => { showCreateBranch.hidden = true; createBranchForm.hidden = false; newBranchName.focus(); });
-element("create-branch-submit").addEventListener("click", () => void createAndCheckoutBranch());
-newBranchName.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); void createAndCheckoutBranch(); } });
-element("create-worktree-submit").addEventListener("click", () => void createWorktree());
-newWorktreeBranch.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); void createWorktree(); } });
 taskMenuToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(taskMenu, taskMenuToggle); });
 taskMenu.addEventListener("click", (event) => event.stopPropagation());
 sidebarContextMenu.addEventListener("click", (event) => event.stopPropagation());
@@ -525,7 +416,7 @@ async function initialize(): Promise<void> {
     applyNavigation();
     await loadModels();
     engineState.textContent = health.engine?.state ?? "UNLOADED";
-    routeState.textContent = composerControls.routeLabel;
+    routeState.textContent = composer.controls.routeLabel;
     setConnection(configuredHostOrigin.replace(/^https?:\/\//, ""), "active");
     setStatus(health.engine?.state ?? "Ready", "idle");
     showConversationWorkspace();
@@ -556,13 +447,13 @@ function rebuildRouteLabels(preferredRoute?: string): void {
   if (!routeCards.length) return;
   const priority = new Map([["default", 0], ["fast", 1], ["smart", 2]]);
   const cards = routeCards.filter((card: Json) => priority.has(String(card.id))).sort((left: Json, right: Json) => (priority.get(left.id) ?? 3) - (priority.get(right.id) ?? 3));
-  composerControls.setRoutes(cards.map((card: Json) => {
+  composer.controls.setRoutes(cards.map((card: Json) => {
     const route = (managementConfiguration?.routes ?? []).find((item: Json) => item.id === card.id);
     const recipe = (managementConfiguration?.recipes ?? []).find((item: Json) => item.id === route?.recipeId);
     const modelName = recipe?.displayName ?? recipe?.modelId;
     return { id: card.id, label: modelName ? `${card.display_name ?? card.id} · ${modelName}` : (card.display_name ?? card.id), group: "Routes" };
   }), preferredRoute);
-  routeState.textContent = composerControls.routeLabel;
+  routeState.textContent = composer.controls.routeLabel;
   syncComposerContext();
 }
 
@@ -608,16 +499,16 @@ async function selectProject(id: string): Promise<void> {
 
 async function selectSession(id: string, rerender = true, projectId?: string): Promise<void> {
   projectSidebar.hideChatHover();
-  composerControls.resetContextStatus();
+  composer.controls.resetContextStatus();
   showConversationWorkspace();
   newChatMode = false;
   workspace.classList.remove("new-chat-open");
-  newChatContext.hidden = true;
+  composer.exitNewChat();
   if (projectId) currentProject = projectId;
   if (currentProject) projectSidebar.ensureExpanded(currentProject);
   currentSession = id;
   const selectedSession = currentSessionRecord();
-  if (selectedSession?.routeId) composerControls.setRoute(selectedSession.routeId);
+  if (selectedSession?.routeId) composer.controls.setRoute(selectedSession.routeId);
   syncComposerContext();
   projectSidebar.markSessionRead(id);
   if (rerender) renderProjectTree();
@@ -625,7 +516,7 @@ async function selectSession(id: string, rerender = true, projectId?: string): P
   messages.replaceChildren(loadingMessage("Loading conversation…"));
   try {
     const transcript = await api(`/api/v1/sessions/${id}/transcript`);
-    rebuildPromptHistory(transcript.data ?? []);
+    composer.rebuildHistory((transcript.data ?? []).filter((entry: Json) => entry.kind === "message" && entry.role === "user" && typeof entry.content?.text === "string" && entry.content.text.length > 0).map((entry: Json) => entry.content.text as string));
     messages.replaceChildren();
     activityTimeline.clear();
     sessionTokenEstimate = estimateTranscriptContext(transcript.data ?? []);
@@ -667,7 +558,7 @@ async function selectSession(id: string, rerender = true, projectId?: string): P
     appendMessage("system", errorMessage(error));
   }
   refreshComposerState();
-  prompt.focus();
+  composer.focus();
   rememberLocation({ view: "conversation", ...(currentProject ? { projectId: currentProject } : {}), sessionId: id });
 }
 
@@ -681,27 +572,19 @@ function openNewChat(): void {
   newChatMode = true;
   newChatProjectDetached = false;
   currentSession = undefined;
-  promptHistory = [];
-  promptHistoryIndex = -1;
-  promptDraft = "";
   sessionTokenEstimate = 0;
-  composerControls.resetContextStatus();
+  composer.controls.resetContextStatus();
   projectSidebar.ensureExpanded(currentProject);
   workspace.classList.add("new-chat-open");
-  newChatProject.textContent = projectRecords.find((project) => project.id === currentProject)?.name ?? "Project";
-  newChatProjectControl.hidden = false;
   connectionWorkspace.setConfiguration(managementConfiguration);
-  newChatContext.hidden = false;
-  prompt.value = "";
+  composer.enterNewChat(projectRecords.find((project) => project.id === currentProject)?.name ?? "Project");
   agentRuns.resetWarmup();
-  composerAttachments.replaceChildren();
-  composerAttachments.hidden = true;
   renderProjectTree();
   showNewChatLanding();
-  void refreshBranchState();
+  void composer.refreshBranches();
   updateContextMeter();
   refreshComposerState();
-  prompt.focus();
+  composer.focus();
   rememberLocation({ view: "conversation", projectId: currentProject, newChat: true });
 }
 
@@ -725,7 +608,7 @@ function showNewChatLanding(): void {
   const grid = document.createElement("div"); grid.className = "starter-grid";
   for (const [label, iconPath] of suggestions) {
     const button = document.createElement("button"); button.type = "button"; button.className = "starter-card"; button.append(svg(iconPath!), Object.assign(document.createElement("span"), { textContent: label }));
-    button.addEventListener("click", () => { prompt.value = label!; resizePrompt(); updateContextMeter(); refreshComposerState(); agentRuns.scheduleWarmup(prompt.value, composerControls.routeId); prompt.focus(); });
+    button.addEventListener("click", () => { composer.setDraft(label!); composer.focus(); });
     grid.append(button);
   }
   landing.append(mark, heading, grid); messages.append(landing); updateTitles();
@@ -858,7 +741,7 @@ async function editProjectFolder(id: string): Promise<void> {
   catch (error) { showToast(errorMessage(error)); }
 }
 
-function openProjectWorktreeSetup(id: string): void { openNewChatForProject(id); newChatEnvironmentMenu.hidden = false; newChatEnvironmentControl.setAttribute("aria-expanded", "true"); createWorktreeForm.hidden = false; newWorktreeBranch.focus(); }
+function openProjectWorktreeSetup(id: string): void { openNewChatForProject(id); composer.openWorktreeSetup(); }
 
 function openRemoveProjectDialog(id: string): void { const project = projectRecords.find((item) => item.id === id); if (!project) return; removeProjectTarget = id; removeProjectName.textContent = project.name; removeProjectDialog.showModal(); }
 
@@ -900,7 +783,7 @@ async function openPluginsPage(): Promise<void> { if (!administrator || !pairing
 async function openAdministrationPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); closeManagementEditor(); workspacePages.show("administration"); adminUsers.replaceChildren(panelEmpty("Loading users…")); await loadAdministration(); rememberLocation({ view: "administration" }); }
 function showPairingPage(message: string): void { closePopovers(); inspectorPanel.close(); closeManagementEditor(); workspacePages.show("pairing"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
 function showConversationWorkspace(): void { closeManagementEditor(); workspacePages.show("conversation"); }
-function setConversationInert(inert: boolean): void { for (const area of [workspaceHeader, messages, composerDock]) { area.toggleAttribute("inert", inert); area.setAttribute("aria-hidden", String(inert)); } }
+function setConversationInert(inert: boolean): void { for (const area of [workspaceHeader, messages, composer.root]) { area.toggleAttribute("inert", inert); area.setAttribute("aria-hidden", String(inert)); } }
 
 function rememberLocation(location: AppLocation): void {
   if (replayingNavigation) return;
@@ -1422,7 +1305,7 @@ async function loadManagementConfiguration(renderPage: boolean): Promise<Json | 
 }
 
 function syncContextLimit(): void {
-  const route = managementConfiguration?.routes?.find((item: Json) => item.id === composerControls.routeId);
+  const route = managementConfiguration?.routes?.find((item: Json) => item.id === composer.controls.routeId);
   const recipe = managementConfiguration?.recipes?.find((item: Json) => item.id === route?.recipeId);
   if (Number.isFinite(recipe?.contextTokens) && recipe.contextTokens > 0) contextTokenLimit = recipe.contextTokens;
 }
@@ -1621,85 +1504,19 @@ function closeManagementEditor(): void {
 
 function activeProject(): Json | undefined { return projectRecords.find((project) => project.id === currentProject); }
 
-async function refreshBranchState(): Promise<void> {
-  const rootPath = activeProject()?.rootPath;
-  if (!rootPath) { currentBranch = "main"; availableBranches = [currentBranch]; newChatBranchLabel.textContent = currentBranch; renderBranchList(); return; }
-  try {
-    const state = await window.fitz.gitBranches(rootPath);
-    currentBranch = state.current || "main";
-    availableBranches = state.branches.length ? state.branches : [currentBranch];
-    newChatBranchLabel.textContent = currentBranch;
-    renderBranchList();
-  } catch {
-    currentBranch = "main"; availableBranches = [currentBranch]; newChatBranchLabel.textContent = currentBranch; renderBranchList();
-  }
-}
-
-async function openBranchMenu(): Promise<void> {
-  const opening = newChatBranchMenu.hidden;
-  closePopovers();
-  if (!opening) return;
-  newChatBranchMenu.hidden = false;
-  newChatBranchControl.setAttribute("aria-expanded", "true");
-  branchSearch.value = "";
-  showCreateBranch.hidden = false;
-  createBranchForm.hidden = true;
-  await refreshBranchState();
-  branchSearch.focus();
-}
-
-function renderBranchList(): void {
-  const query = branchSearch.value.trim().toLowerCase();
-  branchList.replaceChildren();
-  for (const branch of availableBranches.filter((value) => value.toLowerCase().includes(query))) {
-    const button = document.createElement("button"); button.type = "button"; button.classList.toggle("selected", branch === currentBranch);
-    button.append(svg('<circle cx="6" cy="4.5" r="1.5"></circle><circle cx="6" cy="15.5" r="1.5"></circle><circle cx="14" cy="7" r="1.5"></circle><path d="M6 6v8M7.5 12.5c4 0 6.5-1.5 6.5-4"></path>'), Object.assign(document.createElement("span"), { textContent: branch }));
-    button.addEventListener("click", () => void checkoutBranch(branch)); branchList.append(button);
-  }
-  if (!branchList.childElementCount) branchList.append(panelEmpty("No matching branches"));
-}
-
-async function checkoutBranch(branch: string): Promise<void> {
-  const rootPath = activeProject()?.rootPath; if (!rootPath || branch === currentBranch) { closePopovers(); return; }
-  try { const state = await window.fitz.checkoutBranch(rootPath, branch); currentBranch = state.current; availableBranches = state.branches; newChatBranchLabel.textContent = currentBranch; closePopovers(); }
-  catch (error) { showToast(errorMessage(error)); }
-}
-
-async function createAndCheckoutBranch(): Promise<void> {
-  const rootPath = activeProject()?.rootPath; const branch = newBranchName.value.trim(); if (!rootPath || !branch) return;
-  try { const state = await window.fitz.createBranch(rootPath, branch); currentBranch = state.current; availableBranches = state.branches; newChatBranchLabel.textContent = currentBranch; newBranchName.value = ""; closePopovers(); }
-  catch (error) { showToast(errorMessage(error)); }
-}
-
-async function chooseEnvironment(choice: string): Promise<void> {
-  if (choice === "local") { closePopovers(); return; }
-  if (choice === "worktree") { createWorktreeForm.hidden = false; newWorktreeBranch.focus(); return; }
-  if (choice === "usage") composerControls.openContextUsage();
-}
-
-async function createWorktree(): Promise<void> {
-  const project = activeProject(); const branch = newWorktreeBranch.value.trim(); if (!project?.rootPath || !branch) return;
-  try {
-    const worktree = await window.fitz.createWorktree(project.rootPath, branch);
-    await api(`/api/v1/projects/${project.id}`, "PATCH", { rootPath: worktree.path });
-    project.rootPath = worktree.path; currentBranch = worktree.branch; availableBranches = [worktree.branch];
-    newChatBranchLabel.textContent = currentBranch; newWorktreeBranch.value = ""; closePopovers();
-  } catch (error) { showToast(errorMessage(error)); }
-}
-
 async function updateSessionBinding(): Promise<void> {
   const session = currentSessionRecord();
-  if (!session || !composerControls.routeId) return;
+  if (!session || !composer.controls.routeId) return;
   try {
-    const response = await api(`/api/v1/sessions/${session.id}`, "PATCH", { routeId: composerControls.routeId });
+    const response = await api(`/api/v1/sessions/${session.id}`, "PATCH", { routeId: composer.controls.routeId });
     Object.assign(session, response.data);
   } catch (error) { showToast(errorMessage(error)); }
 }
 
 function handleRouteChange(): void {
-  routeState.textContent = composerControls.routeLabel;
+  routeState.textContent = composer.controls.routeLabel;
   agentRuns.resetWarmup();
-  agentRuns.scheduleWarmup(prompt.value, composerControls.routeId);
+  agentRuns.scheduleWarmup(composer.value, composer.controls.routeId);
   if (currentSession) void updateSessionBinding();
   syncComposerContext();
 }
@@ -1761,59 +1578,52 @@ function togglePopover(popover: HTMLElement, toggle: HTMLButtonElement): void {
 function closePopovers(): void {
   customSelects.close();
   appMenuPopover.hidden = true;
-  composerControls.closePopovers();
+  composer.closePopovers();
   taskMenu.hidden = true;
   sidebarContextMenu.hidden = true;
-  newChatEnvironmentMenu.hidden = true;
-  newChatBranchMenu.hidden = true;
   projectSidebar.hideOverlays();
   taskMenuToggle.setAttribute("aria-expanded", "false");
-  newChatEnvironmentControl.setAttribute("aria-expanded", "false");
-  newChatBranchControl.setAttribute("aria-expanded", "false");
   projectSidebar.resetMenuToggles();
   for (const toggle of document.querySelectorAll("[data-app-menu]")) toggle.setAttribute("aria-expanded", "false");
 }
 
 async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLElement): Promise<void> {
-  const content = (submittedContent ?? prompt.value).trim();
-  if (!content && pastedImages.length === 0) return;
+  const content = (submittedContent ?? composer.value).trim();
+  const attachments = composer.consumePastedAttachments();
+  if (!content && attachments.length === 0) return;
   if (!currentSession && newChatMode && currentProject) {
     try {
       const title = content.split(/\r?\n/, 1)[0]!.trim().slice(0, 80) || "New chat";
-      const response = await api(`/api/v1/projects/${currentProject}/sessions`, "POST", { title, routeId: composerControls.routeId as FixedRouteId });
+      const response = await api(`/api/v1/projects/${currentProject}/sessions`, "POST", { title, routeId: composer.controls.routeId as FixedRouteId });
       const sessions = sessionsByProject.get(currentProject) ?? [];
       sessions.unshift(response.data);
       sessionsByProject.set(currentProject, sessions);
       currentSession = response.data.id;
       newChatMode = false;
       workspace.classList.remove("new-chat-open");
-      newChatContext.hidden = true;
+      composer.exitNewChat();
       renderProjectTree();
     } catch (error) { showToast(errorMessage(error)); return; }
   }
   if (!currentSession) { openNewChat(); return; }
-  if (!composerControls.routeId) { showToast("No model route is available"); return; }
-  prompt.value = "";
+  if (!composer.controls.routeId) { showToast("No model route is available"); return; }
+  composer.clearDraft();
   agentRuns.resetWarmup();
-  resizePrompt();
-  // Upload pasted images as artifacts and collect image URLs
+  // Upload pasted files as artifacts; images become multi-modal message parts
   const imageParts: Array<{ type: "image_url"; image_url: { url: string } }> = [];
-  for (const img of pastedImages) {
+  for (const pasted of attachments) {
     try {
       const response = await api(`/api/v1/sessions/${currentSession}/artifacts`, "POST", {
-        name: `screenshot-${Date.now()}.png`,
-        mimeType: img.mimeType,
-        contentBase64: img.dataUrl.split(",")[1]!,
+        name: pasted.kind === "pdf" ? pasted.name : `screenshot-${Date.now()}.png`,
+        mimeType: pasted.mimeType,
+        contentBase64: pasted.dataUrl.split(",")[1]!,
       });
-      imageParts.push({ type: "image_url" as const, image_url: { url: `/api/v1/artifacts/${response.data.id}` } });
+      if (pasted.kind === "image") imageParts.push({ type: "image_url" as const, image_url: { url: `/api/v1/artifacts/${response.data.id}` } });
     } catch (error) { showToast(errorMessage(error)); }
   }
-  const capturedImages = pastedImages.splice(0);
-  capturedImages.forEach((img) => img.chip.remove());
-  refreshComposerAttachments();
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   if (!existingUserMessage) appendMessage("user", content);
-  if (content && !existingUserMessage) { promptHistory.push(content); promptHistoryIndex = -1; promptDraft = ""; }
+  if (content && !existingUserMessage) composer.pushHistory(content);
   sessionTokenEstimate += estimateTokens(content);
   updateContextMeter();
   // Build multi-modal message content
@@ -1821,11 +1631,11 @@ async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLE
     ? [{ type: "text" as const, text: content }, ...imageParts]
     : content;
   await agentRuns.start({
-    model: composerControls.routeId,
-    max_tokens: composerControls.maxTokens,
-    temperature: composerControls.temperature,
+    model: composer.controls.routeId,
+    max_tokens: composer.controls.maxTokens,
+    temperature: composer.controls.temperature,
     sessionId: currentSession,
-    accessMode: composerControls.accessMode,
+    accessMode: composer.controls.accessMode,
     messages: [{ role: "user", content: messageContent }],
   });
 }
@@ -1835,19 +1645,15 @@ async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLE
 // (Pi queues it as a steering message) and emits a `user.steer` event when it is
 // delivered. We render the message here, inside the agent's work feed next to the
 // tool calls and reasoning, so the user gets immediate feedback.
-async function steerPrompt(): Promise<void> {
-  const content = prompt.value.trim();
+async function steerPrompt(content: string): Promise<void> {
   const runId = agentRuns.runId;
   if (!content || !runId) return;
-  prompt.value = "";
+  composer.clearDraft();
   agentRuns.resetWarmup();
-  resizePrompt();
   updateContextMeter();
   refreshComposerState();
   const steerRow = activityTimeline.appendSteer(content);
-  promptHistory.push(content);
-  promptHistoryIndex = -1;
-  promptDraft = "";
+  composer.pushHistory(content);
   sessionTokenEstimate += estimateTokens(content);
   updateContextMeter();
   try {
@@ -1856,21 +1662,15 @@ async function steerPrompt(): Promise<void> {
     // The run finished or stopped accepting messages before the steer landed;
     // put the draft back and drop the undelivered row.
     steerRow.remove();
-    prompt.value = content;
-    resizePrompt();
-    updateContextMeter();
-    refreshComposerState();
+    composer.setDraft(content);
   }
 }
 
 async function loadArtifacts(): Promise<void> {
   artifacts.replaceChildren();
-  // Preserve pasted image chips; only remove artifact chips
-  const pastedChips = pastedImages.map((img) => img.chip);
-  composerAttachments.replaceChildren();
-  pastedChips.forEach((chip) => composerAttachments.append(chip));
+  composer.clearArtifactChips();
   inspectorPanel.resetPreview();
-  if (!currentSession) { artifacts.append(panelEmpty("Artifacts appear with a task")); refreshComposerAttachments(); return; }
+  if (!currentSession) { artifacts.append(panelEmpty("Artifacts appear with a task")); return; }
   const response = await api(`/api/v1/sessions/${currentSession}/artifacts`);
   if (!(response.data ?? []).length) artifacts.append(panelEmpty("No artifacts yet"));
   for (const artifact of response.data ?? []) {
@@ -1878,14 +1678,8 @@ async function loadArtifacts(): Promise<void> {
     const name = document.createElement("span"); name.textContent = artifact.name;
     const size = document.createElement("small"); size.textContent = formatBytes(artifact.byteSize);
     value.append(name, size); value.addEventListener("click", () => void inspectorPanel.previewArtifact(artifact, value, artifacts)); artifacts.append(value);
-    const chip = document.createElement("div"); chip.className = "attachment-chip";
-    const chipPreview = document.createElement("button"); chipPreview.type = "button"; chipPreview.className = "attachment-preview"; chipPreview.setAttribute("aria-label", `Preview ${artifact.name}`);
-    const chipName = document.createElement("span"); chipName.textContent = artifact.name;
-    const chipSize = document.createElement("small"); chipSize.textContent = formatBytes(artifact.byteSize);
-    const remove = document.createElement("button"); remove.type = "button"; remove.className = "attachment-remove"; remove.title = `Remove ${artifact.name}`; remove.setAttribute("aria-label", `Remove ${artifact.name}`); remove.textContent = "×";
-    chipPreview.append(chipName, chipSize); chipPreview.addEventListener("click", () => void inspectorPanel.previewArtifact(artifact, value, artifacts)); remove.addEventListener("click", () => void removeArtifact(artifact)); chip.append(chipPreview, remove); composerAttachments.append(chip);
+    composer.addArtifactChip(artifact.name, formatBytes(artifact.byteSize), () => void inspectorPanel.previewArtifact(artifact, value, artifacts), () => void removeArtifact(artifact));
   }
-  refreshComposerAttachments();
 }
 
 async function loadAgentQueue(): Promise<void> {
@@ -1930,75 +1724,12 @@ function chooseArtifact(): void {
 async function uploadArtifact(): Promise<void> {
   const file = artifactFile.files?.[0]; artifactFile.value = "";
   if (!file || !currentSession) return;
-  if (file.size > 1_500_000) { showToast("Artifacts are currently limited to 1.5 MB"); return; }
+  if (file.size > 5_000_000) { showToast("Artifacts are currently limited to 5 MB"); return; }
   try {
     const contentBase64 = bytesToBase64(new Uint8Array(await file.arrayBuffer()));
     await api(`/api/v1/sessions/${currentSession}/artifacts`, "POST", { name: file.name, mimeType: file.type || "application/octet-stream", contentBase64 });
     await loadArtifacts(); inspectorPanel.open(); showToast(`Attached ${file.name}`);
   } catch (error) { showToast(errorMessage(error)); }
-}
-
-// --- Image paste handling ---
-
-function handlePaste(event: ClipboardEvent): void {
-  const items = event.clipboardData?.items;
-  if (!items) return;
-  for (const item of items) {
-    if (!item.type.startsWith("image/")) continue;
-    event.preventDefault();
-    // Steering is text-only for now; pasted images wait for the next regular message.
-    if (agentRuns.active) return;
-    const file = item.getAsFile();
-    if (!file) continue;
-    if (file.size > 5_000_000) { showToast("Pasted image is too large (max 5 MB)"); return; }
-    readPastedImage(file);
-    break;
-  }
-}
-
-function readPastedImage(file: File): void {
-  const reader = new FileReader();
-  reader.onload = () => {
-    const dataUrl = reader.result as string;
-    const chip = createImageChip(dataUrl, file.type, () => removePastedImage(chip));
-    composerAttachments.append(chip);
-    pastedImages.push({ dataUrl, mimeType: file.type, chip });
-    refreshComposerAttachments();
-  };
-  reader.readAsDataURL(file);
-}
-
-function createImageChip(dataUrl: string, mimeType: string, onRemove: () => void): HTMLElement {
-  const chip = document.createElement("div");
-  chip.className = "attachment-chip";
-  chip.style.width = "96px";
-  chip.style.height = "96px";
-  chip.style.minWidth = "96px";
-
-  const preview = document.createElement("img");
-  preview.src = dataUrl;
-  preview.style.cssText = "width:100%;height:100%;object-fit:cover;border-radius:11px;pointer-events:none;";
-  preview.setAttribute("alt", "Pasted image");
-
-  const remove = document.createElement("button");
-  remove.type = "button";
-  remove.className = "attachment-remove";
-  remove.textContent = "\u00d7";
-  remove.addEventListener("click", () => { onRemove(); });
-
-  chip.append(preview, remove);
-  return chip;
-}
-
-function removePastedImage(chip: HTMLElement): void {
-  const index = pastedImages.findIndex((img) => img.chip === chip);
-  if (index >= 0) pastedImages.splice(index, 1);
-  chip.remove();
-  refreshComposerAttachments();
-}
-
-function refreshComposerAttachments(): void {
-  composerAttachments.hidden = composerAttachments.childElementCount === 0;
 }
 
 function showLanding(hasTask = false): void {
@@ -2074,20 +1805,9 @@ function appendChangeSummary(files: Array<{ path: string; action: "edited" | "cr
 }
 
 function refreshComposerState(): void {
-  const ready = Boolean((currentSession || (newChatMode && currentProject)) && composerControls.routeId);
-  const running = agentRuns.active;
-  const hasText = prompt.value.trim().length > 0;
-  // The composer stays unlocked while the agent is reasoning so the user can write
-  // a steering message; sending routes it into the running conversation instead of
-  // canceling. With an empty draft the send button becomes the stop control.
-  prompt.disabled = !ready;
-  composerControls.updateState({ running, hasSession: Boolean(currentSession) });
-  attachButton.disabled = !currentSession || running;
+  const ready = Boolean((currentSession || (newChatMode && currentProject)) && composer.controls.routeId);
   addArtifactButton.disabled = !currentSession;
-  sendButton.classList.toggle("running", running && !hasText);
-  sendButton.title = running ? (hasText ? "Send to the running agent" : "Stop task") : "Send message";
-  sendButton.setAttribute("aria-label", sendButton.title);
-  sendButton.disabled = running ? false : !ready || !hasText;
+  composer.setState({ ready, running: agentRuns.active, hasSession: Boolean(currentSession) });
 }
 
 function updateTitles(): void {
@@ -2099,23 +1819,22 @@ function updateTitles(): void {
 }
 
 function toggleSidebar(): void { shell.classList.toggle("sidebar-collapsed"); closePopovers(); }
-function resizePrompt(): void { prompt.style.height = "auto"; prompt.style.height = `${Math.min(prompt.scrollHeight, 180)}px`; }
-function updateContextMeter(): void { composerControls.updateContext(sessionTokenEstimate + estimateTokens(prompt.value), contextTokenLimit); }
+function updateContextMeter(): void { composer.controls.updateContext(sessionTokenEstimate + estimateTokens(composer.value), contextTokenLimit); }
 
 async function compactCurrentSession(): Promise<void> {
   if (!currentSession || agentRuns.active) return;
-  composerControls.setContextStatus("Compacting…", true);
+  composer.controls.setContextStatus("Compacting…", true);
   try {
-    const response = await api(`/api/v1/sessions/${currentSession}/compact`, "POST", { model: composerControls.routeId || "default" });
+    const response = await api(`/api/v1/sessions/${currentSession}/compact`, "POST", { model: composer.controls.routeId || "default" });
     sessionTokenEstimate = Number(response.data?.estimatedContextTokens ?? sessionTokenEstimate);
     updateContextMeter();
     activityTimeline.appendContext("Context compacted");
-    composerControls.setContextStatus(`Reduced ${formatTokenCount(Number(response.data?.estimatedInputTokens ?? 0))} to ${formatTokenCount(sessionTokenEstimate)} tokens`);
-  } catch (error) { composerControls.setContextStatus(errorMessage(error)); }
+    composer.controls.setContextStatus(`Reduced ${formatTokenCount(Number(response.data?.estimatedInputTokens ?? 0))} to ${formatTokenCount(sessionTokenEstimate)} tokens`);
+  } catch (error) { composer.controls.setContextStatus(errorMessage(error)); }
   finally { refreshComposerState(); }
 }
 
-function setStatus(text: string, state: string): void { status.textContent = text; status.dataset.state = state; }
+function setStatus(text: string, state: string): void { composer.setStatus(text, state); }
 function setConnection(text: string, state: string): void { connectionDetail.textContent = text; connectionStatus.dataset.state = state; }
 function setFormBusy(formElement: HTMLFormElement, busy: boolean): void { for (const control of formElement.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>("input,button,select")) control.disabled = busy; }
 // Toast notifications are intentionally removed; this no-op keeps the call sites intact.

@@ -26,6 +26,7 @@ export class ResourceInspector {
   #preview: ResourcePreview | undefined;
   #sourceMode = false;
   #version = 0;
+  #activeObjectUrl: string | undefined;
 
   constructor(options: ResourceInspectorOptions) {
     this.#options = options;
@@ -34,9 +35,49 @@ export class ResourceInspector {
   }
 
   empty(message: string): HTMLElement { return textBlock("inspector-empty", message); }
-  cancelPending(): void { this.#version += 1; }
+  cancelPending(): void { this.#version += 1; this.#revokeObjectUrl(); }
+
+  /** Previews a locally pasted image (data URL) in the Inspector. */
+  previewImage(dataUrl: string, mimeType: string, name: string): void {
+    this.#revokeObjectUrl();
+    this.#resource = undefined;
+    this.#preview = undefined;
+    this.#options.renderToggle.hidden = true;
+    this.#options.openButton.hidden = true;
+    this.#setHeading(name, `${mimeType} · ${this.#formatBytes(this.#dataUrlSize(dataUrl))} · Pasted image`, "file");
+    this.#options.openPanel();
+    this.#options.preview.replaceChildren();
+    const img = document.createElement("img");
+    img.className = "inspector-media";
+    img.alt = name;
+    img.src = dataUrl;
+    this.#options.preview.append(img);
+  }
+
+  /** Previews a locally pasted PDF (data URL) in the Inspector. */
+  previewPdf(dataUrl: string, mimeType: string, name: string): void {
+    this.#resource = undefined;
+    this.#preview = undefined;
+    this.#options.renderToggle.hidden = true;
+    this.#options.openButton.hidden = true;
+    this.#setHeading(name, `${mimeType} · ${this.#formatBytes(this.#dataUrlSize(dataUrl))} · Pasted PDF`, "file");
+    this.#options.openPanel();
+    this.#options.preview.replaceChildren();
+    const frame = document.createElement("iframe");
+    frame.className = "inspector-frame";
+    frame.title = name;
+    // The PDF viewer will not initialize in a sandboxed frame without
+    // allow-same-origin; the framed content is an inert blob of the user's own
+    // file, so same-origin here carries no script execution risk. Chromium's
+    // viewer also renders data: URL PDFs unreliably, so the content is served
+    // as a same-process blob URL instead.
+    frame.setAttribute("sandbox", "allow-same-origin");
+    frame.src = this.#objectUrl(this.#base64FromDataUrl(dataUrl), mimeType);
+    this.#options.preview.append(frame);
+  }
 
   async previewArtifact(artifact: Json, selected: HTMLButtonElement, artifactList: HTMLElement): Promise<void> {
+    this.#revokeObjectUrl();
     for (const item of artifactList.querySelectorAll(".artifact-item")) item.classList.remove("active");
     selected.classList.add("active");
     this.#setHeading(String(artifact.name ?? "Artifact"), `${this.#formatBytes(Number(artifact.byteSize ?? 0))} · Attachment`, "file");
@@ -72,9 +113,11 @@ export class ResourceInspector {
       if (artifact.kind === "pdf") {
         const frame = document.createElement("iframe");
         frame.className = "inspector-frame";
-        frame.setAttribute("sandbox", "");
+        // See previewPdf: the viewer needs allow-same-origin in a sandboxed
+        // frame, and a blob URL renders more reliably than a data: URL.
+        frame.setAttribute("sandbox", "allow-same-origin");
         frame.title = artifact.name;
-        frame.src = `data:application/pdf;base64,${response.body}`;
+        frame.src = this.#objectUrl(response.body, artifact.mimeType);
         this.#options.preview.append(frame);
         return;
       }
@@ -86,6 +129,7 @@ export class ResourceInspector {
 
   async inspect(reference: string): Promise<void> {
     const version = ++this.#version;
+    this.#revokeObjectUrl();
     this.#preview = undefined;
     this.#options.renderToggle.hidden = true;
     this.#options.openPanel();
@@ -233,7 +277,19 @@ export class ResourceInspector {
 
   #error(message: string): HTMLElement { return textBlock("inspector-error", message); }
   #errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
-  #base64Bytes(value: string): Uint8Array { const binary = atob(value); return Uint8Array.from(binary, (character) => character.charCodeAt(0)); }
+  #base64Bytes(value: string): Uint8Array<ArrayBuffer> { const binary = atob(value); const bytes = new Uint8Array(binary.length); for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i); return bytes; }
+  #dataUrlSize(dataUrl: string): number { try { return atob(dataUrl.slice(dataUrl.indexOf(",") + 1)).length; } catch { return 0; } }
+  #base64FromDataUrl(dataUrl: string): string { return dataUrl.slice(dataUrl.indexOf(",") + 1); }
+  /** Creates (and tracks) a same-process blob URL for inert PDF content. */
+  #objectUrl(base64: string, mimeType: string): string {
+    this.#revokeObjectUrl();
+    const blob = new Blob([this.#base64Bytes(base64)], { type: mimeType });
+    this.#activeObjectUrl = URL.createObjectURL(blob);
+    return this.#activeObjectUrl;
+  }
+  #revokeObjectUrl(): void {
+    if (this.#activeObjectUrl) { URL.revokeObjectURL(this.#activeObjectUrl); this.#activeObjectUrl = undefined; }
+  }
   #formatBytes(value: number): string { return value < 1024 ? `${value} B` : `${(value / 1024).toFixed(1)} KB`; }
 }
 

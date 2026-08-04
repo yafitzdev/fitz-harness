@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; media-src data: https: http:; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-src data: https: http:">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; media-src data: https: http:; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-src data: blob: https: http:">
     <title>Fitz Codex</title>
     <link rel="stylesheet" href="styles.css">
   </head>
@@ -198,92 +198,6 @@
 
         <section id="messages" class="messages" aria-live="polite"></section>
 
-        <div class="composer-dock">
-          <button id="scroll-to-bottom" class="scroll-to-bottom" type="button" aria-label="Go to latest message" title="Go to latest message" hidden>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v15M5.5 12.5 12 19l6.5-6.5"></path></svg>
-          </button>
-          <form id="composer" class="composer-card">
-            <div id="composer-attachments" class="composer-attachments" hidden></div>
-            <div id="new-chat-context" class="new-chat-context" hidden>
-              <button id="new-chat-project-control" class="new-chat-context-item project-context-control" type="button" title="Don't work in a project" aria-label="Don't work in a project">
-                <svg class="context-project-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
-                <svg class="context-remove-icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.2"></circle><path d="m7.7 7.7 4.6 4.6M12.3 7.7l-4.6 4.6"></path></svg>
-                <span id="new-chat-project"></span>
-              </button>
-              <div class="context-control-wrap">
-                <button id="new-chat-environment-control" class="new-chat-context-item" type="button" aria-label="Choose execution environment" aria-expanded="false"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4.2" width="14" height="9.4" rx="1.4"></rect><path d="M1.8 16h16.4"></path></svg><span id="new-chat-environment-label">Local</span></button>
-                <div id="new-chat-environment-menu" class="popover context-choice-menu environment-choice-menu" hidden>
-                  <small>Workspace</small>
-                  <button type="button" data-environment-choice="local"><svg viewBox="0 0 20 20"><rect x="3" y="4.2" width="14" height="9.4" rx="1.4"></rect><path d="M1.8 16h16.4"></path></svg><span>Work locally</span><b>✓</b></button>
-                  <button type="button" data-environment-choice="worktree"><svg viewBox="0 0 20 20"><path d="M4 6h8M12 3l3 3-3 3M16 14H8M8 11l-3 3 3 3"></path></svg><span>New worktree</span></button>
-                  <button type="button" data-environment-choice="cloud" disabled><svg viewBox="0 0 20 20"><path d="M5.5 15.5h9a3 3 0 0 0 .5-6 5 5 0 0 0-9.4-1.4A3.8 3.8 0 0 0 5.5 15.5z"></path></svg><span>Cloud</span></button>
-                  <div id="create-worktree-form" class="create-branch-form" hidden><input id="new-worktree-branch" placeholder="Worktree branch" autocomplete="off"><button id="create-worktree-submit" type="button">Create</button></div>
-                  <hr>
-                  <button type="button" data-environment-choice="usage"><svg viewBox="0 0 20 20"><path d="M4 14.5a7 7 0 1 1 12 0"></path><path d="m10 11 3-3"></path></svg><span>Usage remaining</span><svg class="choice-chevron" viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"></path></svg></button>
-                </div>
-              </div>
-              <div class="context-control-wrap">
-                <button id="new-chat-branch-control" class="new-chat-context-item" type="button" aria-label="Choose branch" aria-expanded="false"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="6" cy="4.5" r="1.5"></circle><circle cx="6" cy="15.5" r="1.5"></circle><circle cx="14" cy="7" r="1.5"></circle><path d="M6 6v8M7.5 12.5c4 0 6.5-1.5 6.5-4"></path></svg><span id="new-chat-branch-label">main</span></button>
-                <div id="new-chat-branch-menu" class="popover context-choice-menu branch-choice-menu" hidden>
-                  <label class="branch-search"><svg viewBox="0 0 20 20"><circle cx="8.5" cy="8.5" r="5"></circle><path d="m12.2 12.2 4 4"></path></svg><input id="branch-search" type="search" placeholder="Search branches" autocomplete="off"></label>
-                  <small>Branches</small>
-                  <div id="branch-list" class="branch-list"></div>
-                  <div id="create-branch-form" class="create-branch-form" hidden><input id="new-branch-name" placeholder="New branch name" autocomplete="off"><button id="create-branch-submit" type="button">Create</button></div>
-                  <button id="show-create-branch" class="create-branch-toggle" type="button"><svg viewBox="0 0 20 20"><path d="M10 4v12M4 10h12"></path></svg><span>Create and checkout new branch…</span></button>
-                </div>
-              </div>
-            </div>
-            <textarea id="prompt" rows="1" placeholder="Do anything" aria-label="Message" disabled></textarea>
-            <div class="composer-toolbar">
-              <div class="composer-tools">
-                <button id="attach" class="icon-button" type="button" title="Attach a file" aria-label="Attach a file" disabled>
-                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"></path></svg>
-                </button>
-                <div class="access-mode-wrap">
-                  <button id="access-mode-toggle" class="access-label" type="button" aria-label="Tool access mode" aria-expanded="false">
-                    <svg id="access-mode-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.8 16 5v4.4c0 3.8-2.4 6.3-6 7.8-3.6-1.5-6-4-6-7.8V5z"></path><path d="M10 7v3.2M10 13h.01"></path></svg><span id="access-mode-label">Full access</span>
-                  </button>
-                  <div id="access-mode-menu" class="popover access-mode-menu" hidden>
-                    <button type="button" data-access-mode="full"><svg viewBox="0 0 20 20"><path d="M10 2.8 16 5v4.4c0 3.8-2.4 6.3-6 7.8-3.6-1.5-6-4-6-7.8V5z"></path><path d="M10 7v3.2M10 13h.01"></path></svg><span><strong>Full access</strong><small>Run all tools automatically</small></span></button>
-                    <button type="button" data-access-mode="ask"><svg viewBox="0 0 20 20"><path d="M10 2.8 16 5v4.4c0 3.8-2.4 6.3-6 7.8-3.6-1.5-6-4-6-7.8V5z"></path><path d="M8.4 8.1a1.8 1.8 0 1 1 2.5 1.7c-.8.4-.9.8-.9 1.3M10 13.7h.01"></path></svg><span><strong>Ask first</strong><small>Approve commands and edits inline</small></span></button>
-                    <button type="button" data-access-mode="read-only"><svg viewBox="0 0 20 20"><rect x="4.2" y="8.5" width="11.6" height="8" rx="2"></rect><path d="M6.8 8.5V6.3a3.2 3.2 0 0 1 6.4 0v2.2"></path></svg><span><strong>Read only</strong><small>Allow inspection, block changes</small></span></button>
-                  </div>
-                </div>
-              </div>
-              <div class="composer-controls">
-                <div class="context-usage-wrap">
-                  <button id="context-meter" class="context-meter" type="button" title="Context window usage" aria-label="Context window usage"></button>
-                  <div id="context-usage-popover" class="popover context-usage-popover" hidden>
-                    <span>Context window:</span><strong id="context-percent">0% full</strong><b id="context-tokens">0 / 128k tokens used</b>
-                    <button id="context-compact" type="button">Compact now</button><small id="context-compact-status" hidden></small>
-                  </div>
-                </div>
-                <div class="model-picker">
-                  <button id="model-toggle" class="model-toggle" type="button" aria-label="Model settings" aria-expanded="false" disabled><span id="model-summary">Model</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"></path></svg></button>
-                  <div id="model-menu" class="popover model-menu" hidden>
-                    <button class="setting-row" type="button" data-setting="model"><span>Model</span><span><span id="model-value">Model</span><svg viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"></path></svg></span></button>
-                    <button class="setting-row" type="button" data-setting="effort"><span>Effort</span><span><span id="effort-value">Medium</span><svg viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"></path></svg></span></button>
-                    <div class="settings-divider"></div>
-                    <button id="advanced-settings" class="advanced-row" type="button" aria-expanded="false"><span>Advanced</span><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></button>
-                    <div id="advanced-settings-panel" class="advanced-settings-panel" hidden>
-                      <label for="temperature"><span>Temperature</span><output id="temperature-value" for="temperature">0.4</output></label>
-                      <input id="temperature" type="range" min="0" max="2" step="0.1" value="0.4">
-                      <small>Lower is focused; higher is more varied.</small>
-                    </div>
-                    <div id="settings-submenu" class="popover settings-submenu" hidden></div>
-                    <select id="model" aria-label="Model route" hidden disabled></select>
-                    <select id="effort" aria-label="Effort" hidden><option value="2048">Light</option><option value="8192" selected>Medium</option><option value="16384">High</option></select>
-                  </div>
-                </div>
-                <span id="status" class="run-status visually-hidden" data-state="loading">Connecting</span>
-                <button id="send" class="send-button" type="submit" title="Send message" aria-label="Send message" disabled>
-                  <svg class="send-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15V5M6 9l4-4 4 4"></path></svg>
-                  <svg class="stop-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="6" y="6" width="8" height="8" rx="1"></rect></svg>
-                </button>
-              </div>
-            </div>
-          </form>
-        </div>
         <div hidden aria-hidden="true">
           <button id="context-add" type="button"></button><button id="add-artifact" type="button"></button>
           <span id="engine-state"></span><span id="route-state"></span><span id="queue-count"></span>

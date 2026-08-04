@@ -15,11 +15,13 @@ const activityTimeline = readFileSync(new URL("./ui/chat/activity-timeline.ts", 
 const reasoningView = readFileSync(new URL("./ui/chat/reasoning-view.ts", import.meta.url), "utf8");
 const agentRunController = readFileSync(new URL("./ui/chat/agent-run-controller.ts", import.meta.url), "utf8");
 const composerControls = readFileSync(new URL("./ui/chat/composer-controls.ts", import.meta.url), "utf8");
+const composer = readFileSync(new URL("./ui/chat/composer.ts", import.meta.url), "utf8");
 const connectionWorkspace = readFileSync(new URL("./ui/connections/connection-workspace.ts", import.meta.url), "utf8");
 const pluginCatalog = readFileSync(new URL("./ui/plugins/plugin-catalog.ts", import.meta.url), "utf8");
 const resourceInspector = readFileSync(new URL("./ui/inspector/resource-inspector.ts", import.meta.url), "utf8");
 const inspectorPanel = readFileSync(new URL("./ui/inspector/inspector-panel.ts", import.meta.url), "utf8");
 const projectSidebar = readFileSync(new URL("./ui/sidebar/project-sidebar.ts", import.meta.url), "utf8");
+const composerCss = readFileSync(new URL("./ui/chat/composer.css", import.meta.url), "utf8");
 const styles = [
   readFileSync(new URL("./renderer/styles.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/theme/tokens.css", import.meta.url), "utf8"),
@@ -28,6 +30,7 @@ const styles = [
   readFileSync(new URL("./ui/chat/activity-timeline.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/reasoning-view.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/composer-controls.css", import.meta.url), "utf8"),
+  composerCss,
   readFileSync(new URL("./ui/connections/connection-workspace.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/plugins/plugin-catalog.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/sidebar/project-sidebar.css", import.meta.url), "utf8"),
@@ -38,7 +41,7 @@ const preload = readFileSync(new URL("./preload.ts", import.meta.url), "utf8");
 
 describe("desktop renderer shell", () => {
   it("wires every visible shell action to a renderer interaction", () => {
-    const actions = [
+    const rendererActions = [
       "sidebar-menu",
       "sidebar-resizer",
       "new-session",
@@ -47,22 +50,20 @@ describe("desktop renderer shell", () => {
       "connection-status",
       "context-toggle",
       "context-add",
-      "attach",
-      "send",
       "add-artifact",
       "choose-project-folder",
-      "model-toggle",
-      "context-meter",
-      "context-compact",
-      "advanced-settings",
       "task-menu-toggle",
       "rename-task",
       "archive-task",
       "update",
     ];
-    for (const id of actions) {
+    for (const id of rendererActions) {
       expect(html, `missing control #${id}`).toContain(`id="${id}"`);
       expect(renderer, `missing renderer binding for #${id}`).toContain(`element("${id}")`);
+    }
+    for (const id of ["attach", "send", "model-toggle", "context-meter", "context-compact", "advanced-settings", "scroll-to-bottom"]) {
+      expect(composer, `missing composer control #${id}`).toContain(`id="${id}"`);
+      expect(composer, `missing composer binding for #${id}`).toContain(`this.el<HTMLButtonElement>("#${id}")`);
     }
   });
 
@@ -155,7 +156,7 @@ describe("desktop renderer shell", () => {
     expect(connectionWorkspace).toContain('consumerFixedRouteId');
     expect(connectionWorkspace).toContain('const LOCAL_CONNECTION_ID = "hosted--local"');
     expect(renderer).not.toContain('connectionWorkspace.selectedConnectionId');
-    expect(renderer).toContain('routeId: composerControls.routeId as FixedRouteId');
+    expect(renderer).toContain('routeId: composer.controls.routeId as FixedRouteId');
     expect(renderer).not.toContain('candidate.routeId === card.id');
     expect(connectionWorkspace).toContain('testRecipe({ id: model.recipeId');
     expect(connectionWorkspace).toContain("private views(): ConnectionView[]");
@@ -232,7 +233,7 @@ describe("desktop renderer shell", () => {
   });
 
   it("exposes working keyboard, retry, attachment, and cancellation paths", () => {
-    expect(renderer).toContain('event.key === "Enter"');
+    expect(composer).toContain('event.key === "Enter"');
     expect(renderer).toContain('connectionStatus.addEventListener("click"');
     expect(renderer).toContain("artifactFile.click()");
     expect(renderer).toContain('api(`/api/v1/artifacts/${artifact.id}`, "DELETE")');
@@ -249,8 +250,8 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('/api/v1/management/recipes/${encodeURIComponent(id)}');
     expect(renderer).toContain("sessionTokenEstimate += estimateTokens");
     expect(renderer).toContain('api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" })');
-    expect(renderer).toContain("max_tokens: composerControls.maxTokens");
-    expect(renderer).toContain("if (prompt.value.trim().length > 0) void steerPrompt()");
+    expect(renderer).toContain("max_tokens: composer.controls.maxTokens");
+    expect(renderer).toContain("if (content.trim().length > 0) void steerPrompt(content)");
     expect(renderer).toContain("else void agentRuns.cancel()");
     expect(renderer).toContain("activityTimeline.appendSteer(content)");
     expect(agentRunController).toContain('this.#options.api(`/api/v1/agent/runs/${this.#runId}`, "DELETE")');
@@ -267,19 +268,19 @@ describe("desktop renderer shell", () => {
       "branch-search",
       "create-branch-form",
       "create-worktree-form",
-    ]) expect(html).toContain(`id="${id}"`);
+    ]) expect(composer).toContain(`id="${id}"`);
 
     expect(renderer).toContain('newChatProjectDetached = true');
-    expect(renderer).toContain("window.fitz.gitBranches(rootPath)");
-    expect(renderer).toContain("window.fitz.checkoutBranch(rootPath, branch)");
-    expect(renderer).toContain("window.fitz.createBranch(rootPath, branch)");
-    expect(renderer).toContain("window.fitz.createWorktree(project.rootPath, branch)");
+    expect(composer).toContain("this.options.bridge.gitBranches(rootPath)");
+    expect(composer).toContain("this.options.bridge.checkoutBranch(rootPath, branch)");
+    expect(composer).toContain("this.options.bridge.createBranch(rootPath, branch)");
+    expect(composer).toContain("this.options.bridge.createWorktree(rootPath, branch)");
     expect(main).toContain('ipcMain.handle("fitz:git-branches"');
     expect(main).toContain('ipcMain.handle("fitz:git-checkout-branch"');
     expect(main).toContain('ipcMain.handle("fitz:git-create-branch"');
     expect(main).toContain('ipcMain.handle("fitz:git-create-worktree"');
-    expect(styles).toContain("bottom: 100%");
-    expect(styles).not.toContain("bottom: calc(100% - 12px)");
+    expect(composerCss).toContain("bottom: 100%");
+    expect(composerCss).not.toContain("bottom: calc(100% - 12px)");
   });
 
   it("renders durable Codex-style agent activity with tool-specific symbols", () => {
@@ -416,8 +417,8 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".messages > * { grid-column: 2; }");
     expect(styles).toContain("left: var(--conversation-gutter)");
     expect(styles).toContain("bottom: 12px");
-    expect(styles).toContain(".composer-dock::before");
-    expect(styles).toContain("inset: var(--codex-radius-3xl) 0 -12px");
+    expect(composerCss).toContain(".composer-dock::before");
+    expect(composerCss).toContain("inset: var(--codex-radius-3xl) 0 -12px");
     expect(styles).toContain("--conversation-scrollbar: 0px");
     expect(styles).toContain(".workspace.inspector-open { --conversation-viewport: calc(100% - var(--inspector-width))");
     expect(renderer).toContain("new ConversationLayout({");
@@ -428,35 +429,35 @@ describe("desktop renderer shell", () => {
     expect(conversationLayout).toContain('workspace.style.setProperty("--conversation-width", `${conversationWidth}px`)');
     expect(conversationLayout).toContain('workspace.style.setProperty("--conversation-gutter", `${gutter}px`)');
     expect(conversationLayout).toContain("composer.offsetHeight");
-    expect(html).toContain('id="scroll-to-bottom"');
+    expect(composer).toContain('id="scroll-to-bottom"');
     expect(conversationLayout).toContain('options.messages.addEventListener("scroll", this.updateScrollButton');
     expect(conversationLayout).toContain('messages.scrollTo({ top: this.#options.messages.scrollHeight, behavior: "smooth" })');
     expect(styles).not.toContain("scroll-behavior: smooth");
     expect(renderer).toContain("if (!messages.childElementCount) showLanding(true)");
     expect(renderer).toContain("messages.scrollTop = messages.scrollHeight");
     expect(conversationLayout).toContain("distanceFromBottom < 48");
-    expect(styles).toContain(".scroll-to-bottom");
-    expect(styles).toContain("bottom: calc(100% + 12px)");
+    expect(composerCss).toContain(".scroll-to-bottom");
+    expect(composerCss).toContain("bottom: calc(100% + 12px)");
   });
 
   it("expands Advanced model settings and sends the chosen temperature and output limit", () => {
-    for (const id of ["advanced-settings-panel", "temperature", "temperature-value"]) expect(html).toContain(`id="${id}"`);
+    for (const id of ["advanced-settings-panel", "temperature", "temperature-value"]) expect(composer).toContain(`id="${id}"`);
     expect(composerControls).toContain("this.toggleAdvancedSettings()");
     expect(composerControls).toContain('this.storage.setItem("fitz-temperature", this.elements.temperature.value)');
-    expect(renderer).toContain("temperature: composerControls.temperature");
-    expect(renderer).toContain("max_tokens: composerControls.maxTokens");
+    expect(renderer).toContain("temperature: composer.controls.temperature");
+    expect(renderer).toContain("max_tokens: composer.controls.maxTokens");
     expect(styles).toContain('.advanced-row[aria-expanded="true"] svg');
     expect(styles).toContain(".advanced-settings-panel");
     expect(styles).toContain(".model-menu { right: 0; bottom: 34px; width: 286px;");
     expect(styles).toContain(".settings-submenu.open-left");
-    expect(html).toContain('<option value="2048">Light</option><option value="8192" selected>Medium</option><option value="16384">High</option>');
-    expect(html).not.toContain('data-setting="speed"');
-    expect(html).not.toContain("Extra High");
-    expect(html).not.toContain("Ultra");
+    expect(composer).toContain('<option value="2048">Light</option><option value="8192" selected>Medium</option><option value="16384">High</option>');
+    expect(composer).not.toContain('data-setting="speed"');
+    expect(composer).not.toContain("Extra High");
+    expect(composer).not.toContain("Ultra");
   });
 
   it("silently warms the selected route after the first composer character", () => {
-    expect(renderer).toContain("agentRuns.scheduleWarmup(prompt.value, composerControls.routeId)");
+    expect(renderer).toContain("agentRuns.scheduleWarmup(composer.value, composer.controls.routeId)");
     expect(agentRunController).toContain('this.#options.api("/api/v1/inference/warm", "POST", { model })');
     expect(agentRunController).toContain("if (this.#composerHadText || this.active || !model) return");
     expect(agentRunController).toContain("}, 120)");
@@ -469,18 +470,18 @@ describe("desktop renderer shell", () => {
   });
 
   it("recalls the session's own user prompts with the up and down arrow keys", () => {
-    expect(renderer).toContain("let promptHistory: string[] = []");
-    expect(renderer).toContain("let promptHistoryIndex = -1");
-    expect(renderer).toContain("let promptDraft = \"\"");
-    expect(renderer).toContain('event.key === "ArrowUp" || event.key === "ArrowDown"');
-    expect(renderer).toContain('navigatePromptHistory(event.key === "ArrowUp" ? -1 : 1)');
-    expect(renderer).toContain("promptDraft = prompt.value");
-    expect(renderer).toContain("prompt.value = promptDraft");
-    expect(renderer).toContain("prompt.value = promptHistory[promptHistoryIndex] ?? \"\"");
-    expect(renderer).toContain("function rebuildPromptHistory(transcript: Json[]): void");
+    expect(composer).toContain("promptHistory: string[] = []");
+    expect(composer).toContain("promptHistoryIndex = -1");
+    expect(composer).toContain("promptDraft = \"\"");
+    expect(composer).toContain('event.key === "ArrowUp" || event.key === "ArrowDown"');
+    expect(composer).toContain('navigatePromptHistory(event.key === "ArrowUp" ? -1 : 1)');
+    expect(composer).toContain("this.promptDraft = this.prompt.value");
+    expect(composer).toContain("this.prompt.value = this.promptDraft");
+    expect(composer).toContain("this.prompt.value = this.promptHistory[this.promptHistoryIndex] ?? \"\"");
+    expect(composer).toContain("rebuildHistory(texts: string[])");
     expect(renderer).toContain("entry.kind === \"message\" && entry.role === \"user\"");
-    expect(renderer).toContain("promptHistory.push(content)");
-    expect(renderer).toContain("rebuildPromptHistory(transcript.data ?? [])");
+    expect(composer).toContain("this.promptHistory.push(text)");
+    expect(renderer).toContain("composer.rebuildHistory((transcript.data ?? [])");
   });
 
   it("keeps every dropdown and overflow surface at the compact Codex menu density", () => {
@@ -493,7 +494,7 @@ describe("desktop renderer shell", () => {
   });
 
   it("manually compacts context from the inline usage popover", () => {
-    expect(html).toContain('id="context-compact"');
+    expect(composer).toContain('id="context-compact"');
     expect(renderer).toContain('api(`/api/v1/sessions/${currentSession}/compact`, "POST"');
     expect(renderer).toContain("estimateTranscriptContext");
     expect(renderer).toContain('activityTimeline.appendContext("Context compacted")');
@@ -576,7 +577,7 @@ describe("desktop renderer shell", () => {
     expect(resourceInspector).toContain("window.fitz.previewResource({ projectRoot, reference, searchRoots: this.#options.getSearchRoots() })");
     expect(resourceInspector).toContain("this.#resourceError(error, reference)");
     expect(resourceInspector).toContain("this.#render(this.#preview)");
-    expect(resourceInspector).toContain('frame.setAttribute("sandbox", "")');
+    expect(resourceInspector).toContain('frame.setAttribute("sandbox", "allow-same-origin")');
     expect(styles).toContain(".inspector-panel");
     expect(styles).not.toContain(".workspace.inspector-open .messages { margin-right: var(--inspector-width); }");
     expect(styles).toContain(".inspector-resizer");
@@ -600,6 +601,33 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(":is(.inspector-source, .markdown-code) .hljs-keyword");
     expect(preload).toContain('ipcRenderer.invoke("fitz:preview-resource", input)');
     expect(main).toContain('ipcMain.handle("fitz:preview-resource"');
+  });
+
+  it("previews pasted images and PDFs from their composer chips in the Inspector", () => {
+    expect(composer).toContain('item.type.startsWith("image/") ? "image" : item.type === "application/pdf" ? "pdf" : undefined');
+    expect(composer).toContain("readPastedFile(file, kind)");
+    expect(composer).toContain('chip.className = `attachment-chip ${kind === "pdf" ? "pdf-chip" : "image-chip"}`;');
+    expect(composer).toContain('preview.className = `attachment-preview ${kind === "pdf" ? "pdf-preview" : "image-preview"}`;');
+    expect(composer).toContain('preview.title = kind === "pdf" ? "Preview PDF" : "Preview image";');
+    expect(renderer).toContain("inspectorPanel.previewImage(dataUrl, mimeType, name)");
+    expect(renderer).toContain("inspectorPanel.previewPdf(dataUrl, mimeType, name)");
+    expect(renderer).toContain('name: pasted.kind === "pdf" ? pasted.name : `screenshot-${Date.now()}.png`');
+    expect(composer).toContain('this.pastedFiles.push({ dataUrl, mimeType: file.type || "application/pdf", name, kind, chip })');
+    expect(inspectorPanel).toContain("previewImage(dataUrl: string, mimeType: string, name: string): void");
+    expect(inspectorPanel).toContain("previewPdf(dataUrl: string, mimeType: string, name: string): void");
+    expect(resourceInspector).toContain("previewImage(dataUrl: string, mimeType: string, name: string): void");
+    expect(resourceInspector).toContain("previewPdf(dataUrl: string, mimeType: string, name: string): void");
+    expect(resourceInspector).toContain('img.className = "inspector-media"');
+    expect(resourceInspector).toContain("frame.src = this.#objectUrl(response.body, artifact.mimeType)");
+    expect(resourceInspector).toContain('frame.src = this.#objectUrl(this.#base64FromDataUrl(dataUrl), mimeType)');
+    // Pasted and attached PDFs are framed as blob URLs; the CSP must allow them.
+    expect(html).toContain('frame-src data: blob: https: http:');
+    expect(main).toContain("plugins: true");
+    expect(composerCss).toContain(".image-chip .attachment-preview { display: block; padding: 0; border-radius: 10px; cursor: zoom-in; }");
+    expect(composerCss).toContain(".image-chip .attachment-preview:hover img, .image-chip .attachment-preview:focus-visible img");
+    expect(composerCss).toContain(".pdf-chip .attachment-preview { display: grid; grid-template-rows: 1fr auto; place-items: center; gap: 3px; padding: 8px; text-align: center; cursor: zoom-in; }");
+    expect(composerCss).toContain(".pdf-chip .attachment-preview svg");
+    expect(composerCss).toContain(".pdf-chip .pdf-name");
   });
 
   it("pairs a desktop without exposing its durable bearer credential to the renderer", () => {

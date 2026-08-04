@@ -119,4 +119,44 @@ describe("InspectorPanel", () => {
     view.resetPreview();
     expect(content.childElementCount).toBe(0);
   });
+
+  it("previews a pasted image from its data URL in the Inspector", () => {
+    const host = mount();
+    const view = panel(host);
+    const dataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+    view.previewImage(dataUrl, "image/png", "Pasted image");
+
+    expect(view.isOpen).toBe(true);
+    const img = view.element.querySelector<HTMLImageElement>(".inspector-media")!;
+    expect(img).not.toBeNull();
+    expect(img.src).toBe(dataUrl);
+    expect(img.alt).toBe("Pasted image");
+    expect(view.element.querySelector("#inspector-title")?.textContent).toBe("Pasted image");
+    expect(view.element.querySelector("#inspector-location")?.textContent).toContain("image/png");
+  });
+
+  it("previews a pasted PDF from its data URL in the Inspector", () => {
+    const host = mount();
+    const view = panel(host);
+    const createObjectURL = vi.fn(() => "blob:test-pdf");
+    const revokeObjectURL = vi.fn();
+    Object.assign(URL, { createObjectURL, revokeObjectURL });
+    const dataUrl = "data:application/pdf;base64,JVBERi0xLjQK";
+
+    view.previewPdf(dataUrl, "application/pdf", "manual.pdf");
+
+    expect(view.isOpen).toBe(true);
+    const frame = view.element.querySelector<HTMLIFrameElement>(".inspector-frame")!;
+    expect(frame).not.toBeNull();
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(frame.src).toBe("blob:test-pdf");
+    expect(frame.title).toBe("manual.pdf");
+    expect(frame.getAttribute("sandbox")).toBe("allow-same-origin");
+    expect(view.element.querySelector("#inspector-title")?.textContent).toBe("manual.pdf");
+    expect(view.element.querySelector("#inspector-location")?.textContent).toContain("application/pdf");
+
+    view.close();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:test-pdf");
+  });
 });
