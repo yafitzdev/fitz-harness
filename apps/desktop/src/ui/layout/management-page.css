@@ -1,0 +1,18 @@
+/* Shared chrome for the Connections, Playbooks, Plugins, and Administration
+   tabs. Every management page renders the same header and content column so
+   switching between tabs never shifts the layout. */
+.management-page { --management-content-width: 900px; position: absolute; z-index: 8; inset: 0; overflow-y: auto; scrollbar-gutter: stable both-edges; background: var(--bg); }
+.management-page-header { height: 50px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid var(--border-soft); }
+.management-page-tabs { display: flex; gap: 4px; }
+.management-page-tabs button { height: 30px; padding: 0 11px; border: 0; border-radius: 9px; color: var(--muted); background: transparent; cursor: pointer; }
+.management-page-tabs button.active { color: var(--text); background: rgba(255,255,255,.08); }
+.management-actions { display: flex; align-items: center; gap: 7px; }
+.compact-button { padding: 7px 14px; border-radius: 9px; }
+.management-page-content { width: min(var(--management-content-width), calc(100% - 48px)); margin: 44px auto 80px; }
+.management-page-content h1 { margin: 0; font-size: 28px; font-weight: 560; letter-spacing: -.03em; }
+.management-page-content > p { margin: 5px 0 24px; color: var(--muted); font-size: 15px; }
+.management-search { height: 40px; display: flex; align-items: center; gap: 9px; margin-bottom: 28px; padding: 0 13px; border: 1px solid #4b4e4a; border-radius: 20px; background: #303230; color: var(--muted); }
+.management-search:focus-within { border-color: #6b6e69; }
+.management-search svg { flex: 0 0 auto; }
+.management-search input { width: 100%; border: 0; outline: 0; background: transparent; color: var(--text); }
+.management-search input::placeholder { color: #9b9e98; }

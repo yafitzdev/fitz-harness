@@ -7,6 +7,7 @@ const markdown = readFileSync(new URL("./markdown.ts", import.meta.url), "utf8")
 const syntaxHighlighting = readFileSync(new URL("./syntax-highlighting.ts", import.meta.url), "utf8");
 const conversationLayout = readFileSync(new URL("./ui/layout/conversation-layout.ts", import.meta.url), "utf8");
 const workspacePages = readFileSync(new URL("./ui/layout/workspace-pages.ts", import.meta.url), "utf8");
+const managementPage = readFileSync(new URL("./ui/layout/management-page.ts", import.meta.url), "utf8");
 const resizablePane = readFileSync(new URL("./ui/primitives/resizable-pane.ts", import.meta.url), "utf8");
 const customSelect = readFileSync(new URL("./ui/primitives/custom-select.ts", import.meta.url), "utf8");
 const contextMenu = readFileSync(new URL("./ui/primitives/context-menu.ts", import.meta.url), "utf8");
@@ -40,6 +41,7 @@ const styles = [
   readFileSync(new URL("./ui/playbooks/playbook-workspace.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/sidebar/project-sidebar.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/inspector/inspector-panel.css", import.meta.url), "utf8"),
+  readFileSync(new URL("./ui/layout/management-page.css", import.meta.url), "utf8"),
 ].join("\n");
 const main = readFileSync(new URL("./main.ts", import.meta.url), "utf8");
 const preload = readFileSync(new URL("./preload.ts", import.meta.url), "utf8");
@@ -152,10 +154,10 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('id="manage-playbooks"');
     expect(html).toContain('id="manage-connections"');
     expect(html).not.toContain('id="connections-page"');
-    expect(connectionWorkspace).toContain('CONNECTIONS_TEMPLATE');
-    expect(connectionWorkspace).toContain('this.root.innerHTML = CONNECTIONS_TEMPLATE');
+    expect(connectionWorkspace).toContain('CONNECTION_EDITOR_TEMPLATE');
+    expect(connectionWorkspace).toContain("new ManagementPageLayout(this.root");
     expect(connectionWorkspace).toContain('id="consumer-connection-url"');
-    expect(connectionWorkspace).toContain('id="connection-search"');
+    expect(connectionWorkspace).toContain('id: "connection-search"');
     expect(connectionWorkspace).toContain('id="connection-editor"');
     expect(renderer).toContain("new ConnectionWorkspaceController");
     expect(renderer).toContain("mount: workspace,");
@@ -189,8 +191,8 @@ describe("desktop renderer shell", () => {
   it("provides an inline Pi package and skills workspace", () => {
     expect(html).toContain('id="manage-plugins"');
     expect(html).toContain('id="plugins-page"');
-    expect(html).toContain('id="plugins-tab"');
-    expect(html).toContain('id="skills-tab"');
+    expect(renderer).toContain('{ id: "plugins-tab", label: "Plugins", active: true }');
+    expect(renderer).toContain('{ id: "skills-tab", label: "Skills" }');
     expect(html).toContain('id="plugin-catalog"');
     expect(html).toContain('id="installed-plugins-toggle"');
     expect(html).toContain('id="plugin-catalog-toggle"');
@@ -207,7 +209,8 @@ describe("desktop renderer shell", () => {
   it("opens Playbooks as a first-class searchable workspace page", () => {
     expect(html).toContain('id="playbook-page"');
     expect(html).not.toContain('data-management-view=');
-    expect(html).toContain('id="playbook-search"');
+    expect(renderer).toContain('search: { id: "playbook-search"');
+    expect(renderer).toContain('id: "management-browser"');
     expect(renderer).toContain("openPlaybookPage()");
     expect(playbookWorkspace).toContain("render(): void");
     expect(renderer).toContain("FIXED_ROUTES");
@@ -674,7 +677,7 @@ describe("desktop renderer shell", () => {
     expect(administrationPage).toContain('/routes`, "PUT", { routeIds }');
     expect(administrationPage).toContain('/quota`, "PUT", quota');
     expect(administrationPage).toContain('revokeAdminDevice(device.id)');
-    expect(styles).toContain(".administration-content");
+    expect(html).toContain('id="administration-sections"');
     expect(styles).toContain(".tool-policy");
     expect(html).toContain('id="select-popover"');
     expect(renderer).toContain("new CustomSelectController(selectPopover, closePopovers)");
@@ -719,6 +722,28 @@ describe("desktop renderer shell", () => {
     expect(resizablePane).toContain('setAttribute("aria-valuenow"');
     expect(contextMenu).toContain("openBeside(anchor: HTMLElement");
     expect(contextMenu).toContain('button.classList.toggle("danger"');
+  });
+
+  it("composes every management tab from the shared layout component", () => {
+    expect(renderer).toContain('import { ManagementPageLayout, managementRefreshIcon } from "./ui/layout/management-page.js"');
+    expect(renderer).toContain("new ManagementPageLayout(playbookPage");
+    expect(renderer).toContain("new ManagementPageLayout(pluginsPage");
+    expect(renderer).toContain("new ManagementPageLayout(administrationPage");
+    expect(connectionWorkspace).toContain("new ManagementPageLayout(this.root");
+    expect(html).not.toContain('class="management-page-header"');
+    expect(html).not.toContain('class="management-page-tabs"');
+    expect(html).not.toContain('class="management-actions"');
+    expect(html).not.toContain('class="management-page-content"');
+    expect(html).not.toContain('class="management-search"');
+    expect(styles).not.toContain(".plugin-page-tabs");
+    expect(styles).not.toContain(".plugin-content");
+    expect(styles).not.toContain(".administration-content");
+    expect(managementPage).toContain('className = "management-page-header"');
+    expect(managementPage).toContain('className = "management-page-tabs"');
+    expect(managementPage).toContain('className = "management-actions"');
+    expect(managementPage).toContain('className = "management-page-content"');
+    expect(managementPage).toContain("addContent(options: ManagementPageContentOptions)");
+    expect(managementPage).toContain("setActiveTab(id: string): void");
   });
 
   it("renders and exports host-redacted diagnostics from the administration workspace", () => {

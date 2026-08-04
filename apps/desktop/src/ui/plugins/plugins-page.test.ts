@@ -1,30 +1,41 @@
 // @vitest-environment happy-dom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ManagementPageLayout, managementRefreshIcon } from "../layout/management-page.js";
 import { PluginsPageController, type PluginsPageOptions } from "./plugins-page.js";
 
 function buildPage(): HTMLElement {
   const page = document.createElement("section");
   page.id = "plugins-page";
-  page.innerHTML = `
-    <header class="management-page-header plugin-page-tabs">
-      <div><button id="plugins-tab" class="active" type="button">Plugins</button><button id="skills-tab" type="button">Skills</button></div>
-      <button id="refresh-plugins" class="icon-button" type="button"></button>
-    </header>
-    <div class="management-page-content plugin-content">
-      <div id="plugins-view">
-        <h1>Plugins</h1>
-        <input id="plugin-search" type="search">
-        <section class="plugin-section"><button id="installed-plugins-toggle" type="button" aria-expanded="true"></button><div id="installed-plugins" class="plugin-grid"></div></section>
-        <section class="plugin-section"><button id="plugin-catalog-toggle" type="button" aria-expanded="true"></button><div id="plugin-catalog" class="plugin-grid"></div><button id="load-more-plugins" type="button" hidden>Load more</button></section>
-      </div>
-      <div id="skills-view" hidden>
-        <h1>Skills</h1>
-        <input id="skill-search" type="search">
-        <section><div id="installed-skills" class="plugin-grid"></div></section>
-      </div>
-    </div>
-  `;
+  page.className = "management-page";
+  const layout = new ManagementPageLayout(page, {
+    tabs: [{ id: "plugins-tab", label: "Plugins", active: true }, { id: "skills-tab", label: "Skills" }],
+    actions: [{ id: "refresh-plugins", icon: managementRefreshIcon, label: "Refresh packages" }],
+  });
+  const installed = document.createElement("section");
+  installed.className = "plugin-section";
+  installed.innerHTML = '<button id="installed-plugins-toggle" type="button" aria-expanded="true"></button><div id="installed-plugins" class="plugin-grid"></div>';
+  const discover = document.createElement("section");
+  discover.className = "plugin-section";
+  discover.innerHTML = '<button id="plugin-catalog-toggle" type="button" aria-expanded="true"></button><div id="plugin-catalog" class="plugin-grid"></div><button id="load-more-plugins" type="button" hidden>Load more</button>';
+  const skills = document.createElement("section");
+  skills.className = "plugin-section";
+  skills.innerHTML = '<div id="installed-skills" class="plugin-grid"></div>';
+  layout.addContent({
+    id: "plugins-view",
+    title: "Plugins",
+    description: "Extend Pi with packages from the community catalog.",
+    search: { id: "plugin-search", placeholder: "Search plugins" },
+    body: [installed, discover],
+  });
+  layout.addContent({
+    id: "skills-view",
+    hidden: true,
+    title: "Skills",
+    description: "Task-specific guidance currently available to Pi.",
+    search: { id: "skill-search", placeholder: "Search skills" },
+    body: [skills],
+  });
   document.body.append(page);
   return page;
 }

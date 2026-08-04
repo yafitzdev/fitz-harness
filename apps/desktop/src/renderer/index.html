@@ -105,9 +105,7 @@
         </section>
 
         <section id="administration-page" class="management-page administration-page" aria-label="Administration" hidden>
-          <header class="management-page-header"><button id="refresh-administration" class="icon-button" type="button" title="Refresh administration" aria-label="Refresh administration"><svg viewBox="0 0 20 20"><path d="M15.5 7A6 6 0 1 0 16 12"></path><path d="M15.5 3v4h-4"></path></svg></button></header>
-          <div class="administration-content">
-            <h1>Administration</h1><p>Pair devices, manage users, and control their access.</p>
+          <div id="administration-sections" class="administration-sections">
             <section class="admin-section"><div class="admin-section-heading"><button class="admin-section-toggle" type="button" data-section="pairing" aria-expanded="true" aria-controls="admin-pairing-body"><svg class="admin-section-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m7 5 5 5-5 5"></path></svg><h2>Pair a device</h2></button></div><div class="admin-section-body" id="admin-pairing-body"><form id="pairing-code-form" class="admin-inline-form"><label>Role<select id="pairing-code-role"><option value="consumer">Consumer</option><option value="agent">Agent</option><option value="administrator">Administrator</option></select></label><label>Expires<select id="pairing-code-ttl"><option value="600">10 minutes</option><option value="3600">1 hour</option><option value="86400">24 hours</option></select></label><button type="submit">Generate code</button></form><div id="pairing-code-result" class="pairing-code-result" hidden><div><small>One-time code</small><strong id="issued-pairing-code"></strong><span id="issued-pairing-expiry"></span></div><button id="copy-pairing-code" type="button">Copy</button></div></div></section>
             <section class="admin-section"><div class="admin-section-heading"><button class="admin-section-toggle" type="button" data-section="remote" aria-expanded="true" aria-controls="admin-remote-body"><svg class="admin-section-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m7 5 5 5-5 5"></path></svg><h2>Remote access</h2></button><button id="refresh-remote-access" type="button">Refresh</button></div><div class="admin-section-body" id="admin-remote-body"><p class="admin-section-description">Expose only the loopback host through private Tailscale HTTPS. Fitz never opens a public listener.</p><div id="remote-access-status" class="remote-access-status"></div><div class="remote-access-actions"><button id="enable-remote-access" type="button">Enable private HTTPS</button><button id="disable-remote-access" type="button">Disable</button></div><div id="remote-access-confirmation" class="remote-access-confirmation" hidden><span id="remote-access-confirmation-text"></span><div><button id="cancel-remote-access" type="button">Cancel</button><button id="confirm-remote-access" type="button">Confirm</button></div></div></div></section>
             <section class="admin-section"><div class="admin-section-heading"><button class="admin-section-toggle" type="button" data-section="startup" aria-expanded="true" aria-controls="admin-startup-body"><svg class="admin-section-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m7 5 5 5-5 5"></path></svg><h2>Host startup</h2></button><button id="refresh-host-startup" type="button">Refresh</button></div><div class="admin-section-body" id="admin-startup-body"><p class="admin-section-description">Start the packaged host invisibly when you sign in. Models remain unloaded until a request arrives.</p><div id="host-startup-status" class="host-startup-status"></div><div class="remote-access-actions"><button id="install-host-startup" type="button">Start at sign-in</button><button id="remove-host-startup" type="button">Remove startup</button></div><div id="host-startup-confirmation" class="remote-access-confirmation" hidden><span id="host-startup-confirmation-text"></span><div><button id="cancel-host-startup" type="button">Cancel</button><button id="confirm-host-startup" type="button">Confirm</button></div></div></div></section>
@@ -120,15 +118,7 @@
         </section>
 
         <section id="playbook-page" class="management-page" aria-label="Playbook management" hidden>
-          <header class="management-page-header">
-            <div class="management-actions"><button id="refresh-playbooks" class="icon-button" type="button" title="Refresh engines" aria-label="Refresh engines"><svg viewBox="0 0 20 20"><path d="M15.5 7A6 6 0 1 0 16 12"></path><path d="M15.5 3v4h-4"></path></svg></button></div>
-          </header>
-          <div id="management-browser" class="management-page-content">
-            <h1 id="management-title">Playbooks</h1>
-            <p id="management-description">Engine folders appear automatically. Configure and test their recipes here.</p>
-            <label class="management-search"><svg viewBox="0 0 20 20"><circle cx="9" cy="9" r="5.5"></circle><path d="m13 13 4 4"></path></svg><input id="playbook-search" type="search" placeholder="Search playbooks" autocomplete="off"></label>
-            <div id="playbook-list" class="playbook-list"></div>
-          </div>
+          <div id="playbook-list" class="playbook-list"></div>
           <section id="management-editor" class="management-editor" hidden>
             <button id="close-management-editor" class="management-back" type="button"><svg viewBox="0 0 20 20"><path d="m12 5-5 5 5 5"></path></svg><span>Back</span></button>
             <form id="engine-form" class="management-editor-form" hidden>
@@ -147,23 +137,9 @@
         </section>
 
         <section id="plugins-page" class="management-page plugins-page" aria-label="Pi packages" hidden>
-          <header class="management-page-header plugin-page-tabs">
-            <div><button id="plugins-tab" class="active" type="button">Plugins</button><button id="skills-tab" type="button">Skills</button></div>
-            <button id="refresh-plugins" class="icon-button" type="button" title="Refresh packages" aria-label="Refresh packages"><svg viewBox="0 0 20 20"><path d="M15.5 7A6 6 0 1 0 16 12"></path><path d="M15.5 3v4h-4"></path></svg></button>
-          </header>
-          <div class="management-page-content plugin-content">
-            <div id="plugins-view">
-              <h1>Plugins</h1><p>Extend Pi with packages from the community catalog.</p>
-              <label class="management-search"><svg viewBox="0 0 20 20"><circle cx="9" cy="9" r="5.5"></circle><path d="m13 13 4 4"></path></svg><input id="plugin-search" type="search" placeholder="Search plugins" autocomplete="off"></label>
-              <section class="plugin-section"><button class="plugin-section-toggle" id="installed-plugins-toggle" type="button" aria-expanded="true" aria-controls="installed-plugins-body"><svg class="plugin-section-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m7 5 5 5-5 5"></path></svg><h2>Installed</h2></button><div id="installed-plugins-body" class="plugin-section-body"><div id="installed-plugins" class="plugin-grid"></div></div></section>
-              <section class="plugin-section"><button class="plugin-section-toggle" id="plugin-catalog-toggle" type="button" aria-expanded="true" aria-controls="plugin-catalog-body"><svg class="plugin-section-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m7 5 5 5-5 5"></path></svg><h2>Discover</h2></button><div id="plugin-catalog-body" class="plugin-section-body"><div id="plugin-catalog" class="plugin-grid"></div><button id="load-more-plugins" class="quiet-button" type="button" hidden>Load more</button></div></section>
-            </div>
-            <div id="skills-view" hidden>
-              <h1>Skills</h1><p>Task-specific guidance currently available to Pi.</p>
-              <label class="management-search"><svg viewBox="0 0 20 20"><circle cx="9" cy="9" r="5.5"></circle><path d="m13 13 4 4"></path></svg><input id="skill-search" type="search" placeholder="Search skills" autocomplete="off"></label>
-              <section class="plugin-section"><h2>Installed</h2><div id="installed-skills" class="plugin-grid"></div></section>
-            </div>
-          </div>
+          <section class="plugin-section" id="plugins-installed-section"><button class="plugin-section-toggle" id="installed-plugins-toggle" type="button" aria-expanded="true" aria-controls="installed-plugins-body"><svg class="plugin-section-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m7 5 5 5-5 5"></path></svg><h2>Installed</h2></button><div id="installed-plugins-body" class="plugin-section-body"><div id="installed-plugins" class="plugin-grid"></div></div></section>
+          <section class="plugin-section" id="plugins-discover-section"><button class="plugin-section-toggle" id="plugin-catalog-toggle" type="button" aria-expanded="true" aria-controls="plugin-catalog-body"><svg class="plugin-section-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m7 5 5 5-5 5"></path></svg><h2>Discover</h2></button><div id="plugin-catalog-body" class="plugin-section-body"><div id="plugin-catalog" class="plugin-grid"></div><button id="load-more-plugins" class="quiet-button" type="button" hidden>Load more</button></div></section>
+          <section class="plugin-section" id="plugins-skills-section"><h2>Installed</h2><div id="installed-skills" class="plugin-grid"></div></section>
         </section>
 
         <section id="messages" class="messages" aria-live="polite"></section>

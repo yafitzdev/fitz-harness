@@ -11,6 +11,7 @@
 @import "../ui/playbooks/playbook-workspace.css";
 @import "../ui/sidebar/project-sidebar.css";
 @import "../ui/inspector/inspector-panel.css";
+@import "../ui/layout/management-page.css";
 
 * { box-sizing: border-box; }
 html, body { width: 100%; height: 100%; }
@@ -228,7 +229,6 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .folder-picker.has-folder span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .form-help { margin: -7px 0 0; color: var(--muted); font-size: 12px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 2px; }
-.management-page { --management-content-width: 900px; position: absolute; z-index: 8; inset: 0; overflow-y: auto; scrollbar-gutter: stable both-edges; background: var(--bg); }
 .pairing-page { display: grid; place-items: center; padding: 48px 24px; }
 .pairing-content { width: min(520px, 100%); }
 .pairing-mark { width: 42px; height: 42px; display: grid; place-items: center; margin-bottom: 20px; border-radius: 13px; background: var(--codex-gray-800); color: var(--codex-text-secondary); }
@@ -244,17 +244,6 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .pairing-submit { justify-self: end; min-width: 110px; padding: 9px 17px; border-radius: var(--codex-radius-md); background: #e8e8e3; color: #171817; cursor: pointer; font-weight: 550; }
 .pairing-submit:disabled { opacity: .5; cursor: default; }
 .pairing-page[hidden] { display: none; }
-.management-page-header { height: 50px; display: flex; align-items: center; justify-content: flex-end; padding: 0 12px; border-bottom: 1px solid var(--border-soft); }
-.management-actions { display: flex; align-items: center; gap: 7px; }
-.compact-button { padding: 7px 14px; border-radius: 9px; }
-.management-page-content { width: min(var(--management-content-width), calc(100% - 48px)); margin: 44px auto 80px; }
-.management-page-content h1 { margin: 0; font-size: 28px; font-weight: 560; letter-spacing: -.03em; }
-.management-page-content > p { margin: 5px 0 24px; color: var(--muted); font-size: 15px; }
-.management-search { height: 40px; display: flex; align-items: center; gap: 9px; margin-bottom: 28px; padding: 0 13px; border: 1px solid #4b4e4a; border-radius: 20px; background: #303230; color: var(--muted); }
-.management-search:focus-within { border-color: #6b6e69; }
-.management-search svg { flex: 0 0 auto; }
-.management-search input { width: 100%; border: 0; outline: 0; background: transparent; color: var(--text); }
-.management-search input::placeholder { color: #9b9e98; }
 
 /* Native select rendering is retained as the trigger; renderer.ts owns the Codex menu surface. */
 select {

@@ -1,8 +1,3 @@
-.plugin-page-tabs { justify-content: space-between; }
-.plugin-page-tabs > div { display: flex; gap: 4px; }
-.plugin-page-tabs > div button { height: 30px; padding: 0 11px; border: 0; border-radius: 9px; color: var(--muted); background: transparent; cursor: pointer; }
-.plugin-page-tabs > div button.active { color: var(--text); background: rgba(255,255,255,.08); }
-.plugin-content { width: min(var(--management-content-width), calc(100% - 48px)); }
 .plugin-section { margin-top: 34px; }
 .plugin-section-toggle { display: flex; align-items: center; gap: 8px; width: 100%; margin: 0 0 12px; padding: 0 0 12px; border: 0; border-bottom: 1px solid var(--border-soft); background: transparent; color: var(--text); font: inherit; cursor: pointer; text-align: left; }
 .plugin-section-toggle:hover .plugin-section-chevron, .plugin-section-toggle:focus-visible .plugin-section-chevron { color: var(--text); }

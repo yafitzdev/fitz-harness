@@ -1,21 +1,10 @@
 import type { ConsumerConnectionInput, ConsumerConnectionSummary } from "../../preload.js";
+import { ManagementPageLayout, managementRefreshIcon } from "../layout/management-page.js";
 import { svgIcon } from "../primitives/dom.js";
 
 type Json = Record<string, any>;
 
-const CONNECTIONS_TEMPLATE = `
-  <header class="management-page-header">
-    <div class="management-actions">
-      <button id="new-connection" class="quiet-button compact-button" type="button">New connection</button>
-      <button id="refresh-connections" class="icon-button" type="button" title="Refresh connections" aria-label="Refresh connections"><svg viewBox="0 0 20 20"><path d="M15.5 7A6 6 0 1 0 16 12"></path><path d="M15.5 3v4h-4"></path></svg></button>
-    </div>
-  </header>
-  <div id="connection-list-view" class="management-page-content">
-    <h1>Connections</h1>
-    <p>Provider and self-hosted OpenAI-compatible APIs.</p>
-    <label class="management-search"><svg viewBox="0 0 20 20"><circle cx="9" cy="9" r="5.5"></circle><path d="m13 13 4 4"></path></svg><input id="connection-search" type="search" placeholder="Search connections" autocomplete="off"></label>
-    <div id="consumer-connections" class="playbook-list"></div>
-  </div>
+const CONNECTION_EDITOR_TEMPLATE = `
   <div id="connection-editor" class="management-editor" hidden>
     <button id="connection-editor-back" class="management-back" type="button"><svg viewBox="0 0 20 20"><path d="m12.5 4-6 6 6 6"></path></svg>Connections</button>
     <form id="connection-form" class="management-editor-form">
@@ -99,8 +88,24 @@ export class ConnectionWorkspaceController {
     this.root.className = "management-page connections-page";
     this.root.setAttribute("aria-label", "API connections");
     this.root.hidden = true;
-    this.root.innerHTML = CONNECTIONS_TEMPLATE;
     options.mount.append(this.root);
+    const layout = new ManagementPageLayout(this.root, {
+      actions: [
+        { id: "new-connection", label: "New connection", className: "quiet-button compact-button" },
+        { id: "refresh-connections", icon: managementRefreshIcon, label: "Refresh connections" },
+      ],
+    });
+    const connectionsList = document.createElement("div");
+    connectionsList.id = "consumer-connections";
+    connectionsList.className = "playbook-list";
+    layout.addContent({
+      id: "connection-list-view",
+      title: "Connections",
+      description: "Provider and self-hosted OpenAI-compatible APIs.",
+      search: { id: "connection-search", placeholder: "Search connections" },
+      body: [connectionsList],
+    });
+    this.root.insertAdjacentHTML("beforeend", CONNECTION_EDITOR_TEMPLATE);
     this.elements = {
       form: this.require("connection-form"),
       id: this.require("consumer-connection-id"),

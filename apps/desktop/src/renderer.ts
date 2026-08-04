@@ -6,6 +6,7 @@ import { Composer } from "./ui/chat/composer.js";
 import { ConnectionWorkspaceController, FIXED_ROUTES, type FixedRouteId } from "./ui/connections/connection-workspace.js";
 import { InspectorPanel } from "./ui/inspector/inspector-panel.js";
 import { ConversationLayout } from "./ui/layout/conversation-layout.js";
+import { ManagementPageLayout, managementRefreshIcon } from "./ui/layout/management-page.js";
 import { WorkspacePageController } from "./ui/layout/workspace-pages.js";
 import { CustomSelectController } from "./ui/primitives/custom-select.js";
 import { requiredElement as element, requiredQuery as query, svgIcon as svg, textBlock } from "./ui/primitives/dom.js";
@@ -69,6 +70,50 @@ const pairingDescription = element("pairing-description");
 const pairingError = element("pairing-error");
 const administrationPage = element("administration-page");
 const administrationButton = element("manage-administration") as HTMLButtonElement;
+
+// Every management tab is built from the same layout component: a header with
+// tabs and actions plus one or more content columns, so switching between
+// Connections, Playbooks, Plugins, and Administration never shifts the chrome.
+const playbookLayout = new ManagementPageLayout(playbookPage, {
+  actions: [{ id: "refresh-playbooks", icon: managementRefreshIcon, label: "Refresh engines" }],
+});
+playbookLayout.addContent({
+  id: "management-browser",
+  title: "Playbooks",
+  titleId: "management-title",
+  description: "Engine folders appear automatically. Configure and test their recipes here.",
+  descriptionId: "management-description",
+  search: { id: "playbook-search", placeholder: "Search playbooks" },
+  body: [element("playbook-list")],
+  before: element("management-editor"),
+});
+const pluginsLayout = new ManagementPageLayout(pluginsPage, {
+  tabs: [{ id: "plugins-tab", label: "Plugins", active: true }, { id: "skills-tab", label: "Skills" }],
+  actions: [{ id: "refresh-plugins", icon: managementRefreshIcon, label: "Refresh packages" }],
+});
+pluginsLayout.addContent({
+  id: "plugins-view",
+  title: "Plugins",
+  description: "Extend Pi with packages from the community catalog.",
+  search: { id: "plugin-search", placeholder: "Search plugins" },
+  body: [element("plugins-installed-section"), element("plugins-discover-section")],
+});
+pluginsLayout.addContent({
+  id: "skills-view",
+  hidden: true,
+  title: "Skills",
+  description: "Task-specific guidance currently available to Pi.",
+  search: { id: "skill-search", placeholder: "Search skills" },
+  body: [element("plugins-skills-section")],
+});
+const administrationLayout = new ManagementPageLayout(administrationPage, {
+  actions: [{ id: "refresh-administration", icon: managementRefreshIcon, label: "Refresh administration" }],
+});
+administrationLayout.addContent({
+  title: "Administration",
+  description: "Pair devices, manage users, and control their access.",
+  body: [element("administration-sections")],
+});
 
 let conversationLayout: ConversationLayout | undefined;
 const sidebarPane = new ResizablePane({
