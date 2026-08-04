@@ -17,6 +17,7 @@ const composerControls = readFileSync(new URL("./ui/chat/composer-controls.ts", 
 const connectionWorkspace = readFileSync(new URL("./ui/connections/connection-workspace.ts", import.meta.url), "utf8");
 const pluginCatalog = readFileSync(new URL("./ui/plugins/plugin-catalog.ts", import.meta.url), "utf8");
 const resourceInspector = readFileSync(new URL("./ui/inspector/resource-inspector.ts", import.meta.url), "utf8");
+const inspectorPanel = readFileSync(new URL("./ui/inspector/inspector-panel.ts", import.meta.url), "utf8");
 const projectSidebar = readFileSync(new URL("./ui/sidebar/project-sidebar.ts", import.meta.url), "utf8");
 const styles = [
   readFileSync(new URL("./renderer/styles.css", import.meta.url), "utf8"),
@@ -28,6 +29,7 @@ const styles = [
   readFileSync(new URL("./ui/connections/connection-workspace.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/plugins/plugin-catalog.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/sidebar/project-sidebar.css", import.meta.url), "utf8"),
+  readFileSync(new URL("./ui/inspector/inspector-panel.css", import.meta.url), "utf8"),
 ].join("\n");
 const main = readFileSync(new URL("./main.ts", import.meta.url), "utf8");
 const preload = readFileSync(new URL("./preload.ts", import.meta.url), "utf8");
@@ -537,12 +539,17 @@ describe("desktop renderer shell", () => {
 
   it("replaces the deferred Environment surface with a resource Inspector", () => {
     expect(html).toContain('id="context-toggle" class="icon-button" type="button" title="Toggle environment panel" aria-label="Toggle environment panel" aria-expanded="false" hidden');
-    expect(html).toContain('id="context-panel" class="inspector-panel" aria-label="Inspector" hidden');
-    expect(html).toContain('id="inspector-resizer" class="inspector-resizer"');
-    for (const id of ["inspector-title", "inspector-location", "inspector-render-toggle", "inspector-open", "inspector-close"]) expect(html).toContain(`id="${id}"`);
+    expect(html).not.toContain('id="context-panel"');
+    expect(html).not.toContain('id="inspector-resizer"');
+    for (const id of ["inspector-title", "inspector-location", "inspector-render-toggle", "inspector-open", "inspector-close"]) expect(inspectorPanel).toContain(`id = "${id}"`);
+    expect(inspectorPanel).toContain('className = "inspector-panel"');
+    expect(inspectorPanel).toContain('className = "inspector-resizer"');
+    expect(inspectorPanel).toContain('setAttribute("aria-label", "Inspector")');
     expect(renderer).not.toContain('item("Toggle environment"');
     expect(renderer).toContain('window.addEventListener("fitz:open-resource"');
-    expect(renderer).toContain("resourceInspector.inspect(reference)");
+    expect(renderer).toContain("inspectorPanel.inspect(reference)");
+    expect(renderer).toContain("inspectorPanel.toggle()");
+    expect(inspectorPanel).toContain("new ResourceInspector({");
     expect(resourceInspector).toContain("window.fitz.previewResource({ projectRoot, reference, searchRoots: this.#options.getSearchRoots() })");
     expect(resourceInspector).toContain("this.#resourceError(error, reference)");
     expect(resourceInspector).toContain("this.#render(this.#preview)");
@@ -550,12 +557,14 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".inspector-panel");
     expect(styles).not.toContain(".workspace.inspector-open .messages { margin-right: var(--inspector-width); }");
     expect(styles).toContain(".inspector-resizer");
-    expect(renderer).toContain('storageKey: "fitz-inspector-width"');
-    expect(renderer).toContain("defaultValue: 400, minimum: 200");
-    expect(renderer).toContain("maximum: () => Math.max(200, workspace.getBoundingClientRect().width - 280)");
+    expect(inspectorPanel).toContain('storageKey: "fitz-inspector-width"');
+    expect(inspectorPanel).toContain("defaultValue: 400,");
+    expect(inspectorPanel).toContain("minimum: 200,");
+    expect(inspectorPanel).toContain("Math.max(200, options.mount.getBoundingClientRect().width - 280)");
     expect(renderer).not.toContain("Math.min(760");
     expect(resizablePane).toContain("restore(): void");
-    expect(renderer).toContain('import { ResourceInspector } from "./ui/inspector/resource-inspector.js"');
+    expect(renderer).toContain('import { InspectorPanel } from "./ui/inspector/inspector-panel.js"');
+    expect(inspectorPanel).toContain('import { ResourceInspector } from "./resource-inspector.js"');
     expect(resourceInspector).toContain('import { highlightSource } from "../../syntax-highlighting.js"');
     expect(markdown).toContain('import { highlightSource } from "./syntax-highlighting.js"');
     expect(markdown).toContain("code.innerHTML = highlighted.html");

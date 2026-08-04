@@ -5,7 +5,7 @@ import { ActivityTimeline } from "./ui/chat/activity-timeline.js";
 import { AgentRunController } from "./ui/chat/agent-run-controller.js";
 import { ComposerControls } from "./ui/chat/composer-controls.js";
 import { ConnectionWorkspaceController, FIXED_ROUTES, type FixedRouteId } from "./ui/connections/connection-workspace.js";
-import { ResourceInspector } from "./ui/inspector/resource-inspector.js";
+import { InspectorPanel } from "./ui/inspector/inspector-panel.js";
 import { ConversationLayout } from "./ui/layout/conversation-layout.js";
 import { WorkspacePageController } from "./ui/layout/workspace-pages.js";
 import { CustomSelectController } from "./ui/primitives/custom-select.js";
@@ -87,19 +87,10 @@ const projectTitle = element("project-title");
 const taskTitle = element("task-title");
 const engineState = element("engine-state");
 const routeState = element("route-state");
-const contextPanel = element("context-panel") as HTMLElement;
 const contextToggle = element("context-toggle") as HTMLButtonElement;
-const inspectorTitle = element("inspector-title");
-const inspectorLocation = element("inspector-location");
-const inspectorOpen = element("inspector-open") as HTMLButtonElement;
-const inspectorClose = element("inspector-close") as HTMLButtonElement;
-const inspectorRenderToggle = element("inspector-render-toggle") as HTMLButtonElement;
-const inspectorIcon = element("inspector-icon");
-const inspectorResizer = element("inspector-resizer");
 const artifacts = element("artifacts");
 const requestQueue = element("request-queue");
 const queueCount = element("queue-count");
-const artifactPreview = element("artifact-preview");
 const artifactFile = element("artifact-file") as HTMLInputElement;
 const composerAttachments = element("composer-attachments");
 const pastedImages: PastedImage[] = [];
@@ -198,15 +189,14 @@ const sidebarPane = new ResizablePane({
   pointerValue: (event) => event.clientX,
   apply: (value) => shell.style.setProperty("--sidebar-width", `${value}px`),
 });
-const inspectorPane = new ResizablePane({
-  divider: inspectorResizer, storageKey: "fitz-inspector-width", defaultValue: 400, minimum: 200,
-  maximum: () => Math.max(200, workspace.getBoundingClientRect().width - 280),
-  pointerValue: (event) => workspace.getBoundingClientRect().right - event.clientX,
-  keyboardDirection: -1,
-  apply: (value) => workspace.style.setProperty("--inspector-width", `${value}px`),
-  onChange: () => conversationLayout?.sync(),
+const inspectorPanel = new InspectorPanel({
+  mount: workspace,
+  getProjectRoot: () => String(activeProject()?.rootPath ?? ""),
+  getSearchRoots: () => activityTimeline.searchRoots(),
+  showToast,
+  onLayoutChange: () => conversationLayout?.sync(),
 });
-conversationLayout = new ConversationLayout({ workspace, messages, composer: composerDock, scrollButton: scrollToBottom, inspectorWidth: () => inspectorPane.value() });
+conversationLayout = new ConversationLayout({ workspace, messages, composer: composerDock, scrollButton: scrollToBottom, inspectorWidth: () => inspectorPanel.width() });
 const customSelects = new CustomSelectController(selectPopover, closePopovers);
 const sidebarMenu = new ContextMenu(sidebarContextMenu, closePopovers);
 const projectSidebar = new ProjectSidebarController({
@@ -257,7 +247,7 @@ const workspacePages = new WorkspacePageController({
 });
 const activityTimeline = new ActivityTimeline({
   messages,
-  inspectResource: (reference) => resourceInspector.inspect(reference),
+  inspectResource: (reference) => inspectorPanel.inspect(reference),
   decideApproval: async (approvalId, decision) => {
     const response = await api(`/api/v1/tool-approvals/${approvalId}/decision`, "POST", { decision });
     return response.data?.status === "approved" ? "approved" : "denied";
@@ -276,7 +266,7 @@ const agentRuns = new AgentRunController({
   setStatus,
   setEngineState: (state) => { engineState.textContent = state; },
   refreshControls: refreshComposerState,
-  queueVisible: () => !contextPanel.hidden,
+  queueVisible: () => inspectorPanel.isOpen,
   refreshQueue: loadAgentQueue,
   showToast,
   errorMessage,
@@ -363,18 +353,6 @@ const messageActions = new MessageActions({
   onEditBlocked: () => showToast("Wait for the current response before editing a message."),
   copyText: (text) => window.fitz.copyText(text),
   resend: (text, article) => sendPrompt(text, article),
-});
-const resourceInspector = new ResourceInspector({
-  preview: artifactPreview,
-  title: inspectorTitle,
-  location: inspectorLocation,
-  icon: inspectorIcon,
-  openButton: inspectorOpen,
-  renderToggle: inspectorRenderToggle,
-  openPanel: () => setContextPanel(true),
-  getProjectRoot: () => String(activeProject()?.rootPath ?? ""),
-  getSearchRoots: () => activityTimeline.searchRoots(),
-  showToast,
 });
 void initialize();
 
@@ -470,11 +448,10 @@ element("sidebar-menu").addEventListener("click", toggleSidebar);
 for (const menuButton of document.querySelectorAll<HTMLButtonElement>("[data-app-menu]")) menuButton.addEventListener("click", (event) => openAppMenu(menuButton.dataset.appMenu ?? "", menuButton, event));
 for (const windowButton of document.querySelectorAll<HTMLButtonElement>("[data-window-action]")) windowButton.addEventListener("click", () => void window.fitz.windowAction(windowButton.dataset.windowAction as "minimize" | "maximize" | "close"));
 connectionStatus.addEventListener("click", () => void initialize());
-contextToggle.addEventListener("click", () => setContextPanel(contextPanel.hasAttribute("hidden")));
-inspectorClose.addEventListener("click", () => setContextPanel(false));
+contextToggle.addEventListener("click", () => inspectorPanel.toggle());
 window.addEventListener("fitz:open-resource", (event) => {
   const reference = (event as CustomEvent<{ reference?: string }>).detail?.reference;
-  if (reference) void resourceInspector.inspect(reference);
+  if (reference) void inspectorPanel.inspect(reference);
 });
 element("context-add").addEventListener("click", chooseArtifact);
 attachButton.addEventListener("click", chooseArtifact);
@@ -689,7 +666,7 @@ async function selectSession(id: string, rerender = true, projectId?: string): P
 function openNewChat(): void {
   if (agentRuns.active) { showToast("Stop the current response before starting a new chat"); return; }
   showConversationWorkspace();
-  setContextPanel(false);
+  inspectorPanel.close();
   if (projectRecords.length === 0) { openProjectDialog(true); return; }
   currentProject ??= projectRecords[0]?.id;
   if (!currentProject) return;
@@ -902,7 +879,7 @@ async function continueInNewChat(session: ProjectSidebarSession): Promise<void> 
 async function openPlaybookPage(): Promise<void> {
   if (!pairingPage.hidden) { pairingCode.focus(); return; }
   closePopovers();
-  setContextPanel(false);
+  inspectorPanel.close();
   closeManagementEditor();
   workspacePages.show("playbooks");
   playbookList.replaceChildren(panelEmpty("Loading playbooks…"));
@@ -910,10 +887,10 @@ async function openPlaybookPage(): Promise<void> {
   rememberLocation({ view: "playbooks" });
 }
 
-async function openConnectionsPage(): Promise<void> { if (!pairingPage.hidden) return; closePopovers(); setContextPanel(false); closeManagementEditor(); connectionWorkspace.closeEditor(); workspacePages.show("connections"); await connectionWorkspace.sync(false); rememberLocation({ view: "connections" }); }
-async function openPluginsPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); setContextPanel(false); closeManagementEditor(); connectionWorkspace.closeEditor(); workspacePages.show("plugins"); pluginCatalog.showLoading(); await pluginCatalog.load(false); rememberLocation({ view: "plugins" }); }
-async function openAdministrationPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); setContextPanel(false); closeManagementEditor(); workspacePages.show("administration"); adminUsers.replaceChildren(panelEmpty("Loading users…")); await loadAdministration(); rememberLocation({ view: "administration" }); }
-function showPairingPage(message: string): void { closePopovers(); setContextPanel(false); closeManagementEditor(); workspacePages.show("pairing"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
+async function openConnectionsPage(): Promise<void> { if (!pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); closeManagementEditor(); connectionWorkspace.closeEditor(); workspacePages.show("connections"); await connectionWorkspace.sync(false); rememberLocation({ view: "connections" }); }
+async function openPluginsPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); closeManagementEditor(); connectionWorkspace.closeEditor(); workspacePages.show("plugins"); pluginCatalog.showLoading(); await pluginCatalog.load(false); rememberLocation({ view: "plugins" }); }
+async function openAdministrationPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); closeManagementEditor(); workspacePages.show("administration"); adminUsers.replaceChildren(panelEmpty("Loading users…")); await loadAdministration(); rememberLocation({ view: "administration" }); }
+function showPairingPage(message: string): void { closePopovers(); inspectorPanel.close(); closeManagementEditor(); workspacePages.show("pairing"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
 function showConversationWorkspace(): void { closeManagementEditor(); workspacePages.show("conversation"); }
 function setConversationInert(inert: boolean): void { for (const area of [workspaceHeader, messages, composerDock]) { area.toggleAttribute("inert", inert); area.setAttribute("aria-hidden", String(inert)); } }
 
@@ -1851,7 +1828,7 @@ async function loadArtifacts(): Promise<void> {
   const pastedChips = pastedImages.map((img) => img.chip);
   composerAttachments.replaceChildren();
   pastedChips.forEach((chip) => composerAttachments.append(chip));
-  if (contextPanel.hidden) artifactPreview.replaceChildren(resourceInspector.empty("Select a file or link in the conversation to inspect it here."));
+  inspectorPanel.resetPreview();
   if (!currentSession) { artifacts.append(panelEmpty("Artifacts appear with a task")); refreshComposerAttachments(); return; }
   const response = await api(`/api/v1/sessions/${currentSession}/artifacts`);
   if (!(response.data ?? []).length) artifacts.append(panelEmpty("No artifacts yet"));
@@ -1859,13 +1836,13 @@ async function loadArtifacts(): Promise<void> {
     const value = document.createElement("button"); value.type = "button"; value.className = "artifact-item";
     const name = document.createElement("span"); name.textContent = artifact.name;
     const size = document.createElement("small"); size.textContent = formatBytes(artifact.byteSize);
-    value.append(name, size); value.addEventListener("click", () => void resourceInspector.previewArtifact(artifact, value, artifacts)); artifacts.append(value);
+    value.append(name, size); value.addEventListener("click", () => void inspectorPanel.previewArtifact(artifact, value, artifacts)); artifacts.append(value);
     const chip = document.createElement("div"); chip.className = "attachment-chip";
     const chipPreview = document.createElement("button"); chipPreview.type = "button"; chipPreview.className = "attachment-preview"; chipPreview.setAttribute("aria-label", `Preview ${artifact.name}`);
     const chipName = document.createElement("span"); chipName.textContent = artifact.name;
     const chipSize = document.createElement("small"); chipSize.textContent = formatBytes(artifact.byteSize);
     const remove = document.createElement("button"); remove.type = "button"; remove.className = "attachment-remove"; remove.title = `Remove ${artifact.name}`; remove.setAttribute("aria-label", `Remove ${artifact.name}`); remove.textContent = "×";
-    chipPreview.append(chipName, chipSize); chipPreview.addEventListener("click", () => void resourceInspector.previewArtifact(artifact, value, artifacts)); remove.addEventListener("click", () => void removeArtifact(artifact)); chip.append(chipPreview, remove); composerAttachments.append(chip);
+    chipPreview.append(chipName, chipSize); chipPreview.addEventListener("click", () => void inspectorPanel.previewArtifact(artifact, value, artifacts)); remove.addEventListener("click", () => void removeArtifact(artifact)); chip.append(chipPreview, remove); composerAttachments.append(chip);
   }
   refreshComposerAttachments();
 }
@@ -1895,8 +1872,8 @@ async function cancelQueuedRun(runId: string, button: HTMLButtonElement): Promis
 
 function scheduleQueueRefresh(): void {
   if (queueRefreshTimer) clearTimeout(queueRefreshTimer); queueRefreshTimer = undefined;
-  if (contextPanel.hidden) return;
-  void loadAgentQueue().finally(() => { if (!contextPanel.hidden) queueRefreshTimer = setTimeout(scheduleQueueRefresh, 1_000); });
+  if (!inspectorPanel.isOpen) return;
+  void loadAgentQueue().finally(() => { if (inspectorPanel.isOpen) queueRefreshTimer = setTimeout(scheduleQueueRefresh, 1_000); });
 }
 
 async function removeArtifact(artifact: Json): Promise<void> {
@@ -1916,7 +1893,7 @@ async function uploadArtifact(): Promise<void> {
   try {
     const contentBase64 = bytesToBase64(new Uint8Array(await file.arrayBuffer()));
     await api(`/api/v1/sessions/${currentSession}/artifacts`, "POST", { name: file.name, mimeType: file.type || "application/octet-stream", contentBase64 });
-    await loadArtifacts(); setContextPanel(true); showToast(`Attached ${file.name}`);
+    await loadArtifacts(); inspectorPanel.open(); showToast(`Attached ${file.name}`);
   } catch (error) { showToast(errorMessage(error)); }
 }
 
@@ -2072,16 +2049,6 @@ function updateTitles(): void {
   projectTitle.textContent = project?.name ?? "Fitz Codex";
   taskTitle.textContent = "";
   taskMenuToggle.hidden = !session;
-}
-
-function setContextPanel(open: boolean): void {
-  contextPanel.hidden = !open;
-  inspectorResizer.hidden = !open;
-  workspace.classList.toggle("inspector-open", open);
-  shell.classList.toggle("context-open", open);
-  contextToggle.setAttribute("aria-expanded", String(open));
-  if (!open) resourceInspector.cancelPending();
-  requestAnimationFrame(() => conversationLayout?.sync());
 }
 
 function toggleSidebar(): void { shell.classList.toggle("sidebar-collapsed"); closePopovers(); }
