@@ -19,6 +19,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc -b --pretty false",
     "check": "pnpm typecheck && pnpm test",
+    "docs:overview": "node scripts/generate-project-overview.mjs",
     "desktop:pack:win": "pnpm host:pack:win && pnpm --filter @fitz/desktop pack:win",
     "desktop:dist:win": "pnpm host:pack:win && pnpm --filter @fitz/desktop dist:win",
     "host:pack:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/package-host.ps1",
