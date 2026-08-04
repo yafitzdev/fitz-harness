@@ -3,6 +3,36 @@ import { svgIcon } from "../primitives/dom.js";
 
 type Json = Record<string, any>;
 
+const CONNECTIONS_TEMPLATE = `
+  <header class="management-page-header">
+    <div class="management-actions">
+      <button id="new-connection" class="quiet-button compact-button" type="button">New connection</button>
+      <button id="refresh-connections" class="icon-button" type="button" title="Refresh connections" aria-label="Refresh connections"><svg viewBox="0 0 20 20"><path d="M15.5 7A6 6 0 1 0 16 12"></path><path d="M15.5 3v4h-4"></path></svg></button>
+    </div>
+  </header>
+  <div id="connection-list-view" class="management-page-content">
+    <h1>Connections</h1>
+    <p>Provider and self-hosted OpenAI-compatible APIs.</p>
+    <label class="management-search"><svg viewBox="0 0 20 20"><circle cx="9" cy="9" r="5.5"></circle><path d="m13 13 4 4"></path></svg><input id="connection-search" type="search" placeholder="Search connections" autocomplete="off"></label>
+    <div id="consumer-connections" class="playbook-list"></div>
+  </div>
+  <div id="connection-editor" class="management-editor" hidden>
+    <button id="connection-editor-back" class="management-back" type="button"><svg viewBox="0 0 20 20"><path d="m12.5 4-6 6 6 6"></path></svg>Connections</button>
+    <form id="connection-form" class="management-editor-form">
+      <input id="consumer-connection-id" type="hidden">
+      <div class="editor-heading"><small>API connection</small><h1 id="connection-editor-title">New connection</h1><p>Connect a provider or a model server you host yourself. Models are discovered automatically.</p></div>
+      <div class="configuration-grid">
+        <label>Connection name<input id="consumer-connection-name" maxlength="100" required placeholder="Cohere"></label>
+        <label>Authorization<select id="consumer-connection-auth"><option value="bearer">Bearer token</option><option value="none">None</option></select></label>
+        <label class="wide-field">OpenAI-compatible base URL<input id="consumer-connection-url" type="url" maxlength="2048" required placeholder="http://127.0.0.1:8000/v1"><small>Use a provider, local model server, or another Fitz host.</small></label>
+        <label id="consumer-api-key-field" class="wide-field">API key<input id="consumer-connection-key" type="password" autocomplete="off" placeholder="Stored securely"></label>
+      </div>
+      <p id="connection-form-status" class="connection-form-status" hidden></p>
+      <div class="editor-actions"><button id="cancel-connection-edit" class="quiet-button" type="button">Cancel</button><button class="primary-button" type="submit">Connect</button></div>
+    </form>
+  </div>
+`;
+
 export type FixedRouteId = "fast" | "default" | "smart";
 export const LOCAL_CONNECTION_ID = "hosted--local";
 export const FIXED_ROUTES: readonly { id: FixedRouteId; label: string; icon: string }[] = [
@@ -44,6 +74,7 @@ export interface ConnectionWorkspaceElements {
 }
 
 export interface ConnectionWorkspaceOptions {
+  mount: HTMLElement;
   bridge: ConnectionWorkspaceBridge;
   api: (path: string, method?: string, body?: unknown) => Promise<Json>;
   reloadConfiguration: () => Promise<Json | undefined>;
@@ -55,16 +86,47 @@ export interface ConnectionWorkspaceOptions {
 }
 
 export class ConnectionWorkspaceController {
+  readonly root: HTMLElement;
   readonly elements: ConnectionWorkspaceElements;
   private readonly options: ConnectionWorkspaceOptions;
   private records: ConsumerConnectionSummary[] = [];
   private configuration: Json | undefined;
 
-  constructor(elements: ConnectionWorkspaceElements, options: ConnectionWorkspaceOptions) {
-    this.elements = elements;
+  constructor(options: ConnectionWorkspaceOptions) {
     this.options = options;
+    this.root = document.createElement("section");
+    this.root.className = "management-page connections-page";
+    this.root.setAttribute("aria-label", "API connections");
+    this.root.hidden = true;
+    this.root.innerHTML = CONNECTIONS_TEMPLATE;
+    options.mount.append(this.root);
+    this.elements = {
+      form: this.require("connection-form"),
+      id: this.require("consumer-connection-id"),
+      name: this.require("consumer-connection-name"),
+      url: this.require("consumer-connection-url"),
+      auth: this.require("consumer-connection-auth"),
+      apiKey: this.require("consumer-connection-key"),
+      apiKeyField: this.require("consumer-api-key-field"),
+      formStatus: this.require("connection-form-status"),
+      connections: this.require("consumer-connections"),
+      listView: this.require("connection-list-view"),
+      editor: this.require("connection-editor"),
+      editorTitle: this.require("connection-editor-title"),
+      search: this.require("connection-search"),
+      refresh: this.require("refresh-connections"),
+      newConnection: this.require("new-connection"),
+      editorBack: this.require("connection-editor-back"),
+      cancelEdit: this.require("cancel-connection-edit"),
+    };
     this.bind();
     this.resetForm();
+  }
+
+  private require<T extends HTMLElement>(id: string): T {
+    const value = this.root.querySelector<T>(`#${id}`);
+    if (!value) throw new Error(`Connection workspace is missing #${id}`);
+    return value;
   }
 
   get editorOpen(): boolean { return !this.elements.editor.hidden; }

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ConnectionWorkspaceController, type ConnectionWorkspaceBridge, type ConnectionWorkspaceElements } from "./connection-workspace.js";
+import { ConnectionWorkspaceController, type ConnectionWorkspaceBridge } from "./connection-workspace.js";
 
 function node<T extends HTMLElement>(tag: string): T {
   const element = document.createElement(tag) as T;
@@ -10,14 +10,7 @@ function node<T extends HTMLElement>(tag: string): T {
 }
 
 function setup(overrides: Partial<ConnectionWorkspaceBridge> = {}) {
-  const elements: ConnectionWorkspaceElements = {
-    form: node("form"), id: node("input"), name: node("input"), url: node("input"), auth: node("select"), apiKey: node("input"),
-    apiKeyField: node("div"), formStatus: node("p"), connections: node("div"), listView: node("div"), editor: node("div"), editorTitle: node("h1"),
-    search: node("input"), refresh: node("button"), newConnection: node("button"), editorBack: node("button"), cancelEdit: node("button"),
-  };
-  elements.editor.hidden = true;
-  for (const value of ["none", "bearer"]) elements.auth.append(Object.assign(document.createElement("option"), { value, textContent: value }));
-  elements.form.append(elements.id, elements.name, elements.url, elements.auth, elements.apiKey);
+  const mount = node("div");
   const remote = { id: "remote-1", displayName: "Remote API", baseUrl: "https://remote.test/v1", authType: "bearer" as const, hasCredential: true, models: [{ id: "remote-model", routeId: "", recipeId: "consumer-recipe--remote-model" }], updatedAt: "now" };
   const bridge: ConnectionWorkspaceBridge = {
     syncConsumerConnections: vi.fn(async () => []),
@@ -40,8 +33,8 @@ function setup(overrides: Partial<ConnectionWorkspaceBridge> = {}) {
     showToast: vi.fn(),
     errorMessage: vi.fn((error: unknown) => error instanceof Error ? error.message : String(error)),
   };
-  const controller = new ConnectionWorkspaceController(elements, { bridge, ...calls });
-  return { controller, elements, bridge, calls, remote };
+  const controller = new ConnectionWorkspaceController({ mount, bridge, ...calls });
+  return { controller, elements: controller.elements, bridge, calls, remote };
 }
 
 function click(target: Element): void { target.dispatchEvent(new MouseEvent("click", { bubbles: true })); }

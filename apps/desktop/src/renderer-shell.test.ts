@@ -18,6 +18,8 @@ const composerControls = readFileSync(new URL("./ui/chat/composer-controls.ts", 
 const composer = readFileSync(new URL("./ui/chat/composer.ts", import.meta.url), "utf8");
 const connectionWorkspace = readFileSync(new URL("./ui/connections/connection-workspace.ts", import.meta.url), "utf8");
 const pluginCatalog = readFileSync(new URL("./ui/plugins/plugin-catalog.ts", import.meta.url), "utf8");
+const administrationPage = readFileSync(new URL("./ui/administration/administration-page.ts", import.meta.url), "utf8");
+const playbookWorkspace = readFileSync(new URL("./ui/playbooks/playbook-workspace.ts", import.meta.url), "utf8");
 const resourceInspector = readFileSync(new URL("./ui/inspector/resource-inspector.ts", import.meta.url), "utf8");
 const inspectorPanel = readFileSync(new URL("./ui/inspector/inspector-panel.ts", import.meta.url), "utf8");
 const projectSidebar = readFileSync(new URL("./ui/sidebar/project-sidebar.ts", import.meta.url), "utf8");
@@ -33,6 +35,8 @@ const styles = [
   composerCss,
   readFileSync(new URL("./ui/connections/connection-workspace.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/plugins/plugin-catalog.css", import.meta.url), "utf8"),
+  readFileSync(new URL("./ui/administration/administration-page.css", import.meta.url), "utf8"),
+  readFileSync(new URL("./ui/playbooks/playbook-workspace.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/sidebar/project-sidebar.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/inspector/inspector-panel.css", import.meta.url), "utf8"),
 ].join("\n");
@@ -146,11 +150,16 @@ describe("desktop renderer shell", () => {
     expect(html).not.toContain('data-runtime-mode="consume"');
     expect(html).toContain('id="manage-playbooks"');
     expect(html).toContain('id="manage-connections"');
-    expect(html).toContain('id="connections-page"');
-    expect(html).toContain('id="consumer-connection-url"');
-    expect(html).toContain('id="connection-search"');
-    expect(html).toContain('id="connection-editor"');
+    expect(html).not.toContain('id="connections-page"');
+    expect(connectionWorkspace).toContain('CONNECTIONS_TEMPLATE');
+    expect(connectionWorkspace).toContain('this.root.innerHTML = CONNECTIONS_TEMPLATE');
+    expect(connectionWorkspace).toContain('id="consumer-connection-url"');
+    expect(connectionWorkspace).toContain('id="connection-search"');
+    expect(connectionWorkspace).toContain('id="connection-editor"');
     expect(renderer).toContain("new ConnectionWorkspaceController");
+    expect(renderer).toContain("mount: workspace,");
+    expect(renderer).toContain("connections: connectionWorkspace.root,");
+    expect(renderer).not.toContain("const connectionsPage");
     expect(connectionWorkspace).toContain('this.options.bridge.saveConsumerConnection');
     expect(renderer).not.toContain('/api/v1/runtime-mode');
     expect(connectionWorkspace).toContain('consumerFixedRouteId');
@@ -169,8 +178,8 @@ describe("desktop renderer shell", () => {
     expect(connectionWorkspace).toContain('this.assignRoute(definition, model, button)');
     expect(connectionWorkspace).toContain('if (!connection.hosted)');
     expect(connectionWorkspace).not.toContain('url.className = "connection-url"');
-    expect(html).toContain("Provider and self-hosted OpenAI-compatible APIs.");
-    expect(html).toContain("http://127.0.0.1:8000/v1");
+    expect(connectionWorkspace).toContain("Provider and self-hosted OpenAI-compatible APIs.");
+    expect(connectionWorkspace).toContain("http://127.0.0.1:8000/v1");
     expect(styles).toContain('max-height: min(440px, calc(100vh - 32px)); overflow-y: auto;');
     expect(main).toContain('safeStorage.encryptString(JSON.stringify(connections))');
     expect(main).not.toContain('apiKey: connection.apiKey, models');
@@ -196,13 +205,13 @@ describe("desktop renderer shell", () => {
     expect(html).not.toContain('data-management-view=');
     expect(html).toContain('id="playbook-search"');
     expect(renderer).toContain("openPlaybookPage()");
-    expect(renderer).toContain("renderManagementPage()");
+    expect(playbookWorkspace).toContain("render(): void");
     expect(renderer).toContain("FIXED_ROUTES");
     expect(renderer).not.toContain("assignFixedRoute(");
-    expect(renderer).toContain('Configure and test their recipes here.');
+    expect(playbookWorkspace).toContain('Configure and test their recipes here.');
     expect(renderer).not.toContain("now uses ${recipe.displayName}");
-    expect(renderer).toContain("openEngineEditor");
-    expect(renderer).toContain('/api/v1/management/engines/${encodeURIComponent(folderName)}');
+    expect(playbookWorkspace).toContain("openEngineEditor(");
+    expect(playbookWorkspace).toContain('/api/v1/management/engines/${encodeURIComponent(folderName)}');
     expect(renderer).not.toContain("ENGINE_CATALOG");
     expect(html).not.toContain("Add engine");
     expect(html).not.toContain("engine-root-path");
@@ -219,14 +228,14 @@ describe("desktop renderer shell", () => {
   });
 
   it("tests each Playbooks recipe directly and reports the result on its row", () => {
-    expect(renderer).toContain('testButton.className = "recipe-test-button"');
-    expect(renderer).toContain('api(`/api/v1/management/recipes/${encodeURIComponent(recipe.id)}/test`, "POST")');
-    expect(renderer).toContain('state === "passed" ? "✓ Working"');
-    expect(renderer).toContain('state === "failed" ? "Retry"');
-    expect(renderer).toContain('detail: "Sending “Say hi.” to this recipe"');
-    expect(renderer).toContain('modelLabel.className = "recipe-card-label"');
-    expect(renderer).toContain('contextLabel.className = "recipe-card-label recipe-context-label"');
-    expect(renderer).not.toContain('detail.textContent = `${recipe.adapter} · ${recipe.modelId}`');
+    expect(playbookWorkspace).toContain('testButton.className = "recipe-test-button"');
+    expect(playbookWorkspace).toContain('api(`/api/v1/management/recipes/${encodeURIComponent(recipe.id)}/test`, "POST")');
+    expect(playbookWorkspace).toContain('state === "passed" ? "✓ Working"');
+    expect(playbookWorkspace).toContain('state === "failed" ? "Retry"');
+    expect(playbookWorkspace).toContain('detail: "Sending “Say hi.” to this recipe"');
+    expect(playbookWorkspace).toContain('modelLabel.className = "recipe-card-label"');
+    expect(playbookWorkspace).toContain('contextLabel.className = "recipe-card-label recipe-context-label"');
+    expect(playbookWorkspace).not.toContain('detail.textContent = `${recipe.adapter} · ${recipe.modelId}`');
     expect(styles).toContain(".recipe-test-button");
     expect(styles).toContain(".recipe-test-button.passed");
     expect(styles).toContain(".recipe-card-label {");
@@ -247,7 +256,7 @@ describe("desktop renderer shell", () => {
     expect(projectSidebar).toContain('this.#openMenu("task"');
     expect(composerControls).toContain('this.openSettingsSubmenu(row.dataset.setting as ComposerSetting, row)');
     expect(renderer).toContain('api("/api/v1/management/status")');
-    expect(renderer).toContain('/api/v1/management/recipes/${encodeURIComponent(id)}');
+    expect(playbookWorkspace).toContain('/api/v1/management/recipes/${encodeURIComponent(id)}');
     expect(renderer).toContain("sessionTokenEstimate += estimateTokens");
     expect(renderer).toContain('api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" })');
     expect(renderer).toContain("max_tokens: composer.controls.maxTokens");
@@ -461,7 +470,7 @@ describe("desktop renderer shell", () => {
     expect(agentRunController).toContain('this.#options.api("/api/v1/inference/warm", "POST", { model })');
     expect(agentRunController).toContain("if (this.#composerHadText || this.active || !model) return");
     expect(agentRunController).toContain("}, 120)");
-    expect(renderer).toContain("idleTtlSeconds: 600");
+    expect(playbookWorkspace).toContain("idleTtlSeconds: 600");
     expect(renderer).not.toContain('contextMeter.classList.toggle("model-loading", loading)');
     expect(styles).toContain("@keyframes run-activity-spinner");
     expect(styles).toContain(".run-activity::before");
@@ -654,13 +663,13 @@ describe("desktop renderer shell", () => {
     for (const id of ["administration-page", "pairing-code-form", "create-user-form", "admin-users", "tool-policy-form", "tool-policies", "admin-audit-events"]) {
       expect(html).toContain(`id="${id}"`);
     }
-    expect(renderer).toContain('api("/api/v1/management/pairing-codes", "POST"');
-    expect(renderer).toContain('api("/api/v1/management/users")');
-    expect(renderer).toContain('api("/api/v1/management/tool-policies")');
-    expect(renderer).toContain('api("/api/v1/management/audit-events?limit=50")');
-    expect(renderer).toContain('/routes`, "PUT", { routeIds }');
-    expect(renderer).toContain('/quota`, "PUT", quota');
-    expect(renderer).toContain('revokeAdminDevice(device.id)');
+    expect(administrationPage).toContain('api("/api/v1/management/pairing-codes", "POST"');
+    expect(administrationPage).toContain('api("/api/v1/management/users")');
+    expect(administrationPage).toContain('api("/api/v1/management/tool-policies")');
+    expect(administrationPage).toContain('api("/api/v1/management/audit-events?limit=50")');
+    expect(administrationPage).toContain('/routes`, "PUT", { routeIds }');
+    expect(administrationPage).toContain('/quota`, "PUT", quota');
+    expect(administrationPage).toContain('revokeAdminDevice(device.id)');
     expect(styles).toContain(".administration-content");
     expect(styles).toContain(".tool-policy");
     expect(html).toContain('id="select-popover"');
@@ -677,6 +686,8 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('import { WorkspacePageController } from "./ui/layout/workspace-pages.js"');
     expect(renderer).toContain('import { CustomSelectController } from "./ui/primitives/custom-select.js"');
     expect(renderer).toContain('import { ContextMenu } from "./ui/primitives/context-menu.js"');
+    expect(renderer).toContain('import { AdministrationPageController } from "./ui/administration/administration-page.js"');
+    expect(renderer).toContain('import { PlaybookWorkspaceController } from "./ui/playbooks/playbook-workspace.js"');
     expect(workspacePages).toContain('element.hidden = name !== page');
     expect(workspacePages).toContain('classList.toggle("active", name === page)');
     expect(workspacePages).toContain('setConversationInert(page !== "conversation")');
@@ -690,9 +701,9 @@ describe("desktop renderer shell", () => {
     for (const id of ["diagnostic-summary", "diagnostic-metrics", "diagnostic-failures", "export-diagnostics"]) {
       expect(html).toContain(`id="${id}"`);
     }
-    expect(renderer).toContain('api("/api/v1/management/diagnostics")');
-    expect(renderer).toContain("renderDiagnostics(diagnostics)");
-    expect(renderer).toContain("window.fitz.saveDiagnostics(JSON.stringify(diagnosticBundle, null, 2))");
+    expect(administrationPage).toContain('api("/api/v1/management/diagnostics")');
+    expect(administrationPage).toContain("this.renderDiagnostics(diagnostics)");
+    expect(administrationPage).toContain("saveDiagnostics(JSON.stringify(this.diagnosticBundle, null, 2))");
     expect(preload).toContain('ipcRenderer.invoke("fitz:save-diagnostics", content)');
     expect(main).toContain('ipcMain.handle("fitz:save-diagnostics"');
     expect(main).toContain("content.length > 10_000_000");
@@ -704,10 +715,10 @@ describe("desktop renderer shell", () => {
     for (const id of ["remote-access-status", "enable-remote-access", "disable-remote-access", "remote-access-confirmation", "confirm-remote-access"]) {
       expect(html).toContain(`id="${id}"`);
     }
-    expect(renderer).toContain('api("/api/v1/management/connectivity/status")');
-    expect(renderer).toContain('showRemoteConfirmation("enable")');
-    expect(renderer).toContain('api("/api/v1/management/connectivity/tailscale-serve", "POST", {})');
-    expect(renderer).toContain('api("/api/v1/management/connectivity/tailscale-serve", "DELETE")');
+    expect(administrationPage).toContain('api("/api/v1/management/connectivity/status")');
+    expect(administrationPage).toContain('showRemoteConfirmation("enable")');
+    expect(administrationPage).toContain('api("/api/v1/management/connectivity/tailscale-serve", "POST", {})');
+    expect(administrationPage).toContain('api("/api/v1/management/connectivity/tailscale-serve", "DELETE")');
     expect(styles).toContain(".remote-access-confirmation[hidden]");
   });
 
@@ -715,8 +726,9 @@ describe("desktop renderer shell", () => {
     for (const id of ["check-desktop-update", "install-desktop-update", "desktop-update-label", "desktop-update-progress"]) {
       expect(html).toContain(`id="${id}"`);
     }
-    expect(renderer).toContain("window.fitz.updateStatus().then(renderDesktopUpdate)");
-    expect(renderer).toContain("Downloading update · ${Math.round(percent)}%");
+    expect(administrationPage).toContain("updateStatus(): Promise<DesktopUpdateStatus>");
+    expect(administrationPage).toContain(".then((update) => this.renderDesktopUpdate(update))");
+    expect(administrationPage).toContain("Downloading update · ${Math.round(percent)}%");
     expect(preload).toContain('ipcRenderer.invoke("fitz:update-status")');
     expect(main).toContain('autoUpdater.on("download-progress"');
     expect(main).toContain('publishUpdateStatus({ state: "development" })');
@@ -727,9 +739,9 @@ describe("desktop renderer shell", () => {
     for (const id of ["host-startup-status", "install-host-startup", "remove-host-startup", "host-startup-confirmation", "confirm-host-startup"]) {
       expect(html).toContain(`id="${id}"`);
     }
-    expect(renderer).toContain('api("/api/v1/management/startup")');
-    expect(renderer).toContain('showStartupConfirmation("install")');
-    expect(renderer).toContain('action === "install" ? "POST" : "DELETE"');
+    expect(administrationPage).toContain('api("/api/v1/management/startup")');
+    expect(administrationPage).toContain('showStartupConfirmation("install")');
+    expect(administrationPage).toContain('action === "install" ? "POST" : "DELETE"');
     expect(styles).toContain(".host-startup-status");
   });
 });

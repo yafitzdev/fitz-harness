@@ -1,4 +1,3 @@
-import type { DesktopUpdateStatus } from "./preload.js";
 import { appendMarkdown, setMarkdown } from "./markdown.js";
 import { MessageActions, type ActionableMessageRole } from "./ui/chat/message-actions.js";
 import { ActivityTimeline } from "./ui/chat/activity-timeline.js";
@@ -14,6 +13,8 @@ import { requiredElement as element, requiredQuery as query, svgIcon as svg, tex
 import { togglePopover as toggleManagedPopover } from "./ui/primitives/popover.js";
 import { ResizablePane } from "./ui/primitives/resizable-pane.js";
 import { PluginCatalogController } from "./ui/plugins/plugin-catalog.js";
+import { AdministrationPageController } from "./ui/administration/administration-page.js";
+import { PlaybookWorkspaceController } from "./ui/playbooks/playbook-workspace.js";
 import { ProjectSidebarController, type ProjectSidebarProject, type ProjectSidebarSession } from "./ui/sidebar/project-sidebar.js";
 
 type Json = Record<string, any>;
@@ -32,21 +33,14 @@ let contextTokenLimit = 131_072;
 let configuredHostOrigin = "Fitz host";
 let administrator = false;
 let currentUserId: string | undefined;
-let administrationUsers: Json[] = [];
-let administrationPolicies: Json[] = [];
-let diagnosticBundle: Json | undefined;
-let pendingRemoteAction: "enable" | "disable" | undefined;
-let pendingStartupAction: "install" | "remove" | undefined;
 let managementConfiguration: Json | undefined;
 let newChatMode = false;
 let newChatProjectDetached = false;
 let removeProjectTarget: string | undefined;
-let editingRecipe: Json | undefined;
 let renameTarget: { kind: "project" | "task"; id: string } | undefined;
 let navigationIndex = -1;
 let replayingNavigation = false;
 const navigationHistory: AppLocation[] = [];
-const recipeTestStates = new Map<string, { state: "testing" | "passed" | "failed"; detail: string }>();
 let routeCards: Json[] = [];
 
 const shell = query(".app-shell");
@@ -66,11 +60,6 @@ const queueCount = element("queue-count");
 const artifactFile = element("artifact-file") as HTMLInputElement;
 const addArtifactButton = element("add-artifact") as HTMLButtonElement;
 const updateButton = element("update") as HTMLButtonElement;
-const checkDesktopUpdate = element("check-desktop-update") as HTMLButtonElement;
-const installDesktopUpdate = element("install-desktop-update") as HTMLButtonElement;
-const desktopUpdateLabel = element("desktop-update-label");
-const desktopUpdateVersion = element("desktop-update-version");
-const desktopUpdateProgress = element("desktop-update-progress");
 const projectDialog = element("project-dialog") as HTMLDialogElement;
 const projectForm = element("project-form") as HTMLFormElement;
 const projectName = element("project-name") as HTMLInputElement;
@@ -93,7 +82,6 @@ const renameTaskName = element("rename-task-name") as HTMLInputElement;
 const renameHeading = element("rename-heading");
 const renameLabel = element("rename-label");
 const playbookPage = element("playbook-page");
-const connectionsPage = element("connections-page");
 const connectionsButton = element("manage-connections") as HTMLButtonElement;
 const pluginsPage = element("plugins-page");
 const pluginsButton = element("manage-plugins") as HTMLButtonElement;
@@ -106,49 +94,6 @@ const pairingDescription = element("pairing-description");
 const pairingError = element("pairing-error");
 const administrationPage = element("administration-page");
 const administrationButton = element("manage-administration") as HTMLButtonElement;
-const pairingCodeForm = element("pairing-code-form") as HTMLFormElement;
-const pairingCodeRole = element("pairing-code-role") as HTMLSelectElement;
-const pairingCodeTtl = element("pairing-code-ttl") as HTMLSelectElement;
-const pairingCodeResult = element("pairing-code-result");
-const issuedPairingCode = element("issued-pairing-code");
-const issuedPairingExpiry = element("issued-pairing-expiry");
-const copyPairingCode = element("copy-pairing-code") as HTMLButtonElement;
-const createUserForm = element("create-user-form") as HTMLFormElement;
-const createUserName = element("create-user-name") as HTMLInputElement;
-const createUserRole = element("create-user-role") as HTMLSelectElement;
-const adminUsers = element("admin-users");
-const toolPolicyForm = element("tool-policy-form") as HTMLFormElement;
-const toolPolicySubjectType = element("tool-policy-subject-type") as HTMLSelectElement;
-const toolPolicySubject = element("tool-policy-subject") as HTMLSelectElement;
-const toolPolicyName = element("tool-policy-name") as HTMLInputElement;
-const toolPolicyDecision = element("tool-policy-decision") as HTMLSelectElement;
-const toolPolicies = element("tool-policies");
-const adminAuditEvents = element("admin-audit-events");
-const diagnosticGeneratedAt = element("diagnostic-generated-at");
-const diagnosticSummary = element("diagnostic-summary");
-const diagnosticMetrics = element("diagnostic-metrics");
-const diagnosticFailures = element("diagnostic-failures");
-const exportDiagnostics = element("export-diagnostics") as HTMLButtonElement;
-const remoteAccessStatus = element("remote-access-status");
-const remoteAccessConfirmation = element("remote-access-confirmation");
-const remoteAccessConfirmationText = element("remote-access-confirmation-text");
-const enableRemoteAccess = element("enable-remote-access") as HTMLButtonElement;
-const disableRemoteAccess = element("disable-remote-access") as HTMLButtonElement;
-const confirmRemoteAccess = element("confirm-remote-access") as HTMLButtonElement;
-const hostStartupStatus = element("host-startup-status");
-const hostStartupConfirmation = element("host-startup-confirmation");
-const hostStartupConfirmationText = element("host-startup-confirmation-text");
-const installHostStartup = element("install-host-startup") as HTMLButtonElement;
-const removeHostStartup = element("remove-host-startup") as HTMLButtonElement;
-const confirmHostStartup = element("confirm-host-startup") as HTMLButtonElement;
-const playbookList = element("playbook-list");
-const playbookSearch = element("playbook-search") as HTMLInputElement;
-const managementTitle = element("management-title");
-const managementDescription = element("management-description");
-const managementBrowser = element("management-browser");
-const managementEditor = element("management-editor");
-const engineForm = element("engine-form") as HTMLFormElement;
-const recipeForm = element("recipe-form") as HTMLFormElement;
 const removeProjectDialog = element("remove-project-dialog") as HTMLDialogElement;
 const removeProjectForm = element("remove-project-form") as HTMLFormElement;
 const removeProjectName = element("remove-project-name");
@@ -233,22 +178,6 @@ const projectSidebar = new ProjectSidebarController({
   copyValue: (value, message) => void copyValue(value, message),
   continueSession: (session, projectId) => { currentProject = projectId; void continueInNewChat(session); },
 });
-const workspacePages = new WorkspacePageController({
-  pages: {
-    playbooks: playbookPage,
-    connections: connectionsPage,
-    plugins: pluginsPage,
-    administration: administrationPage,
-    pairing: pairingPage,
-  },
-  navigation: {
-    playbooks: element("manage-playbooks"),
-    connections: connectionsButton,
-    plugins: pluginsButton,
-    administration: administrationButton,
-  },
-  setConversationInert,
-});
 const activityTimeline = new ActivityTimeline({
   messages,
   inspectResource: (reference) => inspectorPanel.inspect(reference),
@@ -276,33 +205,73 @@ const agentRuns = new AgentRunController({
   errorMessage,
   terminalReplayError: (error) => error instanceof HttpError,
 });
-const connectionWorkspace = new ConnectionWorkspaceController({
-  form: element("connection-form") as HTMLFormElement,
-  id: element("consumer-connection-id") as HTMLInputElement,
-  name: element("consumer-connection-name") as HTMLInputElement,
-  url: element("consumer-connection-url") as HTMLInputElement,
-  auth: element("consumer-connection-auth") as HTMLSelectElement,
-  apiKey: element("consumer-connection-key") as HTMLInputElement,
-  apiKeyField: element("consumer-api-key-field"),
-  formStatus: element("connection-form-status"),
-  connections: element("consumer-connections"),
-  listView: element("connection-list-view"),
-  editor: element("connection-editor"),
-  editorTitle: element("connection-editor-title"),
-  search: element("connection-search") as HTMLInputElement,
-  refresh: element("refresh-connections") as HTMLButtonElement,
-  newConnection: element("new-connection") as HTMLButtonElement,
-  editorBack: element("connection-editor-back") as HTMLButtonElement,
-  cancelEdit: element("cancel-connection-edit") as HTMLButtonElement,
+const playbookWorkspace = new PlaybookWorkspaceController({
+  page: playbookPage,
+  list: element("playbook-list"),
+  search: element("playbook-search") as HTMLInputElement,
+  title: element("management-title"),
+  description: element("management-description"),
+  browser: element("management-browser"),
+  editor: element("management-editor"),
+  closeEditorButtons: [...document.querySelectorAll<HTMLButtonElement>("#close-management-editor, [data-close-management-editor]")],
+  refresh: element("refresh-playbooks") as HTMLButtonElement,
+  engineForm: element("engine-form") as HTMLFormElement,
+  engineFolder: element("engine-folder") as HTMLSelectElement,
+  engineDisplayName: element("engine-display-name") as HTMLInputElement,
+  engineConnection: element("engine-connection") as HTMLSelectElement,
+  engineRuntime: element("engine-runtime") as HTMLSelectElement,
+  engineBaseUrl: element("engine-base-url") as HTMLInputElement,
+  engineHealthPath: element("engine-health-path") as HTMLInputElement,
+  engineCommand: element("engine-command") as HTMLInputElement,
+  engineArguments: element("engine-arguments") as HTMLTextAreaElement,
+  engineWorkingDirectory: element("engine-working-directory") as HTMLInputElement,
+  engineWslDistribution: element("engine-wsl-distribution") as HTMLInputElement,
+  engineManagedFields: element("engine-managed-fields"),
+  engineRuntimeField: element("engine-runtime-field"),
+  engineBaseUrlField: element("engine-base-url-field"),
+  engineWslField: element("engine-wsl-field"),
+  engineEditorTitle: element("engine-editor-title"),
+  recipeForm: element("recipe-form") as HTMLFormElement,
+  recipePlaybookId: element("recipe-playbook-id") as HTMLInputElement,
+  recipeId: element("recipe-id") as HTMLInputElement,
+  recipeDisplayName: element("recipe-display-name") as HTMLInputElement,
+  recipeAdapter: element("recipe-adapter") as HTMLInputElement,
+  recipeModelId: element("recipe-model-id") as HTMLInputElement,
+  recipeContextTokens: element("recipe-context-tokens") as HTMLInputElement,
+  recipeConfiguration: element("recipe-configuration") as HTMLTextAreaElement,
+  recipeEditorTitle: element("recipe-editor-title"),
 }, {
+  api,
+  reloadConfiguration: () => loadManagementConfiguration(true),
+  showToast,
+  errorMessage,
+});
+const connectionWorkspace = new ConnectionWorkspaceController({
+  mount: workspace,
   bridge: window.fitz,
   api,
   reloadConfiguration: () => loadManagementConfiguration(false),
-  testRecipe,
-  renderRecipeTestState,
+  testRecipe: (recipe, card, button) => playbookWorkspace.testRecipe(recipe, card, button),
+  renderRecipeTestState: (recipeId, card, button) => playbookWorkspace.renderRecipeTestState(recipeId, card, button),
   closePopovers,
   showToast,
   errorMessage,
+});
+const workspacePages = new WorkspacePageController({
+  pages: {
+    playbooks: playbookPage,
+    connections: connectionWorkspace.root,
+    plugins: pluginsPage,
+    administration: administrationPage,
+    pairing: pairingPage,
+  },
+  navigation: {
+    playbooks: element("manage-playbooks"),
+    connections: connectionsButton,
+    plugins: pluginsButton,
+    administration: administrationButton,
+  },
+  setConversationInert,
 });
 const pluginCatalog = new PluginCatalogController({
   pluginsView: element("plugins-view"),
@@ -328,6 +297,61 @@ const messageActions = new MessageActions({
   copyText: (text) => window.fitz.copyText(text),
   resend: (text, article) => sendPrompt(text, article),
 });
+const administrationPageController = new AdministrationPageController({
+  refresh: element("refresh-administration") as HTMLButtonElement,
+  refreshRemoteAccess: element("refresh-remote-access") as HTMLButtonElement,
+  cancelRemoteAccess: element("cancel-remote-access") as HTMLButtonElement,
+  refreshHostStartup: element("refresh-host-startup") as HTMLButtonElement,
+  cancelHostStartup: element("cancel-host-startup") as HTMLButtonElement,
+  pairingCodeForm: element("pairing-code-form") as HTMLFormElement,
+  pairingCodeRole: element("pairing-code-role") as HTMLSelectElement,
+  pairingCodeTtl: element("pairing-code-ttl") as HTMLSelectElement,
+  pairingCodeResult: element("pairing-code-result"),
+  issuedPairingCode: element("issued-pairing-code"),
+  issuedPairingExpiry: element("issued-pairing-expiry"),
+  copyPairingCode: element("copy-pairing-code") as HTMLButtonElement,
+  createUserForm: element("create-user-form") as HTMLFormElement,
+  createUserName: element("create-user-name") as HTMLInputElement,
+  createUserRole: element("create-user-role") as HTMLSelectElement,
+  adminUsers: element("admin-users"),
+  toolPolicyForm: element("tool-policy-form") as HTMLFormElement,
+  toolPolicySubjectType: element("tool-policy-subject-type") as HTMLSelectElement,
+  toolPolicySubject: element("tool-policy-subject") as HTMLSelectElement,
+  toolPolicyName: element("tool-policy-name") as HTMLInputElement,
+  toolPolicyDecision: element("tool-policy-decision") as HTMLSelectElement,
+  toolPolicies: element("tool-policies"),
+  adminAuditEvents: element("admin-audit-events"),
+  diagnosticGeneratedAt: element("diagnostic-generated-at"),
+  diagnosticSummary: element("diagnostic-summary"),
+  diagnosticMetrics: element("diagnostic-metrics"),
+  diagnosticFailures: element("diagnostic-failures"),
+  exportDiagnostics: element("export-diagnostics") as HTMLButtonElement,
+  remoteAccessStatus: element("remote-access-status"),
+  remoteAccessConfirmation: element("remote-access-confirmation"),
+  remoteAccessConfirmationText: element("remote-access-confirmation-text"),
+  enableRemoteAccess: element("enable-remote-access") as HTMLButtonElement,
+  disableRemoteAccess: element("disable-remote-access") as HTMLButtonElement,
+  confirmRemoteAccess: element("confirm-remote-access") as HTMLButtonElement,
+  hostStartupStatus: element("host-startup-status"),
+  hostStartupConfirmation: element("host-startup-confirmation"),
+  hostStartupConfirmationText: element("host-startup-confirmation-text"),
+  installHostStartup: element("install-host-startup") as HTMLButtonElement,
+  removeHostStartup: element("remove-host-startup") as HTMLButtonElement,
+  confirmHostStartup: element("confirm-host-startup") as HTMLButtonElement,
+  checkDesktopUpdate: element("check-desktop-update") as HTMLButtonElement,
+  installDesktopUpdate: element("install-desktop-update") as HTMLButtonElement,
+  desktopUpdateLabel: element("desktop-update-label"),
+  desktopUpdateVersion: element("desktop-update-version"),
+  desktopUpdateProgress: element("desktop-update-progress"),
+  updateButton,
+}, {
+  api,
+  bridge: window.fitz,
+  isAdministrator: () => administrator,
+  currentUserId: () => currentUserId,
+  showToast,
+  errorMessage,
+});
 void initialize();
 
 window.fitz.onNavigationCommand((command) => void navigateHistory(command === "back" ? -1 : 1));
@@ -336,7 +360,7 @@ document.addEventListener("keydown", (event) => {
   if (event.ctrlKey && event.key.toLowerCase() === "b") { event.preventDefault(); toggleSidebar(); }
   if (event.ctrlKey && event.altKey && event.key.toLowerCase() === "r") { event.preventDefault(); openRenameDialog(); }
   if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "a") { event.preventDefault(); void archiveCurrentTask(); }
-  if (event.key === "Escape") { if (!managementEditor.hidden) closeManagementEditor(); else if (connectionWorkspace.editorOpen) connectionWorkspace.closeEditor(); else closePopovers(); }
+  if (event.key === "Escape") { if (playbookWorkspace.editorOpen) playbookWorkspace.closeEditor(); else if (connectionWorkspace.editorOpen) connectionWorkspace.closeEditor(); else closePopovers(); }
 });
 
 element("new-project").addEventListener("click", () => openProjectDialog());
@@ -345,11 +369,6 @@ element("manage-playbooks").addEventListener("click", () => void openPlaybookPag
 connectionsButton.addEventListener("click", () => void openConnectionsPage());
 pluginsButton.addEventListener("click", () => void openPluginsPage());
 administrationButton.addEventListener("click", () => void openAdministrationPage());
-element("refresh-administration").addEventListener("click", () => void loadAdministration());
-element("refresh-playbooks").addEventListener("click", () => void loadManagementConfiguration(true));
-element("close-management-editor").addEventListener("click", closeManagementEditor);
-for (const button of document.querySelectorAll<HTMLButtonElement>("[data-close-management-editor]")) button.addEventListener("click", closeManagementEditor);
-playbookSearch.addEventListener("input", renderManagementPage);
 element("sidebar-menu").addEventListener("click", toggleSidebar);
 for (const menuButton of document.querySelectorAll<HTMLButtonElement>("[data-app-menu]")) menuButton.addEventListener("click", (event) => openAppMenu(menuButton.dataset.appMenu ?? "", menuButton, event));
 for (const windowButton of document.querySelectorAll<HTMLButtonElement>("[data-window-action]")) windowButton.addEventListener("click", () => void window.fitz.windowAction(windowButton.dataset.windowAction as "minimize" | "maximize" | "close"));
@@ -370,35 +389,9 @@ element("rename-task").addEventListener("click", openRenameDialog);
 element("archive-task").addEventListener("click", () => void archiveCurrentTask());
 renameForm.addEventListener("submit", (event) => { event.preventDefault(); void renameCurrentTask(); });
 removeProjectForm.addEventListener("submit", (event) => { event.preventDefault(); void removeProject(); });
-updateButton.addEventListener("click", () => void window.fitz.installUpdate());
-installDesktopUpdate.addEventListener("click", () => void window.fitz.installUpdate());
-checkDesktopUpdate.addEventListener("click", () => void checkForDesktopUpdate());
-window.fitz.onUpdateStatus(renderDesktopUpdate);
-void window.fitz.updateStatus().then(renderDesktopUpdate).catch(() => renderDesktopUpdate({ state: "error" }));
 projectForm.addEventListener("submit", (event) => { event.preventDefault(); void createProject(); });
 taskForm.addEventListener("submit", (event) => { event.preventDefault(); void createSession(); });
 pairingForm.addEventListener("submit", (event) => { event.preventDefault(); void pairDevice(); });
-pairingCodeForm.addEventListener("submit", (event) => { event.preventDefault(); void issuePairingCode(); });
-copyPairingCode.addEventListener("click", () => void window.fitz.copyText(issuedPairingCode.textContent ?? ""));
-createUserForm.addEventListener("submit", (event) => { event.preventDefault(); void createAdminUser(); });
-toolPolicySubjectType.addEventListener("change", renderToolPolicySubjects);
-toolPolicyForm.addEventListener("submit", (event) => { event.preventDefault(); void saveToolPolicy(); });
-exportDiagnostics.addEventListener("click", () => void exportDiagnosticBundle());
-element("refresh-remote-access").addEventListener("click", () => void loadRemoteAccess());
-enableRemoteAccess.addEventListener("click", () => showRemoteConfirmation("enable"));
-disableRemoteAccess.addEventListener("click", () => showRemoteConfirmation("disable"));
-element("cancel-remote-access").addEventListener("click", hideRemoteConfirmation);
-confirmRemoteAccess.addEventListener("click", () => void applyRemoteAccessChange());
-element("refresh-host-startup").addEventListener("click", () => void loadHostStartup());
-installHostStartup.addEventListener("click", () => showStartupConfirmation("install"));
-removeHostStartup.addEventListener("click", () => showStartupConfirmation("remove"));
-element("cancel-host-startup").addEventListener("click", hideStartupConfirmation);
-confirmHostStartup.addEventListener("click", () => void applyStartupChange());
-recipeForm.addEventListener("submit", (event) => { event.preventDefault(); void saveRecipe(); });
-engineForm.addEventListener("submit", (event) => { event.preventDefault(); void saveEngine(); });
-(element("engine-folder") as HTMLSelectElement).addEventListener("change", applyEngineFolderChoice);
-(element("engine-connection") as HTMLSelectElement).addEventListener("change", updateEngineFieldVisibility);
-(element("engine-runtime") as HTMLSelectElement).addEventListener("change", updateEngineFieldVisibility);
 for (const closeButton of document.querySelectorAll<HTMLElement>("[data-close-dialog]")) {
   closeButton.addEventListener("click", () => {
     const dialog = document.getElementById(closeButton.dataset.closeDialog ?? "") as HTMLDialogElement | null;
@@ -771,18 +764,18 @@ async function openPlaybookPage(): Promise<void> {
   if (!pairingPage.hidden) { pairingCode.focus(); return; }
   closePopovers();
   inspectorPanel.close();
-  closeManagementEditor();
+  playbookWorkspace.closeEditor();
   workspacePages.show("playbooks");
-  playbookList.replaceChildren(panelEmpty("Loading playbooks…"));
+  playbookWorkspace.showLoading();
   await loadManagementConfiguration(true);
   rememberLocation({ view: "playbooks" });
 }
 
-async function openConnectionsPage(): Promise<void> { if (!pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); closeManagementEditor(); connectionWorkspace.closeEditor(); workspacePages.show("connections"); await connectionWorkspace.sync(false); rememberLocation({ view: "connections" }); }
-async function openPluginsPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); closeManagementEditor(); connectionWorkspace.closeEditor(); workspacePages.show("plugins"); pluginCatalog.showLoading(); await pluginCatalog.load(false); rememberLocation({ view: "plugins" }); }
-async function openAdministrationPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); closeManagementEditor(); workspacePages.show("administration"); adminUsers.replaceChildren(panelEmpty("Loading users…")); await loadAdministration(); rememberLocation({ view: "administration" }); }
-function showPairingPage(message: string): void { closePopovers(); inspectorPanel.close(); closeManagementEditor(); workspacePages.show("pairing"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
-function showConversationWorkspace(): void { closeManagementEditor(); workspacePages.show("conversation"); }
+async function openConnectionsPage(): Promise<void> { if (!pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("connections"); await connectionWorkspace.sync(false); rememberLocation({ view: "connections" }); }
+async function openPluginsPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("plugins"); pluginCatalog.showLoading(); await pluginCatalog.load(false); rememberLocation({ view: "plugins" }); }
+async function openAdministrationPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); workspacePages.show("administration"); administrationPageController.showLoading(); await administrationPageController.load(); rememberLocation({ view: "administration" }); }
+function showPairingPage(message: string): void { closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); workspacePages.show("pairing"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
+function showConversationWorkspace(): void { playbookWorkspace.closeEditor(); workspacePages.show("conversation"); }
 function setConversationInert(inert: boolean): void { for (const area of [workspaceHeader, messages, composer.root]) { area.toggleAttribute("inert", inert); area.setAttribute("aria-hidden", String(inert)); } }
 
 function rememberLocation(location: AppLocation): void {
@@ -833,463 +826,6 @@ async function pairDevice(): Promise<void> {
   finally { setFormBusy(pairingForm, false); }
 }
 
-async function issuePairingCode(): Promise<void> {
-  setFormBusy(pairingCodeForm, true);
-  try {
-    const response = await api("/api/v1/management/pairing-codes", "POST", {
-      intendedRole: pairingCodeRole.value,
-      ttlSeconds: Number(pairingCodeTtl.value),
-    });
-    issuedPairingCode.textContent = response.data.code;
-    issuedPairingExpiry.textContent = `Expires ${new Date(response.data.expiresAt).toLocaleString()}`;
-    pairingCodeResult.hidden = false;
-  }
-  catch (error) { showToast(errorMessage(error)); }
-  finally { setFormBusy(pairingCodeForm, false); }
-}
-
-async function createAdminUser(): Promise<void> {
-  setFormBusy(createUserForm, true);
-  try {
-    await api("/api/v1/management/users", "POST", {
-      displayName: createUserName.value.trim(),
-      role: createUserRole.value,
-    });
-    createUserName.value = "";
-    await loadAdministration();
-  }
-  catch (error) { showToast(errorMessage(error)); }
-  finally { setFormBusy(createUserForm, false); }
-}
-
-async function loadAdministration(): Promise<void> {
-  if (!administrator) return;
-  try {
-    const [users, policies, audit, diagnostics, remote, startup] = await Promise.all([
-      api("/api/v1/management/users"),
-      api("/api/v1/management/tool-policies"),
-      api("/api/v1/management/audit-events?limit=50"),
-      api("/api/v1/management/diagnostics"),
-      api("/api/v1/management/connectivity/status"),
-      api("/api/v1/management/startup"),
-    ]);
-    administrationUsers = users.data ?? [];
-    administrationPolicies = policies.data ?? [];
-    const access = await Promise.all(administrationUsers.map((user) =>
-      api(`/api/v1/management/users/${user.id}/access`).then((response) => response.data),
-    ));
-    adminUsers.replaceChildren(...access.map(renderAdminUser));
-    if (!access.length) adminUsers.append(panelEmpty("No users yet"));
-    renderToolPolicySubjects();
-    renderToolPolicies();
-    renderAdminAuditEvents(audit.data ?? []);
-    diagnosticBundle = diagnostics;
-    renderDiagnostics(diagnostics);
-    renderRemoteAccess(remote.data);
-    renderHostStartup(startup.data);
-  }
-  catch (error) { adminUsers.replaceChildren(panelEmpty(`Administration unavailable: ${errorMessage(error)}`)); }
-}
-
-function renderAdminUser(access: Json): HTMLElement {
-  const user = access.user as Json;
-  const activeDevices = (access.devices ?? []).filter((device: Json) => !device.revokedAt).length;
-  const details = document.createElement("details");
-  details.className = "admin-user";
-
-  const summary = document.createElement("summary");
-  const title = document.createElement("span");
-  title.className = "admin-user-title";
-  title.append(
-    Object.assign(document.createElement("strong"), { textContent: user.displayName }),
-    Object.assign(document.createElement("small"), { textContent: `${activeDevices} active device${activeDevices === 1 ? "" : "s"}` }),
-  );
-  const role = document.createElement("select");
-  role.setAttribute("aria-label", `Role for ${user.displayName}`);
-  for (const value of ["consumer", "agent", "administrator"]) {
-    role.add(new Option(value[0]!.toUpperCase() + value.slice(1), value));
-  }
-  role.value = user.role;
-  role.disabled = user.id === currentUserId;
-  role.addEventListener("click", (event) => event.stopPropagation());
-  role.addEventListener("change", () => void updateAdminUser(user.id, { role: role.value }));
-  const status = document.createElement("span");
-  status.className = "admin-user-status";
-  status.textContent = user.id === currentUserId ? "Current user" : user.status;
-  summary.append(title, role, status);
-
-  const body = document.createElement("div");
-  body.className = "admin-user-body";
-  const routesHeading = document.createElement("h3");
-  routesHeading.textContent = "Routes";
-  const routeList = document.createElement("div");
-  routeList.className = "admin-routes";
-  for (const route of FIXED_ROUTES) {
-    const label = document.createElement("label");
-    label.className = "admin-route";
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.value = route.id;
-    input.checked = user.role === "administrator" || (access.routeIds ?? []).includes(route.id);
-    input.disabled = user.role === "administrator";
-    label.append(input, route.label);
-    routeList.append(label);
-  }
-
-  const quotaHeading = document.createElement("h3");
-  quotaHeading.textContent = "Quotas";
-  const quota = document.createElement("div");
-  quota.className = "admin-access";
-  const quotaFields = [
-    ["maxRequestsPerMinute", "Requests / minute"],
-    ["maxPromptChars", "Prompt characters"],
-    ["maxOutputTokens", "Output tokens"],
-    ["maxQueueDepth", "Queue depth"],
-  ];
-  for (const [key, labelText] of quotaFields) {
-    const label = document.createElement("label");
-    label.textContent = labelText!;
-    const input = document.createElement("input");
-    input.type = "number";
-    input.min = "1";
-    input.value = String(access.quota?.[key!] ?? 1);
-    input.dataset.quota = key!;
-    label.append(input);
-    quota.append(label);
-  }
-
-  const devicesHeading = document.createElement("h3");
-  devicesHeading.textContent = "Devices";
-  const devices = document.createElement("div");
-  devices.className = "admin-devices";
-  for (const device of access.devices ?? []) {
-    const item = document.createElement("span");
-    item.className = "admin-device";
-    const current = device.id === access.currentDeviceId;
-    item.append(Object.assign(document.createElement("span"), {
-      textContent: `${device.name}${current ? " · current" : ""}${device.revokedAt ? " · revoked" : ""}`,
-    }));
-    if (!device.revokedAt && !current) {
-      const revoke = document.createElement("button");
-      revoke.type = "button";
-      revoke.title = `Revoke ${device.name}`;
-      revoke.setAttribute("aria-label", revoke.title);
-      revoke.textContent = "×";
-      revoke.addEventListener("click", () => void revokeAdminDevice(device.id));
-      item.append(revoke);
-    }
-    devices.append(item);
-  }
-  if (!(access.devices ?? []).length) devices.append(panelEmpty("No devices"));
-
-  const actions = document.createElement("div");
-  actions.className = "admin-user-actions";
-  const save = document.createElement("button");
-  save.type = "button";
-  save.textContent = "Save access";
-  save.addEventListener("click", () => void saveAdminAccess(user.id, details, save));
-  actions.append(save);
-  if (user.id !== currentUserId) {
-    const toggle = document.createElement("button");
-    toggle.type = "button";
-    toggle.className = user.status === "active" ? "danger" : "";
-    toggle.textContent = user.status === "active" ? "Disable user" : "Enable user";
-    toggle.addEventListener("click", () => void updateAdminUser(user.id, { status: user.status === "active" ? "disabled" : "active" }));
-    actions.append(toggle);
-  }
-  body.append(routesHeading, routeList, quotaHeading, quota, devicesHeading, devices, actions);
-  details.append(summary, body);
-  return details;
-}
-
-function renderToolPolicySubjects(): void {
-  const previous = toolPolicySubject.value;
-  toolPolicySubject.replaceChildren();
-  if (toolPolicySubjectType.value === "role") {
-    for (const role of ["consumer", "agent", "administrator"]) toolPolicySubject.add(new Option(role, role));
-  } else {
-    for (const user of administrationUsers) toolPolicySubject.add(new Option(user.displayName, user.id));
-  }
-  if ([...toolPolicySubject.options].some((option) => option.value === previous)) toolPolicySubject.value = previous;
-}
-
-function renderToolPolicies(): void {
-  toolPolicies.replaceChildren();
-  for (const policy of administrationPolicies) {
-    const row = document.createElement("div");
-    row.className = "tool-policy";
-    const subject = policy.subjectType === "user"
-      ? administrationUsers.find((user) => user.id === policy.subjectId)?.displayName ?? policy.subjectId
-      : policy.subjectId;
-    row.append(
-      Object.assign(document.createElement("strong"), { textContent: policy.toolName }),
-      Object.assign(document.createElement("span"), { textContent: `${policy.subjectType}: ${subject}` }),
-      Object.assign(document.createElement("em"), { textContent: policy.decision }),
-    );
-    toolPolicies.append(row);
-  }
-  if (!administrationPolicies.length) toolPolicies.append(panelEmpty("No explicit tool policies"));
-}
-
-function renderAdminAuditEvents(events: Json[]): void {
-  adminAuditEvents.replaceChildren();
-  for (const event of events) {
-    const row = document.createElement("div");
-    row.className = "admin-audit-event";
-    const actor = administrationUsers.find((user) => user.id === event.actorUserId)?.displayName ?? "System";
-    const timestamp = String(event.timestamp ?? "");
-    const target = event.targetType ?? "system";
-    row.append(
-      Object.assign(document.createElement("strong"), { textContent: event.action }),
-      Object.assign(document.createElement("span"), { textContent: `${actor} · ${target}${event.targetId ? ` · ${event.targetId}` : ""}` }),
-      Object.assign(document.createElement("time"), { textContent: timestamp ? new Date(timestamp).toLocaleString() : "", dateTime: timestamp }),
-    );
-    adminAuditEvents.append(row);
-  }
-  if (!events.length) adminAuditEvents.append(panelEmpty("No activity yet"));
-}
-
-function renderDiagnostics(diagnostics: Json): void {
-  diagnosticGeneratedAt.textContent = diagnostics.generatedAt
-    ? `Captured ${new Date(diagnostics.generatedAt).toLocaleString()} · values are redacted before leaving the host`
-    : "";
-  diagnosticSummary.replaceChildren();
-  const stats = [
-    ["Engine", diagnostics.engine?.state ?? "Unknown"],
-    ["Queue", String(diagnostics.queueDepth ?? 0)],
-    ["Free RAM", diagnosticMib(diagnostics.resources?.freeRamMiB, diagnostics.resources?.totalRamMiB)],
-    ["Free VRAM", diagnosticMib(diagnostics.resources?.freeVramMiB, diagnostics.resources?.totalVramMiB)],
-  ];
-  for (const [label, value] of stats) {
-    const stat = document.createElement("div");
-    stat.className = "diagnostic-stat";
-    stat.append(
-      Object.assign(document.createElement("small"), { textContent: label }),
-      Object.assign(document.createElement("strong"), { textContent: value }),
-    );
-    diagnosticSummary.append(stat);
-  }
-
-  const metricRows: Array<[string, string]> = [];
-  for (const [name, value] of Object.entries(diagnostics.metrics?.counters ?? {})) metricRows.push([name, Number(value).toLocaleString()]);
-  for (const [name, value] of Object.entries(diagnostics.metrics?.gauges ?? {})) metricRows.push([name, String(value)]);
-  for (const [name, value] of Object.entries<Json>(diagnostics.metrics?.timings ?? {})) metricRows.push([name, `${Number(value.averageMs ?? 0).toFixed(1)} ms avg`]);
-  renderDiagnosticRows(diagnosticMetrics, metricRows, "No metrics recorded yet");
-
-  const failures: Array<[string, string]> = [];
-  for (const request of diagnostics.recentRequests ?? []) {
-    if (["failed", "interrupted", "cancelled"].includes(request.status)) failures.push([`${request.routeId} · ${request.status}`, request.errorCode ?? request.id]);
-  }
-  for (const event of diagnostics.recentLifecycleEvents ?? []) {
-    if (event.data?.state === "FAILED") failures.push([event.data.recipeId ?? "engine", event.data.reason ?? "Engine failed"]);
-  }
-  renderDiagnosticRows(diagnosticFailures, failures.slice(0, 20), "No recent failures");
-}
-
-function renderDiagnosticRows(container: HTMLElement, rows: Array<[string, string]>, empty: string): void {
-  container.replaceChildren();
-  for (const [name, value] of rows) {
-    const row = document.createElement("div");
-    row.className = "diagnostic-row";
-    row.append(
-      Object.assign(document.createElement("span"), { textContent: name }),
-      Object.assign(document.createElement("strong"), { textContent: value }),
-    );
-    container.append(row);
-  }
-  if (!rows.length) container.append(panelEmpty(empty));
-}
-
-function diagnosticMib(free: unknown, total: unknown): string {
-  if (!Number.isFinite(Number(free)) || !Number.isFinite(Number(total))) return "Unavailable";
-  return `${Math.round(Number(free)).toLocaleString()} / ${Math.round(Number(total)).toLocaleString()} MiB`;
-}
-
-async function exportDiagnosticBundle(): Promise<void> {
-  if (!diagnosticBundle) return;
-  exportDiagnostics.disabled = true;
-  try {
-    const path = await window.fitz.saveDiagnostics(JSON.stringify(diagnosticBundle, null, 2));
-    if (path) showToast(`Diagnostics saved to ${path}`);
-  } catch (error) { showToast(errorMessage(error)); }
-  finally { exportDiagnostics.disabled = false; }
-}
-
-async function checkForDesktopUpdate(): Promise<void> {
-  checkDesktopUpdate.disabled = true;
-  try { await window.fitz.checkForUpdates(); }
-  catch { renderDesktopUpdate({ state: "error" }); }
-  finally { if (desktopUpdateLabel.dataset.state !== "checking" && desktopUpdateLabel.dataset.state !== "downloading") checkDesktopUpdate.disabled = false; }
-}
-
-function renderDesktopUpdate(update: DesktopUpdateStatus): void {
-  const percent = update.state === "downloaded" ? 100 : Math.max(0, Math.min(100, update.percent ?? 0));
-  const labels: Record<DesktopUpdateStatus["state"], string> = {
-    idle: "Ready to check",
-    checking: "Checking for updates…",
-    available: "Update found. Download starting…",
-    downloading: `Downloading update · ${Math.round(percent)}%`,
-    current: "Fitz is up to date",
-    downloaded: "Update ready to install",
-    error: "Update check failed",
-    development: "Update checks are available in packaged builds",
-  };
-  desktopUpdateLabel.textContent = labels[update.state];
-  desktopUpdateLabel.dataset.state = update.state;
-  desktopUpdateVersion.textContent = update.version ? `Version ${update.version}` : "";
-  desktopUpdateProgress.style.width = `${percent}%`;
-  const busy = update.state === "checking" || update.state === "available" || update.state === "downloading";
-  checkDesktopUpdate.disabled = busy;
-  installDesktopUpdate.hidden = update.state !== "downloaded";
-  updateButton.hidden = update.state !== "downloaded";
-}
-
-async function loadRemoteAccess(): Promise<void> {
-  try {
-    const response = await api("/api/v1/management/connectivity/status");
-    renderRemoteAccess(response.data);
-  } catch (error) { remoteAccessStatus.replaceChildren(panelEmpty(`Remote status unavailable: ${errorMessage(error)}`)); }
-}
-
-function renderRemoteAccess(remote: Json): void {
-  const tailscale = remote.tailscale ?? {};
-  const configuration = remote.serve?.configuration;
-  const served = remote.serve?.available === true && configuration && Object.keys(configuration).length > 0;
-  const values = [
-    ["Tailscale", String(tailscale.state ?? "unknown").replaceAll("-", " ")],
-    ["Device", tailscale.dnsName ?? tailscale.addresses?.[0] ?? "Not connected"],
-    ["Private HTTPS", remote.serve?.available === false ? "Unavailable" : served ? "Enabled" : "Disabled"],
-  ];
-  remoteAccessStatus.replaceChildren();
-  for (const [label, value] of values) {
-    const card = document.createElement("div");
-    card.className = "remote-access-card";
-    card.append(
-      Object.assign(document.createElement("small"), { textContent: label }),
-      Object.assign(document.createElement("strong"), { textContent: value }),
-    );
-    remoteAccessStatus.append(card);
-  }
-  enableRemoteAccess.disabled = tailscale.state !== "connected" || served;
-  disableRemoteAccess.disabled = !served;
-}
-
-function showRemoteConfirmation(action: "enable" | "disable"): void {
-  pendingRemoteAction = action;
-  remoteAccessConfirmationText.textContent = action === "enable"
-    ? "Enable private HTTPS through Tailscale Serve for this Fitz host?"
-    : "Disable the private HTTPS route? Remote clients will disconnect.";
-  confirmRemoteAccess.textContent = action === "enable" ? "Confirm enable" : "Confirm disable";
-  remoteAccessConfirmation.hidden = false;
-}
-
-function hideRemoteConfirmation(): void {
-  pendingRemoteAction = undefined;
-  remoteAccessConfirmation.hidden = true;
-}
-
-async function applyRemoteAccessChange(): Promise<void> {
-  if (!pendingRemoteAction) return;
-  const action = pendingRemoteAction;
-  confirmRemoteAccess.disabled = true;
-  try {
-    if (action === "enable") await api("/api/v1/management/connectivity/tailscale-serve", "POST", {});
-    else await api("/api/v1/management/connectivity/tailscale-serve", "DELETE");
-    hideRemoteConfirmation();
-    await loadAdministration();
-    showToast(action === "enable" ? "Private HTTPS enabled" : "Private HTTPS disabled");
-  } catch (error) { showToast(errorMessage(error)); }
-  finally { confirmRemoteAccess.disabled = false; }
-}
-
-async function loadHostStartup(): Promise<void> {
-  try {
-    const response = await api("/api/v1/management/startup");
-    renderHostStartup(response.data);
-  } catch (error) { hostStartupStatus.replaceChildren(panelEmpty(`Startup status unavailable: ${errorMessage(error)}`)); }
-}
-
-function renderHostStartup(startup: Json): void {
-  hostStartupStatus.replaceChildren(
-    Object.assign(document.createElement("strong"), { textContent: startup.configured ? "Starts at sign-in" : "Does not start at sign-in" }),
-    Object.assign(document.createElement("span"), { textContent: startup.message ?? (startup.available ? "Per-user Windows startup" : "Packaged host launcher unavailable") }),
-  );
-  installHostStartup.disabled = !startup.available || startup.configured;
-  removeHostStartup.disabled = !startup.configured;
-}
-
-function showStartupConfirmation(action: "install" | "remove"): void {
-  pendingStartupAction = action;
-  hostStartupConfirmationText.textContent = action === "install"
-    ? "Start the lightweight Fitz host automatically at Windows sign-in?"
-    : "Remove Fitz host from Windows sign-in startup?";
-  confirmHostStartup.textContent = action === "install" ? "Confirm startup" : "Confirm removal";
-  hostStartupConfirmation.hidden = false;
-}
-
-function hideStartupConfirmation(): void {
-  pendingStartupAction = undefined;
-  hostStartupConfirmation.hidden = true;
-}
-
-async function applyStartupChange(): Promise<void> {
-  if (!pendingStartupAction) return;
-  const action = pendingStartupAction;
-  confirmHostStartup.disabled = true;
-  try {
-    await api("/api/v1/management/startup", action === "install" ? "POST" : "DELETE", action === "install" ? {} : undefined);
-    hideStartupConfirmation();
-    await loadAdministration();
-    showToast(action === "install" ? "Host will start at sign-in" : "Host startup removed");
-  } catch (error) { showToast(errorMessage(error)); }
-  finally { confirmHostStartup.disabled = false; }
-}
-
-async function saveToolPolicy(): Promise<void> {
-  setFormBusy(toolPolicyForm, true);
-  try {
-    const subjectType = toolPolicySubjectType.value;
-    const subjectId = toolPolicySubject.value;
-    const toolName = toolPolicyName.value.trim();
-    if (!subjectId) throw new Error("Choose a policy subject");
-    await api(`/api/v1/management/tool-policies/${encodeURIComponent(subjectType)}/${encodeURIComponent(subjectId)}/${encodeURIComponent(toolName)}`, "PUT", {
-      decision: toolPolicyDecision.value,
-    });
-    toolPolicyName.value = "";
-    await loadAdministration();
-  } catch (error) { showToast(errorMessage(error)); }
-  finally { setFormBusy(toolPolicyForm, false); }
-}
-
-async function updateAdminUser(userId: string, update: Json): Promise<void> {
-  try {
-    await api(`/api/v1/management/users/${userId}`, "PATCH", update);
-    await loadAdministration();
-  } catch (error) { showToast(errorMessage(error)); }
-}
-
-async function revokeAdminDevice(deviceId: string): Promise<void> {
-  try {
-    await api(`/api/v1/management/devices/${deviceId}`, "DELETE");
-    await loadAdministration();
-  } catch (error) { showToast(errorMessage(error)); }
-}
-
-async function saveAdminAccess(userId: string, card: HTMLElement, button: HTMLButtonElement): Promise<void> {
-  button.disabled = true;
-  try {
-    const routeIds = [...card.querySelectorAll<HTMLInputElement>(".admin-route input:checked")].map((input) => input.value);
-    const quota: Json = {};
-    for (const input of card.querySelectorAll<HTMLInputElement>("[data-quota]")) quota[input.dataset.quota!] = Number(input.value);
-    await Promise.all([
-      api(`/api/v1/management/users/${userId}/routes`, "PUT", { routeIds }),
-      api(`/api/v1/management/users/${userId}/quota`, "PUT", quota),
-    ]);
-    showToast("Access saved");
-  } catch (error) { showToast(errorMessage(error)); }
-  finally { button.disabled = false; }
-}
-
 async function loadManagementConfiguration(renderPage: boolean): Promise<Json | undefined> {
   try {
     managementConfiguration = await api("/api/v1/management/status");
@@ -1297,9 +833,10 @@ async function loadManagementConfiguration(renderPage: boolean): Promise<Json | 
     updateContextMeter();
     connectionWorkspace.setConfiguration(managementConfiguration);
     rebuildRouteLabels();
-    if (renderPage) renderManagementPage();
+    playbookWorkspace.setConfiguration(managementConfiguration);
+    if (renderPage) playbookWorkspace.render();
   } catch (error) {
-    if (renderPage) playbookList.replaceChildren(panelEmpty(`Management data is unavailable: ${errorMessage(error)}`));
+    if (renderPage) playbookWorkspace.showUnavailable(errorMessage(error));
   }
   return managementConfiguration;
 }
@@ -1308,198 +845,6 @@ function syncContextLimit(): void {
   const route = managementConfiguration?.routes?.find((item: Json) => item.id === composer.controls.routeId);
   const recipe = managementConfiguration?.recipes?.find((item: Json) => item.id === route?.recipeId);
   if (Number.isFinite(recipe?.contextTokens) && recipe.contextTokens > 0) contextTokenLimit = recipe.contextTokens;
-}
-
-function renderManagementPage(): void {
-  const configuration = managementConfiguration;
-  playbookList.replaceChildren();
-  managementTitle.textContent = "Playbooks";
-  managementDescription.textContent = "Engine folders appear automatically. Configure and test their recipes here.";
-  playbookSearch.placeholder = "Search playbooks";
-  if (!configuration) { playbookList.append(panelEmpty("Management data is unavailable")); return; }
-  const recipes = configuration.recipes ?? [];
-  const folders = configuration.engineFolders ?? [];
-  const query = playbookSearch.value.trim().toLowerCase();
-  const matches = (...values: unknown[]) => !query || values.some((value) => String(value ?? "").toLowerCase().includes(query));
-  const visibleFolders = folders.filter((folder: Json) => {
-    const engineRecipes = recipes.filter((recipe: Json) => recipe.playbookId === folder.folderName);
-    return matches(folder.folderName, folder.rootPath, folder.engine?.displayName, ...engineRecipes.flatMap((recipe: Json) => [recipe.displayName, recipe.modelId]));
-  });
-  if (!visibleFolders.length) { playbookList.append(panelEmpty(`No engine folders found in ${configuration.engineRoot ?? "the configured root"}`)); return; }
-  for (const folder of visibleFolders) {
-    const engine = folder.engine;
-    const playbookId = folder.folderName;
-    const playbookRecipes = recipes.filter((recipe: Json) => recipe.playbookId === playbookId);
-    const card = document.createElement("section"); card.className = "playbook-card";
-    const heading = document.createElement("div"); heading.className = "playbook-heading";
-    const identity = document.createElement("div");
-    const title = document.createElement("h3"); title.textContent = engine?.displayName ?? playbookId;
-    identity.append(title);
-    const headingActions = document.createElement("div"); headingActions.className = "playbook-actions";
-    const configure = document.createElement("button"); configure.type = "button"; configure.className = "quiet-button compact-button"; configure.textContent = engine ? "Configure" : "Set up"; configure.addEventListener("click", () => openEngineEditor(folder)); headingActions.append(configure);
-    if (engine) { const addRecipe = document.createElement("button"); addRecipe.type = "button"; addRecipe.className = "quiet-button compact-button"; addRecipe.textContent = "Add recipe"; addRecipe.addEventListener("click", () => openRecipeEditor(undefined, { ...engine, rootPath: folder.rootPath })); headingActions.append(addRecipe); }
-    heading.append(identity, headingActions); card.append(heading);
-    if (engine && !playbookRecipes.length) card.append(panelEmpty("No recipes yet"));
-    if (!engine) { playbookList.append(card); continue; }
-    for (const recipe of playbookRecipes) {
-      const recipeCard = document.createElement("article"); recipeCard.className = "recipe-card";
-      const recipeDetails = document.createElement("button"); recipeDetails.type = "button"; recipeDetails.className = "recipe-card-details"; recipeDetails.addEventListener("click", () => openRecipeEditor(recipe));
-      const name = document.createElement("span"); name.className = "recipe-display-name"; name.textContent = recipe.displayName;
-      const labels = document.createElement("div"); labels.className = "recipe-card-labels";
-      const modelLabel = document.createElement("span"); modelLabel.className = "recipe-card-label"; modelLabel.textContent = recipe.modelId;
-      const contextLabel = document.createElement("span"); contextLabel.className = "recipe-card-label recipe-context-label"; contextLabel.textContent = `${formatTokenCount(recipe.contextTokens)} ctx`;
-      labels.append(modelLabel, contextLabel); recipeDetails.append(name, labels);
-      const recipeActions = document.createElement("div"); recipeActions.className = "recipe-card-actions";
-      const testButton = document.createElement("button"); testButton.type = "button"; testButton.className = "recipe-test-button"; testButton.setAttribute("aria-live", "polite"); testButton.addEventListener("click", (event) => { event.stopPropagation(); void testRecipe(recipe, recipeCard, testButton); });
-      recipeActions.append(testButton); renderRecipeTestState(recipe.id, recipeCard, testButton);
-      recipeCard.append(recipeDetails, recipeActions); card.append(recipeCard);
-    }
-    playbookList.append(card);
-  }
-}
-
-async function testRecipe(recipe: Json, card: HTMLElement, button: HTMLButtonElement): Promise<void> {
-  recipeTestStates.set(recipe.id, { state: "testing", detail: "Sending “Say hi.” to this recipe" });
-  renderRecipeTestState(recipe.id, card, button);
-  try {
-    const response = await api(`/api/v1/management/recipes/${encodeURIComponent(recipe.id)}/test`, "POST");
-    recipeTestStates.set(recipe.id, { state: "passed", detail: String(response.data?.output ?? "Recipe returned a response") });
-  } catch (error) {
-    recipeTestStates.set(recipe.id, { state: "failed", detail: errorMessage(error) });
-  }
-  renderRecipeTestState(recipe.id, card, button);
-}
-
-function renderRecipeTestState(recipeId: string, card: HTMLElement, button: HTMLButtonElement): void {
-  const result = recipeTestStates.get(recipeId);
-  const state = result?.state ?? "idle";
-  button.disabled = state === "testing";
-  button.classList.toggle("testing", state === "testing");
-  button.classList.toggle("passed", state === "passed");
-  button.classList.toggle("failed", state === "failed");
-  card.classList.toggle("recipe-test-passed", state === "passed");
-  card.classList.toggle("recipe-test-failed", state === "failed");
-  button.textContent = state === "testing" ? "Testing…" : state === "passed" ? "✓ Working" : state === "failed" ? "Retry" : "Test";
-  button.title = result?.detail ?? "Send “Say hi.” directly to this recipe";
-  button.setAttribute("aria-label", state === "passed" ? "Recipe test passed" : state === "failed" ? `Recipe test failed: ${result?.detail ?? "Unknown error"}. Retry` : state === "testing" ? "Testing recipe" : "Test recipe");
-}
-
-function openEngineEditor(folder?: Json): void {
-  engineForm.reset();
-  const folderSelect = element("engine-folder") as HTMLSelectElement;
-  folderSelect.replaceChildren();
-  const folders = managementConfiguration?.engineFolders ?? [];
-  for (const candidate of folders) { const option = document.createElement("option"); option.value = candidate.folderName; option.textContent = candidate.folderName; folderSelect.append(option); }
-  const preferred = folder ?? folders.find((candidate: Json) => !candidate.registered) ?? folders[0];
-  element("engine-editor-title").textContent = preferred?.engine ? "Configure engine" : "Set up engine";
-  if (preferred) folderSelect.value = preferred.folderName;
-  else { const option = document.createElement("option"); option.textContent = "No folders found"; option.disabled = true; option.selected = true; folderSelect.append(option); }
-  applyEngineFolderChoice();
-  showManagementEditor("engine");
-  (preferred ? element("engine-display-name") : folderSelect).focus();
-}
-
-function applyEngineFolderChoice(): void {
-  const folderName = (element("engine-folder") as HTMLSelectElement).value;
-  const folder = (managementConfiguration?.engineFolders ?? []).find((candidate: Json) => candidate.folderName === folderName);
-  const engine = folder?.engine;
-  const value = (id: string) => element(id) as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
-  value("engine-display-name").value = engine?.displayName ?? folderName;
-  value("engine-connection").value = engine?.connectionMode ?? "managed";
-  value("engine-runtime").value = engine?.runtime ?? "windows";
-  value("engine-base-url").value = engine?.baseUrl ?? "http://127.0.0.1:18080";
-  value("engine-health-path").value = engine?.healthPath ?? "/v1/models";
-  value("engine-command").value = engine?.launchCommand ?? "";
-  value("engine-arguments").value = (engine?.launchArguments ?? []).join("\n");
-  value("engine-working-directory").value = engine?.workingDirectory ?? ".";
-  value("engine-wsl-distribution").value = engine?.wslDistribution ?? "Ubuntu";
-  (engineForm.querySelector('button[type="submit"]') as HTMLButtonElement).disabled = !folder;
-  updateEngineFieldVisibility();
-}
-
-function updateEngineFieldVisibility(): void {
-  const managed = (element("engine-connection") as HTMLSelectElement).value === "managed";
-  element("engine-managed-fields").hidden = !managed;
-  element("engine-runtime-field").hidden = !managed;
-  element("engine-base-url-field").hidden = managed;
-  element("engine-wsl-field").hidden = !managed || (element("engine-runtime") as HTMLSelectElement).value !== "wsl";
-}
-
-async function saveEngine(): Promise<void> {
-  const value = (id: string) => (element(id) as HTMLInputElement | HTMLSelectElement).value.trim();
-  const folderName = value("engine-folder");
-  if (!folderName) return;
-  setFormBusy(engineForm, true);
-  try {
-    await api(`/api/v1/management/engines/${encodeURIComponent(folderName)}`, "PUT", {
-      displayName: value("engine-display-name"),
-      connectionMode: value("engine-connection"),
-      runtime: value("engine-runtime"),
-      baseUrl: value("engine-base-url"),
-      healthPath: value("engine-health-path"),
-      launchCommand: value("engine-command"),
-      launchArguments: (element("engine-arguments") as HTMLTextAreaElement).value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
-      workingDirectory: value("engine-working-directory"),
-      wslDistribution: value("engine-wsl-distribution"),
-    });
-    closeManagementEditor();
-    await loadManagementConfiguration(true);
-  } catch (error) { showToast(errorMessage(error)); }
-  finally { setFormBusy(engineForm, false); }
-}
-
-function openRecipeEditor(recipe?: Json, playbook?: Json): void {
-  editingRecipe = recipe;
-  recipeForm.reset();
-  element("recipe-editor-title").textContent = recipe ? "Edit recipe" : "Create recipe";
-  const value = (id: string) => element(id) as HTMLInputElement;
-  const playbookIds = [...new Set((managementConfiguration?.recipes ?? []).map((item: Json) => item.playbookId))];
-  const playbookId = recipe?.playbookId ?? playbook?.id ?? (playbookIds.length === 1 ? playbookIds[0] : "");
-  value("recipe-playbook-id").value = playbookId; value("recipe-playbook-id").readOnly = Boolean(playbookId);
-  value("recipe-id").value = recipe?.id ?? ""; value("recipe-id").readOnly = Boolean(recipe);
-  value("recipe-display-name").value = recipe?.displayName ?? "";
-  const adapter = recipe?.adapter ?? (playbook?.connectionMode === "managed" ? "openai-managed" : "openai-compatible");
-  value("recipe-adapter").value = adapter; value("recipe-adapter").readOnly = true;
-  value("recipe-model-id").value = recipe?.modelId ?? "";
-  value("recipe-context-tokens").value = String(recipe?.contextTokens ?? 131_072);
-  const defaultConfiguration = playbook?.connectionMode === "managed"
-    ? { enginePath: playbook.rootPath, runtime: playbook.runtime, command: playbook.launchCommand, args: playbook.launchArguments, workingDirectory: playbook.workingDirectory ?? ".", healthPath: playbook.healthPath, readinessTimeoutMs: 120_000, ...(playbook.wslDistribution ? { wslDistribution: playbook.wslDistribution } : {}) }
-    : playbook ? { baseUrl: playbook.baseUrl, healthPath: playbook.healthPath, allowInsecureRemote: false } : {};
-  (element("recipe-configuration") as HTMLTextAreaElement).value = JSON.stringify(recipe?.configuration ?? defaultConfiguration, null, 2);
-  showManagementEditor("recipe"); value("recipe-id").focus();
-}
-
-async function saveRecipe(): Promise<void> {
-  const value = (id: string) => (element(id) as HTMLInputElement).value.trim();
-  let configuration: Json;
-  try { configuration = JSON.parse((element("recipe-configuration") as HTMLTextAreaElement).value || "{}"); }
-  catch { showToast("Configuration must be valid JSON"); return; }
-  const id = value("recipe-id"); if (!id) return;
-  setFormBusy(recipeForm, true);
-  try {
-    await api(`/api/v1/management/recipes/${encodeURIComponent(id)}`, "PUT", {
-      playbookId: value("recipe-playbook-id"), displayName: value("recipe-display-name"), adapter: value("recipe-adapter"), modelId: value("recipe-model-id"),
-      contextTokens: Number(value("recipe-context-tokens")), configuration,
-      capabilities: editingRecipe?.capabilities ?? { chatCompletions: true, streaming: true, toolCalls: false, responseFormat: false, minP: false, maxConcurrentGenerations: 1 },
-      lifecycle: editingRecipe?.lifecycle ?? { loadPolicy: "onDemand", evictionPolicy: "idle-ttl", idleTtlSeconds: 600, minimumResidencySeconds: 0 },
-    });
-    closeManagementEditor(); await loadManagementConfiguration(true);
-  } catch (error) { showToast(errorMessage(error)); } finally { setFormBusy(recipeForm, false); }
-}
-
-function showManagementEditor(kind: "engine" | "recipe"): void {
-  managementBrowser.hidden = true;
-  managementEditor.hidden = false;
-  engineForm.hidden = kind !== "engine";
-  recipeForm.hidden = kind !== "recipe";
-  playbookPage.scrollTop = 0;
-}
-
-function closeManagementEditor(): void {
-  managementEditor.hidden = true;
-  managementBrowser.hidden = false;
-  engineForm.hidden = true;
-  recipeForm.hidden = true;
 }
 
 function activeProject(): Json | undefined { return projectRecords.find((project) => project.id === currentProject); }
