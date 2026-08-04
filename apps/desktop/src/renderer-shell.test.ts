@@ -684,6 +684,25 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("background-position: right 9px center");
   });
 
+  it("lets the administration sections collapse to their headers", () => {
+    expect(html).toContain('class="admin-section-toggle"');
+    expect(html).toContain('data-section="pairing"');
+    expect(html).toContain('data-section="remote"');
+    expect(html).toContain('data-section="startup"');
+    expect(html).toContain('data-section="users"');
+    expect(html).toContain('data-section="policies"');
+    expect(html).toContain('data-section="diagnostics"');
+    expect(html).toContain('data-section="updates"');
+    expect(html).toContain('data-section="activity"');
+    expect(html).toContain('id="admin-remote-body"');
+    expect(administrationPage).toContain('fitz-collapsed-admin-sections');
+    expect(administrationPage).toContain('querySelectorAll<HTMLButtonElement>(".admin-section-toggle")');
+    expect(renderer).toContain("sections: administrationPage");
+    expect(styles).toContain(".admin-section-toggle");
+    expect(styles).toContain(".admin-section.collapsed .admin-section-chevron { transform: rotate(-90deg); }");
+    expect(styles).toContain(".admin-section.collapsed .admin-section-body { display: none; }");
+  });
+
   it("keeps shared shell behavior behind reusable component boundaries", () => {
     expect(renderer).toContain('import { ResizablePane } from "./ui/primitives/resizable-pane.js"');
     expect(renderer).toContain('import { ConversationLayout } from "./ui/layout/conversation-layout.js"');

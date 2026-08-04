@@ -82,7 +82,7 @@ function setup(
   bridgeOverrides: Partial<AdministrationPageBridge> = {},
 ) {
   const elements: AdministrationPageElements = {
-    refresh: node("button"), refreshRemoteAccess: node("button"), cancelRemoteAccess: node("button"), refreshHostStartup: node("button"), cancelHostStartup: node("button"),
+    refresh: node("button"), sections: node("div"), refreshRemoteAccess: node("button"), cancelRemoteAccess: node("button"), refreshHostStartup: node("button"), cancelHostStartup: node("button"),
     pairingCodeForm: node("form"), pairingCodeRole: node("select"), pairingCodeTtl: node("select"), pairingCodeResult: node("div"),
     issuedPairingCode: node("strong"), issuedPairingExpiry: node("span"), copyPairingCode: node("button"),
     createUserForm: node("form"), createUserName: node("input"), createUserRole: node("select"), adminUsers: node("div"),
@@ -128,7 +128,23 @@ function setup(
 function submit(form: HTMLFormElement): void { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); }
 function click(target: Element): void { target.dispatchEvent(new MouseEvent("click", { bubbles: true })); }
 
-beforeEach(() => document.body.replaceChildren());
+function memoryStorage(initial: Record<string, string> = {}): Storage {
+  const values = new Map(Object.entries(initial));
+  return {
+    get length() { return values.size; },
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => [...values.keys()][index] ?? null,
+    removeItem: (key) => values.delete(key),
+    setItem: (key, value) => values.set(key, String(value)),
+  } as Storage;
+}
+
+beforeEach(() => {
+  // happy-dom ships an empty localStorage stub without working methods; install a real one.
+  globalThis.localStorage = memoryStorage();
+  document.body.replaceChildren();
+});
 afterEach(() => vi.useRealTimers());
 
 describe("AdministrationPageController", () => {
@@ -301,4 +317,132 @@ describe("AdministrationPageController", () => {
     await vi.waitFor(() => expect(bridge.saveDiagnostics).toHaveBeenCalledWith(expect.stringContaining('"engine"')));
     expect(showToast).toHaveBeenCalledWith("Diagnostics saved to C:\\Users\\me\\diagnostics.json");
   });
+
+  it("collapses and expands administration sections from their header toggles", () => {
+    const sections = sectionsFixture({
+      remote: { actions: ["refresh-remote-access"] },
+      users: {},
+    });
+    const { controller } = setupWithSections(sections);
+
+    const remoteToggle = toggleOf(sections, "remote");
+    const usersToggle = toggleOf(sections, "users");
+    expect(sectionOf(sections, "remote").classList.contains("collapsed")).toBe(false);
+    expect(remoteToggle.getAttribute("aria-expanded")).toBe("true");
+
+    click(remoteToggle);
+    expect(sectionOf(sections, "remote").classList.contains("collapsed")).toBe(true);
+    expect(remoteToggle.getAttribute("aria-expanded")).toBe("false");
+    // Only the toggled section collapses; the others stay expanded.
+    expect(sectionOf(sections, "users").classList.contains("collapsed")).toBe(false);
+    expect(JSON.parse(localStorage.getItem("fitz-collapsed-admin-sections") ?? "[]")).toContain("remote");
+
+    click(remoteToggle);
+    expect(sectionOf(sections, "remote").classList.contains("collapsed")).toBe(false);
+    expect(remoteToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(JSON.parse(localStorage.getItem("fitz-collapsed-admin-sections") ?? "[]")).not.toContain("remote");
+
+    // Every section toggle is independently bound, including ones without actions.
+    click(usersToggle);
+    expect(sectionOf(sections, "users").classList.contains("collapsed")).toBe(true);
+  });
+
+  it("restores collapsed administration sections from storage and keeps heading actions usable", async () => {
+    localStorage.setItem("fitz-collapsed-admin-sections", '["remote","users"]');
+    const sections = sectionsFixture({
+      remote: { actions: ["refresh-remote-access"] },
+      users: {},
+    });
+    const api = adminApi();
+    const refreshRemote = sections.querySelector<HTMLButtonElement>("#refresh-remote-access")!;
+    const { controller } = setupWithSections(sections, { api, refreshRemoteAccess: refreshRemote });
+
+    expect(sectionOf(sections, "remote").classList.contains("collapsed")).toBe(true);
+    expect(toggleOf(sections, "remote").getAttribute("aria-expanded")).toBe("false");
+    expect(sectionOf(sections, "users").classList.contains("collapsed")).toBe(true);
+
+    // Heading actions still work without toggling the collapse state.
+    click(refreshRemote);
+    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/connectivity/status"));
+    expect(sectionOf(sections, "remote").classList.contains("collapsed")).toBe(true);
+  });
 });
+
+// Builds the static admin-section markup shape used by renderer/index.html:
+// a heading row with a chevron toggle button plus optional action buttons, and
+// a sibling body wrapper the toggle controls.
+function sectionsFixture(config: Record<string, { actions?: string[] }>): HTMLElement {
+  const root = document.createElement("div");
+  for (const [key, { actions = [] }] of Object.entries(config)) {
+    const section = document.createElement("section");
+    section.className = "admin-section";
+
+    const heading = document.createElement("div");
+    heading.className = "admin-section-heading";
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "admin-section-toggle";
+    toggle.dataset.section = key;
+    toggle.setAttribute("aria-expanded", "true");
+    toggle.setAttribute("aria-controls", `admin-${key}-body`);
+    toggle.append(Object.assign(document.createElement("svg"), { className: "admin-section-chevron" }));
+    toggle.append(Object.assign(document.createElement("h2"), { textContent: key }));
+    heading.append(toggle);
+    for (const id of actions) {
+      heading.append(Object.assign(document.createElement("button"), { id, type: "button", textContent: id }));
+    }
+
+    const body = document.createElement("div");
+    body.className = "admin-section-body";
+    body.id = `admin-${key}-body`;
+    body.textContent = `${key} content`;
+
+    section.append(heading, body);
+    root.append(section);
+  }
+  document.body.append(root);
+  return root;
+}
+
+function setupWithSections(
+  sections: HTMLElement,
+  overrides: Partial<{ api: AdministrationPageApi; refreshRemoteAccess: HTMLButtonElement }> = {},
+) {
+  const elements = {
+    refresh: node("button"), sections, refreshRemoteAccess: overrides.refreshRemoteAccess ?? node("button"), cancelRemoteAccess: node("button"), refreshHostStartup: node("button"), cancelHostStartup: node("button"),
+    pairingCodeForm: node("form"), pairingCodeRole: node("select"), pairingCodeTtl: node("select"), pairingCodeResult: node("div"),
+    issuedPairingCode: node("strong"), issuedPairingExpiry: node("span"), copyPairingCode: node("button"),
+    createUserForm: node("form"), createUserName: node("input"), createUserRole: node("select"), adminUsers: node("div"),
+    toolPolicyForm: node("form"), toolPolicySubjectType: node("select"), toolPolicySubject: node("select"), toolPolicyName: node("input"), toolPolicyDecision: node("select"), toolPolicies: node("div"),
+    adminAuditEvents: node("div"), diagnosticGeneratedAt: node("p"), diagnosticSummary: node("div"), diagnosticMetrics: node("div"), diagnosticFailures: node("div"), exportDiagnostics: node("button"),
+    remoteAccessStatus: node("div"), remoteAccessConfirmation: node("div"), remoteAccessConfirmationText: node("span"),
+    enableRemoteAccess: node("button"), disableRemoteAccess: node("button"), confirmRemoteAccess: node("button"),
+    hostStartupStatus: node("div"), hostStartupConfirmation: node("div"), hostStartupConfirmationText: node("span"),
+    installHostStartup: node("button"), removeHostStartup: node("button"), confirmHostStartup: node("button"),
+    checkDesktopUpdate: node("button"), installDesktopUpdate: node("button"), desktopUpdateLabel: node("span"), desktopUpdateVersion: node("span"), desktopUpdateProgress: node("span"), updateButton: node("button"),
+  };
+  const controller = new AdministrationPageController(elements, {
+    api: overrides.api ?? adminApi(),
+    bridge: {
+      copyText: vi.fn(async () => undefined),
+      saveDiagnostics: vi.fn(async () => undefined),
+      checkForUpdates: vi.fn(async () => undefined),
+      installUpdate: vi.fn(async () => undefined),
+      updateStatus: vi.fn(async () => ({ state: "idle" as const })),
+      onUpdateStatus: vi.fn(() => () => undefined),
+    },
+    isAdministrator: () => true,
+    currentUserId: () => "user-1",
+    showToast: vi.fn(),
+    errorMessage: (error: unknown) => (error instanceof Error ? error.message : String(error)),
+  });
+  return { controller, elements };
+}
+
+function sectionOf(root: HTMLElement, key: string): HTMLElement {
+  return root.querySelector<HTMLElement>(`[data-section="${key}"]`)!.closest<HTMLElement>(".admin-section")!;
+}
+
+function toggleOf(root: HTMLElement, key: string): HTMLButtonElement {
+  return root.querySelector<HTMLButtonElement>(`[data-section="${key}"]`)!;
+}

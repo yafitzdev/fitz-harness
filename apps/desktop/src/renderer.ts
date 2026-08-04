@@ -344,6 +344,7 @@ const messageActions = new MessageActions({
 });
 const administrationPageController = new AdministrationPageController({
   refresh: element("refresh-administration") as HTMLButtonElement,
+  sections: administrationPage,
   refreshRemoteAccess: element("refresh-remote-access") as HTMLButtonElement,
   cancelRemoteAccess: element("cancel-remote-access") as HTMLButtonElement,
   refreshHostStartup: element("refresh-host-startup") as HTMLButtonElement,
