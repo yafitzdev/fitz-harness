@@ -52,6 +52,9 @@ let replayingNavigation = false;
 const navigationHistory: AppLocation[] = [];
 const recipeTestStates = new Map<string, { state: "testing" | "passed" | "failed"; detail: string }>();
 let routeCards: Json[] = [];
+let promptHistory: string[] = [];
+let promptHistoryIndex = -1;
+let promptDraft = "";
 
 const shell = query(".app-shell");
 const workspaceHeader = query(".workspace-header");
@@ -383,12 +386,20 @@ form.addEventListener("submit", (event) => {
   else void sendPrompt();
 });
 window.fitz.onNavigationCommand((command) => void navigateHistory(command === "back" ? -1 : 1));
-prompt.addEventListener("input", () => { resizePrompt(); updateContextMeter(); refreshComposerState(); agentRuns.scheduleWarmup(prompt.value, composerControls.routeId); });
+prompt.addEventListener("input", () => { if (promptHistoryIndex !== -1) { promptHistoryIndex = -1; promptDraft = ""; } resizePrompt(); updateContextMeter(); refreshComposerState(); agentRuns.scheduleWarmup(prompt.value, composerControls.routeId); });
 prompt.addEventListener("paste", handlePaste);
 prompt.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
     form.requestSubmit();
+    return;
+  }
+  if ((event.key === "ArrowUp" || event.key === "ArrowDown") && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !event.isComposing) {
+    const browsing = promptHistoryIndex !== -1;
+    const atStart = prompt.selectionStart === 0;
+    if (event.key === "ArrowUp" ? browsing || atStart : browsing) {
+      if (navigatePromptHistory(event.key === "ArrowUp" ? -1 : 1)) event.preventDefault();
+    }
   }
 });
 document.addEventListener("keydown", (event) => {
@@ -398,6 +409,53 @@ document.addEventListener("keydown", (event) => {
   if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "a") { event.preventDefault(); void archiveCurrentTask(); }
   if (event.key === "Escape") { if (!managementEditor.hidden) closeManagementEditor(); else if (connectionWorkspace.editorOpen) connectionWorkspace.closeEditor(); else closePopovers(); }
 });
+
+// Recall the current session's own messages in the composer with the up/down
+// arrow keys, shell-style: up walks older, down walks newer and restores the
+// draft the user was typing before they started browsing.
+function navigatePromptHistory(direction: -1 | 1): boolean {
+  if (!promptHistory.length) return false;
+  if (direction === -1) {
+    if (promptHistoryIndex === -1) {
+      promptDraft = prompt.value;
+      promptHistoryIndex = promptHistory.length - 1;
+    } else if (promptHistoryIndex > 0) {
+      promptHistoryIndex--;
+    } else {
+      return false; // already at the oldest entry
+    }
+  } else {
+    if (promptHistoryIndex === -1) return false; // not browsing
+    if (promptHistoryIndex < promptHistory.length - 1) {
+      promptHistoryIndex++;
+    } else {
+      // Past the newest entry: restore the draft the user was typing.
+      promptHistoryIndex = -1;
+      prompt.value = promptDraft;
+      promptDraft = "";
+      afterPromptHistoryChange();
+      return true;
+    }
+  }
+  prompt.value = promptHistory[promptHistoryIndex] ?? "";
+  afterPromptHistoryChange();
+  return true;
+}
+
+function afterPromptHistoryChange(): void {
+  resizePrompt();
+  updateContextMeter();
+  refreshComposerState();
+  prompt.selectionStart = prompt.selectionEnd = prompt.value.length;
+}
+
+function rebuildPromptHistory(transcript: Json[]): void {
+  promptHistory = transcript
+    .filter((entry: Json) => entry.kind === "message" && entry.role === "user" && typeof entry.content?.text === "string" && entry.content.text.length > 0)
+    .map((entry: Json) => entry.content.text as string);
+  promptHistoryIndex = -1;
+  promptDraft = "";
+}
 
 element("new-project").addEventListener("click", () => openProjectDialog());
 element("new-session").addEventListener("click", openNewChat);
@@ -590,6 +648,7 @@ async function selectSession(id: string, rerender = true, projectId?: string): P
   messages.replaceChildren(loadingMessage("Loading conversation…"));
   try {
     const transcript = await api(`/api/v1/sessions/${id}/transcript`);
+    rebuildPromptHistory(transcript.data ?? []);
     messages.replaceChildren();
     activityTimeline.clear();
     sessionTokenEstimate = estimateTranscriptContext(transcript.data ?? []);
@@ -639,6 +698,9 @@ function openNewChat(): void {
   newChatMode = true;
   newChatProjectDetached = false;
   currentSession = undefined;
+  promptHistory = [];
+  promptHistoryIndex = -1;
+  promptDraft = "";
   sessionTokenEstimate = 0;
   composerControls.resetContextStatus();
   projectSidebar.ensureExpanded(currentProject);
@@ -1768,6 +1830,7 @@ async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLE
   refreshComposerAttachments();
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
   if (!existingUserMessage) appendMessage("user", content);
+  if (content && !existingUserMessage) { promptHistory.push(content); promptHistoryIndex = -1; promptDraft = ""; }
   sessionTokenEstimate += estimateTokens(content);
   updateContextMeter();
   // Build multi-modal message content

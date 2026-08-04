@@ -443,6 +443,21 @@ describe("desktop renderer shell", () => {
     expect(styles).not.toContain(".context-meter.model-loading");
   });
 
+  it("recalls the session's own user prompts with the up and down arrow keys", () => {
+    expect(renderer).toContain("let promptHistory: string[] = []");
+    expect(renderer).toContain("let promptHistoryIndex = -1");
+    expect(renderer).toContain("let promptDraft = \"\"");
+    expect(renderer).toContain('event.key === "ArrowUp" || event.key === "ArrowDown"');
+    expect(renderer).toContain('navigatePromptHistory(event.key === "ArrowUp" ? -1 : 1)');
+    expect(renderer).toContain("promptDraft = prompt.value");
+    expect(renderer).toContain("prompt.value = promptDraft");
+    expect(renderer).toContain("prompt.value = promptHistory[promptHistoryIndex] ?? \"\"");
+    expect(renderer).toContain("function rebuildPromptHistory(transcript: Json[]): void");
+    expect(renderer).toContain("entry.kind === \"message\" && entry.role === \"user\"");
+    expect(renderer).toContain("promptHistory.push(content)");
+    expect(renderer).toContain("rebuildPromptHistory(transcript.data ?? [])");
+  });
+
   it("keeps every dropdown and overflow surface at the compact Codex menu density", () => {
     expect(styles).toContain(".popover { position: absolute; z-index: 18; padding: 4px;");
     expect(styles).toContain(".menu-surface button { width: 100%; min-height: 32px;");
