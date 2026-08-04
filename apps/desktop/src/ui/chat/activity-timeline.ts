@@ -1,4 +1,5 @@
 import { svgIcon } from "../primitives/dom.js";
+import { ReasoningView } from "./reasoning-view.js";
 
 type Json = Record<string, any>;
 type WorkSummary = { root: HTMLElement; toggle: HTMLButtonElement; details: HTMLElement; startedAt: number; lastAt: number };
@@ -24,6 +25,7 @@ export class ActivityTimeline {
   readonly #options: ActivityTimelineOptions;
   readonly #searchRoots = new Set<string>();
   readonly #burstsByTool = new WeakMap<HTMLElement, ActivityBurst>();
+  readonly #reasoningByRow = new WeakMap<HTMLElement, ReasoningView>();
   #work: WorkSummary | undefined;
   #burst: ActivityBurst | undefined;
 
@@ -45,6 +47,44 @@ export class ActivityTimeline {
   appendCommentary(node: HTMLElement, createdAt?: string): void {
     this.#burst = undefined;
     this.appendWork(node, createdAt);
+  }
+
+  /** A user steering message queued into the running conversation: rendered inside the agent's work feed, among the tool calls and reasoning. */
+  appendSteer(text: string, createdAt?: string): HTMLElement {
+    this.#removeLanding();
+    this.#burst = undefined;
+    const row = document.createElement("div");
+    row.className = "message agent-activity steer-activity";
+    const icon = document.createElement("span");
+    icon.className = "agent-activity-icon";
+    icon.append(svgIcon('<path d="M12 11.5a4.25 4.25 0 1 0-4.25-4.25A4.25 4.25 0 0 0 12 11.5Zm0 2.25c-3.55 0-6.5 1.95-6.5 4.4V19.5h13v-1.35c0-2.45-2.95-4.4-6.5-4.4Z"></path>'));
+    const label = document.createElement("span");
+    label.className = "agent-activity-label";
+    label.textContent = text;
+    label.title = text;
+    row.append(icon, label);
+    this.appendWork(row, createdAt);
+    return row;
+  }
+
+  /** A model thinking segment, rendered as a collapsible row inside the work feed. */
+  appendReasoning(running: boolean): HTMLElement {
+    this.#removeLanding();
+    this.#burst = undefined;
+    const view = new ReasoningView(running);
+    this.#reasoningByRow.set(view.element, view);
+    this.appendWork(view.element);
+    this.#scroll();
+    return view.element;
+  }
+
+  appendReasoningDelta(row: HTMLElement, text: string): void {
+    this.#reasoningByRow.get(row)?.appendDelta(text);
+    this.#scroll();
+  }
+
+  completeReasoning(row: HTMLElement): void {
+    this.#reasoningByRow.get(row)?.complete();
   }
 
   appendTool(toolName: string, input: unknown, toolCallId: string, running: boolean, createdAt?: string): HTMLElement {

@@ -7,6 +7,9 @@ export interface AgentRunActivity {
   setRun(activity: HTMLElement, label: string, startedAt: number): void;
   appendContext(label?: string): HTMLElement;
   markAssistantAsCommentary(content: HTMLElement): void;
+  appendReasoning(running: boolean): HTMLElement;
+  appendReasoningDelta(row: HTMLElement, text: string): void;
+  completeReasoning(row: HTMLElement): void;
   appendApproval(approval: Json): HTMLElement;
   resolveApproval(row: HTMLElement, decision: "approved" | "denied"): void;
   appendTool(toolName: string, input: unknown, toolCallId: string, running: boolean): HTMLElement;
@@ -120,8 +123,15 @@ export class AgentRunController {
     }
   }
 
+  /** Insert a message into the running conversation. The host forwards it to the active stream. */
+  async steer(text: string): Promise<void> {
+    if (!this.#runId) throw new Error("No active run to steer");
+    await this.#options.api(`/api/v1/agent/runs/${this.#runId}/steer`, "POST", { text });
+  }
+
   async #follow(runId: string, activity: HTMLElement, startedAt: number): Promise<void> {
     let assistant: HTMLElement | undefined;
+    let reasoning: HTMLElement | undefined;
     const tools = new Map<string, { row: HTMLElement; toolName: string; input: unknown }>();
     const approvals = new Map<string, HTMLElement>();
     const changedFiles = new Map<string, "edited" | "created">();
@@ -165,10 +175,30 @@ export class AgentRunController {
           this.#options.addTokenEstimate(delta);
           this.#options.messages.scrollTop = this.#options.messages.scrollHeight;
         }
+        if (event.type === "reasoning.delta") {
+          // Model thinking streams into its own collapsible activity row, separate
+          // from the assistant bubble: it is never persisted as a chat message and
+          // never re-sent to the model as context.
+          const delta = String(event.data?.text ?? "");
+          if (delta) {
+            if (!reasoning) { activity.remove(); reasoning = this.#options.activity.appendReasoning(true); }
+            this.#options.activity.appendReasoningDelta(reasoning, delta);
+          }
+        }
+        if (event.type === "reasoning.completed") {
+          if (reasoning) { this.#options.activity.completeReasoning(reasoning); reasoning = undefined; }
+        }
+        if (event.type === "user.steer") {
+          // A steering message was delivered into the running conversation; the next
+          // deltas answer it, so start a fresh assistant bubble instead of merging
+          // into the previous turn's text.
+          assistant = undefined;
+        }
         if (event.type === "tool.approval.requested") {
           const approvalId = String(event.data?.approvalId ?? "");
           activity.remove();
           if (assistant) { this.#options.activity.markAssistantAsCommentary(assistant); assistant = undefined; }
+          if (reasoning) { this.#options.activity.completeReasoning(reasoning); reasoning = undefined; }
           approvals.set(approvalId, this.#options.activity.appendApproval({ id: approvalId, toolName: String(event.data?.toolName ?? "tool"), request: event.data?.input ?? {}, status: "pending" }));
           this.#options.setStatus("Waiting for approval", "active");
           this.#options.setEngineState("WAITING");
@@ -187,6 +217,7 @@ export class AgentRunController {
           const input = event.data?.input;
           activity.remove();
           if (assistant) { this.#options.activity.markAssistantAsCommentary(assistant); assistant = undefined; }
+          if (reasoning) { this.#options.activity.completeReasoning(reasoning); reasoning = undefined; }
           tools.set(toolCallId, { row: this.#options.activity.appendTool(toolName, input, toolCallId, true), toolName, input });
           this.#options.setStatus(`Running ${toolName}`, "active");
           this.#options.setEngineState(toolName.toUpperCase());
@@ -207,6 +238,7 @@ export class AgentRunController {
         }
         if (["run.completed", "run.failed", "run.cancelled", "run.interrupted"].includes(event.type)) {
           done = true;
+          if (reasoning) { this.#options.activity.completeReasoning(reasoning); reasoning = undefined; }
           const success = event.type === "run.completed";
           this.#options.setStatus(success ? "Ready" : event.type.slice(4), success ? "idle" : "error");
           this.#options.setEngineState(success || event.type === "run.cancelled" ? "READY" : event.type.slice(4).toUpperCase());

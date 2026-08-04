@@ -163,7 +163,9 @@ export class FakeEngineAdapter implements EngineAdapter<FakeInstanceHandle> {
 }
 
 function lastUserText(request: InferenceRequest): string {
-  return [...request.messages].reverse().find((message) => message.role === "user")?.content ?? "";
+  const content = [...request.messages].reverse().find((message) => message.role === "user")?.content;
+  if (typeof content === "string") return content;
+  return content?.map((part) => (part.type === "text" ? part.text : "")).join(" ").trim() ?? "";
 }
 
 function recipeFromHandle(instance: FakeInstanceHandle): Recipe {

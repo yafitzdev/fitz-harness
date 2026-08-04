@@ -21,6 +21,45 @@ describe("PiAgentRuntime", () => {
     expect(events).toEqual([{ type: "assistant.delta", text: "ready" }]);
   });
 
+  it("translates Pi thinking events into the reasoning stream, separate from text", async () => {
+    let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+    const runtime = new PiAgentRuntime({
+      cwd: "C:/project",
+      createSession: async () => ({
+        subscribe: (next) => { listener = next; return () => undefined; },
+        prompt: async () => {
+          listener({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", delta: "Let me " } });
+          listener({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", delta: "inspect it." } });
+          listener({ type: "message_update", assistantMessageEvent: { type: "thinking_end", content: "Let me inspect it." } });
+          listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Inspection complete." } });
+        },
+        abort: async () => undefined,
+        dispose: () => undefined,
+      }),
+    });
+    const events = []; for await (const event of runtime.run({ model: "fast", messages: [{ role: "user", content: "plan" }] })) events.push(event);
+    expect(events).toEqual([
+      { type: "reasoning.delta", text: "Let me " },
+      { type: "reasoning.delta", text: "inspect it." },
+      { type: "reasoning.completed" },
+      { type: "assistant.delta", text: "Inspection complete." },
+    ]);
+  });
+
+  it("passes the configured thinking level through the session factory boundary", async () => {
+    let seenThinkingLevel: string | undefined;
+    const runtime = new PiAgentRuntime({
+      thinkingLevel: "medium",
+      createSession: async (options) => {
+        seenThinkingLevel = options.thinkingLevel;
+        return { subscribe: (listener) => { listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "ok" } }); return () => undefined; }, prompt: async () => undefined, abort: async () => undefined, dispose: () => undefined };
+      },
+    });
+    const events = []; for await (const event of runtime.run({ model: "fast", messages: [{ role: "user", content: "hi" }] })) events.push(event);
+    expect(seenThinkingLevel).toBe("medium");
+    expect(events).toEqual([{ type: "assistant.delta", text: "ok" }]);
+  });
+
   it("builds authoritative Fitz paths into the appended system instructions", () => {
     const prompt = buildFitzSystemInstructions({ cwd: "C:/project", agentDir: "C:/Fitz/pi", llmRoot: "C:/Users/me/.llm" });
     expect(prompt).toContain("C:/Fitz/pi/extensions");
@@ -44,6 +83,44 @@ describe("PiAgentRuntime", () => {
     const runtime = new PiAgentRuntime({ cwd: "C:/project", tools: ["read"], apiKey: "private-pi-token", createSession: async (options) => { expect(options.tools).toEqual(["read"]); expect(options.apiKey).toBe("private-pi-token"); return { subscribe: (next) => { listener = next; return () => undefined; }, prompt: async (prompt) => { expect(prompt).toContain("USER: inspect this"); listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "hello" } }); listener({ type: "tool_execution_start", toolCallId: "call-1", toolName: "read", args: { path: "README.md" } }); listener({ type: "tool_execution_end", toolCallId: "call-1", toolName: "read", result: "done" }); }, abort: async () => undefined, dispose: () => { disposed = true; } }; } });
     const events = []; for await (const event of runtime.run({ model: "fast", messages: [{ role: "user", content: "inspect this" }] })) events.push(event);
     expect(events).toEqual([{ type: "assistant.delta", text: "hello" }, { type: "tool.started", toolCallId: "call-1", toolName: "read", input: { path: "README.md" } }, { type: "tool.completed", toolCallId: "call-1", toolName: "read", result: "done" }]); expect(disposed).toBe(true);
+  });
+
+  it("forwards steering messages to the live session and emits user.steer at delivery", async () => {
+    let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+    let releasePrompt!: () => void;
+    const promptGate = new Promise<void>((resolve) => { releasePrompt = resolve; });
+    const steered: string[] = [];
+    const runtime = new PiAgentRuntime({
+      cwd: "C:/project",
+      createSession: async () => ({
+        subscribe: (next) => { listener = next; return () => undefined; },
+        prompt: async () => {
+          listener({ type: "message_start", message: { role: "user", content: "initial prompt" } });
+          listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "working" } });
+          await promptGate;
+        },
+        steer: async (text) => { steered.push(text); },
+        abort: async () => undefined,
+        dispose: () => undefined,
+      }),
+    });
+    const run = runtime.run({ model: "fast", messages: [{ role: "user", content: "initial prompt" }] });
+    const events: Array<{ type: string; text?: string }> = [];
+    const collected = (async () => { for await (const event of run) events.push(event); })();
+    // Wait for the session to be created and its subscription to become active.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await run.steer!("focus on the tests");
+    expect(steered).toEqual(["focus on the tests"]);
+    // Pi delivers the steering message by emitting a user message_start.
+    listener({ type: "message_start", message: { role: "user", content: [{ type: "text", text: "focus on the tests" }] } });
+    listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: " second" } });
+    releasePrompt();
+    await collected;
+    expect(events).toEqual([
+      { type: "assistant.delta", text: "working" },
+      { type: "user.steer", text: "focus on the tests" },
+      { type: "assistant.delta", text: " second" },
+    ]);
   });
 
   it("propagates Pi session failures", async () => {

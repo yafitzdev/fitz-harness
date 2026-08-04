@@ -12,6 +12,7 @@ const customSelect = readFileSync(new URL("./ui/primitives/custom-select.ts", im
 const contextMenu = readFileSync(new URL("./ui/primitives/context-menu.ts", import.meta.url), "utf8");
 const messageActions = readFileSync(new URL("./ui/chat/message-actions.ts", import.meta.url), "utf8");
 const activityTimeline = readFileSync(new URL("./ui/chat/activity-timeline.ts", import.meta.url), "utf8");
+const reasoningView = readFileSync(new URL("./ui/chat/reasoning-view.ts", import.meta.url), "utf8");
 const agentRunController = readFileSync(new URL("./ui/chat/agent-run-controller.ts", import.meta.url), "utf8");
 const composerControls = readFileSync(new URL("./ui/chat/composer-controls.ts", import.meta.url), "utf8");
 const connectionWorkspace = readFileSync(new URL("./ui/connections/connection-workspace.ts", import.meta.url), "utf8");
@@ -25,6 +26,7 @@ const styles = [
   readFileSync(new URL("./ui/primitives/scroll-surface.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/message-actions.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/activity-timeline.css", import.meta.url), "utf8"),
+  readFileSync(new URL("./ui/chat/reasoning-view.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/composer-controls.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/connections/connection-workspace.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/plugins/plugin-catalog.css", import.meta.url), "utf8"),
@@ -248,8 +250,11 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("sessionTokenEstimate += estimateTokens");
     expect(renderer).toContain('api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" })');
     expect(renderer).toContain("max_tokens: composerControls.maxTokens");
-    expect(renderer).toContain("if (agentRuns.active) void agentRuns.cancel()");
+    expect(renderer).toContain("if (prompt.value.trim().length > 0) void steerPrompt()");
+    expect(renderer).toContain("else void agentRuns.cancel()");
+    expect(renderer).toContain("activityTimeline.appendSteer(content)");
     expect(agentRunController).toContain('this.#options.api(`/api/v1/agent/runs/${this.#runId}`, "DELETE")');
+    expect(agentRunController).toContain('this.#options.api(`/api/v1/agent/runs/${this.#runId}/steer`, "POST", { text })');
   });
 
   it("makes the new-chat project, environment, and branch controls functional", () => {
@@ -315,6 +320,24 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".agent-activity-summary { width: 100%; min-width: 0; min-height: 26px;");
     expect(styles).toContain(".work-summary-details { padding: 6px 0 0; }");
     expect(styles).toContain(".work-summary-details > .message.commentary { margin: 0 0 8px; }");
+  });
+
+  it("treats the reasoning chain as its own component, separate from chat", () => {
+    expect(agentRunController).toContain('event.type === "reasoning.delta"');
+    expect(agentRunController).toContain("this.#options.activity.appendReasoning(true)");
+    expect(agentRunController).toContain("this.#options.activity.appendReasoningDelta(reasoning, delta)");
+    expect(agentRunController).toContain("this.#options.activity.completeReasoning(reasoning)");
+    expect(activityTimeline).toContain("appendReasoning(running: boolean): HTMLElement");
+    expect(activityTimeline).toContain("new ReasoningView(running)");
+    expect(activityTimeline).toContain("?.appendDelta(text)");
+    expect(activityTimeline).toContain("?.complete()");
+    expect(reasoningView).toContain("export class ReasoningView");
+    expect(reasoningView).toContain('className = "reasoning-content"');
+    expect(reasoningView).toContain('label.textContent = running ? "Thinking…" : "Thought through the approach"');
+    expect(renderer).toContain('entry.kind === "reasoning"');
+    expect(renderer).toContain("activityTimeline.appendReasoning(false)");
+    expect(styles).toContain(".reasoning-content");
+    expect(styles).toContain(".reasoning-activity .agent-activity-label { font-style: italic; }");
   });
 
   it("collapses completed Pi activity behind a durable work summary", () => {

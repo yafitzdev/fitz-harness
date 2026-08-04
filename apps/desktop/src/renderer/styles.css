@@ -2,6 +2,7 @@
 @import "../ui/primitives/scroll-surface.css";
 @import "../ui/chat/message-actions.css";
 @import "../ui/chat/activity-timeline.css";
+@import "../ui/chat/reasoning-view.css";
 @import "../ui/chat/composer-controls.css";
 @import "../ui/connections/connection-workspace.css";
 @import "../ui/plugins/plugin-catalog.css";

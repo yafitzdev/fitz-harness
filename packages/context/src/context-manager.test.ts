@@ -14,6 +14,17 @@ describe("ContextManager", () => {
     const manager = new ContextManager(store, undefined, { reserveOutputTokens: 32, compactionThreshold: 0.8, recentTokenFraction: 0.5 }); const result = await manager.prepare({ model: "fast", sessionId: "s", messages: [{ role: "user", content: "new turn" }] }, 256); expect(result.compacted).toBe(true); expect(store.transcriptAfter("s", 0).at(-1)?.kind).toBe("compaction"); store.close();
   });
 
+  it("never re-sends reasoning entries back into the model context", async () => {
+    const store = SqliteStore.memory(); const now = new Date(0).toISOString(); store.createProject({ id: "p", name: "P", createdAt: now, updatedAt: now }); store.createSession({ id: "s", projectId: "p", title: "S", status: "active", createdAt: now, updatedAt: now });
+    store.appendTranscriptEntry({ id: "u", sessionId: "s", kind: "message", role: "user", content: { text: "task" }, createdAt: now });
+    store.appendTranscriptEntry({ id: "r", sessionId: "s", kind: "reasoning", role: "assistant", content: { text: "hidden reasoning" }, createdAt: now });
+    store.appendTranscriptEntry({ id: "a", sessionId: "s", kind: "message", role: "assistant", content: { text: "answer" }, createdAt: now });
+    const manager = new ContextManager(store); const prepared = await manager.prepare({ model: "fast", sessionId: "s", messages: [{ role: "user", content: "next" }] }, 10_000);
+    expect(prepared.request.messages.map((message) => message.content)).toEqual(["task", "answer", "next"]);
+    expect(prepared.request.messages.map((message) => message.content)).not.toContain("hidden reasoning");
+    store.close();
+  });
+
   it("creates a manual checkpoint while preserving the canonical transcript", async () => {
     const store = SqliteStore.memory(); const now = new Date(0).toISOString(); store.createProject({ id: "p", name: "P", createdAt: now, updatedAt: now }); store.createSession({ id: "s", projectId: "p", title: "S", status: "active", createdAt: now, updatedAt: now });
     store.appendTranscriptEntry({ id: "old-user", sessionId: "s", kind: "message", role: "user", content: { text: "old question" }, createdAt: now }); store.appendTranscriptEntry({ id: "old-assistant", sessionId: "s", kind: "message", role: "assistant", content: { text: "old answer" }, createdAt: now });

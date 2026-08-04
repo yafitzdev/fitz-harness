@@ -7,18 +7,22 @@ function activityMock() {
   const activity = document.createElement("div");
   const tool = document.createElement("div");
   const approval = document.createElement("div");
+  const reasoning = document.createElement("div");
   const timeline: AgentRunActivity = {
     appendRun: vi.fn(() => activity),
     setRun: vi.fn(),
     appendContext: vi.fn(() => document.createElement("div")),
     markAssistantAsCommentary: vi.fn(),
+    appendReasoning: vi.fn(() => reasoning),
+    appendReasoningDelta: vi.fn(),
+    completeReasoning: vi.fn(),
     appendApproval: vi.fn(() => approval),
     resolveApproval: vi.fn(),
     appendTool: vi.fn(() => tool),
     completeTool: vi.fn(),
     finishWork: vi.fn(),
   };
-  return { timeline, activity, tool, approval };
+  return { timeline, activity, tool, approval, reasoning };
 }
 
 function request(): AgentRunRequest {
@@ -144,5 +148,85 @@ describe("AgentRunController", () => {
     expect(api).toHaveBeenCalledWith("/api/v1/agent/runs/run-late", "DELETE");
     expect(calls.setStatus).toHaveBeenCalledWith("Stopping", "loading");
     expect(controller.active).toBe(false);
+  });
+
+  it("steers the active run through the host endpoint", async () => {
+    let resolveEvents!: (value: Record<string, unknown>) => void;
+    const events = new Promise<Record<string, unknown>>((resolve) => { resolveEvents = resolve; });
+    const api = vi.fn(async (path: string, method?: string) => {
+      if (path === "/api/v1/agent/runs" && method === "POST") return { data: { id: "run-1" } };
+      if (path.includes("/events")) return events;
+      return { data: {} };
+    });
+    const { controller } = setup(api);
+
+    const starting = controller.start(request());
+    await vi.waitFor(() => { expect(controller.runId).toBe("run-1"); });
+    await controller.steer("focus on tests");
+
+    expect(api).toHaveBeenCalledWith("/api/v1/agent/runs/run-1/steer", "POST", { text: "focus on tests" });
+    resolveEvents({ events: [{ sequence: 1, type: "run.completed", data: {} }] });
+    await starting;
+    expect(controller.active).toBe(false);
+  });
+
+  it("starts a fresh assistant bubble when a steering message is delivered", async () => {
+    const api = vi.fn(async (path: string) => path === "/api/v1/agent/runs"
+      ? { data: { id: "run-1" } }
+      : { events: [
+        { sequence: 1, type: "run.started", data: {} },
+        { sequence: 2, type: "assistant.delta", data: { text: "first answer" } },
+        { sequence: 3, type: "user.steer", data: { text: "focus on tests" } },
+        { sequence: 4, type: "assistant.delta", data: { text: "second answer" } },
+        { sequence: 5, type: "run.completed", data: {} },
+      ] });
+    const { controller, assistant, calls } = setup(api);
+
+    await controller.start(request());
+
+    expect(calls.appendAssistant).toHaveBeenCalledTimes(2);
+    expect(calls.appendAssistantDelta).toHaveBeenNthCalledWith(1, assistant, "first answer");
+    expect(calls.appendAssistantDelta).toHaveBeenNthCalledWith(2, assistant, "second answer");
+  });
+
+  it("streams reasoning into its own activity row and completes it before chat text", async () => {
+    const api = vi.fn(async (path: string) => path === "/api/v1/agent/runs"
+      ? { data: { id: "run-reason" } }
+      : { events: [
+        { sequence: 1, type: "run.started", data: {} },
+        { sequence: 2, type: "reasoning.delta", data: { text: "Let me " } },
+        { sequence: 3, type: "reasoning.delta", data: { text: "think." } },
+        { sequence: 4, type: "reasoning.completed", data: {} },
+        { sequence: 5, type: "assistant.delta", data: { text: "Answer" } },
+        { sequence: 6, type: "run.completed", data: {} },
+      ] });
+    const { controller, activity, assistant, calls } = setup(api);
+
+    await controller.start(request());
+
+    expect(activity.timeline.appendReasoning).toHaveBeenCalledWith(true);
+    expect(activity.timeline.appendReasoningDelta).toHaveBeenNthCalledWith(1, activity.reasoning, "Let me ");
+    expect(activity.timeline.appendReasoningDelta).toHaveBeenNthCalledWith(2, activity.reasoning, "think.");
+    expect(activity.timeline.completeReasoning).toHaveBeenCalledWith(activity.reasoning);
+    expect(calls.appendAssistant).toHaveBeenCalledTimes(1);
+    expect(calls.appendAssistantDelta).toHaveBeenCalledWith(assistant, "Answer");
+    expect(activity.timeline.finishWork).toHaveBeenCalledOnce();
+  });
+
+  it("completes an open reasoning row when a tool call interrupts it", async () => {
+    const api = vi.fn(async (path: string) => path === "/api/v1/agent/runs"
+      ? { data: { id: "run-interrupt" } }
+      : { events: [
+        { sequence: 1, type: "run.started", data: {} },
+        { sequence: 2, type: "reasoning.delta", data: { text: "planning" } },
+        { sequence: 3, type: "tool.started", data: { toolName: "read", toolCallId: "tool-1", input: { path: "a.txt" } } },
+        { sequence: 4, type: "tool.completed", data: { toolCallId: "tool-1", result: "ok", isError: false } },
+        { sequence: 5, type: "run.completed", data: {} },
+      ] });
+    const { controller, activity } = setup(api);
+
+    await controller.start(request());
+
+    expect(activity.timeline.completeReasoning).toHaveBeenCalledWith(activity.reasoning);
   });
 });

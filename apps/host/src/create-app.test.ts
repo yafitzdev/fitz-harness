@@ -480,6 +480,86 @@ describe("Fitz host", () => {
     await runtime.app.close();
   });
 
+  it("streams reasoning as its own event stream and persists it under its own transcript kind", async () => {
+    const runtime = createHost({ agentRuntime: { id: "thinking-agent", run: () => { const events = (async function* () {
+      yield { type: "reasoning.delta" as const, text: "Let me " };
+      yield { type: "reasoning.delta" as const, text: "inspect it." };
+      yield { type: "reasoning.completed" as const };
+      yield { type: "assistant.delta" as const, text: "I will inspect it." };
+      yield { type: "tool.started" as const, toolCallId: "tool-1", toolName: "read", input: { path: "README.md" } };
+      yield { type: "tool.completed" as const, toolCallId: "tool-1", toolName: "read", result: "ok", isError: false };
+      yield { type: "assistant.delta" as const, text: "Inspection complete." };
+    })(); return Object.assign(events, { cancel: () => undefined }); } } });
+    const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Thinking" } });
+    const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "Reasoning" } });
+    const created = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", sessionId: session.json().data.id, messages: [{ role: "user", content: "think then act" }] } }); const runId = created.json().data.id;
+    for (let attempt = 0; attempt < 50 && runtime.agentRuns.get(runId)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+    const replay = await runtime.app.inject({ method: "GET", url: `/api/v1/agent/runs/${runId}/events` });
+    expect(replay.json().events.map((event: { type: string }) => event.type)).toEqual(["run.created", "run.queue.updated", "run.queue.updated", "run.started", "reasoning.delta", "reasoning.delta", "reasoning.completed", "assistant.delta", "tool.started", "tool.completed", "assistant.delta", "run.completed"]);
+    const transcript = runtime.store.transcriptAfter(session.json().data.id, 0);
+    expect(transcript.map((entry) => [entry.kind, entry.role])).toEqual([
+      ["message", "user"], ["reasoning", "assistant"], ["message", "assistant"], ["tool-call", "tool"], ["tool-result", "tool"], ["message", "assistant"],
+    ]);
+    expect(transcript.find((entry) => entry.kind === "reasoning")?.content.text).toBe("Let me inspect it.");
+    expect(transcript.filter((entry) => entry.kind === "message").some((entry) => entry.content.text?.includes("Let me inspect it."))).toBe(false);
+    await runtime.app.close();
+  });
+
+  it("inserts a steering message into the running conversation and records it", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const steered: string[] = [];
+    const runtime = createHost({ agentRuntime: { id: "steerable-agent", run: () => {
+      const events = (async function* () {
+        yield { type: "assistant.delta" as const, text: "working on it" };
+        await gate;
+        yield { type: "user.steer" as const, text: "focus on tests" };
+        yield { type: "assistant.delta" as const, text: "done" };
+      })();
+      return Object.assign(events, { cancel: () => undefined, steer: (text: string) => { steered.push(text); } });
+    } } });
+    const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Steer" } });
+    const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "Steering" } });
+    const created = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", sessionId: session.json().data.id, messages: [{ role: "user", content: "begin" }] } });
+    const runId = created.json().data.id as string;
+    for (let attempt = 0; attempt < 50 && runtime.agentRuns.get(runId)?.status !== "running"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+    const steeredResponse = await runtime.app.inject({ method: "POST", url: `/api/v1/agent/runs/${runId}/steer`, payload: { text: "focus on tests" } });
+    expect(steeredResponse.statusCode, steeredResponse.body).toBe(200);
+    expect(steeredResponse.json().data).toEqual({ id: runId, steered: true });
+    expect(steered).toEqual(["focus on tests"]);
+    release();
+    for (let attempt = 0; attempt < 50 && runtime.agentRuns.get(runId)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(runtime.agentRuns.get(runId)?.status).toBe("completed");
+    const replay = await runtime.app.inject({ method: "GET", url: `/api/v1/agent/runs/${runId}/events` });
+    expect(replay.json().events.map((event: { type: string }) => event.type)).toEqual(expect.arrayContaining(["user.steer"]));
+    expect(replay.json().events.find((event: { type: string }) => event.type === "user.steer").data.text).toBe("focus on tests");
+    const transcript = runtime.store.transcriptAfter(session.json().data.id, 0);
+    expect(transcript.some((entry) => entry.role === "user" && entry.content.text === "focus on tests")).toBe(true);
+    await runtime.app.close();
+  });
+
+  it("rejects steering a queued run, an unknown run, or an empty message", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const runtime = createHost({ agentRuntime: { id: "steerable-agent", run: () => {
+      const events = (async function* () { await gate; yield { type: "assistant.delta" as const, text: "done" }; })();
+      return Object.assign(events, { cancel: () => undefined, steer: () => undefined });
+    } } });
+    const first = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", messages: [{ role: "user", content: "first" }] } });
+    const second = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "smart", messages: [{ role: "user", content: "second" }] } });
+    const firstId = first.json().data.id as string; const secondId = second.json().data.id as string;
+    for (let attempt = 0; attempt < 50 && runtime.agentRuns.get(firstId)?.status !== "running"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+    const queued = await runtime.app.inject({ method: "POST", url: `/api/v1/agent/runs/${secondId}/steer`, payload: { text: "nope" } });
+    expect(queued.statusCode).toBe(409);
+    const unknown = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs/missing/steer", payload: { text: "nope" } });
+    expect(unknown.statusCode).toBe(404);
+    const empty = await runtime.app.inject({ method: "POST", url: `/api/v1/agent/runs/${firstId}/steer`, payload: { text: "   " } });
+    expect(empty.statusCode).toBe(400);
+    release();
+    for (let attempt = 0; attempt < 50 && (runtime.agentRuns.get(firstId)?.status !== "completed" || runtime.agentRuns.get(secondId)?.status !== "completed"); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+    await runtime.app.close();
+  });
+
   it("serializes whole native agent tasks and exposes cancellable queue positions", async () => {
     const releases = new Map<string, () => void>(); const started: string[] = [];
     const runtime = createHost({ agentRuntime: { id: "queued-agent", run: (request) => {

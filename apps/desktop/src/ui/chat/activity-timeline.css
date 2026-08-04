@@ -64,3 +64,6 @@
 .work-summary-details > .message.commentary { margin: 0 0 8px; }
 .context-activity { width: 100%; display: flex; align-items: center; gap: 6px; margin-bottom: 12px; color: var(--codex-text-secondary); }
 .context-activity .agent-activity-icon { width: 18px; height: 18px; }
+.steer-activity { width: 100%; min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin: 2px 0 10px; color: var(--text); }
+.steer-activity .agent-activity-icon { order: 2; }
+.steer-activity .agent-activity-label { white-space: normal; overflow-wrap: anywhere; max-width: 80%; padding: 6px 10px; border-radius: var(--codex-radius-2xl); background: rgba(255,255,255,.05); color: var(--text); line-height: 1.45; }

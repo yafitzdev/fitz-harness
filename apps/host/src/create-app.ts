@@ -374,6 +374,26 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   app.get("/api/v1/agent/queue", async (request) => { const principal = principals.get(request); return { protocolVersion: PROTOCOL_VERSION, data: agentRuns.queue(principal?.user.role === "administrator" ? undefined : principal?.user.id) }; });
   app.get("/api/v1/agent/runs/:runId", async (request, reply) => { const run = agentRuns.get((request.params as { runId: string }).runId); if (!run) return reply.code(404).send({ error: "Run not found" }); if (!canAccessRun(principals.get(request), run.ownerUserId)) return reply.code(403).send({ error: "Run access denied" }); return { protocolVersion: PROTOCOL_VERSION, data: run }; });
   app.delete("/api/v1/agent/runs/:runId", async (request, reply) => { const runId = (request.params as { runId: string }).runId; const run = agentRuns.get(runId); if (!run) return reply.code(404).send({ error: "Run not found" }); if (!canAccessRun(principals.get(request), run.ownerUserId)) return reply.code(403).send({ error: "Run access denied" }); if (!agentRuns.cancel(runId)) return reply.code(409).send({ error: "Run is no longer active" }); return reply.code(202).send({ data: { id: runId, cancellationRequested: true } }); });
+  app.post("/api/v1/agent/runs/:runId/steer", async (request, reply) => {
+    try {
+      const runId = (request.params as { runId: string }).runId;
+      const run = agentRuns.get(runId);
+      if (!run) return reply.code(404).send({ error: "Run not found" });
+      if (!canAccessRun(principals.get(request), run.ownerUserId)) return reply.code(403).send({ error: "Run access denied" });
+      const text = requireString(requireRecord(request.body).text, "text").trim();
+      if (!text) throw new TypeError("text must not be empty");
+      try {
+        const steered = await agentRuns.steer(runId, text);
+        if (!steered) return reply.code(409).send({ error: "This run cannot be steered right now" });
+      } catch (error) {
+        return reply.code(409).send({ error: errorMessage(error) });
+      }
+      security?.audit("agent-run.steered", principals.get(request)?.user.id, "agent-run", runId, { routeId: run.routeId });
+      return { data: { id: runId, steered: true } };
+    } catch (error) {
+      return reply.code(400).send({ error: errorMessage(error) });
+    }
+  });
   app.get("/api/v1/agent/runs/:runId/events", async (request, reply) => {
     const runId = (request.params as { runId: string }).runId; const run = agentRuns.get(runId); if (!run) return reply.code(404).send({ error: "Run not found" }); if (!canAccessRun(principals.get(request), run.ownerUserId)) return reply.code(403).send({ error: "Run access denied" });
     const query = request.query as { after?: string; stream?: string }; const headerAfter = typeof request.headers["last-event-id"] === "string" ? request.headers["last-event-id"] : undefined; const after = toNonNegativeInteger(query.after ?? headerAfter, 0);

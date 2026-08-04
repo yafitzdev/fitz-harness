@@ -358,8 +358,10 @@ void initialize();
 
 form.addEventListener("submit", (event) => {
   event.preventDefault();
-  if (agentRuns.active) void agentRuns.cancel();
-  else void sendPrompt();
+  if (agentRuns.active) {
+    if (prompt.value.trim().length > 0) void steerPrompt();
+    else void agentRuns.cancel();
+  } else void sendPrompt();
 });
 window.fitz.onNavigationCommand((command) => void navigateHistory(command === "back" ? -1 : 1));
 prompt.addEventListener("input", () => { if (promptHistoryIndex !== -1) { promptHistoryIndex = -1; promptDraft = ""; } resizePrompt(); updateContextMeter(); refreshComposerState(); agentRuns.scheduleWarmup(prompt.value, composerControls.routeId); });
@@ -645,6 +647,12 @@ async function selectSession(id: string, rerender = true, projectId?: string): P
         const existing = transcriptTools.get(toolCallId);
         if (existing) activityTimeline.completeTool(existing.row, existing.toolName, existing.input, entry.content?.result, Boolean(entry.content?.isError));
         else activityTimeline.completeTool(activityTimeline.appendTool(String(entry.content?.toolName ?? "tool"), undefined, toolCallId, true, entry.createdAt), String(entry.content?.toolName ?? "tool"), undefined, entry.content?.result, Boolean(entry.content?.isError));
+      }
+      if (entry.kind === "reasoning") {
+        const text = entry.content?.text ?? "";
+        const row = activityTimeline.appendReasoning(false);
+        activityTimeline.appendReasoningDelta(row, text);
+        activityTimeline.completeReasoning(row);
       }
       if (entry.kind === "compaction") activityTimeline.appendContext(entry.content?.manual === true ? "Context compacted" : "Context automatically compacted");
     }
@@ -1822,6 +1830,39 @@ async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLE
   });
 }
 
+// While the agent is reasoning the composer stays unlocked. Sending inserts the
+// message into the running conversation: the host forwards it to the active stream
+// (Pi queues it as a steering message) and emits a `user.steer` event when it is
+// delivered. We render the message here, inside the agent's work feed next to the
+// tool calls and reasoning, so the user gets immediate feedback.
+async function steerPrompt(): Promise<void> {
+  const content = prompt.value.trim();
+  const runId = agentRuns.runId;
+  if (!content || !runId) return;
+  prompt.value = "";
+  agentRuns.resetWarmup();
+  resizePrompt();
+  updateContextMeter();
+  refreshComposerState();
+  const steerRow = activityTimeline.appendSteer(content);
+  promptHistory.push(content);
+  promptHistoryIndex = -1;
+  promptDraft = "";
+  sessionTokenEstimate += estimateTokens(content);
+  updateContextMeter();
+  try {
+    await agentRuns.steer(content);
+  } catch {
+    // The run finished or stopped accepting messages before the steer landed;
+    // put the draft back and drop the undelivered row.
+    steerRow.remove();
+    prompt.value = content;
+    resizePrompt();
+    updateContextMeter();
+    refreshComposerState();
+  }
+}
+
 async function loadArtifacts(): Promise<void> {
   artifacts.replaceChildren();
   // Preserve pasted image chips; only remove artifact chips
@@ -1905,6 +1946,8 @@ function handlePaste(event: ClipboardEvent): void {
   for (const item of items) {
     if (!item.type.startsWith("image/")) continue;
     event.preventDefault();
+    // Steering is text-only for now; pasted images wait for the next regular message.
+    if (agentRuns.active) return;
     const file = item.getAsFile();
     if (!file) continue;
     if (file.size > 5_000_000) { showToast("Pasted image is too large (max 5 MB)"); return; }
@@ -2033,14 +2076,18 @@ function appendChangeSummary(files: Array<{ path: string; action: "edited" | "cr
 function refreshComposerState(): void {
   const ready = Boolean((currentSession || (newChatMode && currentProject)) && composerControls.routeId);
   const running = agentRuns.active;
-  prompt.disabled = !ready || running;
+  const hasText = prompt.value.trim().length > 0;
+  // The composer stays unlocked while the agent is reasoning so the user can write
+  // a steering message; sending routes it into the running conversation instead of
+  // canceling. With an empty draft the send button becomes the stop control.
+  prompt.disabled = !ready;
   composerControls.updateState({ running, hasSession: Boolean(currentSession) });
   attachButton.disabled = !currentSession || running;
   addArtifactButton.disabled = !currentSession;
-  sendButton.classList.toggle("running", running);
-  sendButton.title = running ? "Stop task" : "Send message";
+  sendButton.classList.toggle("running", running && !hasText);
+  sendButton.title = running ? (hasText ? "Send to the running agent" : "Stop task") : "Send message";
   sendButton.setAttribute("aria-label", sendButton.title);
-  sendButton.disabled = running ? false : !ready || prompt.value.trim().length === 0;
+  sendButton.disabled = running ? false : !ready || !hasText;
 }
 
 function updateTitles(): void {

@@ -73,6 +73,54 @@ describe("ActivityTimeline", () => {
     ]);
   });
 
+  it("shows a steering message inside the work feed and starts a new burst after it", () => {
+    const { messages, timeline } = setup();
+    timeline.appendTool("bash", { command: "pnpm test" }, "tool-1", true, "2026-08-03T08:00:00.000Z");
+
+    const steer = timeline.appendSteer("focus on the tests", "2026-08-03T08:00:01.000Z");
+    const after = timeline.appendTool("read", { path: "src/app.ts" }, "tool-2", true, "2026-08-03T08:00:02.000Z");
+
+    expect(steer.classList.contains("steer-activity")).toBe(true);
+    expect(steer.querySelector(".agent-activity-label")?.textContent).toBe("focus on the tests");
+    const bursts = [...messages.querySelectorAll<HTMLElement>(".activity-burst")];
+    expect(bursts).toHaveLength(2);
+    expect([...messages.querySelectorAll(".work-summary-details > *")].map((node) => node.textContent)).toEqual([
+      expect.stringContaining("Running command"),
+      "focus on the tests",
+      expect.stringContaining("Reading src/app.ts"),
+    ]);
+    expect(after.closest(".activity-burst")).toBe(bursts[1]);
+  });
+
+  it("renders model reasoning as a collapsible row in the work feed, separate from chat", () => {
+    const { messages, timeline } = setup();
+    const row = timeline.appendReasoning(true);
+    timeline.appendReasoningDelta(row, "Let me inspect the codebase.");
+    timeline.completeReasoning(row);
+
+    expect(row.classList.contains("reasoning-activity")).toBe(true);
+    expect(row.classList.contains("running")).toBe(false);
+    expect(messages.querySelector(".reasoning-content")?.textContent).toBe("Let me inspect the codebase.");
+    expect(messages.querySelector(".work-summary-details > .reasoning-activity")).toBe(row);
+    const summary = messages.querySelector<HTMLButtonElement>(".reasoning-activity .agent-activity-summary")!;
+    expect(summary.textContent).toContain("Thought through the approach");
+    const details = messages.querySelector<HTMLElement>(".reasoning-activity .reasoning-details")!;
+    expect(details.hidden).toBe(true);
+    summary.click();
+    expect(details.hidden).toBe(false);
+    expect(summary.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("ends the previous tool burst when a reasoning segment starts", () => {
+    const { messages, timeline } = setup();
+    timeline.appendTool("bash", { command: "pnpm test" }, "tool-1", true, "2026-08-03T08:00:00.000Z");
+    timeline.appendReasoning(true);
+    const after = timeline.appendTool("read", { path: "src/app.ts" }, "tool-2", true, "2026-08-03T08:00:02.000Z");
+    const bursts = [...messages.querySelectorAll<HTMLElement>(".activity-burst")];
+    expect(bursts).toHaveLength(2);
+    expect(after.closest(".activity-burst")).toBe(bursts[1]);
+  });
+
   it("keeps commands hidden behind the burst summary until it is opened", () => {
     const { messages, timeline } = setup();
     const row = timeline.appendTool("bash", { command: "git status --short" }, "tool-1", true);

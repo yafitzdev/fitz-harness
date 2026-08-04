@@ -3,11 +3,14 @@ import type { AgentRunRequest, ToolAccessMode } from "@fitz/protocol";
 import type { Model } from "@earendil-works/pi-ai/compat";
 
 type PiEvent =
-  | { type: "message_update"; assistantMessageEvent: { type: string; delta?: string } }
+  | { type: "message_start"; message: { role?: string; content?: unknown } }
+  | { type: "message_update"; assistantMessageEvent: { type: string; delta?: string; content?: string } }
   | { type: "message_end"; message: { role?: string; stopReason?: string; errorMessage?: string } }
   | { type: "tool_execution_start"; toolCallId: string; toolName: string; args?: unknown }
   | { type: "tool_execution_end"; toolCallId: string; toolName: string; result: unknown; isError?: boolean };
-export interface PiSession { subscribe(listener: (event: PiEvent) => void): () => void; prompt(text: string): Promise<void>; abort(): Promise<void>; dispose(): void }
+/** Pi thinking levels. Maps to the SDK's `ThinkingLevel`; kept local so the runtime boundary stays SDK-free. */
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+export interface PiSession { subscribe(listener: (event: PiEvent) => void): () => void; prompt(text: string): Promise<void>; steer(text: string): Promise<void>; abort(): Promise<void>; dispose(): void }
 export interface PiToolCall { toolCallId: string; toolName: string; input: unknown }
 export interface PiToolApprovalResult { allowed: boolean; reason?: string }
 export interface ToolApprovalHandle { approvalId: string; decision: Promise<"approved" | "denied"> }
@@ -22,6 +25,7 @@ export type PiSessionFactory = (options: {
   maxTokens: number;
   agentDir: string;
   llmRoot: string;
+  thinkingLevel?: ThinkingLevel;
   approveTool: (request: PiToolCall) => Promise<PiToolApprovalResult>;
 }) => Promise<PiSession>;
 export interface PiAgentRuntimeOptions {
@@ -30,6 +34,7 @@ export interface PiAgentRuntimeOptions {
   baseUrl?: string;
   apiKey?: string;
   contextWindow?: number;
+  thinkingLevel?: ThinkingLevel;
   createSession?: PiSessionFactory;
   requestToolApproval?: ToolApprovalRequester;
   agentDir?: string;
@@ -46,6 +51,7 @@ export class PiAgentRuntime implements AgentRuntime {
   readonly #baseUrl: string;
   readonly #apiKey: string;
   readonly #contextWindow: number;
+  readonly #thinkingLevel: ThinkingLevel;
   readonly #createSession: PiSessionFactory;
   readonly #requestToolApproval: ToolApprovalRequester | undefined;
   readonly #agentDir: string;
@@ -56,6 +62,7 @@ export class PiAgentRuntime implements AgentRuntime {
     this.#baseUrl = (options.baseUrl ?? "http://127.0.0.1:8787/v1").replace(/\/$/, "");
     this.#apiKey = options.apiKey ?? "fitz-local";
     this.#contextWindow = options.contextWindow ?? 100_000;
+    this.#thinkingLevel = options.thinkingLevel ?? "off";
     this.#createSession = options.createSession ?? createSdkSession;
     this.#requestToolApproval = options.requestToolApproval;
     this.#agentDir = options.agentDir ?? process.env.FITZ_PI_AGENT_DIR ?? `${process.cwd()}/.fitz-pi`;
@@ -64,31 +71,53 @@ export class PiAgentRuntime implements AgentRuntime {
   run(request: AgentRunRequest, signal?: AbortSignal): AgentRuntimeRun {
     const channel = new EventChannel(); let session: PiSession | undefined; const controller = new AbortController();
     const cancel = () => { controller.abort(); void session?.abort(); }; if (signal) { if (signal.aborted) cancel(); else signal.addEventListener("abort", cancel, { once: true }); }
-    void (async () => { try { session = await this.#createSession({
-      cwd: typeof this.#cwd === "function" ? this.#cwd(request) : this.#cwd,
-      ...(this.#tools ? { tools: this.#tools } : {}),
-      routeId: request.model,
-      baseUrl: this.#baseUrl,
-      apiKey: this.#apiKey,
-      contextWindow: this.#contextWindow,
-      maxTokens: request.maxTokens ?? 16_384,
-      agentDir: this.#agentDir,
-      llmRoot: this.#llmRoot,
-      approveTool: (toolCall) => this.#approveTool(request.accessMode ?? "full", request.sessionId, toolCall, controller.signal, channel),
-    }); if (controller.signal.aborted) { await session.abort(); throw abortError(); }
+    const sessionTask = (async () => {
+      const created = await this.#createSession({
+        cwd: typeof this.#cwd === "function" ? this.#cwd(request) : this.#cwd,
+        ...(this.#tools ? { tools: this.#tools } : {}),
+        routeId: request.model,
+        baseUrl: this.#baseUrl,
+        apiKey: this.#apiKey,
+        contextWindow: this.#contextWindow,
+        maxTokens: request.maxTokens ?? 16_384,
+        agentDir: this.#agentDir,
+        llmRoot: this.#llmRoot,
+        thinkingLevel: this.#thinkingLevel,
+        approveTool: (toolCall) => this.#approveTool(request.accessMode ?? "full", request.sessionId, toolCall, controller.signal, channel),
+      }); session = created; if (controller.signal.aborted) { await created.abort(); throw abortError(); }
+      return created;
+    })();
+    void (async () => { try {
+      const activeSession = await sessionTask;
       let sawAssistant = false;
-      const unsubscribe = session.subscribe((event) => {
+      // The first user message_start is the initial prompt; any later one is a steering
+      // message Pi has pulled off its steer queue, i.e. the point where the user's text is
+      // inserted into the running conversation.
+      let sawInitialUserMessage = false;
+      const unsubscribe = activeSession.subscribe((event) => {
         const failure = piFailure(event);
         if (failure) { channel.fail(failure); return; }
+        if (event.type === "message_start" && event.message?.role === "user") {
+          if (!sawInitialUserMessage) { sawInitialUserMessage = true; return; }
+          const text = extractTextFromMessageContent(event.message.content);
+          if (text) channel.push({ type: "user.steer", text });
+          return;
+        }
         const translated = translateEvent(event);
         if (translated) { if (translated.type === "assistant.delta") sawAssistant = true; channel.push(translated); }
       }); try {
-        await session.prompt(formatPrompt(request));
+        await activeSession.prompt(formatPrompt(request));
         if (controller.signal.aborted) throw abortError();
         if (!sawAssistant) throw new Error("Pi agent completed without an assistant response");
         channel.close();
-      } finally { unsubscribe(); session.dispose(); }
-    } catch (error) { channel.fail(error); } })(); return Object.assign(channel, { cancel });
+      } finally { unsubscribe(); activeSession.dispose(); }
+    } catch (error) { channel.fail(error); } })();
+    const steer = async (text: string): Promise<void> => {
+      if (controller.signal.aborted) throw abortError();
+      const activeSession = await sessionTask;
+      await activeSession.steer(text);
+    };
+    return Object.assign(channel, { cancel, steer });
   }
 
   async #approveTool(mode: ToolAccessMode, sessionId: string | undefined, toolCall: PiToolCall, signal: AbortSignal, channel: EventChannel): Promise<PiToolApprovalResult> {
@@ -113,7 +142,7 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
     api: "openai-completions",
     provider: "openrouter",
     baseUrl: options.baseUrl,
-    reasoning: false,
+    reasoning: (options.thinkingLevel ?? "off") !== "off",
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: options.contextWindow,
@@ -151,7 +180,7 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
     cwd: options.cwd,
     tools: enabledTools,
     model,
-    thinkingLevel: "off",
+    thinkingLevel: options.thinkingLevel ?? "off",
     modelRuntime,
     resourceLoader,
     sessionManager: sdk.SessionManager.inMemory(options.cwd),
@@ -189,12 +218,17 @@ export function broadFilesystemScanReason(toolName: string, input: unknown): str
     ? "Fitz blocked an unbounded filesystem scan. Search the active project or the authoritative Fitz Pi/LLM directories supplied in the system instructions instead."
     : undefined;
 }
-function translateEvent(event: PiEvent): AgentRuntimeEvent | undefined { if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta" && event.assistantMessageEvent.delta) return { type: "assistant.delta", text: event.assistantMessageEvent.delta }; if (event.type === "tool_execution_start") return { type: "tool.started", toolCallId: event.toolCallId, toolName: event.toolName, ...(event.args !== undefined ? { input: event.args } : {}) }; if (event.type === "tool_execution_end") return { type: "tool.completed", toolCallId: event.toolCallId, toolName: event.toolName, result: event.result, ...(event.isError !== undefined ? { isError: event.isError } : {}) }; return undefined; }
+function translateEvent(event: PiEvent): AgentRuntimeEvent | undefined { if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta" && event.assistantMessageEvent.delta) return { type: "assistant.delta", text: event.assistantMessageEvent.delta }; if (event.type === "message_update" && event.assistantMessageEvent.type === "thinking_delta" && event.assistantMessageEvent.delta) return { type: "reasoning.delta", text: event.assistantMessageEvent.delta }; if (event.type === "message_update" && event.assistantMessageEvent.type === "thinking_end") return { type: "reasoning.completed" }; if (event.type === "tool_execution_start") return { type: "tool.started", toolCallId: event.toolCallId, toolName: event.toolName, ...(event.args !== undefined ? { input: event.args } : {}) }; if (event.type === "tool_execution_end") return { type: "tool.completed", toolCallId: event.toolCallId, toolName: event.toolName, result: event.result, ...(event.isError !== undefined ? { isError: event.isError } : {}) }; return undefined; }
 function piFailure(event: PiEvent): Error | undefined { return event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason === "error" ? new Error(event.message.errorMessage ?? "Pi model request failed") : undefined; }
 function formatPrompt(request: AgentRunRequest): string { return request.messages.map((message) => `${message.role.toUpperCase()}: ${extractTextFromContent(message.content)}`).join("\n\n"); }
 function extractTextFromContent(content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>): string {
   if (typeof content === "string") return content;
   return content.filter((part) => part.type === "text").map((part) => part.text ?? "").join(" ");
+}
+function extractTextFromMessageContent(content: unknown): string {
+  if (typeof content === "string") return content.trim();
+  if (!Array.isArray(content)) return "";
+  return content.filter((part): part is { type: string; text?: string } => Boolean(part) && typeof part === "object" && "text" in part && typeof (part as { text?: unknown }).text === "string").map((part) => part.text ?? "").join(" ").trim();
 }
 function abortError(): Error { const error = new Error("Pi agent run was cancelled"); error.name = "AbortError"; return error; }
 
