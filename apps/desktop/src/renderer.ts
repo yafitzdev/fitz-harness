@@ -199,8 +199,8 @@ const sidebarPane = new ResizablePane({
   apply: (value) => shell.style.setProperty("--sidebar-width", `${value}px`),
 });
 const inspectorPane = new ResizablePane({
-  divider: inspectorResizer, storageKey: "fitz-inspector-width", defaultValue: 400, minimum: 300,
-  maximum: () => Math.max(300, Math.min(760, workspace.getBoundingClientRect().width - 420)),
+  divider: inspectorResizer, storageKey: "fitz-inspector-width", defaultValue: 400, minimum: 200,
+  maximum: () => Math.max(200, workspace.getBoundingClientRect().width - 280),
   pointerValue: (event) => workspace.getBoundingClientRect().right - event.clientX,
   keyboardDirection: -1,
   apply: (value) => workspace.style.setProperty("--inspector-width", `${value}px`),

@@ -551,6 +551,9 @@ describe("desktop renderer shell", () => {
     expect(styles).not.toContain(".workspace.inspector-open .messages { margin-right: var(--inspector-width); }");
     expect(styles).toContain(".inspector-resizer");
     expect(renderer).toContain('storageKey: "fitz-inspector-width"');
+    expect(renderer).toContain("defaultValue: 400, minimum: 200");
+    expect(renderer).toContain("maximum: () => Math.max(200, workspace.getBoundingClientRect().width - 280)");
+    expect(renderer).not.toContain("Math.min(760");
     expect(resizablePane).toContain("restore(): void");
     expect(renderer).toContain('import { ResourceInspector } from "./ui/inspector/resource-inspector.js"');
     expect(resourceInspector).toContain('import { highlightSource } from "../../syntax-highlighting.js"');
