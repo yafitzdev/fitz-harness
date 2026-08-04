@@ -341,6 +341,13 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".markdown-table table");
   });
 
+  it("runs a post-generation rule layer between raw output and display", () => {
+    expect(markdown).toContain('import { applyPostGeneration } from "./post-generation.js"');
+    expect(markdown).toContain("const display = applyPostGeneration(");
+    expect(markdown).toContain("renderBlocks(target, display.split(");
+    expect(renderer).toContain('if (role === "assistant" || role === "commentary") setMarkdown(content, text); else content.textContent = text');
+  });
+
   it("reveals compact Copy and user Edit actions on message hover", () => {
     expect(renderer).toContain("messageActions.attach(article, content");
     expect(renderer).toContain("copyText: (text) => window.fitz.copyText(text)");

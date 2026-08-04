@@ -1,12 +1,16 @@
+import { applyPostGeneration } from "./post-generation.js";
 import { highlightSource } from "./syntax-highlighting.js";
 
 const markdownSources = new WeakMap<HTMLElement, string>();
 
 export function setMarkdown(target: HTMLElement, source: string): void {
-  markdownSources.set(target, source);
+  // Post-generation rules edit the raw output before it reaches the user.
+  // The stored transcript and the context sent back to the model stay raw.
+  const display = applyPostGeneration(source.replace(/\r\n?/g, "\n"));
+  markdownSources.set(target, display);
   target.classList.add("markdown");
   target.replaceChildren();
-  renderBlocks(target, source.replace(/\r\n?/g, "\n").split("\n"));
+  renderBlocks(target, display.split("\n"));
 }
 
 export function appendMarkdown(target: HTMLElement, delta: string): void {
