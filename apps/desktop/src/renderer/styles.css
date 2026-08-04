@@ -42,7 +42,6 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .icon-button:hover:not(:disabled), .quiet-button:hover { background: var(--surface-hover); color: var(--text); }
 .icon-button:disabled { opacity: .3; cursor: not-allowed; }
 .sidebar-brand { min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 7px 0 9px; color: #d8dad5; font-size: 17px; font-weight: 650; letter-spacing: -.02em; }
-.connection-choice-list { display: grid; }
 .nav-action { width: 100%; display: flex; align-items: center; gap: 9px; padding: 8px 9px; color: var(--text); background: transparent; border-radius: 7px; cursor: pointer; text-align: left; }
 .nav-action:hover { background: rgba(255,255,255,.08); }
 .nav-action.active { background: rgba(255,255,255,.1); color: white; }

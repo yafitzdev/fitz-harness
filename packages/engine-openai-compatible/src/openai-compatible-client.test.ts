@@ -39,4 +39,25 @@ describe("OpenAICompatibleClient model discovery", () => {
     expect(supportsChatCompletions({ id: "omni-moderation-latest" })).toBe(false);
     expect(supportsChatCompletions({ id: "gpt-image-1" })).toBe(false);
   });
+
+  it("surfaces reasoning_content deltas as reasoning", async () => {
+    const client = new OpenAICompatibleClient({
+      fetch: async () => new Response(
+        'data: {"choices":[{"delta":{"reasoning_content":"Let me think"},"finish_reason":null}]}\n\n'
+        + 'data: {"choices":[{"delta":{"content":"Hi!"},"finish_reason":"stop"}]}\n\n'
+        + "data: [DONE]\n\n",
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      ),
+    });
+
+    const deltas = [];
+    for await (const delta of client.streamChat("https://example.test/v1", "deepseek-v4-pro", {
+      id: "req-1", routeId: "probe", messages: [{ role: "user", content: "Say hi." }],
+    }, new AbortController().signal)) {
+      deltas.push(delta);
+    }
+    expect(deltas[0]).toEqual(expect.objectContaining({ text: "", reasoning: "Let me think" }));
+    expect(deltas[1]).toEqual(expect.objectContaining({ text: "Hi!", finishReason: "stop" }));
+    expect(deltas[1].reasoning).toBeUndefined();
+  });
 });

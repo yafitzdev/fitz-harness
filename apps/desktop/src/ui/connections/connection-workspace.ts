@@ -41,8 +41,6 @@ export interface ConnectionWorkspaceElements {
   newConnection: HTMLButtonElement;
   editorBack: HTMLButtonElement;
   cancelEdit: HTMLButtonElement;
-  environmentLabel: HTMLElement;
-  connectionChoices: HTMLElement;
 }
 
 export interface ConnectionWorkspaceOptions {
@@ -51,7 +49,6 @@ export interface ConnectionWorkspaceOptions {
   reloadConfiguration: () => Promise<Json | undefined>;
   testRecipe: (recipe: Json, card: HTMLElement, button: HTMLButtonElement) => Promise<void>;
   renderRecipeTestState: (recipeId: string, card: HTMLElement, button: HTMLButtonElement) => void;
-  onSelectionChange: (connectionId: string) => void;
   closePopovers: () => void;
   showToast: (message: string) => void;
   errorMessage: (error: unknown) => string;
@@ -62,7 +59,6 @@ export class ConnectionWorkspaceController {
   private readonly options: ConnectionWorkspaceOptions;
   private records: ConsumerConnectionSummary[] = [];
   private configuration: Json | undefined;
-  private selectedId = LOCAL_CONNECTION_ID;
 
   constructor(elements: ConnectionWorkspaceElements, options: ConnectionWorkspaceOptions) {
     this.elements = elements;
@@ -71,21 +67,14 @@ export class ConnectionWorkspaceController {
     this.resetForm();
   }
 
-  get selectedConnectionId(): string { return this.selectedId; }
   get editorOpen(): boolean { return !this.elements.editor.hidden; }
-
-  setSelectedConnection(id: string): void {
-    this.selectedId = id || LOCAL_CONNECTION_ID;
-    this.renderChoices();
-  }
 
   setConfiguration(configuration: Json | undefined): void {
     this.configuration = configuration;
-    this.renderChoices();
   }
 
-  routeIdFor(routeId: FixedRouteId, connectionId = this.selectedId): string {
-    return connectionId === LOCAL_CONNECTION_ID ? routeId : consumerFixedRouteId(connectionId, routeId);
+  routeIdFor(routeId: FixedRouteId): string {
+    return routeId;
   }
 
   async sync(reportFailure: boolean): Promise<void> {
@@ -93,7 +82,6 @@ export class ConnectionWorkspaceController {
     this.records = await this.options.bridge.listConsumerConnections();
     this.configuration = await this.options.reloadConfiguration();
     this.render();
-    this.renderChoices();
     const failed = results.filter((item) => !item.connected);
     if (reportFailure && failed.length) this.options.showToast(failed[0]?.error ?? "Connection failed");
   }
@@ -173,11 +161,11 @@ export class ConnectionWorkspaceController {
     heading.append(identity, actions);
     card.append(heading);
     if (!connection.availableModels.length) card.append(emptyState("No chat models available"));
-    for (const model of connection.availableModels) card.append(this.modelCard(connection, model, routes));
+    for (const model of connection.availableModels) card.append(this.modelCard(model, routes));
     return card;
   }
 
-  private modelCard(connection: ConnectionView, model: ConnectionModelView, routes: Json[]): HTMLElement {
+  private modelCard(model: ConnectionModelView, routes: Json[]): HTMLElement {
     const card = document.createElement("article");
     card.className = "recipe-card";
     const details = document.createElement("div");
@@ -210,8 +198,8 @@ export class ConnectionWorkspaceController {
     routeToggle.setAttribute("role", "group");
     routeToggle.setAttribute("aria-label", `${model.id} routing`);
     for (const definition of FIXED_ROUTES) {
-      const routeId = connection.hosted ? definition.id : consumerFixedRouteId(connection.id, definition.id);
-      const route = routes.find((item: Json) => item.id === routeId) ?? (!connection.hosted ? routes.find((item: Json) => item.id === `consumer--${definition.id}` && item.recipeId === model.recipeId) : undefined);
+      const routeId = definition.id;
+      const route = routes.find((item: Json) => item.id === routeId);
       const button = document.createElement("button");
       button.type = "button";
       button.className = `route-symbol route-${definition.id}`;
@@ -220,35 +208,13 @@ export class ConnectionWorkspaceController {
       button.setAttribute("aria-pressed", String(route?.recipeId === model.recipeId));
       button.classList.toggle("active", route?.recipeId === model.recipeId);
       button.append(svgIcon(definition.icon));
-      button.addEventListener("click", () => void this.assignRoute(connection, definition, model, button));
+      button.addEventListener("click", () => void this.assignRoute(definition, model, button));
       routeToggle.append(button);
     }
     actions.append(routeToggle, test);
     this.options.renderRecipeTestState(model.recipeId, card, test);
     card.append(details, actions);
     return card;
-  }
-
-  private renderChoices(): void {
-    const views = this.views();
-    if (!views.some((connection) => connection.id === this.selectedId)) this.selectedId = LOCAL_CONNECTION_ID;
-    const selected = views.find((connection) => connection.id === this.selectedId) ?? views[0];
-    this.elements.environmentLabel.textContent = selected?.displayName ?? "This PC";
-    this.elements.connectionChoices.replaceChildren();
-    for (const connection of views) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.dataset.connectionId = connection.id;
-      button.append(svgIcon('<circle cx="10" cy="10" r="6"></circle><path d="M7 10h6M10 7v6"></path>'), Object.assign(document.createElement("span"), { textContent: connection.displayName }));
-      if (connection.id === this.selectedId) button.append(Object.assign(document.createElement("b"), { textContent: "✓" }));
-      button.addEventListener("click", () => {
-        this.selectedId = connection.id;
-        this.options.onSelectionChange(connection.id);
-        this.renderChoices();
-        this.options.closePopovers();
-      });
-      this.elements.connectionChoices.append(button);
-    }
   }
 
   private async save(): Promise<void> {
@@ -290,7 +256,6 @@ export class ConnectionWorkspaceController {
       }
       try {
         await this.options.bridge.removeConsumerConnection(id);
-        if (this.selectedId === id) this.selectedId = LOCAL_CONNECTION_ID;
         await this.refreshRecordsAndConfiguration();
       } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
     });
@@ -302,11 +267,10 @@ export class ConnectionWorkspaceController {
     this.records = await this.options.bridge.listConsumerConnections();
     this.configuration = await this.options.reloadConfiguration();
     this.render();
-    this.renderChoices();
   }
 
-  private async assignRoute(connection: ConnectionView, definition: (typeof FIXED_ROUTES)[number], model: ConnectionModelView, button: HTMLButtonElement): Promise<void> {
-    const routeId = connection.hosted ? definition.id : consumerFixedRouteId(connection.id, definition.id);
+  private async assignRoute(definition: (typeof FIXED_ROUTES)[number], model: ConnectionModelView, button: HTMLButtonElement): Promise<void> {
+    const routeId = definition.id;
     const current = this.configuration?.routes?.find((route: Json) => route.id === routeId);
     if (current?.recipeId === model.recipeId) return;
     button.disabled = true;

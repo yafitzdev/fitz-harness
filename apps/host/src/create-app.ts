@@ -173,16 +173,19 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const activeRoutes = (): Route[] => routes.listRoutes();
   const publicRoutes = (): Route[] => activeRoutes().filter((route) => PUBLIC_ROUTE_IDS.has(route.id));
   const resolveActiveRoute = (routeId: string) => routes.resolve(routeId);
-  const resolveSessionRouteId = (session: SessionRecord | undefined, requestedRouteId: string): string => {
-    if (!session || !PUBLIC_ROUTE_IDS.has(requestedRouteId)) return requestedRouteId;
-    if (!session.connectionId || session.connectionId === LOCAL_CONNECTION_ID) return requestedRouteId;
-    const scopedRouteId = consumerConnectionRouteId(session.connectionId, requestedRouteId);
-    if (activeRoutes().some((route) => route.id === scopedRouteId)) return scopedRouteId;
-    const legacyRoute = activeRoutes().find((route) => route.id === `${CONSUMER_ROUTE_PREFIX}${requestedRouteId}`);
-    const connection = consumerConnections().find((candidate) => candidate.id === session.connectionId);
-    if (legacyRoute && connection?.models.some((model) => model.recipeId === legacyRoute.recipeId)) return legacyRoute.id;
-    return scopedRouteId;
+  // Routes are global: exactly one fast/default/smart slot, each pointing at a single
+  // recipe from any connection (local or cloud). Sessions may still carry a connectionId
+  // from before this model, but resolution never depends on it. Legacy scoped route ids
+  // (consumer--<connection>--route--<class> and consumer--<class>) collapse to the class.
+  const normalizePublicRouteId = (routeId: string): string => {
+    if (PUBLIC_ROUTE_IDS.has(routeId)) return routeId;
+    const scoped = /^consumer--.+--route--(fast|default|smart)$/.exec(routeId);
+    if (scoped) return scoped[1]!;
+    const legacy = /^consumer--(fast|default|smart)$/.exec(routeId);
+    if (legacy) return legacy[1]!;
+    return routeId;
   };
+  const resolveSessionRouteId = (_session: SessionRecord | undefined, requestedRouteId: string): string => normalizePublicRouteId(requestedRouteId);
 
   app.addHook("onRequest", async (request, reply) => {
     requestStarts.set(request, performance.now());
@@ -219,9 +222,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       const publicRouteId = requirePublicRouteId(body.model);
       const principal = principals.get(request);
       if (principal && !security?.authorizeRoute(principal, publicRouteId)) return reply.code(403).send({ error: "Route access denied" });
-      const connectionId = typeof body.connectionId === "string" && body.connectionId.trim() ? body.connectionId.trim() : LOCAL_CONNECTION_ID;
-      const executionRouteId = connectionId === LOCAL_CONNECTION_ID ? publicRouteId : consumerConnectionRouteId(connectionId, publicRouteId);
-      const resolved = resolveActiveRoute(executionRouteId);
+      const resolved = resolveActiveRoute(publicRouteId);
       return { data: await lifecycle.warm(resolved.recipe) };
     } catch (error) { return reply.code(error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) }); }
   });
@@ -254,11 +255,13 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
 
   app.post("/v1/chat/completions", async (request, reply) => {
     let body;
+    let model: string;
     try {
       body = parseChatCompletionRequest(request.body);
-      const resolved = resolveActiveRoute(body.model);
+      model = normalizePublicRouteId(body.model);
+      const resolved = resolveActiveRoute(model);
       const principal = principals.get(request);
-      if (principal && !security?.authorizeRoute(principal, body.model)) {
+      if (principal && !security?.authorizeRoute(principal, model)) {
         return reply.code(403).send(openAIError(new SecurityPolicyError("Route access denied"), "permission_error"));
       }
       if (principal) {
@@ -266,20 +269,20 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         security?.enforceQuota(principal, promptChars, body.max_tokens ?? principal.quota.maxOutputTokens, scheduler.queueDepth);
       }
       if (!resolved.recipe.capabilities.chatCompletions) {
-        throw new TypeError(`Route ${body.model} does not support chat completions`);
+        throw new TypeError(`Route ${model} does not support chat completions`);
       }
       if (body.stream !== false && !resolved.recipe.capabilities.streaming) {
-        throw new TypeError(`Route ${body.model} does not support streaming`);
+        throw new TypeError(`Route ${model} does not support streaming`);
       }
       if (body.tools?.length && !resolved.recipe.capabilities.toolCalls) {
-        throw new TypeError(`Route ${body.model} does not support tool calls`);
+        throw new TypeError(`Route ${model} does not support tool calls`);
       }
     } catch (error) {
       const statusCode = error instanceof RouteNotFoundError ? 404 : error instanceof SecurityPolicyError ? 429 : 400;
       return reply.code(statusCode).send(openAIError(error, "invalid_request_error"));
     }
 
-    const stream = scheduler.enqueue(body.model, {
+    const stream = scheduler.enqueue(model, {
       messages: body.messages,
       ...(body.max_tokens !== undefined ? { maxTokens: body.max_tokens } : {}),
       ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),
@@ -293,7 +296,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
 
     if (body.stream === false) {
       try {
-        return await collectCompletion(stream.requestId, body.model, stream);
+        return await collectCompletion(stream.requestId, model, stream);
       } catch (error) {
         const statusCode = error instanceof RouteNotFoundError ? 404 : 502;
         return reply.code(statusCode).send(openAIError(error, "server_error"));
@@ -316,7 +319,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       if (!reply.raw.writableEnded) abort();
     });
 
-    writeSse(reply, streamChunk(completionId, created, body.model, { role: "assistant" }, null));
+    writeSse(reply, streamChunk(completionId, created, model, { role: "assistant" }, null));
     try {
       for await (const delta of stream) {
         writeSse(
@@ -324,7 +327,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
           streamChunk(
             completionId,
             created,
-            body.model,
+            model,
             {
               ...(delta.text ? { content: delta.text } : {}),
               ...(delta.toolCalls?.length ? { tool_calls: delta.toolCalls } : {}),
@@ -362,7 +365,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       if (body.sessionId) { if (!session) return reply.code(404).send({ error: "Session not found" }); if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); }
       if (principal && !security?.authorizeRoute(principal, body.model)) return reply.code(403).send({ error: "Route access denied" });
       if (principal) { const promptChars = body.messages.reduce((total, message) => total + contentTextLength(message.content), 0); security?.enforceQuota(principal, promptChars, body.maxTokens ?? principal.quota.maxOutputTokens, agentRuns.queue().length); }
-      const executionRouteId = resolveSessionRouteId(session, body.model);
+      const executionRouteId = normalizePublicRouteId(body.model);
       const resolved = resolveActiveRoute(executionRouteId); const prepared = await context.prepare({ ...body, model: executionRouteId }, resolved.recipe.contextTokens); const run = agentRuns.start(prepared.request, principal?.user.id, body.messages); security?.audit("agent-run.created", principal?.user.id, "agent-run", run.id, { routeId: run.routeId, connectionId: session?.connectionId, publicRouteId: body.model, compacted: prepared.compacted });
       return reply.code(202).send({ protocolVersion: PROTOCOL_VERSION, data: run, queue: agentRuns.queue(principal?.user.role === "administrator" ? undefined : principal?.user.id).find((item) => item.runId === run.id), context: { compacted: prepared.compacted, estimatedInputTokens: prepared.estimatedInputTokens, budgetTokens: prepared.budgetTokens } });
     } catch (error) { return reply.code(error instanceof SecurityPolicyError ? 429 : error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) }); }
@@ -633,18 +636,36 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         const controller = new AbortController();
         const cancel = () => controller.abort();
         request.raw.once("aborted", cancel);
+        // Keep the probe prompt minimal but give reasoning-capable models enough room to
+        // finish an answer: some providers count reasoning tokens against max_tokens, so a
+        // tiny budget can end with `finish_reason: "length"` and no visible text. Sampling
+        // temperature is left unset because reasoning models may reject non-default values.
         const stream = scheduler.enqueueRecipe(recipeId, {
           messages: [{ role: "user", content: "Say hi." }],
-          maxTokens: 16,
-          temperature: 0,
+          maxTokens: 1024,
         }, controller.signal, { unloadAfterCompletion: true });
         let output = "";
+        let reasoningLength = 0;
+        let finishReason: string | undefined;
+        let events = 0;
         try {
-          for await (const delta of stream) if (delta.text) output += delta.text;
+          for await (const delta of stream) {
+            events += 1;
+            if (delta.text) output += delta.text;
+            if (delta.reasoning) reasoningLength += delta.reasoning.length;
+            if (delta.finishReason) finishReason = delta.finishReason;
+          }
         } finally {
           request.raw.off("aborted", cancel);
         }
-        if (!output.trim()) throw new Error("Recipe completed without returning text");
+        if (!output.trim()) {
+          const detail = reasoningLength > 0
+            ? `The model produced reasoning (${reasoningLength} characters) but no visible answer${finishReason ? `; the stream ended with finish reason "${finishReason}"` : ""}. It may be a reasoning model that needs a larger output budget.`
+            : finishReason
+              ? `The stream ended with finish reason "${finishReason}" after ${events} events but contained no visible text.`
+              : `The provider returned an empty stream (${events} events, no text).`;
+          throw new Error(`Recipe completed without returning text: ${detail}`);
+        }
         return { data: { recipeId, working: true, unloaded: true, output: output.trim().slice(0, 500) } };
       } catch (error) {
         const statusCode = error instanceof RecipeNotFoundError ? 404 : 502;
@@ -858,10 +879,6 @@ function consumerCredentialEnvironment(connectionId: string): string {
 function consumerModelRegistration(connectionId: string, modelId: string): ConsumerModelRegistration {
   const suffix = createHash("sha256").update(modelId).digest("hex").slice(0, 16);
   return { modelId, routeId: `${CONSUMER_ROUTE_PREFIX}${connectionId}--${suffix}`, recipeId: `consumer-recipe--${connectionId}--${suffix}` };
-}
-
-function consumerConnectionRouteId(connectionId: string, routeId: string): string {
-  return `${CONSUMER_ROUTE_PREFIX}${connectionId}--route--${routeId}`;
 }
 
 function requirePublicRouteId(value: unknown): "fast" | "default" | "smart" {

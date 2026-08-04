@@ -4,7 +4,7 @@ import { MessageActions, type ActionableMessageRole } from "./ui/chat/message-ac
 import { ActivityTimeline } from "./ui/chat/activity-timeline.js";
 import { AgentRunController } from "./ui/chat/agent-run-controller.js";
 import { ComposerControls } from "./ui/chat/composer-controls.js";
-import { ConnectionWorkspaceController, FIXED_ROUTES, LOCAL_CONNECTION_ID, type FixedRouteId } from "./ui/connections/connection-workspace.js";
+import { ConnectionWorkspaceController, FIXED_ROUTES, type FixedRouteId } from "./ui/connections/connection-workspace.js";
 import { ResourceInspector } from "./ui/inspector/resource-inspector.js";
 import { ConversationLayout } from "./ui/layout/conversation-layout.js";
 import { WorkspacePageController } from "./ui/layout/workspace-pages.js";
@@ -51,6 +51,7 @@ let navigationIndex = -1;
 let replayingNavigation = false;
 const navigationHistory: AppLocation[] = [];
 const recipeTestStates = new Map<string, { state: "testing" | "passed" | "failed"; detail: string }>();
+let routeCards: Json[] = [];
 
 const shell = query(".app-shell");
 const workspaceHeader = query(".workspace-header");
@@ -64,9 +65,7 @@ const newChatContext = element("new-chat-context");
 const newChatProject = element("new-chat-project");
 const newChatProjectControl = element("new-chat-project-control") as HTMLButtonElement;
 const newChatEnvironmentControl = element("new-chat-environment-control") as HTMLButtonElement;
-const newChatEnvironmentLabel = element("new-chat-environment-label");
 const newChatEnvironmentMenu = element("new-chat-environment-menu");
-const newChatConnectionList = element("new-chat-connection-list");
 const createWorktreeForm = element("create-worktree-form");
 const newWorktreeBranch = element("new-worktree-branch") as HTMLInputElement;
 const newChatBranchControl = element("new-chat-branch-control") as HTMLButtonElement;
@@ -330,18 +329,12 @@ const connectionWorkspace = new ConnectionWorkspaceController({
   newConnection: element("new-connection") as HTMLButtonElement,
   editorBack: element("connection-editor-back") as HTMLButtonElement,
   cancelEdit: element("cancel-connection-edit") as HTMLButtonElement,
-  environmentLabel: newChatEnvironmentLabel,
-  connectionChoices: newChatConnectionList,
 }, {
   bridge: window.fitz,
   api,
   reloadConfiguration: () => loadManagementConfiguration(false),
   testRecipe,
   renderRecipeTestState,
-  onSelectionChange: (connectionId) => {
-    agentRuns.resetWarmup();
-    agentRuns.scheduleWarmup(prompt.value, composerControls.routeId, connectionId);
-  },
   closePopovers,
   showToast,
   errorMessage,
@@ -390,7 +383,7 @@ form.addEventListener("submit", (event) => {
   else void sendPrompt();
 });
 window.fitz.onNavigationCommand((command) => void navigateHistory(command === "back" ? -1 : 1));
-prompt.addEventListener("input", () => { resizePrompt(); updateContextMeter(); refreshComposerState(); agentRuns.scheduleWarmup(prompt.value, composerControls.routeId, connectionWorkspace.selectedConnectionId); });
+prompt.addEventListener("input", () => { resizePrompt(); updateContextMeter(); refreshComposerState(); agentRuns.scheduleWarmup(prompt.value, composerControls.routeId); });
 prompt.addEventListener("paste", handlePaste);
 prompt.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
@@ -517,9 +510,24 @@ async function initialize(): Promise<void> {
 
 async function loadModels(preferredRoute?: string): Promise<void> {
   const response = await api("/v1/models");
+  routeCards = response.data ?? [];
+  rebuildRouteLabels(preferredRoute);
+}
+
+// Rebuilds the chat route selector's labels from the latest management configuration
+// (route → recipe). The selected route is preserved; only the displayed model name
+// refreshes, so picks made in the Connections workspace show up in chat immediately.
+function rebuildRouteLabels(preferredRoute?: string): void {
+  if (!routeCards.length) return;
   const priority = new Map([["default", 0], ["fast", 1], ["smart", 2]]);
-  const cards = [...(response.data ?? [])].filter((card: Json) => priority.has(String(card.id))).sort((left: Json, right: Json) => (priority.get(left.id) ?? 3) - (priority.get(right.id) ?? 3));
-  composerControls.setRoutes(cards.map((card: Json) => ({ id: card.id, label: card.display_name ?? card.id, group: "Routes" })), preferredRoute);
+  const cards = routeCards.filter((card: Json) => priority.has(String(card.id))).sort((left: Json, right: Json) => (priority.get(left.id) ?? 3) - (priority.get(right.id) ?? 3));
+  composerControls.setRoutes(cards.map((card: Json) => {
+    const route = (managementConfiguration?.routes ?? []).find((item: Json) => item.id === card.id);
+    const recipe = (managementConfiguration?.recipes ?? []).find((item: Json) => item.id === route?.recipeId);
+    const modelName = recipe?.displayName ?? recipe?.modelId;
+    return { id: card.id, label: modelName ? `${card.display_name ?? card.id} · ${modelName}` : (card.display_name ?? card.id), group: "Routes" };
+  }), preferredRoute);
+  routeState.textContent = composerControls.routeLabel;
   syncComposerContext();
 }
 
@@ -574,7 +582,6 @@ async function selectSession(id: string, rerender = true, projectId?: string): P
   if (currentProject) projectSidebar.ensureExpanded(currentProject);
   currentSession = id;
   const selectedSession = currentSessionRecord();
-  connectionWorkspace.setSelectedConnection(selectedSession?.connectionId ?? LOCAL_CONNECTION_ID);
   if (selectedSession?.routeId) composerControls.setRoute(selectedSession.routeId);
   syncComposerContext();
   projectSidebar.markSessionRead(id);
@@ -673,7 +680,7 @@ function showNewChatLanding(): void {
   const grid = document.createElement("div"); grid.className = "starter-grid";
   for (const [label, iconPath] of suggestions) {
     const button = document.createElement("button"); button.type = "button"; button.className = "starter-card"; button.append(svg(iconPath!), Object.assign(document.createElement("span"), { textContent: label }));
-    button.addEventListener("click", () => { prompt.value = label!; resizePrompt(); updateContextMeter(); refreshComposerState(); agentRuns.scheduleWarmup(prompt.value, composerControls.routeId, connectionWorkspace.selectedConnectionId); prompt.focus(); });
+    button.addEventListener("click", () => { prompt.value = label!; resizePrompt(); updateContextMeter(); refreshComposerState(); agentRuns.scheduleWarmup(prompt.value, composerControls.routeId); prompt.focus(); });
     grid.append(button);
   }
   landing.append(mark, heading, grid); messages.append(landing); updateTitles();
@@ -723,7 +730,7 @@ async function createSession(): Promise<void> {
   if (!projectId || !title) return;
   setFormBusy(taskForm, true);
   try {
-    const response = await api(`/api/v1/projects/${projectId}/sessions`, "POST", { title, connectionId: LOCAL_CONNECTION_ID, routeId: "default" });
+    const response = await api(`/api/v1/projects/${projectId}/sessions`, "POST", { title, routeId: "default" });
     taskDialog.close();
     await loadProjects(projectId, response.data.id);
     showToast(`Started ${title}`);
@@ -1361,6 +1368,7 @@ async function loadManagementConfiguration(renderPage: boolean): Promise<Json | 
     syncContextLimit();
     updateContextMeter();
     connectionWorkspace.setConfiguration(managementConfiguration);
+    rebuildRouteLabels();
     if (renderPage) renderManagementPage();
   } catch (error) {
     if (renderPage) playbookList.replaceChildren(panelEmpty(`Management data is unavailable: ${errorMessage(error)}`));
@@ -1369,10 +1377,7 @@ async function loadManagementConfiguration(renderPage: boolean): Promise<Json | 
 }
 
 function syncContextLimit(): void {
-  const session = currentSessionRecord();
-  const connectionId = session?.connectionId ?? connectionWorkspace.selectedConnectionId;
-  const executionRouteId = connectionWorkspace.routeIdFor(composerControls.routeId as FixedRouteId, connectionId);
-  const route = managementConfiguration?.routes?.find((item: Json) => item.id === executionRouteId) ?? managementConfiguration?.routes?.find((item: Json) => item.id === composerControls.routeId);
+  const route = managementConfiguration?.routes?.find((item: Json) => item.id === composerControls.routeId);
   const recipe = managementConfiguration?.recipes?.find((item: Json) => item.id === route?.recipeId);
   if (Number.isFinite(recipe?.contextTokens) && recipe.contextTokens > 0) contextTokenLimit = recipe.contextTokens;
 }
@@ -1641,7 +1646,7 @@ async function updateSessionBinding(): Promise<void> {
   const session = currentSessionRecord();
   if (!session || !composerControls.routeId) return;
   try {
-    const response = await api(`/api/v1/sessions/${session.id}`, "PATCH", { connectionId: session.connectionId ?? LOCAL_CONNECTION_ID, routeId: composerControls.routeId });
+    const response = await api(`/api/v1/sessions/${session.id}`, "PATCH", { routeId: composerControls.routeId });
     Object.assign(session, response.data);
   } catch (error) { showToast(errorMessage(error)); }
 }
@@ -1649,7 +1654,7 @@ async function updateSessionBinding(): Promise<void> {
 function handleRouteChange(): void {
   routeState.textContent = composerControls.routeLabel;
   agentRuns.resetWarmup();
-  agentRuns.scheduleWarmup(prompt.value, composerControls.routeId, connectionWorkspace.selectedConnectionId);
+  agentRuns.scheduleWarmup(prompt.value, composerControls.routeId);
   if (currentSession) void updateSessionBinding();
   syncComposerContext();
 }
@@ -1730,7 +1735,7 @@ async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLE
   if (!currentSession && newChatMode && currentProject) {
     try {
       const title = content.split(/\r?\n/, 1)[0]!.trim().slice(0, 80) || "New chat";
-      const response = await api(`/api/v1/projects/${currentProject}/sessions`, "POST", { title, connectionId: connectionWorkspace.selectedConnectionId, routeId: composerControls.routeId as FixedRouteId });
+      const response = await api(`/api/v1/projects/${currentProject}/sessions`, "POST", { title, routeId: composerControls.routeId as FixedRouteId });
       const sessions = sessionsByProject.get(currentProject) ?? [];
       sessions.unshift(response.data);
       sessionsByProject.set(currentProject, sessions);

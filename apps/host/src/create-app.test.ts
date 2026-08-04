@@ -50,7 +50,7 @@ describe("Fitz host", () => {
     } finally { await runtime.app.close(); }
   });
 
-  it("discovers an external API and resolves a session's connection-scoped route", async () => {
+  it("discovers an external API and routes sessions through the global route model", async () => {
     const upstream = createServer((request, response) => {
       if (request.url === "/v1/models") { response.writeHead(200, { "content-type": "application/json" }); response.end('{"data":[{"id":"upstream-model"},{"id":"explicit-chat-model","endpoints":["chat"]},{"id":"embed-v4.0"},{"id":"rerank-v3.5"},{"id":"cohere-transcribe-03-2026"},{"id":"provider-embedding","endpoints":["embed"]}]}'); return; }
       if (request.url === "/v1/chat/completions") { response.writeHead(200, { "content-type": "text/event-stream" }); response.end('data: {"choices":[{"delta":{"content":"upstream ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'); return; }
@@ -70,20 +70,47 @@ describe("Fitz host", () => {
       expect(models.json().data.map((item: { id: string }) => item.id)).toEqual(["default", "fast", "smart"]);
       const recipeTest = await runtime.app.inject({ method: "POST", url: `/api/v1/management/recipes/${consumerModel.recipeId}/test` });
       expect(recipeTest.statusCode, recipeTest.body).toBe(200); expect(recipeTest.json().data.working).toBe(true);
-      const scopedRouteId = "consumer--test-api--route--default";
-      await runtime.app.inject({ method: "PUT", url: `/api/v1/management/routes/${scopedRouteId}`, payload: { displayName: "Default", recipeId: consumerModel.recipeId, enabled: true, isDefault: true } });
+      await runtime.app.inject({ method: "PUT", url: "/api/v1/management/routes/default", payload: { displayName: "Default", recipeId: consumerModel.recipeId, enabled: true, isDefault: true } });
       const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Connection routing" } });
       const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "External", connectionId: "test-api", routeId: "default" } });
       const run = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", sessionId: session.json().data.id, messages: [{ role: "user", content: "hello" }] } });
       expect(run.statusCode, run.body).toBe(202);
-      expect(run.json().data.routeId).toBe(scopedRouteId);
+      // A session's connectionId no longer scopes resolution: the run uses the global default class.
+      expect(run.json().data.routeId).toBe("default");
+      // Legacy scoped ids collapse to the class, so they resolve to the same global route.
+      const scopedCompletion = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "consumer--test-api--route--default", stream: false, messages: [{ role: "user", content: "hello" }] } });
+      expect(scopedCompletion.statusCode, scopedCompletion.body).toBe(200);
+      expect(scopedCompletion.json().choices[0].message.content).toContain("upstream ok");
       await runtime.app.inject({ method: "PUT", url: "/api/v1/management/connections/test-api", payload: { displayName: "Test API", baseUrl: `http://127.0.0.1:${address.port}/v1`, authType: "none" } });
       const refreshedStatus = await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" });
-      expect(refreshedStatus.json().routes).toContainEqual(expect.objectContaining({ id: scopedRouteId, recipeId: consumerModel.recipeId }));
+      expect(refreshedStatus.json().routes).toContainEqual(expect.objectContaining({ id: "default", recipeId: consumerModel.recipeId }));
       await runtime.app.inject({ method: "DELETE", url: "/api/v1/management/connections/test-api" });
-      expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((item: { id: string }) => item.id)).toEqual(["default", "fast", "smart"]);
-      expect((await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" })).json().routes).not.toContainEqual(expect.objectContaining({ id: scopedRouteId }));
+      // Removing the connection releases the global class it had claimed.
+      expect((await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" })).json().routes).not.toContainEqual(expect.objectContaining({ id: "default", recipeId: consumerModel.recipeId }));
     } finally { await runtime.app.close(); await new Promise<void>((resolve) => upstream.close(() => resolve())); }
+  });
+
+  it("reports a descriptive error when a recipe test returns no visible text", async () => {
+    const reasoningUpstream = createServer((request, response) => {
+      if (request.url === "/v1/models") { response.writeHead(200, { "content-type": "application/json" }); response.end('{"data":[{"id":"reasoning-model"}]}'); return; }
+      if (request.url === "/v1/chat/completions") {
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.end('data: {"choices":[{"delta":{"reasoning_content":"Hmm, let me think about a greeting."},"finish_reason":null}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\ndata: [DONE]\n\n'); return;
+      }
+      response.writeHead(404); response.end();
+    });
+    reasoningUpstream.listen(0, "127.0.0.1"); await once(reasoningUpstream, "listening");
+    const reasoningAddress = reasoningUpstream.address(); if (!reasoningAddress || typeof reasoningAddress === "string") throw new Error("Expected TCP address");
+    const runtime = createHost();
+    try {
+      const saved = await runtime.app.inject({ method: "PUT", url: "/api/v1/management/connections/reasoning-api", payload: { displayName: "Reasoning API", baseUrl: `http://127.0.0.1:${reasoningAddress.port}/v1`, authType: "none" } });
+      expect(saved.statusCode).toBe(200);
+      const recipeId = saved.json().data.models[0].recipeId;
+      const test = await runtime.app.inject({ method: "POST", url: `/api/v1/management/recipes/${recipeId}/test` });
+      expect(test.statusCode).toBe(502);
+      expect(test.json().error).toContain("produced reasoning");
+      expect(test.json().error).toContain("length");
+    } finally { await runtime.app.close(); await new Promise<void>((resolve) => reasoningUpstream.close(() => resolve())); }
   });
 
   it("persists recipe changes from the management API", async () => {

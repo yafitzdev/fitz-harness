@@ -20,6 +20,7 @@ interface StreamChunk {
   choices?: Array<{
     delta?: {
       content?: string;
+      reasoning_content?: string;
       tool_calls?: Array<{
         index: number;
         id?: string;
@@ -113,6 +114,7 @@ export class OpenAICompatibleClient {
       const finishReason = normalizeFinishReason(choice?.finish_reason);
       yield {
         text: choice?.delta?.content ?? "",
+        ...(choice?.delta?.reasoning_content ? { reasoning: choice.delta.reasoning_content } : {}),
         ...(choice?.delta?.tool_calls?.length ? { toolCalls: choice.delta.tool_calls } : {}),
         ...(finishReason ? { finishReason } : {}),
         ...(chunk.usage?.prompt_tokens !== undefined ? { promptTokens: chunk.usage.prompt_tokens } : {}),

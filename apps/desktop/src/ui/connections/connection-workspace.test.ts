@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ConnectionWorkspaceController, LOCAL_CONNECTION_ID, type ConnectionWorkspaceBridge, type ConnectionWorkspaceElements } from "./connection-workspace.js";
+import { ConnectionWorkspaceController, type ConnectionWorkspaceBridge, type ConnectionWorkspaceElements } from "./connection-workspace.js";
 
 function node<T extends HTMLElement>(tag: string): T {
   const element = document.createElement(tag) as T;
@@ -14,7 +14,6 @@ function setup(overrides: Partial<ConnectionWorkspaceBridge> = {}) {
     form: node("form"), id: node("input"), name: node("input"), url: node("input"), auth: node("select"), apiKey: node("input"),
     apiKeyField: node("div"), formStatus: node("p"), connections: node("div"), listView: node("div"), editor: node("div"), editorTitle: node("h1"),
     search: node("input"), refresh: node("button"), newConnection: node("button"), editorBack: node("button"), cancelEdit: node("button"),
-    environmentLabel: node("span"), connectionChoices: node("div"),
   };
   elements.editor.hidden = true;
   for (const value of ["none", "bearer"]) elements.auth.append(Object.assign(document.createElement("option"), { value, textContent: value }));
@@ -33,11 +32,10 @@ function setup(overrides: Partial<ConnectionWorkspaceBridge> = {}) {
     routes: [] as Array<Record<string, unknown>>,
   };
   const calls = {
-    api: vi.fn(async (path: string) => { if (path.includes("/routes/")) configuration = { ...configuration, routes: [{ id: "consumer--remote-1--route--fast", recipeId: "consumer-recipe--remote-model" }] }; return { data: {} }; }),
+    api: vi.fn(async (path: string) => { if (path.includes("/routes/")) configuration = { ...configuration, routes: [{ id: "fast", recipeId: "consumer-recipe--remote-model" }] }; return { data: {} }; }),
     reloadConfiguration: vi.fn(async () => configuration),
     testRecipe: vi.fn(async () => undefined),
     renderRecipeTestState: vi.fn(),
-    onSelectionChange: vi.fn(),
     closePopovers: vi.fn(),
     showToast: vi.fn(),
     errorMessage: vi.fn((error: unknown) => error instanceof Error ? error.message : String(error)),
@@ -61,7 +59,6 @@ describe("ConnectionWorkspaceController", () => {
     expect(elements.connections.textContent).toContain("YanPC");
     expect(elements.connections.textContent).toContain("Local Model");
     expect(elements.connections.textContent).toContain("Remote API");
-    expect(elements.connectionChoices.querySelectorAll("button")).toHaveLength(2);
     expect(calls.showToast).toHaveBeenCalledWith("Remote unavailable");
 
     elements.search.value = "local.gguf";
@@ -89,14 +86,14 @@ describe("ConnectionWorkspaceController", () => {
     expect(bridge.listConsumerConnections).toHaveBeenCalled();
   });
 
-  it("assigns connection-scoped routes and delegates recipe tests", async () => {
+  it("assigns global routes from any connection and delegates recipe tests", async () => {
     const { controller, elements, calls } = setup();
     await controller.sync(false);
     const cards = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card");
     const remoteCard = cards[1]!;
     const fast = remoteCard.querySelector<HTMLButtonElement>(".route-fast")!;
     click(fast);
-    await vi.waitFor(() => expect(calls.api).toHaveBeenCalledWith("/api/v1/management/routes/consumer--remote-1--route--fast", "PUT", expect.objectContaining({ recipeId: "consumer-recipe--remote-model" })));
+    await vi.waitFor(() => expect(calls.api).toHaveBeenCalledWith("/api/v1/management/routes/fast", "PUT", expect.objectContaining({ recipeId: "consumer-recipe--remote-model" })));
     await vi.waitFor(() => expect(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[1]?.querySelector(".route-fast")?.classList.contains("active")).toBe(true));
 
     const test = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[1]!.querySelector<HTMLButtonElement>(".recipe-test-button")!;
@@ -104,25 +101,19 @@ describe("ConnectionWorkspaceController", () => {
     expect(calls.testRecipe).toHaveBeenCalledWith(expect.objectContaining({ id: "consumer-recipe--remote-model" }), expect.any(HTMLElement), test);
   });
 
-  it("owns connection selection and returns to the local host after removal", async () => {
+  it("removes a connection and its cards from the workspace", async () => {
     const listConsumerConnections = vi.fn()
       .mockResolvedValueOnce([{ id: "remote-1", displayName: "Remote API", baseUrl: "https://remote.test/v1", authType: "bearer", hasCredential: true, models: [], updatedAt: "now" }])
       .mockResolvedValue([]);
-    const { controller, elements, bridge, calls } = setup({ listConsumerConnections });
+    const { controller, elements, bridge } = setup({ listConsumerConnections });
     await controller.sync(false);
-    const remoteChoice = elements.connectionChoices.querySelector<HTMLButtonElement>('[data-connection-id="remote-1"]')!;
-    click(remoteChoice);
-    expect(controller.selectedConnectionId).toBe("remote-1");
-    expect(calls.onSelectionChange).toHaveBeenCalledWith("remote-1");
-    expect(calls.closePopovers).toHaveBeenCalled();
-
+    expect(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")).toHaveLength(2);
     const remoteCard = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[1]!;
     const remove = [...remoteCard.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Remove")!;
     click(remove);
     expect(remove.textContent).toBe("Confirm");
     click(remove);
     await vi.waitFor(() => expect(bridge.removeConsumerConnection).toHaveBeenCalledWith("remote-1"));
-    await vi.waitFor(() => expect(controller.selectedConnectionId).toBe(LOCAL_CONNECTION_ID));
-    await vi.waitFor(() => expect(elements.environmentLabel.textContent).toBe("YanPC"));
+    await vi.waitFor(() => expect(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")).toHaveLength(1));
   });
 });

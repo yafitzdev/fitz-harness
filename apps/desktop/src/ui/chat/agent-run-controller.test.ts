@@ -113,16 +113,16 @@ describe("AgentRunController", () => {
     const api = vi.fn(async () => ({ data: {} }));
     const { controller } = setup(api);
 
-    controller.scheduleWarmup("h", "fast", "connection-1");
-    controller.scheduleWarmup("he", "fast", "connection-1");
+    controller.scheduleWarmup("h", "fast");
+    controller.scheduleWarmup("he", "fast");
     await vi.advanceTimersByTimeAsync(120);
     expect(api).toHaveBeenCalledTimes(1);
-    expect(api).toHaveBeenCalledWith("/api/v1/inference/warm", "POST", { model: "fast", connectionId: "connection-1" });
+    expect(api).toHaveBeenCalledWith("/api/v1/inference/warm", "POST", { model: "fast" });
 
     controller.resetWarmup();
-    controller.scheduleWarmup("x", "smart", "connection-2");
+    controller.scheduleWarmup("x", "smart");
     await vi.advanceTimersByTimeAsync(120);
-    expect(api).toHaveBeenLastCalledWith("/api/v1/inference/warm", "POST", { model: "smart", connectionId: "connection-2" });
+    expect(api).toHaveBeenLastCalledWith("/api/v1/inference/warm", "POST", { model: "smart" });
   });
 
   it("remembers cancellation while run creation is still in flight", async () => {

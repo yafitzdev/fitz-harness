@@ -70,6 +70,8 @@ export interface InferenceRequest {
 
 export interface InferenceDelta {
   text: string;
+  /** Provider-side reasoning/thinking text (e.g. OpenAI-compatible `delta.reasoning_content`). */
+  reasoning?: string;
   toolCalls?: ChatToolCallDelta[];
   finishReason?: "stop" | "length" | "tool_calls" | "cancelled";
   promptTokens?: number;

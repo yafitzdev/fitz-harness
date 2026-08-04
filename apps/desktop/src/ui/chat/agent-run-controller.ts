@@ -63,13 +63,13 @@ export class AgentRunController {
     this.#warmupTimer = undefined;
   }
 
-  scheduleWarmup(prompt: string, model: string, connectionId: string): void {
+  scheduleWarmup(prompt: string, model: string): void {
     if (!prompt.length) { this.resetWarmup(); return; }
     if (this.#composerHadText || this.active || !model) return;
     this.#composerHadText = true;
     this.#warmupTimer = setTimeout(() => {
       this.#warmupTimer = undefined;
-      void this.#options.api("/api/v1/inference/warm", "POST", { model, connectionId })
+      void this.#options.api("/api/v1/inference/warm", "POST", { model })
         .catch(() => { this.#composerHadText = false; });
     }, 120);
   }

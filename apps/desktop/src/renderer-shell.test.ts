@@ -150,7 +150,7 @@ describe("desktop renderer shell", () => {
     expect(renderer).not.toContain('/api/v1/runtime-mode');
     expect(connectionWorkspace).toContain('consumerFixedRouteId');
     expect(connectionWorkspace).toContain('const LOCAL_CONNECTION_ID = "hosted--local"');
-    expect(renderer).toContain('connectionId: connectionWorkspace.selectedConnectionId');
+    expect(renderer).not.toContain('connectionWorkspace.selectedConnectionId');
     expect(renderer).toContain('routeId: composerControls.routeId as FixedRouteId');
     expect(renderer).not.toContain('candidate.routeId === card.id');
     expect(connectionWorkspace).toContain('testRecipe({ id: model.recipeId');
@@ -160,8 +160,8 @@ describe("desktop renderer shell", () => {
     expect(renderer).not.toContain('configuredConnectionId');
     expect(renderer).not.toContain('edit.textContent = configuredConnectionId');
     expect(connectionWorkspace).toContain('for (const model of connection.availableModels)');
-    expect(connectionWorkspace).toContain('connection.hosted ? definition.id : consumerFixedRouteId');
-    expect(connectionWorkspace).toContain('this.assignRoute(connection, definition, model, button)');
+    expect(connectionWorkspace).toContain('const routeId = definition.id');
+    expect(connectionWorkspace).toContain('this.assignRoute(definition, model, button)');
     expect(connectionWorkspace).toContain('if (!connection.hosted)');
     expect(connectionWorkspace).not.toContain('url.className = "connection-url"');
     expect(html).toContain("Provider and self-hosted OpenAI-compatible APIs.");
@@ -424,8 +424,8 @@ describe("desktop renderer shell", () => {
   });
 
   it("silently warms the selected route after the first composer character", () => {
-    expect(renderer).toContain("agentRuns.scheduleWarmup(prompt.value, composerControls.routeId, connectionWorkspace.selectedConnectionId)");
-    expect(agentRunController).toContain('this.#options.api("/api/v1/inference/warm", "POST", { model, connectionId })');
+    expect(renderer).toContain("agentRuns.scheduleWarmup(prompt.value, composerControls.routeId)");
+    expect(agentRunController).toContain('this.#options.api("/api/v1/inference/warm", "POST", { model })');
     expect(agentRunController).toContain("if (this.#composerHadText || this.active || !model) return");
     expect(agentRunController).toContain("}, 120)");
     expect(renderer).toContain("idleTtlSeconds: 600");
