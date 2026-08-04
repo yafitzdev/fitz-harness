@@ -1,7 +1,6 @@
 // @vitest-environment happy-dom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ContextMenu } from "../primitives/context-menu.js";
 import { ProjectSidebarController, type ProjectSidebarElements, type ProjectSidebarOptions, type ProjectSidebarState } from "./project-sidebar.js";
 
 function element<T extends HTMLElement>(tag: string, id?: string): T {
@@ -12,29 +11,32 @@ function element<T extends HTMLElement>(tag: string, id?: string): T {
 }
 
 function setup() {
-  const elements: ProjectSidebarElements = {
-    tree: element("nav"),
-    chatHoverCard: element("aside"),
-    chatHoverTitle: element("strong"),
-    chatHoverAge: element("time"),
-    chatHoverProject: element("span"),
-    projectHoverCard: element("aside"),
-    projectHoverTitle: element("strong"),
-    projectHoverTaskCount: element("span"),
-    projectHoverPath: element<HTMLButtonElement>("button"),
-    projectHoverPathLabel: element("span"),
-    projectHoverPin: element<HTMLButtonElement>("button"),
-    projectHoverEdit: element<HTMLButtonElement>("button"),
-  };
-  elements.chatHoverCard.hidden = true;
-  elements.projectHoverCard.hidden = true;
-  const menuElement = element("div");
+  // The controller resolves its own elements from the shell by id, so the test
+  // document must mirror the static markup in renderer/index.html.
+  const tree = element<HTMLElement>("nav", "projects");
+  const chatHoverCard = element<HTMLElement>("aside", "chat-hover-card");
+  chatHoverCard.hidden = true;
+  const chatHoverTitle = element<HTMLElement>("strong", "hover-chat-title");
+  const chatHoverAge = element<HTMLElement>("time", "hover-chat-age");
+  const chatHoverProject = element<HTMLElement>("span", "hover-project-name");
+  const projectHoverCard = element<HTMLElement>("aside", "project-hover-card");
+  projectHoverCard.hidden = true;
+  const projectHoverTitle = element<HTMLElement>("strong", "hover-project-title");
+  const projectHoverTaskCount = element<HTMLElement>("span", "hover-project-task-count");
+  const projectHoverPath = element<HTMLButtonElement>("button", "hover-project-path");
+  const projectHoverPathLabel = element<HTMLElement>("span", "hover-project-path-label");
+  const projectHoverPin = element<HTMLButtonElement>("button", "hover-project-pin");
+  const projectHoverEdit = element<HTMLButtonElement>("button", "hover-project-edit");
+  const menuElement = element<HTMLElement>("div", "sidebar-context-menu");
+  menuElement.hidden = true;
   const calls = {
     selectProject: vi.fn(), selectSession: vi.fn(), newChat: vi.fn(), openProjectPath: vi.fn(), createWorktree: vi.fn(), editProject: vi.fn(), archiveProjectChats: vi.fn(), removeProject: vi.fn(), renameSession: vi.fn(), archiveSession: vi.fn(), copyValue: vi.fn(), continueSession: vi.fn(), closePopovers: vi.fn(),
   };
-  const menu = new ContextMenu(menuElement, calls.closePopovers);
-  const options: ProjectSidebarOptions = { elements, menu, ...calls };
-  const controller = new ProjectSidebarController(options);
+  const controller = new ProjectSidebarController({ mount: tree, ...calls });
+  const elements: ProjectSidebarElements = {
+    tree, chatHoverCard, chatHoverTitle, chatHoverAge, chatHoverProject,
+    projectHoverCard, projectHoverTitle, projectHoverTaskCount, projectHoverPath, projectHoverPathLabel, projectHoverPin, projectHoverEdit,
+  };
   return { controller, elements, menuElement, calls };
 }
 
@@ -139,5 +141,32 @@ describe("ProjectSidebarController", () => {
     expect(elements.chatHoverCard.hidden).toBe(false);
     expect(elements.chatHoverTitle.textContent).toBe("First chat");
     expect(elements.chatHoverProject.textContent).toBe("Alpha");
+  });
+
+  it("hides the context menu and hover overlays through the public API", () => {
+    const { controller, menuElement, elements } = setup();
+    menuElement.hidden = false;
+    elements.projectHoverCard.hidden = false;
+
+    controller.hideMenu();
+    controller.hideOverlays();
+
+    expect(menuElement.hidden).toBe(true);
+    expect(elements.projectHoverCard.hidden).toBe(true);
+    expect(elements.chatHoverCard.hidden).toBe(true);
+  });
+
+  it("fails loudly when a hover card is missing from the shell", () => {
+    const tree = element<HTMLElement>("nav", "projects");
+    element<HTMLElement>("aside", "chat-hover-card");
+    element<HTMLElement>("strong", "hover-chat-title");
+    element<HTMLElement>("time", "hover-chat-age");
+    element<HTMLElement>("span", "hover-project-name");
+    // #project-hover-card is intentionally omitted.
+    const options: ProjectSidebarOptions = {
+      mount: tree,
+      selectProject: vi.fn(), selectSession: vi.fn(), newChat: vi.fn(), openProjectPath: vi.fn(), createWorktree: vi.fn(), editProject: vi.fn(), archiveProjectChats: vi.fn(), removeProject: vi.fn(), renameSession: vi.fn(), archiveSession: vi.fn(), copyValue: vi.fn(), continueSession: vi.fn(), closePopovers: vi.fn(),
+    };
+    expect(() => new ProjectSidebarController(options)).toThrow("Missing #project-hover-card");
   });
 });

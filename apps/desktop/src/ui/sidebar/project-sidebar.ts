@@ -1,5 +1,5 @@
 import { ContextMenu } from "../primitives/context-menu.js";
-import { svgIcon } from "../primitives/dom.js";
+import { requiredElement, svgIcon } from "../primitives/dom.js";
 
 export interface ProjectSidebarProject {
   id: string;
@@ -38,8 +38,8 @@ export interface ProjectSidebarElements {
 }
 
 export interface ProjectSidebarOptions {
-  elements: ProjectSidebarElements;
-  menu: ContextMenu;
+  /** The sidebar tree the controller renders projects and sessions into. */
+  mount: HTMLElement;
   closePopovers: () => void;
   selectProject: (projectId: string) => void;
   selectSession: (sessionId: string, projectId: string) => void;
@@ -58,6 +58,9 @@ export interface ProjectSidebarOptions {
 /** Owns the project/session tree, its persistent presentation state, menus, and hover cards. */
 export class ProjectSidebarController {
   readonly #options: ProjectSidebarOptions;
+  readonly #elements: ProjectSidebarElements;
+  readonly #menu: ContextMenu;
+  readonly #menuElement: HTMLElement;
   readonly #pinnedProjects = this.#storedSet("fitz-pinned-projects");
   readonly #pinnedSessions = this.#storedSet("fitz-pinned-sessions");
   readonly #unreadSessions = this.#storedSet("fitz-unread-sessions");
@@ -68,7 +71,26 @@ export class ProjectSidebarController {
 
   constructor(options: ProjectSidebarOptions) {
     this.#options = options;
-    const elements = options.elements;
+    // The hover cards and context menu live at shell level, so their lookup is
+    // global rather than scoped to the tree.
+    const elements: ProjectSidebarElements = {
+      tree: options.mount,
+      chatHoverCard: requiredElement("chat-hover-card"),
+      chatHoverTitle: requiredElement("hover-chat-title"),
+      chatHoverAge: requiredElement("hover-chat-age"),
+      chatHoverProject: requiredElement("hover-project-name"),
+      projectHoverCard: requiredElement("project-hover-card"),
+      projectHoverTitle: requiredElement("hover-project-title"),
+      projectHoverTaskCount: requiredElement("hover-project-task-count"),
+      projectHoverPath: requiredElement("hover-project-path") as HTMLButtonElement,
+      projectHoverPathLabel: requiredElement("hover-project-path-label"),
+      projectHoverPin: requiredElement("hover-project-pin") as HTMLButtonElement,
+      projectHoverEdit: requiredElement("hover-project-edit") as HTMLButtonElement,
+    };
+    this.#elements = elements;
+    this.#menuElement = requiredElement("sidebar-context-menu");
+    this.#menu = new ContextMenu(this.#menuElement, options.closePopovers);
+    this.#menuElement.addEventListener("click", (event) => event.stopPropagation());
     elements.projectHoverCard.addEventListener("mouseenter", () => this.cancelProjectHoverHide());
     elements.projectHoverCard.addEventListener("mouseleave", () => this.scheduleProjectHoverHide());
     elements.projectHoverCard.addEventListener("click", (event) => event.stopPropagation());
@@ -86,7 +108,7 @@ export class ProjectSidebarController {
 
   render(state: ProjectSidebarState): void {
     this.#state = state;
-    const tree = this.#options.elements.tree;
+    const tree = this.#elements.tree;
     tree.replaceChildren();
     if (state.projects.length === 0) {
       tree.append(this.#empty("No projects yet"));
@@ -118,18 +140,20 @@ export class ProjectSidebarController {
     this.#saveSet("fitz-expanded-projects", this.#expandedProjects);
   }
 
-  hideChatHover(): void { this.#options.elements.chatHoverCard.hidden = true; }
+  hideChatHover(): void { this.#elements.chatHoverCard.hidden = true; }
 
   hideProjectHover(): void {
     this.cancelProjectHoverHide();
-    this.#options.elements.projectHoverCard.hidden = true;
+    this.#elements.projectHoverCard.hidden = true;
     this.#hoveredProjectId = undefined;
   }
 
   hideOverlays(): void { this.hideProjectHover(); this.hideChatHover(); }
 
+  hideMenu(): void { this.#menuElement.hidden = true; }
+
   resetMenuToggles(): void {
-    for (const toggle of this.#options.elements.tree.querySelectorAll(".tree-menu-toggle")) toggle.setAttribute("aria-expanded", "false");
+    for (const toggle of this.#elements.tree.querySelectorAll(".tree-menu-toggle")) toggle.setAttribute("aria-expanded", "false");
   }
 
   cancelProjectHoverHide(): void {
@@ -222,10 +246,10 @@ export class ProjectSidebarController {
     event.preventDefault();
     event.stopPropagation();
     this.#options.closePopovers();
-    this.#options.menu.reset();
+    this.#menu.reset();
     if (kind === "project") this.#buildProjectMenu(id);
     else if (projectId) this.#buildSessionMenu(id, projectId);
-    this.#options.menu.openBeside(toggle);
+    this.#menu.openBeside(toggle);
     toggle.setAttribute("aria-expanded", "true");
   }
 
@@ -233,7 +257,7 @@ export class ProjectSidebarController {
     const project = this.#project(projectId);
     if (!project) return;
     const sessions = this.#state.sessionsByProject.get(projectId) ?? [];
-    const menu = this.#options.menu;
+    const menu = this.#menu;
     menu.add({ label: this.#pinnedProjects.has(projectId) ? "Unpin project" : "Pin project", action: () => this.#toggleStored(this.#pinnedProjects, projectId, "fitz-pinned-projects"), icon: '<path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path>' });
     menu.add({ label: "Open in Explorer", action: () => { if (project.rootPath) this.#options.openProjectPath(project.rootPath); }, icon: '<path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path><path d="M3.5 6.5V4h5l1.5 2"></path>', disabled: !project.rootPath });
     menu.add({ label: "Create permanent worktree", action: () => this.#options.createWorktree(projectId), icon: '<path d="M4 6h8M12 3l3 3-3 3M16 14H8M8 11l-3 3 3 3"></path>', disabled: !project.rootPath });
@@ -247,7 +271,7 @@ export class ProjectSidebarController {
     const session = this.#state.sessionsByProject.get(projectId)?.find((item) => item.id === sessionId);
     const project = this.#project(projectId);
     if (!session) return;
-    const menu = this.#options.menu;
+    const menu = this.#menu;
     menu.add({ label: this.#pinnedSessions.has(sessionId) ? "Unpin chat" : "Pin chat", action: () => this.#toggleStored(this.#pinnedSessions, sessionId, "fitz-pinned-sessions"), icon: '<path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path>' });
     menu.add({ label: "Rename chat", action: () => this.#options.renameSession(sessionId, projectId), icon: '<path d="M4 14.5V17h2.5L15 8.5 11.5 5z"></path><path d="m10.5 6 3.5 3.5"></path>' });
     menu.add({ label: "Archive chat", action: () => this.#options.archiveSession(sessionId, projectId), danger: true, icon: '<rect x="3" y="5" width="14" height="11" rx="2"></rect><path d="M3 8h14M8 11h4"></path>' });
@@ -269,7 +293,7 @@ export class ProjectSidebarController {
     const age = Math.max(0, Date.now() - updated);
     const days = Math.floor(age / 86_400_000);
     const hours = Math.floor(age / 3_600_000);
-    const elements = this.#options.elements;
+    const elements = this.#elements;
     elements.chatHoverTitle.textContent = session.title;
     elements.chatHoverAge.textContent = days ? `${days}d` : hours ? `${hours}h` : "now";
     elements.chatHoverProject.textContent = project.name;
@@ -283,7 +307,7 @@ export class ProjectSidebarController {
     this.cancelProjectHoverHide();
     this.hideChatHover();
     this.#hoveredProjectId = project.id;
-    const elements = this.#options.elements;
+    const elements = this.#elements;
     const taskCount = (this.#state.sessionsByProject.get(project.id) ?? []).length;
     elements.projectHoverTitle.textContent = project.name;
     elements.projectHoverTaskCount.textContent = `${taskCount} ${taskCount === 1 ? "task" : "tasks"}`;

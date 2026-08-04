@@ -8,25 +8,18 @@ import { InspectorPanel } from "./ui/inspector/inspector-panel.js";
 import { ConversationLayout } from "./ui/layout/conversation-layout.js";
 import { WorkspacePageController } from "./ui/layout/workspace-pages.js";
 import { CustomSelectController } from "./ui/primitives/custom-select.js";
-import { ContextMenu } from "./ui/primitives/context-menu.js";
 import { requiredElement as element, requiredQuery as query, svgIcon as svg, textBlock } from "./ui/primitives/dom.js";
 import { togglePopover as toggleManagedPopover } from "./ui/primitives/popover.js";
 import { ResizablePane } from "./ui/primitives/resizable-pane.js";
-import { PluginCatalogController } from "./ui/plugins/plugin-catalog.js";
+import { PluginsPageController } from "./ui/plugins/plugins-page.js";
 import { AdministrationPageController } from "./ui/administration/administration-page.js";
 import { PlaybookWorkspaceController } from "./ui/playbooks/playbook-workspace.js";
-import { ProjectSidebarController, type ProjectSidebarProject, type ProjectSidebarSession } from "./ui/sidebar/project-sidebar.js";
+import { ProjectsController } from "./ui/projects/projects.js";
+import { ProjectSidebarController } from "./ui/sidebar/project-sidebar.js";
 
 type Json = Record<string, any>;
 type AppLocation = { view: "conversation"; projectId?: string; sessionId?: string; newChat?: boolean } | { view: "playbooks" | "connections" | "plugins" | "administration" };
-type ProjectRecord = ProjectSidebarProject & Json;
-type SessionRecord = ProjectSidebarSession & Json;
 
-let projectRecords: ProjectRecord[] = [];
-const sessionsByProject = new Map<string, SessionRecord[]>();
-let currentProject: string | undefined;
-let currentSession: string | undefined;
-let pendingTaskAfterProject = false;
 let queueRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let sessionTokenEstimate = 0;
 let contextTokenLimit = 131_072;
@@ -36,8 +29,6 @@ let currentUserId: string | undefined;
 let managementConfiguration: Json | undefined;
 let newChatMode = false;
 let newChatProjectDetached = false;
-let removeProjectTarget: string | undefined;
-let renameTarget: { kind: "project" | "task"; id: string } | undefined;
 let navigationIndex = -1;
 let replayingNavigation = false;
 const navigationHistory: AppLocation[] = [];
@@ -60,27 +51,11 @@ const queueCount = element("queue-count");
 const artifactFile = element("artifact-file") as HTMLInputElement;
 const addArtifactButton = element("add-artifact") as HTMLButtonElement;
 const updateButton = element("update") as HTMLButtonElement;
-const projectDialog = element("project-dialog") as HTMLDialogElement;
-const projectForm = element("project-form") as HTMLFormElement;
-const projectName = element("project-name") as HTMLInputElement;
-const projectRootPath = element("project-root-path") as HTMLInputElement;
-const projectFolderLabel = element("project-folder-label");
-const chooseProjectFolder = element("choose-project-folder") as HTMLButtonElement;
-const taskDialog = element("task-dialog") as HTMLDialogElement;
-const taskForm = element("task-form") as HTMLFormElement;
-const taskProject = element("task-project") as HTMLSelectElement;
-const taskName = element("task-name") as HTMLInputElement;
 const taskMenuToggle = element("task-menu-toggle") as HTMLButtonElement;
 const taskMenu = element("task-menu");
 const appMenuPopover = element("app-menu-popover");
 const selectPopover = element("select-popover");
-const sidebarContextMenu = element("sidebar-context-menu");
 const sidebarResizer = element("sidebar-resizer");
-const renameDialog = element("rename-dialog") as HTMLDialogElement;
-const renameForm = element("rename-form") as HTMLFormElement;
-const renameTaskName = element("rename-task-name") as HTMLInputElement;
-const renameHeading = element("rename-heading");
-const renameLabel = element("rename-label");
 const playbookPage = element("playbook-page");
 const connectionsButton = element("manage-connections") as HTMLButtonElement;
 const pluginsPage = element("plugins-page");
@@ -94,9 +69,6 @@ const pairingDescription = element("pairing-description");
 const pairingError = element("pairing-error");
 const administrationPage = element("administration-page");
 const administrationButton = element("manage-administration") as HTMLButtonElement;
-const removeProjectDialog = element("remove-project-dialog") as HTMLDialogElement;
-const removeProjectForm = element("remove-project-form") as HTMLFormElement;
-const removeProjectName = element("remove-project-name");
 
 let conversationLayout: ConversationLayout | undefined;
 const sidebarPane = new ResizablePane({
@@ -106,14 +78,14 @@ const sidebarPane = new ResizablePane({
 });
 const inspectorPanel = new InspectorPanel({
   mount: workspace,
-  getProjectRoot: () => String(activeProject()?.rootPath ?? ""),
+  getProjectRoot: () => String(projects.activeProject()?.rootPath ?? ""),
   getSearchRoots: () => activityTimeline.searchRoots(),
   showToast,
   onLayoutChange: () => conversationLayout?.sync(),
 });
 const composer = new Composer({
   mount: workspace,
-  getProjectRoot: () => String(activeProject()?.rootPath ?? "") || undefined,
+  getProjectRoot: () => String(projects.activeProject()?.rootPath ?? "") || undefined,
   bridge: window.fitz,
   closeAllPopovers: closePopovers,
   onRouteChange: () => handleRouteChange(),
@@ -137,7 +109,7 @@ const composer = new Composer({
     else inspectorPanel.previewImage(dataUrl, mimeType, name);
   },
   onWorktreeCreated: async (path) => {
-    const project = activeProject();
+    const project = projects.activeProject();
     if (!project) return;
     await api(`/api/v1/projects/${project.id}`, "PATCH", { rootPath: path });
     project.rootPath = path;
@@ -147,36 +119,120 @@ const composer = new Composer({
 });
 conversationLayout = new ConversationLayout({ workspace, messages, composer: composer.root, scrollButton: composer.scrollButton, inspectorWidth: () => inspectorPanel.width() });
 const customSelects = new CustomSelectController(selectPopover, closePopovers);
-const sidebarMenu = new ContextMenu(sidebarContextMenu, closePopovers);
 const projectSidebar = new ProjectSidebarController({
-  elements: {
-    tree: element("projects"),
-    chatHoverCard: element("chat-hover-card"),
-    chatHoverTitle: element("hover-chat-title"),
-    chatHoverAge: element("hover-chat-age"),
-    chatHoverProject: element("hover-project-name"),
-    projectHoverCard: element("project-hover-card"),
-    projectHoverTitle: element("hover-project-title"),
-    projectHoverTaskCount: element("hover-project-task-count"),
-    projectHoverPath: element("hover-project-path") as HTMLButtonElement,
-    projectHoverPathLabel: element("hover-project-path-label"),
-    projectHoverPin: element("hover-project-pin") as HTMLButtonElement,
-    projectHoverEdit: element("hover-project-edit") as HTMLButtonElement,
-  },
-  menu: sidebarMenu,
+  mount: element("projects"),
   closePopovers,
-  selectProject: (projectId) => void selectProject(projectId),
-  selectSession: (sessionId, projectId) => void selectSession(sessionId, true, projectId),
+  selectProject: (projectId) => void projects.selectProject(projectId),
+  selectSession: (sessionId, projectId) => void projects.selectSession(sessionId, true, projectId),
   newChat: openNewChatForProject,
-  openProjectPath: (path) => void openProjectPath(path),
+  openProjectPath: (path) => void projects.openProjectPath(path),
   createWorktree: openProjectWorktreeSetup,
-  editProject: openProjectRenameDialog,
-  archiveProjectChats: (projectId) => void archiveProjectChats(projectId),
-  removeProject: openRemoveProjectDialog,
-  renameSession: (sessionId, projectId) => { currentProject = projectId; currentSession = sessionId; openRenameDialog(); },
-  archiveSession: (sessionId, projectId) => { currentProject = projectId; currentSession = sessionId; void archiveCurrentTask(); },
+  editProject: (projectId) => void projects.openProjectRenameDialog(projectId),
+  archiveProjectChats: (projectId) => void projects.archiveProjectChats(projectId),
+  removeProject: (projectId) => void projects.openRemoveProjectDialog(projectId),
+  renameSession: (sessionId, projectId) => { projects.setCurrentProject(projectId); projects.setCurrentSession(sessionId); projects.openRenameDialog(); },
+  archiveSession: (sessionId, projectId) => { projects.setCurrentProject(projectId); projects.setCurrentSession(sessionId); void projects.archiveCurrentTask(); },
   copyValue: (value, message) => void copyValue(value, message),
-  continueSession: (session, projectId) => { currentProject = projectId; void continueInNewChat(session); },
+  continueSession: (session, projectId) => void projects.continueInNewChat(session, projectId),
+});
+const projects = new ProjectsController({
+  api,
+  bridge: { chooseFolder: () => window.fitz.chooseFolder(), openPath: (path) => window.fitz.openPath(path) },
+  elements: {
+    projectDialog: element("project-dialog") as HTMLDialogElement,
+    projectForm: element("project-form") as HTMLFormElement,
+    projectName: element("project-name") as HTMLInputElement,
+    projectRootPath: element("project-root-path") as HTMLInputElement,
+    projectFolderLabel: element("project-folder-label"),
+    chooseProjectFolder: element("choose-project-folder") as HTMLButtonElement,
+    taskDialog: element("task-dialog") as HTMLDialogElement,
+    taskForm: element("task-form") as HTMLFormElement,
+    taskProject: element("task-project") as HTMLSelectElement,
+    taskName: element("task-name") as HTMLInputElement,
+    renameDialog: element("rename-dialog") as HTMLDialogElement,
+    renameForm: element("rename-form") as HTMLFormElement,
+    renameTaskName: element("rename-task-name") as HTMLInputElement,
+    renameHeading: element("rename-heading"),
+    renameLabel: element("rename-label"),
+    removeProjectDialog: element("remove-project-dialog") as HTMLDialogElement,
+    removeProjectForm: element("remove-project-form") as HTMLFormElement,
+    removeProjectName: element("remove-project-name"),
+  },
+  sidebar: {
+    ensureExpanded: (projectId) => projectSidebar.ensureExpanded(projectId),
+    hasExpandedProjects: () => projectSidebar.hasExpandedProjects(),
+    markSessionRead: (sessionId) => projectSidebar.markSessionRead(sessionId),
+    removeProjectState: (projectId) => projectSidebar.removeProjectState(projectId),
+  },
+  showToast,
+  errorMessage,
+  closePopovers,
+  showConversationWorkspace,
+  leaveNewChat: () => { newChatMode = false; workspace.classList.remove("new-chat-open"); composer.exitNewChat(); },
+  renderTree,
+  refreshComposerState,
+  rememberLocation: (location) => rememberLocation(location),
+  onStartNewChat: () => openNewChat(),
+  onSessionSelected: async (sessionId) => {
+    projectSidebar.hideChatHover();
+    composer.controls.resetContextStatus();
+    const selectedSession = projects.currentSessionRecord();
+    if (selectedSession?.routeId) composer.controls.setRoute(selectedSession.routeId);
+    syncComposerContext();
+    messages.replaceChildren(loadingMessage("Loading conversation…"));
+    try {
+      const transcript = await api(`/api/v1/sessions/${sessionId}/transcript`);
+      composer.rebuildHistory((transcript.data ?? []).filter((entry: Json) => entry.kind === "message" && entry.role === "user" && typeof entry.content?.text === "string" && entry.content.text.length > 0).map((entry: Json) => entry.content.text as string));
+      messages.replaceChildren();
+      activityTimeline.clear();
+      sessionTokenEstimate = estimateTranscriptContext(transcript.data ?? []);
+      const transcriptTools = new Map<string, { row: HTMLElement; toolName: string; input: unknown }>();
+      for (const entry of transcript.data ?? []) {
+        if (entry.kind === "message") {
+          const text = entry.content?.text ?? "";
+          if (entry.role === "assistant" && entry.content?.phase === "commentary") appendCommentary(text, entry.createdAt);
+          else appendMessage(entry.role ?? "system", text, entry.createdAt);
+        }
+        if (entry.kind === "tool-call") {
+          const toolCallId = String(entry.content?.toolCallId ?? entry.id);
+          const toolName = String(entry.content?.toolName ?? "tool");
+          const input = entry.content?.input;
+          transcriptTools.set(toolCallId, { row: activityTimeline.appendTool(toolName, input, toolCallId, true, entry.createdAt), toolName, input });
+        }
+        if (entry.kind === "tool-result") {
+          const toolCallId = String(entry.content?.toolCallId ?? entry.id);
+          const existing = transcriptTools.get(toolCallId);
+          if (existing) activityTimeline.completeTool(existing.row, existing.toolName, existing.input, entry.content?.result, Boolean(entry.content?.isError));
+          else activityTimeline.completeTool(activityTimeline.appendTool(String(entry.content?.toolName ?? "tool"), undefined, toolCallId, true, entry.createdAt), String(entry.content?.toolName ?? "tool"), undefined, entry.content?.result, Boolean(entry.content?.isError));
+        }
+        if (entry.kind === "reasoning") {
+          const text = entry.content?.text ?? "";
+          const row = activityTimeline.appendReasoning(false);
+          activityTimeline.appendReasoningDelta(row, text);
+          activityTimeline.completeReasoning(row);
+        }
+        if (entry.kind === "compaction") activityTimeline.appendContext(entry.content?.manual === true ? "Context compacted" : "Context automatically compacted");
+      }
+      const pendingApprovals = await api(`/api/v1/sessions/${sessionId}/tool-approvals?status=pending`);
+      for (const approval of pendingApprovals.data ?? []) activityTimeline.appendApproval(approval);
+      updateContextMeter();
+      if (!messages.childElementCount) showLanding(true);
+      messages.scrollTop = messages.scrollHeight;
+      await loadArtifacts();
+    } catch (error) {
+      messages.replaceChildren();
+      appendMessage("system", errorMessage(error));
+    }
+    refreshComposerState();
+    composer.focus();
+    rememberLocation({ view: "conversation", ...(projects.currentProjectId ? { projectId: projects.currentProjectId } : {}), sessionId });
+  },
+  onNoSession: async () => {
+    sessionTokenEstimate = 0;
+    updateContextMeter();
+    showLanding();
+    await loadArtifacts();
+  },
 });
 const activityTimeline = new ActivityTimeline({
   messages,
@@ -273,19 +329,8 @@ const workspacePages = new WorkspacePageController({
   },
   setConversationInert,
 });
-const pluginCatalog = new PluginCatalogController({
-  pluginsView: element("plugins-view"),
-  skillsView: element("skills-view"),
-  pluginsTab: element("plugins-tab") as HTMLButtonElement,
-  skillsTab: element("skills-tab") as HTMLButtonElement,
-  pluginSearch: element("plugin-search") as HTMLInputElement,
-  skillSearch: element("skill-search") as HTMLInputElement,
-  installedPlugins: element("installed-plugins"),
-  pluginCatalog: element("plugin-catalog"),
-  installedSkills: element("installed-skills"),
-  loadMorePlugins: element("load-more-plugins") as HTMLButtonElement,
-  refresh: element("refresh-plugins") as HTMLButtonElement,
-}, {
+const pluginsPageController = new PluginsPageController({
+  page: pluginsPage,
   api,
   openExternal: (url) => window.fitz.openExternal(url),
   showToast,
@@ -358,12 +403,12 @@ window.fitz.onNavigationCommand((command) => void navigateHistory(command === "b
 document.addEventListener("keydown", (event) => {
   if (event.ctrlKey && event.key.toLowerCase() === "n") { event.preventDefault(); openNewChat(); }
   if (event.ctrlKey && event.key.toLowerCase() === "b") { event.preventDefault(); toggleSidebar(); }
-  if (event.ctrlKey && event.altKey && event.key.toLowerCase() === "r") { event.preventDefault(); openRenameDialog(); }
-  if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "a") { event.preventDefault(); void archiveCurrentTask(); }
+  if (event.ctrlKey && event.altKey && event.key.toLowerCase() === "r") { event.preventDefault(); projects.openRenameDialog(); }
+  if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "a") { event.preventDefault(); void projects.archiveCurrentTask(); }
   if (event.key === "Escape") { if (playbookWorkspace.editorOpen) playbookWorkspace.closeEditor(); else if (connectionWorkspace.editorOpen) connectionWorkspace.closeEditor(); else closePopovers(); }
 });
 
-element("new-project").addEventListener("click", () => openProjectDialog());
+element("new-project").addEventListener("click", () => projects.openProjectDialog());
 element("new-session").addEventListener("click", openNewChat);
 element("manage-playbooks").addEventListener("click", () => void openPlaybookPage());
 connectionsButton.addEventListener("click", () => void openConnectionsPage());
@@ -381,16 +426,15 @@ window.addEventListener("fitz:open-resource", (event) => {
 element("context-add").addEventListener("click", chooseArtifact);
 addArtifactButton.addEventListener("click", chooseArtifact);
 artifactFile.addEventListener("change", () => void uploadArtifact());
-chooseProjectFolder.addEventListener("click", () => void selectProjectFolder());
+projects.elements.chooseProjectFolder.addEventListener("click", () => void projects.selectProjectFolder());
 taskMenuToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(taskMenu, taskMenuToggle); });
 taskMenu.addEventListener("click", (event) => event.stopPropagation());
-sidebarContextMenu.addEventListener("click", (event) => event.stopPropagation());
-element("rename-task").addEventListener("click", openRenameDialog);
-element("archive-task").addEventListener("click", () => void archiveCurrentTask());
-renameForm.addEventListener("submit", (event) => { event.preventDefault(); void renameCurrentTask(); });
-removeProjectForm.addEventListener("submit", (event) => { event.preventDefault(); void removeProject(); });
-projectForm.addEventListener("submit", (event) => { event.preventDefault(); void createProject(); });
-taskForm.addEventListener("submit", (event) => { event.preventDefault(); void createSession(); });
+element("rename-task").addEventListener("click", () => projects.openRenameDialog());
+element("archive-task").addEventListener("click", () => void projects.archiveCurrentTask());
+projects.elements.renameForm.addEventListener("submit", (event) => { event.preventDefault(); void projects.renameCurrentTask(); });
+projects.elements.removeProjectForm.addEventListener("submit", (event) => { event.preventDefault(); void projects.removeProject(); });
+projects.elements.projectForm.addEventListener("submit", (event) => { event.preventDefault(); void projects.createProject(); });
+projects.elements.taskForm.addEventListener("submit", (event) => { event.preventDefault(); void projects.createSession(); });
 pairingForm.addEventListener("submit", (event) => { event.preventDefault(); void pairDevice(); });
 for (const closeButton of document.querySelectorAll<HTMLElement>("[data-close-dialog]")) {
   closeButton.addEventListener("click", () => {
@@ -413,7 +457,7 @@ async function initialize(): Promise<void> {
     setConnection(configuredHostOrigin.replace(/^https?:\/\//, ""), "active");
     setStatus(health.engine?.state ?? "Ready", "idle");
     showConversationWorkspace();
-    await loadProjects();
+    await projects.load();
     void loadManagementConfiguration(false);
   } catch (error) {
     if (error instanceof HttpError && error.status === 401) {
@@ -450,143 +494,43 @@ function rebuildRouteLabels(preferredRoute?: string): void {
   syncComposerContext();
 }
 
-async function loadProjects(preferredProject?: string, preferredSession?: string): Promise<void> {
-  const response = await api("/api/v1/projects");
-  projectRecords = response.data ?? [];
-  sessionsByProject.clear();
-  await Promise.all(projectRecords.map(async (project) => {
-    const sessions = await api(`/api/v1/projects/${project.id}/sessions`);
-    sessionsByProject.set(project.id, (sessions.data ?? []).filter((session: Json) => session.status !== "archived"));
-  }));
-
-  if (preferredProject && projectRecords.some((project) => project.id === preferredProject)) currentProject = preferredProject;
-  else if (!currentProject || !projectRecords.some((project) => project.id === currentProject)) currentProject = projectRecords[0]?.id;
-  if (currentProject && !projectSidebar.hasExpandedProjects()) projectSidebar.ensureExpanded(currentProject);
-
-  if (preferredSession) currentSession = preferredSession;
-  const selectedSessions = currentProject ? sessionsByProject.get(currentProject) ?? [] : [];
-  if (!currentSession || !selectedSessions.some((session) => session.id === currentSession)) currentSession = selectedSessions[0]?.id;
-
-  renderProjectTree();
-  if (currentSession) await selectSession(currentSession, false);
-  else { sessionTokenEstimate = 0; updateContextMeter(); showLanding(); await loadArtifacts(); }
-}
-
-function renderProjectTree(): void {
-  projectSidebar.render({ projects: projectRecords, sessionsByProject, currentProjectId: currentProject, currentSessionId: currentSession, newChat: newChatMode });
+function renderTree(): void {
+  projectSidebar.render({ projects: projects.projects, sessionsByProject: projects.sessionsByProject, currentProjectId: projects.currentProjectId, currentSessionId: projects.currentSessionId, newChat: newChatMode });
   updateTitles();
-}
-
-async function selectProject(id: string): Promise<void> {
-  showConversationWorkspace();
-  newChatMode = false;
-  currentProject = id;
-  projectSidebar.ensureExpanded(id);
-  const projectSessions = sessionsByProject.get(id) ?? [];
-  currentSession = projectSessions[0]?.id;
-  renderProjectTree();
-  if (currentSession) await selectSession(currentSession, false);
-  else { sessionTokenEstimate = 0; updateContextMeter(); showLanding(); await loadArtifacts(); rememberLocation({ view: "conversation", projectId: id }); }
-  refreshComposerState();
-}
-
-async function selectSession(id: string, rerender = true, projectId?: string): Promise<void> {
-  projectSidebar.hideChatHover();
-  composer.controls.resetContextStatus();
-  showConversationWorkspace();
-  newChatMode = false;
-  workspace.classList.remove("new-chat-open");
-  composer.exitNewChat();
-  if (projectId) currentProject = projectId;
-  if (currentProject) projectSidebar.ensureExpanded(currentProject);
-  currentSession = id;
-  const selectedSession = currentSessionRecord();
-  if (selectedSession?.routeId) composer.controls.setRoute(selectedSession.routeId);
-  syncComposerContext();
-  projectSidebar.markSessionRead(id);
-  if (rerender) renderProjectTree();
-  updateTitles();
-  messages.replaceChildren(loadingMessage("Loading conversation…"));
-  try {
-    const transcript = await api(`/api/v1/sessions/${id}/transcript`);
-    composer.rebuildHistory((transcript.data ?? []).filter((entry: Json) => entry.kind === "message" && entry.role === "user" && typeof entry.content?.text === "string" && entry.content.text.length > 0).map((entry: Json) => entry.content.text as string));
-    messages.replaceChildren();
-    activityTimeline.clear();
-    sessionTokenEstimate = estimateTranscriptContext(transcript.data ?? []);
-    const transcriptTools = new Map<string, { row: HTMLElement; toolName: string; input: unknown }>();
-    for (const entry of transcript.data ?? []) {
-      if (entry.kind === "message") {
-        const text = entry.content?.text ?? "";
-        if (entry.role === "assistant" && entry.content?.phase === "commentary") appendCommentary(text, entry.createdAt);
-        else appendMessage(entry.role ?? "system", text, entry.createdAt);
-      }
-      if (entry.kind === "tool-call") {
-        const toolCallId = String(entry.content?.toolCallId ?? entry.id);
-        const toolName = String(entry.content?.toolName ?? "tool");
-        const input = entry.content?.input;
-        transcriptTools.set(toolCallId, { row: activityTimeline.appendTool(toolName, input, toolCallId, true, entry.createdAt), toolName, input });
-      }
-      if (entry.kind === "tool-result") {
-        const toolCallId = String(entry.content?.toolCallId ?? entry.id);
-        const existing = transcriptTools.get(toolCallId);
-        if (existing) activityTimeline.completeTool(existing.row, existing.toolName, existing.input, entry.content?.result, Boolean(entry.content?.isError));
-        else activityTimeline.completeTool(activityTimeline.appendTool(String(entry.content?.toolName ?? "tool"), undefined, toolCallId, true, entry.createdAt), String(entry.content?.toolName ?? "tool"), undefined, entry.content?.result, Boolean(entry.content?.isError));
-      }
-      if (entry.kind === "reasoning") {
-        const text = entry.content?.text ?? "";
-        const row = activityTimeline.appendReasoning(false);
-        activityTimeline.appendReasoningDelta(row, text);
-        activityTimeline.completeReasoning(row);
-      }
-      if (entry.kind === "compaction") activityTimeline.appendContext(entry.content?.manual === true ? "Context compacted" : "Context automatically compacted");
-    }
-    const pendingApprovals = await api(`/api/v1/sessions/${id}/tool-approvals?status=pending`);
-    for (const approval of pendingApprovals.data ?? []) activityTimeline.appendApproval(approval);
-    updateContextMeter();
-    if (!messages.childElementCount) showLanding(true);
-    messages.scrollTop = messages.scrollHeight;
-    await loadArtifacts();
-  } catch (error) {
-    messages.replaceChildren();
-    appendMessage("system", errorMessage(error));
-  }
-  refreshComposerState();
-  composer.focus();
-  rememberLocation({ view: "conversation", ...(currentProject ? { projectId: currentProject } : {}), sessionId: id });
 }
 
 function openNewChat(): void {
   if (agentRuns.active) { showToast("Stop the current response before starting a new chat"); return; }
   showConversationWorkspace();
   inspectorPanel.close();
-  if (projectRecords.length === 0) { openProjectDialog(true); return; }
-  currentProject ??= projectRecords[0]?.id;
-  if (!currentProject) return;
+  if (projects.projects.length === 0) { projects.openProjectDialog(true); return; }
+  projects.setCurrentProject(projects.currentProjectId ?? projects.projects[0]!.id);
+  if (!projects.currentProjectId) return;
+  projects.beginNewChat();
   newChatMode = true;
   newChatProjectDetached = false;
-  currentSession = undefined;
   sessionTokenEstimate = 0;
   composer.controls.resetContextStatus();
-  projectSidebar.ensureExpanded(currentProject);
+  projectSidebar.ensureExpanded(projects.currentProjectId);
   workspace.classList.add("new-chat-open");
   connectionWorkspace.setConfiguration(managementConfiguration);
-  composer.enterNewChat(projectRecords.find((project) => project.id === currentProject)?.name ?? "Project");
+  composer.enterNewChat(projects.activeProject()?.name ?? "Project");
   agentRuns.resetWarmup();
-  renderProjectTree();
+  renderTree();
   showNewChatLanding();
   void composer.refreshBranches();
   updateContextMeter();
   refreshComposerState();
   composer.focus();
-  rememberLocation({ view: "conversation", projectId: currentProject, newChat: true });
+  rememberLocation({ view: "conversation", projectId: projects.currentProjectId, newChat: true });
 }
 
-function openNewChatForProject(id: string): void { currentProject = id; projectSidebar.ensureExpanded(id); openNewChat(); }
+function openNewChatForProject(id: string): void { projects.setCurrentProject(id); projectSidebar.ensureExpanded(id); openNewChat(); }
 
 function showNewChatLanding(): void {
   messages.replaceChildren();
   activityTimeline.clear();
-  const project = projectRecords.find((item) => item.id === currentProject);
+  const project = projects.projects.find((item) => item.id === projects.currentProjectId);
   const landing = document.createElement("div"); landing.className = "new-chat-landing";
   const mark = document.createElement("div"); mark.className = "landing-mark"; mark.append(terminalCloudIcon());
   const heading = document.createElement("h1");
@@ -607,158 +551,9 @@ function showNewChatLanding(): void {
   landing.append(mark, heading, grid); messages.append(landing); updateTitles();
 }
 
-function openProjectDialog(afterCreateTask = false): void {
-  showConversationWorkspace();
-  pendingTaskAfterProject = afterCreateTask;
-  projectForm.reset();
-  projectRootPath.value = "";
-  projectFolderLabel.textContent = "Add a folder Fitz can read and edit";
-  chooseProjectFolder.classList.remove("has-folder");
-  projectDialog.showModal();
-  projectName.focus();
-}
-
-function openTaskDialog(): void {
-  showConversationWorkspace();
-  if (projectRecords.length === 0) { openProjectDialog(true); return; }
-  taskForm.reset();
-  taskProject.replaceChildren();
-  for (const project of projectRecords) taskProject.add(new Option(project.name, project.id, false, project.id === currentProject));
-  taskDialog.showModal();
-  taskName.focus();
-}
-
-async function createProject(): Promise<void> {
-  const name = projectName.value.trim();
-  if (!name) return;
-  setFormBusy(projectForm, true);
-  try {
-    const response = await api("/api/v1/projects", "POST", { name, ...(projectRootPath.value ? { rootPath: projectRootPath.value } : {}) });
-    projectDialog.close();
-    await loadProjects(response.data.id);
-    showToast(`Created ${name}`);
-    if (pendingTaskAfterProject) { pendingTaskAfterProject = false; openNewChat(); }
-  } catch (error) {
-    showToast(errorMessage(error));
-  } finally {
-    setFormBusy(projectForm, false);
-  }
-}
-
-async function createSession(): Promise<void> {
-  const projectId = taskProject.value;
-  const title = taskName.value.trim();
-  if (!projectId || !title) return;
-  setFormBusy(taskForm, true);
-  try {
-    const response = await api(`/api/v1/projects/${projectId}/sessions`, "POST", { title, routeId: "default" });
-    taskDialog.close();
-    await loadProjects(projectId, response.data.id);
-    showToast(`Started ${title}`);
-  } catch (error) {
-    showToast(errorMessage(error));
-  } finally {
-    setFormBusy(taskForm, false);
-  }
-}
-
-async function selectProjectFolder(): Promise<void> {
-  const folder = await window.fitz.chooseFolder();
-  if (!folder) return;
-  projectRootPath.value = folder;
-  projectFolderLabel.textContent = folder;
-  chooseProjectFolder.classList.add("has-folder");
-  if (!projectName.value.trim()) projectName.value = folder.split(/[\\/]/).filter(Boolean).at(-1) ?? "Project";
-}
-
-function openRenameDialog(): void {
-  closePopovers();
-  const session = currentSessionRecord();
-  if (!session) return;
-  renameTarget = { kind: "task", id: session.id };
-  renameHeading.textContent = "Rename chat";
-  renameLabel.textContent = "Chat title";
-  renameTaskName.value = session.title;
-  renameDialog.showModal();
-  renameTaskName.select();
-}
-
-function openProjectRenameDialog(id: string): void {
-  closePopovers();
-  const project = projectRecords.find((item) => item.id === id);
-  if (!project) return;
-  renameTarget = { kind: "project", id };
-  renameHeading.textContent = "Rename project";
-  renameLabel.textContent = "Project name";
-  renameTaskName.value = project.name;
-  renameDialog.showModal();
-  renameTaskName.select();
-}
-
-async function renameCurrentTask(): Promise<void> {
-  const title = renameTaskName.value.trim();
-  if (!renameTarget || !title) return;
-  setFormBusy(renameForm, true);
-  try {
-    const path = renameTarget.kind === "project" ? `/api/v1/projects/${renameTarget.id}` : `/api/v1/sessions/${renameTarget.id}`;
-    const preferredProject = renameTarget.kind === "project" ? renameTarget.id : currentProject;
-    const preferredSession = renameTarget.kind === "task" ? renameTarget.id : currentSession;
-    await api(path, "PATCH", { [renameTarget.kind === "project" ? "name" : "title"]: title });
-    renameDialog.close();
-    await loadProjects(preferredProject, preferredSession);
-    showToast(`Renamed to ${title}`);
-  } catch (error) { showToast(errorMessage(error)); }
-  finally { setFormBusy(renameForm, false); }
-}
-
-async function archiveCurrentTask(): Promise<void> {
-  closePopovers();
-  const session = currentSessionRecord();
-  if (!session || !currentProject) return;
-  try {
-    await api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" });
-    currentSession = undefined;
-    await loadProjects(currentProject);
-    showToast(`Archived ${session.title}`);
-  } catch (error) { showToast(errorMessage(error)); }
-}
-
-function currentSessionRecord(): Json | undefined {
-  return currentProject ? (sessionsByProject.get(currentProject) ?? []).find((session) => session.id === currentSession) : undefined;
-}
-
-async function editProjectFolder(id: string): Promise<void> {
-  const folder = await window.fitz.chooseFolder();
-  if (!folder) return;
-  try { await api(`/api/v1/projects/${id}`, "PATCH", { rootPath: folder }); await loadProjects(id, currentSession); showToast("Source folder updated"); }
-  catch (error) { showToast(errorMessage(error)); }
-}
-
 function openProjectWorktreeSetup(id: string): void { openNewChatForProject(id); composer.openWorktreeSetup(); }
 
-function openRemoveProjectDialog(id: string): void { const project = projectRecords.find((item) => item.id === id); if (!project) return; removeProjectTarget = id; removeProjectName.textContent = project.name; removeProjectDialog.showModal(); }
-
-async function removeProject(): Promise<void> {
-  if (!removeProjectTarget) return; const id = removeProjectTarget; setFormBusy(removeProjectForm, true);
-  try { await api(`/api/v1/projects/${id}`, "DELETE"); projectSidebar.removeProjectState(id); removeProjectDialog.close(); removeProjectTarget = undefined; currentProject = currentProject === id ? undefined : currentProject; currentSession = undefined; await loadProjects(currentProject); showToast("Project removed"); }
-  catch (error) { showToast(errorMessage(error)); }
-  finally { setFormBusy(removeProjectForm, false); }
-}
-
-async function openProjectPath(path: string): Promise<void> { try { await window.fitz.openPath(path); } catch (error) { showToast(errorMessage(error)); } }
 async function copyValue(value: string, message: string): Promise<void> { await window.fitz.copyText(value); showToast(message); }
-
-async function archiveProjectChats(id: string): Promise<void> {
-  const active = sessionsByProject.get(id) ?? [];
-  try { await Promise.all(active.map((session) => api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" }))); currentSession = undefined; await loadProjects(id); showToast(`Archived ${active.length} chat${active.length === 1 ? "" : "s"}`); }
-  catch (error) { showToast(errorMessage(error)); }
-}
-
-async function continueInNewChat(session: ProjectSidebarSession): Promise<void> {
-  if (!currentProject) return;
-  try { const response = await api(`/api/v1/projects/${currentProject}/sessions`, "POST", { title: `Continue: ${session.title}` }); await loadProjects(currentProject, response.data.id); showToast("Created continuation chat"); }
-  catch (error) { showToast(errorMessage(error)); }
-}
 
 async function openPlaybookPage(): Promise<void> {
   if (!pairingPage.hidden) { pairingCode.focus(); return; }
@@ -772,7 +567,7 @@ async function openPlaybookPage(): Promise<void> {
 }
 
 async function openConnectionsPage(): Promise<void> { if (!pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("connections"); await connectionWorkspace.sync(false); rememberLocation({ view: "connections" }); }
-async function openPluginsPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("plugins"); pluginCatalog.showLoading(); await pluginCatalog.load(false); rememberLocation({ view: "plugins" }); }
+async function openPluginsPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("plugins"); pluginsPageController.showLoading(); await pluginsPageController.load(false); rememberLocation({ view: "plugins" }); }
 async function openAdministrationPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); workspacePages.show("administration"); administrationPageController.showLoading(); await administrationPageController.load(); rememberLocation({ view: "administration" }); }
 function showPairingPage(message: string): void { closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); workspacePages.show("pairing"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
 function showConversationWorkspace(): void { playbookWorkspace.closeEditor(); workspacePages.show("conversation"); }
@@ -799,9 +594,9 @@ async function navigateHistory(offset: -1 | 1): Promise<void> {
     else if (location.view === "plugins") await openPluginsPage();
     else if (location.view === "administration") await openAdministrationPage();
     else if (location.view === "conversation") {
-      if (location.newChat && location.projectId) { currentProject = location.projectId; openNewChat(); }
-      else if (location.sessionId) await selectSession(location.sessionId, true, location.projectId);
-      else if (location.projectId) await selectProject(location.projectId);
+      if (location.newChat && location.projectId) { projects.setCurrentProject(location.projectId); openNewChat(); }
+      else if (location.sessionId) await projects.selectSession(location.sessionId, true, location.projectId);
+      else if (location.projectId) await projects.selectProject(location.projectId);
     }
   } finally {
     replayingNavigation = false;
@@ -847,10 +642,8 @@ function syncContextLimit(): void {
   if (Number.isFinite(recipe?.contextTokens) && recipe.contextTokens > 0) contextTokenLimit = recipe.contextTokens;
 }
 
-function activeProject(): Json | undefined { return projectRecords.find((project) => project.id === currentProject); }
-
 async function updateSessionBinding(): Promise<void> {
-  const session = currentSessionRecord();
+  const session = projects.currentSessionRecord();
   if (!session || !composer.controls.routeId) return;
   try {
     const response = await api(`/api/v1/sessions/${session.id}`, "PATCH", { routeId: composer.controls.routeId });
@@ -862,7 +655,7 @@ function handleRouteChange(): void {
   routeState.textContent = composer.controls.routeLabel;
   agentRuns.resetWarmup();
   agentRuns.scheduleWarmup(composer.value, composer.controls.routeId);
-  if (currentSession) void updateSessionBinding();
+  if (projects.currentSessionId) void updateSessionBinding();
   syncComposerContext();
 }
 
@@ -891,7 +684,7 @@ function openAppMenu(name: string, toggle: HTMLButtonElement, event: MouseEvent)
   const edit = (command: "undo" | "redo" | "cut" | "copy" | "paste" | "select-all" | "reload" | "devtools") => () => void window.fitz.editCommand(command);
   if (name === "File") {
     item("New chat", '<path d="M4 4h12v12H4z"></path><path d="M7 10h6M10 7v6"></path>', openNewChat, "Ctrl+N");
-    item("New project", '<path d="M3 6h5l1.5 2H17v8H3z"></path><path d="M3 6V4h5l1.5 2"></path>', openProjectDialog);
+    item("New project", '<path d="M3 6h5l1.5 2H17v8H3z"></path><path d="M3 6V4h5l1.5 2"></path>', () => projects.openProjectDialog());
     separator();
     item("Close window", '<path d="m5 5 10 10M15 5 5 15"></path>', () => void window.fitz.windowAction("close"));
   } else if (name === "Edit") {
@@ -925,7 +718,7 @@ function closePopovers(): void {
   appMenuPopover.hidden = true;
   composer.closePopovers();
   taskMenu.hidden = true;
-  sidebarContextMenu.hidden = true;
+  projectSidebar.hideMenu();
   projectSidebar.hideOverlays();
   taskMenuToggle.setAttribute("aria-expanded", "false");
   projectSidebar.resetMenuToggles();
@@ -936,21 +729,17 @@ async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLE
   const content = (submittedContent ?? composer.value).trim();
   const attachments = composer.consumePastedAttachments();
   if (!content && attachments.length === 0) return;
-  if (!currentSession && newChatMode && currentProject) {
+  if (!projects.currentSessionId && newChatMode && projects.currentProjectId) {
     try {
       const title = content.split(/\r?\n/, 1)[0]!.trim().slice(0, 80) || "New chat";
-      const response = await api(`/api/v1/projects/${currentProject}/sessions`, "POST", { title, routeId: composer.controls.routeId as FixedRouteId });
-      const sessions = sessionsByProject.get(currentProject) ?? [];
-      sessions.unshift(response.data);
-      sessionsByProject.set(currentProject, sessions);
-      currentSession = response.data.id;
+      const response = await api(`/api/v1/projects/${projects.currentProjectId}/sessions`, "POST", { title, routeId: composer.controls.routeId as FixedRouteId });
       newChatMode = false;
       workspace.classList.remove("new-chat-open");
       composer.exitNewChat();
-      renderProjectTree();
+      projects.startSessionInProject(projects.currentProjectId, response.data);
     } catch (error) { showToast(errorMessage(error)); return; }
   }
-  if (!currentSession) { openNewChat(); return; }
+  if (!projects.currentSessionId) { openNewChat(); return; }
   if (!composer.controls.routeId) { showToast("No model route is available"); return; }
   composer.clearDraft();
   agentRuns.resetWarmup();
@@ -958,7 +747,7 @@ async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLE
   const imageParts: Array<{ type: "image_url"; image_url: { url: string } }> = [];
   for (const pasted of attachments) {
     try {
-      const response = await api(`/api/v1/sessions/${currentSession}/artifacts`, "POST", {
+      const response = await api(`/api/v1/sessions/${projects.currentSessionId}/artifacts`, "POST", {
         name: pasted.kind === "pdf" ? pasted.name : `screenshot-${Date.now()}.png`,
         mimeType: pasted.mimeType,
         contentBase64: pasted.dataUrl.split(",")[1]!,
@@ -979,7 +768,7 @@ async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLE
     model: composer.controls.routeId,
     max_tokens: composer.controls.maxTokens,
     temperature: composer.controls.temperature,
-    sessionId: currentSession,
+    sessionId: projects.currentSessionId,
     accessMode: composer.controls.accessMode,
     messages: [{ role: "user", content: messageContent }],
   });
@@ -1015,8 +804,8 @@ async function loadArtifacts(): Promise<void> {
   artifacts.replaceChildren();
   composer.clearArtifactChips();
   inspectorPanel.resetPreview();
-  if (!currentSession) { artifacts.append(panelEmpty("Artifacts appear with a task")); return; }
-  const response = await api(`/api/v1/sessions/${currentSession}/artifacts`);
+  if (!projects.currentSessionId) { artifacts.append(panelEmpty("Artifacts appear with a task")); return; }
+  const response = await api(`/api/v1/sessions/${projects.currentSessionId}/artifacts`);
   if (!(response.data ?? []).length) artifacts.append(panelEmpty("No artifacts yet"));
   for (const artifact of response.data ?? []) {
     const value = document.createElement("button"); value.type = "button"; value.className = "artifact-item";
@@ -1062,17 +851,17 @@ async function removeArtifact(artifact: Json): Promise<void> {
 }
 
 function chooseArtifact(): void {
-  if (!currentSession) { showToast("Create or select a task before attaching a file"); return; }
+  if (!projects.currentSessionId) { showToast("Create or select a task before attaching a file"); return; }
   artifactFile.click();
 }
 
 async function uploadArtifact(): Promise<void> {
   const file = artifactFile.files?.[0]; artifactFile.value = "";
-  if (!file || !currentSession) return;
+  if (!file || !projects.currentSessionId) return;
   if (file.size > 5_000_000) { showToast("Artifacts are currently limited to 5 MB"); return; }
   try {
     const contentBase64 = bytesToBase64(new Uint8Array(await file.arrayBuffer()));
-    await api(`/api/v1/sessions/${currentSession}/artifacts`, "POST", { name: file.name, mimeType: file.type || "application/octet-stream", contentBase64 });
+    await api(`/api/v1/sessions/${projects.currentSessionId}/artifacts`, "POST", { name: file.name, mimeType: file.type || "application/octet-stream", contentBase64 });
     await loadArtifacts(); inspectorPanel.open(); showToast(`Attached ${file.name}`);
   } catch (error) { showToast(errorMessage(error)); }
 }
@@ -1082,12 +871,12 @@ function showLanding(hasTask = false): void {
   activityTimeline.clear();
   const landing = document.createElement("div"); landing.className = "landing";
   const mark = document.createElement("div"); mark.className = "landing-mark"; mark.append(sparkIcon());
-  const heading = document.createElement("h1"); heading.textContent = hasTask ? "What should we work on?" : currentProject ? "Start a task" : "Bring your code. Build with Fitz.";
-  const detail = document.createElement("p"); detail.textContent = hasTask ? "Describe a change, ask a question, or attach a file. Fitz keeps the work and transcript together." : currentProject ? "Create a task inside this project to begin a durable conversation." : "Create a project, start a task, and work with local or remote inference from one focused desktop.";
+  const heading = document.createElement("h1"); heading.textContent = hasTask ? "What should we work on?" : projects.currentProjectId ? "Start a task" : "Bring your code. Build with Fitz.";
+  const detail = document.createElement("p"); detail.textContent = hasTask ? "Describe a change, ask a question, or attach a file. Fitz keeps the work and transcript together." : projects.currentProjectId ? "Create a task inside this project to begin a durable conversation." : "Create a project, start a task, and work with local or remote inference from one focused desktop.";
   landing.append(mark, heading, detail);
   if (!hasTask) {
-    const action = document.createElement("button"); action.type = "button"; action.className = "primary-button"; action.textContent = currentProject ? "New task" : "Create project";
-    action.addEventListener("click", () => currentProject ? openNewChat() : openProjectDialog(true)); landing.append(action);
+    const action = document.createElement("button"); action.type = "button"; action.className = "primary-button"; action.textContent = projects.currentProjectId ? "New task" : "Create project";
+    action.addEventListener("click", () => projects.currentProjectId ? openNewChat() : projects.openProjectDialog(true)); landing.append(action);
   }
   messages.append(landing);
   updateTitles();
@@ -1150,14 +939,14 @@ function appendChangeSummary(files: Array<{ path: string; action: "edited" | "cr
 }
 
 function refreshComposerState(): void {
-  const ready = Boolean((currentSession || (newChatMode && currentProject)) && composer.controls.routeId);
-  addArtifactButton.disabled = !currentSession;
-  composer.setState({ ready, running: agentRuns.active, hasSession: Boolean(currentSession) });
+  const ready = Boolean((projects.currentSessionId || (newChatMode && projects.currentProjectId)) && composer.controls.routeId);
+  addArtifactButton.disabled = !projects.currentSessionId;
+  composer.setState({ ready, running: agentRuns.active, hasSession: Boolean(projects.currentSessionId) });
 }
 
 function updateTitles(): void {
-  const project = projectRecords.find((item) => item.id === currentProject);
-  const session = currentProject ? (sessionsByProject.get(currentProject) ?? []).find((item) => item.id === currentSession) : undefined;
+  const project = projects.activeProject();
+  const session = projects.currentSessionRecord();
   projectTitle.textContent = project?.name ?? "Fitz Codex";
   taskTitle.textContent = "";
   taskMenuToggle.hidden = !session;
@@ -1167,10 +956,10 @@ function toggleSidebar(): void { shell.classList.toggle("sidebar-collapsed"); cl
 function updateContextMeter(): void { composer.controls.updateContext(sessionTokenEstimate + estimateTokens(composer.value), contextTokenLimit); }
 
 async function compactCurrentSession(): Promise<void> {
-  if (!currentSession || agentRuns.active) return;
+  if (!projects.currentSessionId || agentRuns.active) return;
   composer.controls.setContextStatus("Compacting…", true);
   try {
-    const response = await api(`/api/v1/sessions/${currentSession}/compact`, "POST", { model: composer.controls.routeId || "default" });
+    const response = await api(`/api/v1/sessions/${projects.currentSessionId}/compact`, "POST", { model: composer.controls.routeId || "default" });
     sessionTokenEstimate = Number(response.data?.estimatedContextTokens ?? sessionTokenEstimate);
     updateContextMeter();
     activityTimeline.appendContext("Context compacted");

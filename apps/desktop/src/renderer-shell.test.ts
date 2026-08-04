@@ -23,6 +23,7 @@ const playbookWorkspace = readFileSync(new URL("./ui/playbooks/playbook-workspac
 const resourceInspector = readFileSync(new URL("./ui/inspector/resource-inspector.ts", import.meta.url), "utf8");
 const inspectorPanel = readFileSync(new URL("./ui/inspector/inspector-panel.ts", import.meta.url), "utf8");
 const projectSidebar = readFileSync(new URL("./ui/sidebar/project-sidebar.ts", import.meta.url), "utf8");
+const projects = readFileSync(new URL("./ui/projects/projects.ts", import.meta.url), "utf8");
 const composerCss = readFileSync(new URL("./ui/chat/composer.css", import.meta.url), "utf8");
 const styles = [
   readFileSync(new URL("./renderer/styles.css", import.meta.url), "utf8"),
@@ -246,8 +247,8 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('connectionStatus.addEventListener("click"');
     expect(renderer).toContain("artifactFile.click()");
     expect(renderer).toContain('api(`/api/v1/artifacts/${artifact.id}`, "DELETE")');
-    expect(renderer).toContain("window.fitz.chooseFolder()");
-    expect(renderer).toContain("window.fitz.openPath(path)");
+    expect(projects).toContain("this.options.bridge.chooseFolder()");
+    expect(projects).toContain("this.options.bridge.openPath(path)");
     expect(renderer).toContain("window.fitz.copyText(value)");
     expect(renderer).toContain("new ResizablePane({");
     expect(resizablePane).toContain('options.divider.addEventListener("pointerdown"');
@@ -258,7 +259,7 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('api("/api/v1/management/status")');
     expect(playbookWorkspace).toContain('/api/v1/management/recipes/${encodeURIComponent(id)}');
     expect(renderer).toContain("sessionTokenEstimate += estimateTokens");
-    expect(renderer).toContain('api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" })');
+    expect(projects).toContain('this.options.api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" })');
     expect(renderer).toContain("max_tokens: composer.controls.maxTokens");
     expect(renderer).toContain("if (content.trim().length > 0) void steerPrompt(content)");
     expect(renderer).toContain("else void agentRuns.cancel()");
@@ -504,7 +505,7 @@ describe("desktop renderer shell", () => {
 
   it("manually compacts context from the inline usage popover", () => {
     expect(composer).toContain('id="context-compact"');
-    expect(renderer).toContain('api(`/api/v1/sessions/${currentSession}/compact`, "POST"');
+    expect(renderer).toContain('api(`/api/v1/sessions/${projects.currentSessionId}/compact`, "POST"');
     expect(renderer).toContain("estimateTranscriptContext");
     expect(renderer).toContain('activityTimeline.appendContext("Context compacted")');
     expect(styles).toContain(".context-usage-popover button");
@@ -545,7 +546,7 @@ describe("desktop renderer shell", () => {
     for (const label of ["Pin project", "Open in Explorer", "Create permanent worktree", "Edit project", "Archive chats", "Remove"]) {
       expect(projectSidebar).toContain(`"${label}"`);
     }
-    expect(renderer).toContain('api(`/api/v1/projects/${id}`, "DELETE")');
+    expect(projects).toContain('this.options.api(`/api/v1/projects/${id}`, "DELETE")');
   });
 
   it("clears the starter screen and reports unobtrusive work progress before output arrives", () => {
@@ -685,8 +686,9 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('import { ConversationLayout } from "./ui/layout/conversation-layout.js"');
     expect(renderer).toContain('import { WorkspacePageController } from "./ui/layout/workspace-pages.js"');
     expect(renderer).toContain('import { CustomSelectController } from "./ui/primitives/custom-select.js"');
-    expect(renderer).toContain('import { ContextMenu } from "./ui/primitives/context-menu.js"');
+    expect(projectSidebar).toContain('import { ContextMenu } from "../primitives/context-menu.js"');
     expect(renderer).toContain('import { AdministrationPageController } from "./ui/administration/administration-page.js"');
+    expect(renderer).toContain('import { ProjectsController } from "./ui/projects/projects.js"');
     expect(renderer).toContain('import { PlaybookWorkspaceController } from "./ui/playbooks/playbook-workspace.js"');
     expect(workspacePages).toContain('element.hidden = name !== page');
     expect(workspacePages).toContain('classList.toggle("active", name === page)');
