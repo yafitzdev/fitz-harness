@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -17,7 +17,7 @@ describe("PiPackageService", () => {
     expect(result).toEqual({ total: 1, packages: [expect.objectContaining({ name: "pi-example", version: "1.2.3", publisher: "fitz", types: ["skill"] })] });
   });
 
-  it("installs, disables, enables, and removes a local Pi package", async () => {
+  it("installs a local Pi package into the registry folder and manages it", async () => {
     const root = await temporaryDirectory();
     const agentDir = join(root, "agent");
     const packageDir = join(root, "package");
@@ -28,28 +28,112 @@ describe("PiPackageService", () => {
 
     await service.install(packageDir);
     const [installed] = await service.installed();
-    expect(installed).toEqual(expect.objectContaining({ displayName: "fitz-test-package", enabled: true }));
+    expect(installed).toEqual(expect.objectContaining({ displayName: "fitz-test-package", enabled: true, installedPath: join(agentDir, "extensions", "package") }));
     expect(await service.skills()).toEqual(expect.arrayContaining([expect.objectContaining({ name: "hello", enabled: true })]));
+    // The registry is the single source of truth: the package lives in extensions/ and
+    // nothing is written to settings.json or the old npm/ tree.
+    const registry = JSON.parse(await readFile(join(agentDir, "extensions", "registry.json"), "utf8"));
+    expect(registry).toEqual({ version: 1, packages: [{ source: packageDir, name: "package", version: "1.0.0", enabled: true }] });
+    expect(await readFile(join(agentDir, "extensions", "package", "skills", "hello", "SKILL.md"), "utf8")).toContain("Say hello");
     await service.setEnabled(installed!.source, false);
     expect(await service.installed()).toEqual([expect.objectContaining({ enabled: false })]);
     await service.setEnabled(installed!.source, true);
     expect(await service.installed()).toEqual([expect.objectContaining({ enabled: true })]);
     await service.remove(installed!.source);
     expect(await service.installed()).toEqual([]);
+    await expect(access(join(agentDir, "extensions", "package"))).rejects.toThrow();
   });
 
-  it("adopts Pi packages installed directly into the managed npm workspace", async () => {
+  it("installs an npm Pi package into its own folder with its own node_modules", async () => {
     const root = await temporaryDirectory();
     const agentDir = join(root, "agent");
-    const packageDir = join(agentDir, "npm", "node_modules", "pi-rtk-optimizer");
-    await mkdir(packageDir, { recursive: true });
-    await writeFile(join(agentDir, "npm", "package.json"), JSON.stringify({ name: "pi-extensions", private: true, dependencies: { "pi-rtk-optimizer": "^0.9.0" } }));
-    await writeFile(join(packageDir, "package.json"), JSON.stringify({ name: "pi-rtk-optimizer", version: "0.9.0", description: "RTK optimizer", keywords: ["pi-package", "pi-extension"] }));
-    const service = new PiPackageService({ agentDir, cwd: root });
+    const stub = join(root, "stub-npm.js");
+    await writeFile(stub, stubNpm, "utf8");
+    const service = new PiPackageService({ agentDir, cwd: root, npmCommand: [process.execPath, stub] });
 
-    expect(await service.installed()).toEqual([expect.objectContaining({ source: "npm:pi-rtk-optimizer", displayName: "pi-rtk-optimizer", version: "0.9.0", enabled: true })]);
-    expect(JSON.parse(await readFile(join(agentDir, "settings.json"), "utf8"))).toEqual(expect.objectContaining({ packages: ["npm:pi-rtk-optimizer"] }));
+    await service.install("npm:pi-web-access");
+    const [installed] = await service.installed();
+    expect(installed).toEqual(expect.objectContaining({ source: "npm:pi-web-access", displayName: "pi-web-access", version: "1.0.0", enabled: true, installedPath: join(agentDir, "extensions", "pi-web-access") }));
+    expect(JSON.parse(await readFile(join(agentDir, "extensions", "registry.json"), "utf8"))).toEqual({
+      version: 1,
+      packages: [{ source: "npm:pi-web-access", name: "pi-web-access", version: "1.0.0", enabled: true }],
+    });
+    // The wrapper install is hoisted: the package's real manifest and files sit at the
+    // folder root, with its own node_modules beside them.
+    expect(JSON.parse(await readFile(join(agentDir, "extensions", "pi-web-access", "package.json"), "utf8")).name).toBe("pi-web-access");
+    expect(await readFile(join(agentDir, "extensions", "pi-web-access", "index.js"), "utf8")).toBe("export default {};\n");
+  });
+
+  it("keeps a package's config.json when updating it", async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, "agent");
+    const stub = join(root, "stub-npm.js");
+    await writeFile(stub, stubNpm, "utf8");
+    const service = new PiPackageService({ agentDir, cwd: root, npmCommand: [process.execPath, stub] });
+    await service.install("npm:pi-web-access");
+    const configPath = join(agentDir, "extensions", "pi-web-access", "config.json");
+    await writeFile(configPath, JSON.stringify({ retries: 3 }));
+
+    process.env.FITZ_STUB_VERSION = "2.0.0";
+    try { await service.update("npm:pi-web-access"); }
+    finally { delete process.env.FITZ_STUB_VERSION; }
+
+    expect(await service.installed()).toEqual([expect.objectContaining({ source: "npm:pi-web-access", version: "2.0.0" })]);
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual({ retries: 3 });
+  });
+
+  it("migrates the legacy npm/settings layout into the extensions registry", async () => {
+    const root = await temporaryDirectory();
+    const agentDir = join(root, "agent");
+    const npmPkg = join(agentDir, "npm", "node_modules", "pi-rtk-optimizer");
+    await mkdir(npmPkg, { recursive: true });
+    await writeFile(join(agentDir, "npm", "package.json"), JSON.stringify({ name: "pi-extensions", private: true, dependencies: { "pi-rtk-optimizer": "^0.9.0" } }));
+    await writeFile(join(npmPkg, "package.json"), JSON.stringify({ name: "pi-rtk-optimizer", version: "0.9.0", description: "RTK optimizer", keywords: ["pi-package", "pi-extension"] }));
+    await writeFile(join(npmPkg, "index.ts"), "export default {};\n");
+    await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-rtk-optimizer"], other: "kept" }));
+    // Pi CLI convention: the package's config lives at extensions/<name>/config.json.
+    const legacyConfigDir = join(agentDir, "extensions", "pi-rtk-optimizer");
+    await mkdir(legacyConfigDir, { recursive: true });
+    await writeFile(join(legacyConfigDir, "config.json"), JSON.stringify({ retries: 3 }));
+
+    // ["false"] guards against an unexpected npm spawn: the migrated package declares no
+    // dependencies, so the migration must not invoke npm at all.
+    const service = new PiPackageService({ agentDir, cwd: root, npmCommand: ["false"] });
+
+    expect(await service.installed()).toEqual([expect.objectContaining({ source: "npm:pi-rtk-optimizer", displayName: "pi-rtk-optimizer", version: "0.9.0", enabled: true, installedPath: legacyConfigDir })]);
+    // The registry is now the single source of truth; settings and the old tree are gone.
+    expect(JSON.parse(await readFile(join(agentDir, "extensions", "registry.json"), "utf8"))).toEqual({
+      version: 1,
+      packages: [{ source: "npm:pi-rtk-optimizer", name: "pi-rtk-optimizer", version: "0.9.0", enabled: true }],
+    });
+    expect(JSON.parse(await readFile(join(agentDir, "settings.json"), "utf8"))).toEqual({ other: "kept" });
+    await expect(access(join(agentDir, "npm"))).rejects.toThrow();
+    // rtk's config and the package files survive the consolidation.
+    expect(JSON.parse(await readFile(join(legacyConfigDir, "config.json"), "utf8"))).toEqual({ retries: 3 });
+    expect(await readFile(join(legacyConfigDir, "index.ts"), "utf8")).toBe("export default {};\n");
+    // Idempotent: a fresh service over the migrated layout sees the same state and does
+    // not re-run the migration.
+    const again = new PiPackageService({ agentDir, cwd: root, npmCommand: ["false"] });
+    expect(await again.installed()).toEqual([expect.objectContaining({ source: "npm:pi-rtk-optimizer", enabled: true })]);
+    expect(JSON.parse(await readFile(join(agentDir, "settings.json"), "utf8"))).toEqual({ other: "kept" });
   });
 });
+
+/** Stand-in for `npm install --prefix <dir>`: writes node_modules/<name> from the wrapper package.json. */
+const stubNpm = `
+const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+const prefix = args.indexOf("--prefix");
+const dir = prefix !== -1 ? args[prefix + 1] : process.cwd();
+const manifest = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+const version = process.env.FITZ_STUB_VERSION ?? "1.0.0";
+for (const name of Object.keys(manifest.dependencies ?? {})) {
+  const target = path.join(dir, "node_modules", ...name.split("/"));
+  fs.mkdirSync(target, { recursive: true });
+  fs.writeFileSync(path.join(target, "package.json"), JSON.stringify({ name, version, keywords: ["pi-package", "pi-extension"], pi: { extensions: ["index.js"] } }));
+  fs.writeFileSync(path.join(target, "index.js"), "export default {};\\n");
+}
+`;
 
 async function temporaryDirectory(): Promise<string> { const path = await mkdtemp(join(tmpdir(), "fitz-pi-packages-")); temporaryDirectories.push(path); return path; }

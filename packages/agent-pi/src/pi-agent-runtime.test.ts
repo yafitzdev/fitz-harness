@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { once } from "node:events";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { broadFilesystemScanReason, buildFitzSystemInstructions, PiAgentRuntime, type PiSession } from "./pi-agent-runtime.js";
+import { broadFilesystemScanReason, buildFitzSystemInstructions, PiAgentRuntime, readEnabledExtensionDirs, type PiSession } from "./pi-agent-runtime.js";
 
 describe("PiAgentRuntime", () => {
   it("passes Fitz runtime locations to the session factory", async () => {
@@ -224,6 +224,36 @@ describe("PiAgentRuntime", () => {
       ]));
     } finally { await new Promise<void>((resolve) => server.close(() => resolve())); await rm(cwd, { recursive: true, force: true }); }
   }, 30_000);
+});
+
+describe("readEnabledExtensionDirs", () => {
+  it("returns the dirs of enabled registry packages only", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "fitz-pi-registry-"));
+    try {
+      await mkdir(join(agentDir, "extensions", "pi-a"), { recursive: true });
+      await mkdir(join(agentDir, "extensions", "pi-b"), { recursive: true });
+      await writeFile(join(agentDir, "extensions", "registry.json"), JSON.stringify({
+        version: 1,
+        packages: [
+          { source: "npm:pi-a", name: "pi-a", enabled: true },
+          { source: "npm:pi-b", name: "pi-b", enabled: false },
+          { source: "local:/missing", name: "pi-gone", enabled: true },
+        ],
+      }));
+      // Disabled packages are excluded, and so are enabled entries whose dir vanished.
+      expect(await readEnabledExtensionDirs(agentDir)).toEqual([join(agentDir, "extensions", "pi-a")]);
+    } finally { await rm(agentDir, { recursive: true, force: true }); }
+  });
+
+  it("returns an empty list when the registry is missing or corrupt", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "fitz-pi-registry-"));
+    try {
+      expect(await readEnabledExtensionDirs(agentDir)).toEqual([]);
+      await mkdir(join(agentDir, "extensions"), { recursive: true });
+      await writeFile(join(agentDir, "extensions", "registry.json"), "not json", "utf8");
+      expect(await readEnabledExtensionDirs(agentDir)).toEqual([]);
+    } finally { await rm(agentDir, { recursive: true, force: true }); }
+  });
 });
 
 async function handlePiRequest(request: IncomingMessage, response: ServerResponse, requests: any[], authorizations: Array<string | undefined>): Promise<void> {

@@ -1,12 +1,8 @@
-import { readFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
-import {
-  DefaultPackageManager,
-  SettingsManager,
-  loadSkills,
-  type PackageSource,
-  type ResolvedPaths,
-} from "@earendil-works/pi-coding-agent";
+import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { basename, join, resolve, sep } from "node:path";
+import { loadSkills } from "@earendil-works/pi-coding-agent";
 
 export interface PiCatalogPackage {
   name: string;
@@ -45,21 +41,30 @@ export interface PiPackageServiceOptions {
   fetch?: typeof globalThis.fetch;
 }
 
+/**
+ * Pi packages live in a single folder — `{agentDir}/extensions/` — and that folder is the
+ * registry: `extensions/registry.json` is the source of truth for what is installed and
+ * enabled. Each package is a directory (`extensions/<name>/`) containing the package files,
+ * its own `config.json`, and its own `node_modules/` for runtime dependencies. Nothing is
+ * stored in `{agentDir}/npm/` or in `settings.json`'s `packages` array.
+ */
 export class PiPackageService {
   readonly #agentDir: string;
   readonly #cwd: string;
-  readonly #settings: SettingsManager;
-  readonly #manager: DefaultPackageManager;
+  readonly #extensionsRoot: string;
+  readonly #registryPath: string;
   readonly #fetch: typeof globalThis.fetch;
+  readonly #npmCommand: string[];
   #operation: Promise<unknown> = Promise.resolve();
+  #migration: Promise<void> | undefined;
 
   constructor(options: PiPackageServiceOptions) {
     this.#agentDir = options.agentDir;
     this.#cwd = options.cwd;
-    this.#settings = SettingsManager.create(options.cwd, options.agentDir, { projectTrusted: true });
-    if (options.npmCommand?.length) this.#settings.setNpmCommand(options.npmCommand);
-    this.#manager = new DefaultPackageManager({ cwd: options.cwd, agentDir: options.agentDir, settingsManager: this.#settings });
+    this.#extensionsRoot = join(options.agentDir, "extensions");
+    this.#registryPath = join(this.#extensionsRoot, "registry.json");
     this.#fetch = options.fetch ?? globalThis.fetch;
+    this.#npmCommand = options.npmCommand?.length ? options.npmCommand : ["npm"];
   }
 
   async catalog(query = "", offset = 0, limit = 50): Promise<{ total: number; packages: PiCatalogPackage[] }> {
@@ -78,78 +83,192 @@ export class PiPackageService {
   }
 
   async installed(): Promise<InstalledPiPackage[]> {
-    await this.#settings.reload();
-    await this.#adoptManagedNpmPackages();
-    const resolved = await this.#manager.resolve(async () => "skip");
-    const configured = this.#manager.listConfiguredPackages().filter((entry) => entry.scope === "user");
-    return Promise.all(configured.map(async (entry) => {
-      const manifest = entry.installedPath ? await packageManifest(entry.installedPath) : undefined;
+    await this.#ensureMigrated();
+    const registry = await this.#readRegistry();
+    return Promise.all(registry.packages.map(async (entry) => {
+      const dir = this.#entryDir(entry);
+      const manifest = await packageManifest(dir);
+      const version = entry.version ?? manifest?.version;
+      const description = manifest?.description;
       return {
         source: entry.source,
-        displayName: manifest?.name ?? sourceName(entry.source),
-        ...(manifest?.version ? { version: manifest.version } : {}),
-        ...(manifest?.description ? { description: manifest.description } : {}),
-        enabled: packageEnabled(this.#settings.getGlobalSettings().packages ?? [], entry.source),
-        ...(entry.installedPath ? { installedPath: entry.installedPath } : {}),
-        resources: resourceCounts(resolved, entry.source),
+        displayName: manifest?.name ?? entry.name,
+        ...(version !== undefined ? { version } : {}),
+        ...(description !== undefined ? { description } : {}),
+        enabled: entry.enabled,
+        installedPath: dir,
+        resources: packageResourceCounts(manifest, dir),
       };
     }));
   }
 
   async skills(): Promise<PiSkillSummary[]> {
-    await this.#settings.reload();
-    const resolved = await this.#manager.resolve(async () => "skip");
-    const result = loadSkills({ cwd: this.#cwd, agentDir: this.#agentDir, skillPaths: resolved.skills.map((resource) => resource.path), includeDefaults: true });
+    await this.#ensureMigrated();
+    const registry = await this.#readRegistry();
+    const enabledByDir = new Map(registry.packages.map((entry) => [this.#entryDir(entry), entry.enabled]));
+    const packageSkillPaths: string[] = [];
+    for (const entry of registry.packages) {
+      packageSkillPaths.push(...await collectSkillFiles(this.#entryDir(entry)));
+    }
+    const result = loadSkills({ cwd: this.#cwd, agentDir: this.#agentDir, skillPaths: packageSkillPaths, includeDefaults: true });
     return result.skills.map((skill) => {
-      const resource = resolved.skills.find((candidate) => skill.filePath === candidate.path || skill.filePath.startsWith(dirname(candidate.path)));
-      return { name: skill.name, description: skill.description, source: resource?.metadata.source ?? skill.sourceInfo.source, enabled: resource?.enabled ?? true, filePath: skill.filePath };
+      const packageDir = packageDirContaining(skill.filePath, this.#extensionsRoot);
+      const isPackage = packageDir !== undefined;
+      return {
+        name: skill.name,
+        description: skill.description,
+        source: isPackage ? "package" : skill.sourceInfo?.source ?? "unknown",
+        enabled: isPackage ? (enabledByDir.get(packageDir) ?? true) : true,
+        filePath: skill.filePath,
+      };
     });
   }
 
-  install(source: string): Promise<void> { return this.#serialize(async () => { await this.#manager.installAndPersist(normalizeSource(source)); await this.#settings.flush(); }); }
-  update(source: string): Promise<void> { return this.#serialize(async () => { await this.#manager.update(normalizeSource(source)); }); }
+  install(source: string): Promise<void> {
+    return this.#serialize(async () => {
+      await this.#ensureMigrated();
+      const normalized = normalizeSource(source);
+      const dir = this.#packageTargetDir(normalized);
+      await mkdir(dir, { recursive: true });
+      if (isNpmSource(normalized)) {
+        await this.#installNpmPackage(normalized.slice("npm:".length), dir);
+      } else {
+        await this.#installLocalPackage(normalized, dir);
+      }
+      const manifest = await packageManifest(dir);
+      const registry = await this.#readRegistry();
+      const existing = registry.packages.find((entry) => entry.source === normalized);
+      if (existing) {
+        existing.name = basename(dir);
+        if (manifest?.version !== undefined) existing.version = manifest.version;
+        existing.enabled = true;
+      } else {
+        registry.packages.push({ source: normalized, name: basename(dir), enabled: true, ...(manifest?.version !== undefined ? { version: manifest.version } : {}) });
+      }
+      await this.#writeRegistry(registry);
+    });
+  }
+
+  update(source: string): Promise<void> {
+    return this.#serialize(async () => {
+      await this.#ensureMigrated();
+      const registry = await this.#readRegistry();
+      const entry = registry.packages.find((candidate) => candidate.source === source);
+      if (!entry) throw new Error("Pi package is not installed");
+      const dir = this.#entryDir(entry);
+      const configPath = join(dir, "config.json");
+      const savedConfig = existsSync(configPath) ? await readFile(configPath) : undefined;
+      if (isNpmSource(entry.source)) {
+        await this.#installNpmPackage(entry.source.slice("npm:".length), dir);
+      } else {
+        await this.#installLocalPackage(entry.source, dir);
+      }
+      if (savedConfig && !existsSync(configPath)) await writeFile(configPath, savedConfig);
+      const manifest = await packageManifest(dir);
+      if (manifest?.version !== undefined) entry.version = manifest.version;
+      await this.#writeRegistry(registry);
+    });
+  }
+
   remove(source: string): Promise<void> {
     return this.#serialize(async () => {
-      await this.#settings.reload();
-      const normalized = normalizeSource(source);
-      const packages = this.#settings.getGlobalSettings().packages ?? [];
-      if (!packages.some((entry) => packageSource(entry) === normalized)) throw new Error("Pi package is not installed");
-      await this.#manager.remove(normalized);
-      this.#settings.setPackages(packages.filter((entry) => packageSource(entry) !== normalized));
-      await this.#settings.flush();
-    });
-  }
-  setEnabled(source: string, enabled: boolean): Promise<void> {
-    return this.#serialize(async () => {
-      await this.#settings.reload();
-      const packages = this.#settings.getGlobalSettings().packages ?? [];
-      const normalized = normalizeSource(source);
-      const next = packages.map((entry) => packageSource(entry) === normalized
-        ? enabled ? normalized : { source: normalized, autoload: false, extensions: [], skills: [], prompts: [], themes: [] }
-        : entry);
-      if (!next.some((entry) => packageSource(entry) === normalized)) throw new Error("Pi package is not installed");
-      this.#settings.setPackages(next);
-      await this.#settings.flush();
+      await this.#ensureMigrated();
+      const registry = await this.#readRegistry();
+      const index = registry.packages.findIndex((entry) => entry.source === source);
+      if (index === -1) throw new Error("Pi package is not installed");
+      const [entry] = registry.packages.splice(index, 1);
+      if (entry) await rm(this.#entryDir(entry), { recursive: true, force: true });
+      await this.#writeRegistry(registry);
     });
   }
 
-  async #adoptManagedNpmPackages(): Promise<void> {
-    const packageRoot = join(this.#agentDir, "npm");
-    const manifest = await packageManifest(packageRoot);
-    const dependencyNames = Object.keys(manifest?.dependencies ?? {});
-    if (!dependencyNames.length) return;
-    const configured = this.#settings.getGlobalSettings().packages ?? [];
-    const configuredSources = new Set(configured.map(packageSource));
-    const discovered: string[] = [];
-    for (const name of dependencyNames) {
-      const installedManifest = await packageManifest(join(packageRoot, "node_modules", ...name.split("/")));
-      if (!isPiPackageManifest(installedManifest)) continue;
-      const source = `npm:${name}`;
-      if (!configuredSources.has(source)) discovered.push(source);
+  setEnabled(source: string, enabled: boolean): Promise<void> {
+    return this.#serialize(async () => {
+      await this.#ensureMigrated();
+      const registry = await this.#readRegistry();
+      const entry = registry.packages.find((candidate) => candidate.source === source);
+      if (!entry) throw new Error("Pi package is not installed");
+      entry.enabled = enabled;
+      await this.#writeRegistry(registry);
+    });
+  }
+
+  #entryDir(entry: { name: string }): string {
+    return join(this.#extensionsRoot, entry.name);
+  }
+
+  #packageTargetDir(source: string): string {
+    if (isNpmSource(source)) return join(this.#extensionsRoot, packageDirName(source.slice("npm:".length)));
+    return join(this.#extensionsRoot, packageDirName(basename(resolve(source))));
+  }
+
+  async #installNpmPackage(spec: string, dir: string): Promise<void> {
+    const { name, version } = parseNpmSpec(spec);
+    const manifestBackup = existsSync(join(dir, "package.json")) ? await readFile(join(dir, "package.json")) : undefined;
+    try {
+      await writeFile(join(dir, "package.json"), JSON.stringify({ name: `fitz-ext-${basename(dir)}`, private: true, dependencies: { [name]: version ?? "latest" } }, null, 2));
+      await this.#runNpm(["install", "--prefix", dir, "--omit=dev", "--legacy-peer-deps", "--no-audit", "--no-fund"]);
+      const scoped = name.startsWith("@");
+      const installed = scoped ? join(dir, "node_modules", ...name.split("/")) : join(dir, "node_modules", name);
+      if (!existsSync(installed)) throw new Error(`npm install did not produce ${name} under ${dir}`);
+      await cp(installed, dir, { recursive: true, force: true });
+      await rm(installed, { recursive: true, force: true });
+    } catch (error) {
+      if (manifestBackup) await writeFile(join(dir, "package.json"), manifestBackup);
+      else await rm(join(dir, "package.json"), { force: true });
+      throw error;
     }
-    if (!discovered.length) return;
-    this.#settings.setPackages([...configured, ...discovered]);
-    await this.#settings.flush();
+  }
+
+  async #installLocalPackage(sourcePath: string, dir: string): Promise<void> {
+    if (!existsSync(sourcePath)) throw new Error(`Path does not exist: ${sourcePath}`);
+    await cp(sourcePath, dir, { recursive: true, force: true });
+  }
+
+  #runNpm(args: string[]): Promise<void> {
+    return new Promise((resolvePromise, reject) => {
+      const [command, ...commandArgs] = this.#npmCommand;
+      if (!command) { reject(new Error("npm command is not configured")); return; }
+      const child = spawn(command, [...commandArgs, ...args], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+      let output = "";
+      child.stdout.on("data", (chunk) => { output += chunk; });
+      child.stderr.on("data", (chunk) => { output += chunk; });
+      child.on("error", (error) => reject(error));
+      child.on("close", (code) => {
+        if (code === 0) resolvePromise();
+        else reject(new Error(`npm ${args[0] ?? "command"} failed (exit ${code}): ${output.slice(-2000)}`));
+      });
+    });
+  }
+
+  async #readRegistry(): Promise<{ version: number; packages: PiRegistryEntry[] }> {
+    const fallback = { version: 1 as const, packages: [] as PiRegistryEntry[] };
+    try {
+      const parsed = JSON.parse(await readFile(this.#registryPath, "utf8")) as Partial<{ version: number; packages: unknown }>;
+      if (!Array.isArray(parsed.packages)) return fallback;
+      const packages = parsed.packages.filter((entry): entry is PiRegistryEntry =>
+        Boolean(entry) && typeof entry === "object"
+        && typeof (entry as PiRegistryEntry).source === "string"
+        && typeof (entry as PiRegistryEntry).name === "string"
+        && typeof (entry as PiRegistryEntry).enabled === "boolean");
+      return { version: 1, packages };
+    } catch {
+      return fallback;
+    }
+  }
+
+  async #writeRegistry(registry: { version: number; packages: PiRegistryEntry[] }): Promise<void> {
+    await mkdir(this.#extensionsRoot, { recursive: true });
+    await writeFile(this.#registryPath, JSON.stringify(registry, null, 2));
+  }
+
+  #ensureMigrated(): Promise<void> {
+    if (!this.#migration) {
+      this.#migration = (async () => {
+        if (!existsSync(this.#registryPath)) await this.#migrateLegacyLayout();
+      })().finally(() => { this.#migration = undefined; });
+    }
+    return this.#migration;
   }
 
   #serialize<T>(operation: () => Promise<T>): Promise<T> {
@@ -157,7 +276,116 @@ export class PiPackageService {
     this.#operation = result.then(() => undefined, () => undefined);
     return result;
   }
+
+  /**
+   * One-time migration from the old layout: packages lived in `{agentDir}/npm/node_modules`
+   * (installed via the Pi SDK package manager) and the enabled list lived in
+   * `settings.json`'s `packages` array; a legacy `{agentDir}/extensions/<name>/config.json`
+   * dir might also exist (Pi CLI convention). Everything is consolidated into
+   * `extensions/<name>/` + `extensions/registry.json`. Idempotent and crash-safe: the old
+   * `npm/` tree is only deleted after the registry is written and settings are cleared.
+   */
+  async #migrateLegacyLayout(): Promise<void> {
+    const npmRoot = join(this.#agentDir, "npm");
+    const settingsPath = join(this.#agentDir, "settings.json");
+    const settings = await readJsonSafe(settingsPath);
+    const oldPackages = Array.isArray(settings?.packages) ? settings.packages : [];
+    const npmNodeModules = join(npmRoot, "node_modules");
+    const hasNpmTree = existsSync(npmNodeModules);
+    if (!hasNpmTree && oldPackages.length === 0 && !(await this.#hasLegacyExtensionDirs())) return;
+
+    const entries: PiRegistryEntry[] = [];
+    const seen = new Set<string>();
+
+    // 1a. Packages listed in the old settings.json.
+    for (const pkg of oldPackages) {
+      const sourceStr = typeof pkg === "string" ? pkg : pkg.source;
+      const enabled = typeof pkg === "string" || (typeof pkg === "object" && pkg?.autoload !== false);
+      if (seen.has(sourceStr)) continue;
+      if (isNpmSource(sourceStr)) {
+        const name = sourceStr.slice("npm:".length);
+        const src = join(npmNodeModules, ...name.split("/"));
+        if (!existsSync(src)) continue;
+        const entryName = packageDirName(name);
+        await this.#mergePackageInto(join(this.#extensionsRoot, entryName), src);
+        const manifest = await packageManifest(src);
+        entries.push({ source: sourceStr, name: entryName, enabled, ...(manifest?.version !== undefined ? { version: manifest.version } : {}) });
+        seen.add(sourceStr);
+      } else if (sourceStr) {
+        const resolved = existsSync(sourceStr) ? sourceStr : join(this.#agentDir, sourceStr);
+        if (!existsSync(resolved)) continue;
+        const entryName = packageDirName(basename(resolve(resolved)));
+        await this.#mergePackageInto(join(this.#extensionsRoot, entryName), resolved);
+        const manifest = await packageManifest(resolved);
+        entries.push({ source: sourceStr, name: entryName, enabled, ...(manifest?.version !== undefined ? { version: manifest.version } : {}) });
+        seen.add(sourceStr);
+      }
+    }
+
+    // 1b. Pi packages physically present in npm/node_modules but not in settings.json.
+    if (hasNpmTree) {
+      for (const name of await npmPackageNames(npmNodeModules)) {
+        const sourceStr = `npm:${name}`;
+        if (seen.has(sourceStr)) continue;
+        const src = join(npmNodeModules, ...name.split("/"));
+        const manifest = await packageManifest(src);
+        if (!isPiPackageManifest(manifest)) continue;
+        const entryName = packageDirName(name);
+        await this.#mergePackageInto(join(this.#extensionsRoot, entryName), src);
+        entries.push({ source: sourceStr, name: entryName, enabled: true, ...(manifest?.version !== undefined ? { version: manifest.version } : {}) });
+        seen.add(sourceStr);
+      }
+    }
+
+    // 1c. Legacy extension dirs under extensions/ that are not covered above.
+    for (const name of await readdirSafe(this.#extensionsRoot)) {
+      const dir = join(this.#extensionsRoot, name);
+      const stats = await statSafe(dir);
+      if (!stats?.isDirectory() || name === "node_modules" || name === "tmp") continue;
+      if (entries.some((entry) => entry.name === name)) continue;
+      const manifest = await packageManifest(dir);
+      if (!isPiPackageManifest(manifest) && !existsSync(join(dir, "index.ts")) && !existsSync(join(dir, "index.js"))) continue;
+      entries.push({ source: `local:${dir}`, name, enabled: true, ...(manifest?.version !== undefined ? { version: manifest.version } : {}) });
+    }
+
+    // 2. Reinstall per-package dependencies for migrated npm packages that declare any.
+    for (const entry of entries) {
+      if (!isNpmSource(entry.source)) continue;
+      const dir = join(this.#extensionsRoot, entry.name);
+      const manifest = await packageManifest(dir);
+      if (!manifest || Object.keys(manifest.dependencies ?? {}).length === 0) continue;
+      await this.#runNpm(["install", "--prefix", dir, "--omit=dev", "--legacy-peer-deps", "--no-audit", "--no-fund"]);
+    }
+
+    // 3. Write the registry, then clear settings.json packages, then delete the old tree.
+    await this.#writeRegistry({ version: 1, packages: entries });
+    if (oldPackages.length > 0 && settings && typeof settings === "object" && !Array.isArray(settings)) {
+      const { packages: _dropped, ...rest } = settings as Record<string, unknown> & { packages?: unknown };
+      await writeFile(settingsPath, JSON.stringify(rest, null, 2));
+    }
+    if (hasNpmTree) await rm(npmRoot, { recursive: true, force: true });
+  }
+
+  async #mergePackageInto(targetDir: string, sourceDir: string): Promise<void> {
+    await mkdir(targetDir, { recursive: true });
+    await cp(sourceDir, targetDir, { recursive: true, force: true });
+  }
+
+  async #hasLegacyExtensionDirs(): Promise<boolean> {
+    for (const name of await readdirSafe(this.#extensionsRoot)) {
+      if (name === "node_modules" || name === "tmp" || name === "registry.json") continue;
+      const dir = join(this.#extensionsRoot, name);
+      const stats = await statSafe(dir);
+      if (!stats?.isDirectory()) continue;
+      if (existsSync(join(dir, "index.ts")) || existsSync(join(dir, "index.js"))) return true;
+      const manifest = await packageManifest(dir);
+      if (isPiPackageManifest(manifest)) return true;
+    }
+    return false;
+  }
 }
+
+interface PiRegistryEntry { source: string; name: string; version?: string; enabled: boolean }
 
 function catalogPackage(entry: Record<string, unknown>): PiCatalogPackage | undefined {
   const pkg = entry.package as Record<string, unknown> | undefined;
@@ -192,11 +420,89 @@ async function packageManifest(path: string): Promise<PackageManifest | undefine
 }
 function isPiPackageManifest(manifest: PackageManifest | undefined): boolean { return Boolean(manifest?.pi || manifest?.keywords?.some((keyword) => keyword === "pi-package" || keyword.startsWith("pi-extension"))); }
 
-function resourceCounts(resolved: ResolvedPaths, source: string): InstalledPiPackage["resources"] {
-  const count = (resources: ResolvedPaths[keyof ResolvedPaths]) => resources.filter((resource) => resource.metadata.source === source).length;
-  return { extensions: count(resolved.extensions), skills: count(resolved.skills), prompts: count(resolved.prompts), themes: count(resolved.themes) };
+function packageResourceCounts(manifest: PackageManifest | undefined, dir: string): InstalledPiPackage["resources"] {
+  const pi = manifest?.pi;
+  const extensions = Array.isArray(pi?.extensions) ? pi.extensions.length : (existsSync(join(dir, "index.ts")) || existsSync(join(dir, "index.js")) ? 1 : 0);
+  const skills = Array.isArray(pi?.skills) ? pi.skills.length : 0;
+  const prompts = Array.isArray(pi?.prompts) ? pi.prompts.length : 0;
+  const themes = Array.isArray(pi?.themes) ? pi.themes.length : 0;
+  return { extensions, skills, prompts, themes };
 }
-function packageSource(source: PackageSource): string { return typeof source === "string" ? source : source.source; }
-function packageEnabled(packages: PackageSource[], source: string): boolean { const entry = packages.find((value) => packageSource(value) === source); return typeof entry === "string" || entry?.autoload !== false; }
-function normalizeSource(source: string): string { const value = source.trim(); if (!value) throw new TypeError("Package source is required"); return /^(npm:|git:|https?:\/\/|ssh:\/\/|\.\.?[\\/]|[\\/]|[A-Za-z]:[\\/])/.test(value) ? value : `npm:${value}`; }
-function sourceName(source: string): string { return basename(source.replace(/^npm:/, "").replace(/@[^@/]+$/, "")) || source; }
+
+async function collectSkillFiles(dir: string): Promise<string[]> {
+  const found: string[] = [];
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) found.push(...await collectSkillFiles(full));
+      else if (entry.isFile() && entry.name === "SKILL.md") found.push(full);
+    }
+  } catch { /* not a directory */ }
+  return found;
+}
+
+function packageDirContaining(filePath: string, root: string): string | undefined {
+  const normalizedRoot = root.endsWith(sep) ? root : `${root}${sep}`;
+  if (!filePath.startsWith(normalizedRoot)) return undefined;
+  const rest = filePath.slice(normalizedRoot.length);
+  const firstSegment = rest.split(sep)[0];
+  return firstSegment ? join(root, firstSegment) : undefined;
+}
+
+async function npmPackageNames(npmNodeModules: string): Promise<string[]> {
+  const names: string[] = [];
+  try {
+    const entries = await readdir(npmNodeModules, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name.startsWith("@")) {
+        for (const sub of await readdirSafe(join(npmNodeModules, entry.name))) {
+          const stats = await statSafe(join(npmNodeModules, entry.name, sub));
+          if (stats?.isDirectory()) names.push(`${entry.name}/${sub}`);
+        }
+      } else {
+        names.push(entry.name);
+      }
+    }
+  } catch { /* not a directory */ }
+  return names;
+}
+
+function isNpmSource(source: string): boolean { return source.startsWith("npm:"); }
+
+/** `pi-web-access@0.18.0` → { name: "pi-web-access", version: "0.18.0" }; `@scope/pkg@1.2.3` → { name: "@scope/pkg", version: "1.2.3" }. */
+function parseNpmSpec(spec: string): { name: string; version?: string } {
+  const trimmed = spec.trim();
+  const at = trimmed.lastIndexOf("@");
+  if (at <= 0) return { name: trimmed };
+  const name = trimmed.slice(0, at);
+  const version = trimmed.slice(at + 1);
+  return version ? { name, version } : { name };
+}
+
+/** Directory name under extensions/: scoped package names collapse to their basename. */
+function packageDirName(name: string): string {
+  const stripped = name.replace(/@[^@/]+$/, "");
+  return basename(stripped) || "package";
+}
+
+function normalizeSource(source: string): string {
+  const value = source.trim();
+  if (!value) throw new TypeError("Package source is required");
+  return /^(npm:|git:|https?:\/\/|ssh:\/\/|\.\.?[\\/]|[\\/]|[A-Za-z]:[\\/])/.test(value) ? value : `npm:${value}`;
+}
+
+async function readJsonSafe(path: string): Promise<Record<string, unknown> | undefined> {
+  try { return JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>; }
+  catch { return undefined; }
+}
+
+async function readdirSafe(path: string): Promise<string[]> {
+  try { return await readdir(path); } catch { return []; }
+}
+
+async function statSafe(path: string): Promise<Awaited<ReturnType<typeof stat>> | undefined> {
+  try { return await stat(path); } catch { return undefined; }
+}

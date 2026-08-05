@@ -1,6 +1,9 @@
 import type { AgentRuntime, AgentRuntimeEvent, AgentRuntimeRun } from "@fitz/agent-core";
 import type { AgentRunRequest, ToolAccessMode } from "@fitz/protocol";
 import type { Model } from "@earendil-works/pi-ai/compat";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 type PiEvent =
   | { type: "message_start"; message: { role?: string; content?: unknown } }
@@ -159,6 +162,11 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
   const resourceLoader = new sdk.DefaultResourceLoader({
     cwd: options.cwd,
     agentDir: options.agentDir,
+    // Fitz owns the Pi extension layout: `{agentDir}/extensions/` is the registry
+    // (extensions/registry.json), so upstream auto-discovery and settings.json packages
+    // must not leak in. Only the registry's enabled package dirs are loaded.
+    noExtensions: true,
+    additionalExtensionPaths: await readEnabledExtensionDirs(options.agentDir),
     appendSystemPrompt: [buildFitzSystemInstructions(options)],
     extensionFactories: [{
       name: "fitz-tool-approval",
@@ -186,6 +194,29 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
     sessionManager: sdk.SessionManager.inMemory(options.cwd),
   });
   return result.session as PiSession;
+}
+
+/**
+ * Absolute paths of the enabled Pi extension package dirs, per the Fitz-managed registry at
+ * `{agentDir}/extensions/registry.json`. Fitz keeps all Pi packages in one folder that is
+ * itself the registry, so these dirs are the only Pi extensions a session loads. Disabled
+ * entries and dirs that no longer exist are excluded; any read/parse error yields an empty
+ * list so a missing or corrupt registry never breaks session creation.
+ */
+export async function readEnabledExtensionDirs(agentDir: string): Promise<string[]> {
+  try {
+    const registry = JSON.parse(await readFile(join(agentDir, "extensions", "registry.json"), "utf8")) as {
+      packages?: Array<{ name?: unknown; enabled?: unknown }>;
+    };
+    if (!Array.isArray(registry.packages)) return [];
+    return registry.packages
+      .filter((entry): entry is { name: string; enabled?: boolean } =>
+        Boolean(entry) && typeof entry.name === "string" && entry.enabled !== false)
+      .map((entry) => join(agentDir, "extensions", entry.name))
+      .filter((dir) => existsSync(dir));
+  } catch {
+    return [];
+  }
 }
 
 export function buildFitzSystemInstructions(options: Pick<Parameters<PiSessionFactory>[0], "cwd" | "agentDir" | "llmRoot">): string {
