@@ -1,5 +1,6 @@
 import { svgIcon } from "../primitives/dom.js";
 import { ReasoningView } from "./reasoning-view.js";
+import { activityKind, burstLabel, describeTool, iconPathFor } from "./tool-activity.js";
 
 type Json = Record<string, any>;
 type WorkSummary = { root: HTMLElement; toggle: HTMLButtonElement; details: HTMLElement; startedAt: number; lastAt: number };
@@ -99,10 +100,10 @@ export class ActivityTimeline {
     summary.setAttribute("aria-expanded", "false");
     const icon = document.createElement("span");
     icon.className = "agent-activity-icon";
-    icon.append(this.#activityIcon(toolName));
+    icon.append(svgIcon(iconPathFor(toolName)));
     const label = document.createElement("span");
     label.className = "agent-activity-label";
-    label.textContent = this.#describe(toolName, input, running);
+    label.textContent = describeTool(toolName, input, running);
     label.title = label.textContent;
     this.#registerSearchRoot(input);
     const resource = this.#resourceReference(toolName, input);
@@ -135,7 +136,7 @@ export class ActivityTimeline {
     row.append(summary, details);
     const burst = this.#ensureBurst(createdAt);
     this.#touchWork(createdAt);
-    const kind = this.#activityKind(toolName);
+    const kind = activityKind(toolName);
     if (kind === "edit") burst.edits += 1;
     else burst.commands += 1;
     if (running) burst.running += 1;
@@ -151,7 +152,7 @@ export class ActivityTimeline {
     row.classList.remove("running");
     row.classList.toggle("failed", isError);
     const label = row.querySelector<HTMLElement>(".agent-activity-label");
-    if (label) { label.textContent = isError ? `${this.#describe(toolName, input, false)} (failed)` : this.#describe(toolName, input, false); label.title = label.textContent; }
+    if (label) { const description = describeTool(toolName, input, false); label.textContent = isError ? `${description} (failed)` : description; label.title = label.textContent; }
     const resultValue = row.querySelector<HTMLElement>(".tool-activity-result .tool-activity-value");
     if (resultValue) resultValue.textContent = this.#formatPayload(result, "No result returned");
     const shellOutput = row.querySelector<HTMLElement>(".shell-output");
@@ -185,7 +186,7 @@ export class ActivityTimeline {
     row.dataset.approvalId = String(approval.id ?? "");
     const heading = document.createElement("div");
     heading.className = "tool-approval-heading";
-    heading.append(this.#activityIcon(String(approval.toolName ?? "tool")), Object.assign(document.createElement("span"), { textContent: `Allow ${String(approval.toolName ?? "tool")}?` }));
+    heading.append(svgIcon(iconPathFor(String(approval.toolName ?? "tool"))), Object.assign(document.createElement("span"), { textContent: `Allow ${String(approval.toolName ?? "tool")}?` }));
     const request = document.createElement("pre");
     request.className = "tool-approval-request";
     request.textContent = this.#formatPayload(approval.request, "No arguments");
@@ -268,7 +269,7 @@ export class ActivityTimeline {
     toggle.setAttribute("aria-expanded", "false");
     const icon = document.createElement("span");
     icon.className = "agent-activity-icon";
-    icon.append(this.#activityIcon("bash"));
+    icon.append(svgIcon(iconPathFor("bash")));
     const label = document.createElement("span");
     label.className = "activity-burst-label";
     const chevron = document.createElement("span");
@@ -296,16 +297,8 @@ export class ActivityTimeline {
 
   #updateBurst(burst: ActivityBurst): void {
     const running = burst.running > 0;
-    let text: string;
-    if (burst.edits > 0 && burst.commands > 0) text = running ? "Editing files, running commands" : "Edited files, ran commands";
-    else if (burst.edits > 0) text = running ? (burst.edits === 1 ? "Editing file" : "Editing files") : (burst.edits === 1 ? "Edited file" : "Edited files");
-    else text = running ? (burst.commands === 1 ? "Running command" : "Running commands") : (burst.commands === 1 ? "Ran command" : "Ran commands");
-    burst.label.textContent = text;
+    burst.label.textContent = burstLabel(burst.edits, burst.commands, running);
     burst.root.classList.toggle("running", running);
-  }
-
-  #activityKind(toolName: string): "command" | "edit" {
-    return toolName === "edit" || toolName === "write" ? "edit" : "command";
   }
 
   async #decide(row: HTMLElement, decision: "approved" | "denied"): Promise<void> {
@@ -334,13 +327,6 @@ export class ActivityTimeline {
     section.append(heading, content); return section;
   }
 
-  #describe(toolName: string, input: unknown, running: boolean): string {
-    const value = input && typeof input === "object" ? input as Json : {};
-    const target = String(value.path ?? value.file_path ?? value.filePath ?? value.command ?? value.cmd ?? value.pattern ?? value.query ?? "").trim();
-    const verb = running ? ({ bash: "Running", edit: "Editing", write: "Writing", read: "Reading", grep: "Searching", find: "Finding", ls: "Listing" } as Json)[toolName] ?? "Running" : ({ bash: "Ran", edit: "Edited", write: "Wrote", read: "Read", grep: "Searched", find: "Found", ls: "Listed" } as Json)[toolName] ?? "Ran";
-    return target ? `${verb} ${target}` : `${verb} ${toolName.replaceAll("_", " ")}`;
-  }
-
   #resourceReference(toolName: string, input: unknown): string | undefined {
     if (!["edit", "write", "read"].includes(toolName) || !input || typeof input !== "object") return undefined;
     const value = input as Json; const path = value.path ?? value.file_path ?? value.filePath;
@@ -353,12 +339,6 @@ export class ActivityTimeline {
     if (typeof path !== "string" || !/^(?:[A-Za-z]:[\\/]|\\\\)/.test(path.trim())) return;
     const normalized = path.trim(); this.#searchRoots.delete(normalized); this.#searchRoots.add(normalized);
     while (this.#searchRoots.size > 32) this.#searchRoots.delete(this.#searchRoots.values().next().value!);
-  }
-
-  #activityIcon(toolName: string): SVGElement {
-    if (toolName === "edit" || toolName === "write") return svgIcon('<path d="m4.2 14.8.7-3.2 7.8-7.8a1.45 1.45 0 0 1 2.05 2.05L7 13.65z"></path><path d="m11.7 4.8 2.05 2.05"></path>');
-    if (["bash", "grep", "find", "ls", "read"].includes(toolName)) return svgIcon('<rect x="2.8" y="3.2" width="14.4" height="13.6" rx="2.3"></rect><path d="m6 7 2.2 2L6 11M10.4 12h3.1"></path>');
-    return svgIcon('<path d="M10 2.8c.45 3.5 2.2 5.45 5.8 7.2-3.6 1.75-5.35 3.7-5.8 7.2-.45-3.5-2.2-5.45-5.8-7.2C7.8 8.25 9.55 6.3 10 2.8Z"></path>');
   }
 
   #shellCommand(input: unknown): string { if (input && typeof input === "object") { const value = input as Json; const command = value.command ?? value.cmd; if (typeof command === "string") return command; } return this.#formatPayload(input, "Command unavailable"); }

@@ -1,5 +1,6 @@
 import type { DesktopUpdateStatus } from "../../preload.js";
 import { FIXED_ROUTES } from "../connections/connection-workspace.js";
+import { CollapsibleSection } from "../layout/collapsible-section.js";
 import { textBlock } from "../primitives/dom.js";
 
 type Json = Record<string, any>;
@@ -78,7 +79,6 @@ export interface AdministrationPageOptions {
 export class AdministrationPageController {
   readonly elements: AdministrationPageElements;
   private readonly options: AdministrationPageOptions;
-  private readonly collapsedSections: Set<string> = this.storedSet("fitz-collapsed-admin-sections");
   private users: Json[] = [];
   private policies: Json[] = [];
   private diagnosticBundle: Json | undefined;
@@ -88,8 +88,8 @@ export class AdministrationPageController {
   constructor(elements: AdministrationPageElements, options: AdministrationPageOptions) {
     this.elements = elements;
     this.options = options;
+    CollapsibleSection.adoptAll(this.elements.sections, { storageKey: "fitz-collapsed-admin-sections" });
     this.bind();
-    this.applyCollapsedSections();
     this.options.bridge.onUpdateStatus((update) => this.renderDesktopUpdate(update));
     void this.options.bridge
       .updateStatus()
@@ -133,9 +133,6 @@ export class AdministrationPageController {
 
   private bind(): void {
     this.elements.refresh.addEventListener("click", () => void this.load());
-    for (const toggle of this.elements.sections.querySelectorAll<HTMLButtonElement>(".admin-section-toggle")) {
-      toggle.addEventListener("click", () => this.toggleAdminSection(toggle));
-    }
     this.elements.pairingCodeForm.addEventListener("submit", (event) => { event.preventDefault(); void this.issuePairingCode(); });
     this.elements.copyPairingCode.addEventListener("click", () => void this.options.bridge.copyText(this.elements.issuedPairingCode.textContent ?? ""));
     this.elements.createUserForm.addEventListener("submit", (event) => { event.preventDefault(); void this.createAdminUser(); });
@@ -155,38 +152,6 @@ export class AdministrationPageController {
     this.elements.checkDesktopUpdate.addEventListener("click", () => void this.checkForDesktopUpdate());
     this.elements.installDesktopUpdate.addEventListener("click", () => void this.options.bridge.installUpdate());
     this.elements.updateButton.addEventListener("click", () => void this.options.bridge.installUpdate());
-  }
-
-  private toggleAdminSection(toggle: HTMLButtonElement): void {
-    const key = toggle.dataset.section;
-    if (!key) return;
-    if (this.collapsedSections.has(key)) this.collapsedSections.delete(key);
-    else this.collapsedSections.add(key);
-    this.saveSet("fitz-collapsed-admin-sections", this.collapsedSections);
-    this.applyAdminSectionState(toggle, key);
-  }
-
-  private applyCollapsedSections(): void {
-    for (const toggle of this.elements.sections.querySelectorAll<HTMLButtonElement>(".admin-section-toggle")) {
-      this.applyAdminSectionState(toggle, toggle.dataset.section ?? "");
-    }
-  }
-
-  private applyAdminSectionState(toggle: HTMLButtonElement, key: string): void {
-    const collapsed = this.collapsedSections.has(key);
-    toggle.closest(".admin-section")?.classList.toggle("collapsed", collapsed);
-    toggle.setAttribute("aria-expanded", String(!collapsed));
-  }
-
-  private storedSet(key: string): Set<string> {
-    try {
-      const value = JSON.parse(localStorage.getItem(key) ?? "[]");
-      return new Set(Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
-    } catch { return new Set(); }
-  }
-
-  private saveSet(key: string, values: Set<string>): void {
-    localStorage.setItem(key, JSON.stringify([...values]));
   }
 
   private async issuePairingCode(): Promise<void> {

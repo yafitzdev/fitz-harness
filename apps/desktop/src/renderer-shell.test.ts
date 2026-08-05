@@ -8,11 +8,13 @@ const syntaxHighlighting = readFileSync(new URL("./syntax-highlighting.ts", impo
 const conversationLayout = readFileSync(new URL("./ui/layout/conversation-layout.ts", import.meta.url), "utf8");
 const workspacePages = readFileSync(new URL("./ui/layout/workspace-pages.ts", import.meta.url), "utf8");
 const managementPage = readFileSync(new URL("./ui/layout/management-page.ts", import.meta.url), "utf8");
+const collapsibleSection = readFileSync(new URL("./ui/layout/collapsible-section.ts", import.meta.url), "utf8");
 const resizablePane = readFileSync(new URL("./ui/primitives/resizable-pane.ts", import.meta.url), "utf8");
 const customSelect = readFileSync(new URL("./ui/primitives/custom-select.ts", import.meta.url), "utf8");
 const contextMenu = readFileSync(new URL("./ui/primitives/context-menu.ts", import.meta.url), "utf8");
 const messageActions = readFileSync(new URL("./ui/chat/message-actions.ts", import.meta.url), "utf8");
 const activityTimeline = readFileSync(new URL("./ui/chat/activity-timeline.ts", import.meta.url), "utf8");
+const toolActivity = readFileSync(new URL("./ui/chat/tool-activity.ts", import.meta.url), "utf8");
 const reasoningView = readFileSync(new URL("./ui/chat/reasoning-view.ts", import.meta.url), "utf8");
 const agentRunController = readFileSync(new URL("./ui/chat/agent-run-controller.ts", import.meta.url), "utf8");
 const composerControls = readFileSync(new URL("./ui/chat/composer-controls.ts", import.meta.url), "utf8");
@@ -42,6 +44,7 @@ const styles = [
   readFileSync(new URL("./ui/sidebar/project-sidebar.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/inspector/inspector-panel.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/layout/management-page.css", import.meta.url), "utf8"),
+  readFileSync(new URL("./ui/layout/collapsible-section.css", import.meta.url), "utf8"),
 ].join("\n");
 const main = readFileSync(new URL("./main.ts", import.meta.url), "utf8");
 const preload = readFileSync(new URL("./preload.ts", import.meta.url), "utf8");
@@ -130,6 +133,7 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("width: var(--codex-scrollbar-size)");
     expect(styles).toContain("height: var(--codex-scrollbar-size)");
     expect(styles).toContain("background-clip: content-box");
+    expect(styles).toContain(".management-page-content > p { margin: 5px 0 24px; overflow: hidden; color: var(--muted); font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }");
     expect(styles).not.toContain(".management-page-content { width: min(820px");
   });
 
@@ -196,6 +200,9 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('id="plugin-catalog"');
     expect(html).toContain('id="installed-plugins-toggle"');
     expect(html).toContain('id="plugin-catalog-toggle"');
+    expect(html).toContain('data-collapsible-key="installed"');
+    expect(html).toContain('data-collapsible-key="discover"');
+    expect(pluginCatalog).toContain('CollapsibleSection.adoptAll(this.elements.pluginsView, { storageKey: "fitz-collapsed-plugin-sections" })');
     expect(pluginCatalog).toContain('fitz-collapsed-plugin-sections');
     expect(pluginCatalog).toContain('/api/v1/management/pi/catalog');
     expect(pluginCatalog).toContain('/api/v1/management/pi/packages/install');
@@ -215,7 +222,7 @@ describe("desktop renderer shell", () => {
     expect(playbookWorkspace).toContain("render(): void");
     expect(renderer).toContain("FIXED_ROUTES");
     expect(renderer).not.toContain("assignFixedRoute(");
-    expect(playbookWorkspace).toContain('Configure and test their recipes here.');
+    expect(playbookWorkspace).toContain('Configure and test recipes from your engine folders.');
     expect(renderer).not.toContain("now uses ${recipe.displayName}");
     expect(playbookWorkspace).toContain("openEngineEditor(");
     expect(playbookWorkspace).toContain('/api/v1/management/engines/${encodeURIComponent(folderName)}');
@@ -311,7 +318,9 @@ describe("desktop renderer shell", () => {
     expect(activityTimeline).toContain("#formatPayload");
     expect(agentRunController).toContain("this.#options.activity.markAssistantAsCommentary");
     expect(activityTimeline).toContain("Context automatically compacted");
-    expect(activityTimeline).toContain('toolName === "edit" || toolName === "write"');
+    expect(toolActivity).toContain("BUILT_IN_TOOLS");
+    expect(toolActivity).toContain('kind: "edit"');
+    expect(toolActivity).toContain("iconPathFor");
     expect(styles).toContain(".agent-activity-icon");
     expect(styles).toContain(".agent-activity-details");
     expect(styles).toContain(".agent-activity.open .agent-activity-chevron");
@@ -688,22 +697,25 @@ describe("desktop renderer shell", () => {
   });
 
   it("lets the administration sections collapse to their headers", () => {
-    expect(html).toContain('class="admin-section-toggle"');
-    expect(html).toContain('data-section="pairing"');
-    expect(html).toContain('data-section="remote"');
-    expect(html).toContain('data-section="startup"');
-    expect(html).toContain('data-section="users"');
-    expect(html).toContain('data-section="policies"');
-    expect(html).toContain('data-section="diagnostics"');
-    expect(html).toContain('data-section="updates"');
-    expect(html).toContain('data-section="activity"');
+    expect(html).toContain('class="collapsible-toggle"');
+    expect(html).toContain('data-collapsible-key="pairing"');
+    expect(html).toContain('data-collapsible-key="remote"');
+    expect(html).toContain('data-collapsible-key="startup"');
+    expect(html).toContain('data-collapsible-key="users"');
+    expect(html).toContain('data-collapsible-key="policies"');
+    expect(html).toContain('data-collapsible-key="diagnostics"');
+    expect(html).toContain('data-collapsible-key="updates"');
+    expect(html).toContain('data-collapsible-key="activity"');
     expect(html).toContain('id="admin-remote-body"');
     expect(administrationPage).toContain('fitz-collapsed-admin-sections');
-    expect(administrationPage).toContain('querySelectorAll<HTMLButtonElement>(".admin-section-toggle")');
+    expect(administrationPage).toContain('CollapsibleSection.adoptAll(this.elements.sections, { storageKey: "fitz-collapsed-admin-sections" })');
+    expect(administrationPage).toContain('import { CollapsibleSection } from "../layout/collapsible-section.js"');
     expect(renderer).toContain("sections: administrationPage");
-    expect(styles).toContain(".admin-section-toggle");
-    expect(styles).toContain(".admin-section.collapsed .admin-section-chevron { transform: rotate(-90deg); }");
-    expect(styles).toContain(".admin-section.collapsed .admin-section-body { display: none; }");
+    expect(collapsibleSection).toContain("static adopt(");
+    expect(collapsibleSection).toContain("static adoptAll(");
+    expect(styles).toContain(".collapsible-toggle");
+    expect(styles).toContain(".collapsible-section.collapsed .collapsible-chevron { transform: rotate(-90deg); }");
+    expect(styles).toContain(".collapsible-section.collapsed .collapsible-body { display: none; }");
   });
 
   it("keeps shared shell behavior behind reusable component boundaries", () => {

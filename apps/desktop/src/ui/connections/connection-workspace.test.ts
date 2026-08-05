@@ -131,7 +131,7 @@ describe("ConnectionWorkspaceController", () => {
     await controller.sync(false);
     let cards = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card");
     expect(cards).toHaveLength(2);
-    const remoteToggle = cards[1]!.querySelector<HTMLButtonElement>(".connection-collapse-toggle")!;
+    const remoteToggle = cards[1]!.querySelector<HTMLButtonElement>(".collapsible-toggle")!;
     expect(remoteToggle.getAttribute("aria-expanded")).toBe("true");
     expect(cards[1]!.querySelectorAll(".recipe-card").length).toBeGreaterThan(0);
 
@@ -139,7 +139,7 @@ describe("ConnectionWorkspaceController", () => {
     cards = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card");
     expect(cards[1]!.classList.contains("collapsed")).toBe(true);
     expect(cards[1]!.querySelectorAll(".recipe-card")).toHaveLength(0);
-    expect(cards[1]!.querySelector<HTMLButtonElement>(".connection-collapse-toggle")!.getAttribute("aria-expanded")).toBe("false");
+    expect(cards[1]!.querySelector<HTMLButtonElement>(".collapsible-toggle")!.getAttribute("aria-expanded")).toBe("false");
 
     // A re-render (search filtering) keeps the collapsed connection collapsed.
     elements.search.value = "remote";
@@ -148,18 +148,18 @@ describe("ConnectionWorkspaceController", () => {
     expect(cards).toHaveLength(1);
     expect(cards[0]!.classList.contains("collapsed")).toBe(true);
 
-    click(cards[0]!.querySelector<HTMLButtonElement>(".connection-collapse-toggle")!);
+    click(cards[0]!.querySelector<HTMLButtonElement>(".collapsible-toggle")!);
     cards = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card");
     expect(cards[0]!.classList.contains("collapsed")).toBe(false);
     expect(cards[0]!.querySelectorAll(".recipe-card").length).toBeGreaterThan(0);
-    expect(cards[0]!.querySelector<HTMLButtonElement>(".connection-collapse-toggle")!.getAttribute("aria-expanded")).toBe("true");
+    expect(cards[0]!.querySelector<HTMLButtonElement>(".collapsible-toggle")!.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("persists collapsed connections across syncs and leaves route actions untouched", async () => {
     const { controller, elements, calls } = setup();
     await controller.sync(false);
     const remoteCard = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[1]!;
-    click(remoteCard.querySelector<HTMLButtonElement>(".connection-collapse-toggle")!);
+    click(remoteCard.querySelector<HTMLButtonElement>(".collapsible-toggle")!);
     expect(JSON.parse(localStorage.getItem("fitz-collapsed-connections") ?? "[]")).toContain("remote-1");
 
     await controller.sync(false);

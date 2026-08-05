@@ -34,8 +34,6 @@ export class PluginsPageController {
       installedPlugins: require("installed-plugins"),
       pluginCatalog: require("plugin-catalog"),
       installedSkills: require("installed-skills"),
-      installedPluginsToggle: require("installed-plugins-toggle"),
-      pluginCatalogToggle: require("plugin-catalog-toggle"),
       loadMorePlugins: require("load-more-plugins"),
       refresh: require("refresh-plugins"),
     }, {

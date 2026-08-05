@@ -1,12 +1,4 @@
-.plugin-section { margin-top: 34px; }
-.plugin-section-toggle { display: flex; align-items: center; gap: 8px; width: 100%; margin: 0 0 12px; padding: 0 0 12px; border: 0; border-bottom: 1px solid var(--border-soft); background: transparent; color: var(--text); font: inherit; cursor: pointer; text-align: left; }
-.plugin-section-toggle:hover .plugin-section-chevron, .plugin-section-toggle:focus-visible .plugin-section-chevron { color: var(--text); }
-.plugin-section-chevron { flex: 0 0 auto; display: grid; place-items: center; color: var(--muted); transition: transform 120ms ease; }
-.plugin-section-chevron svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.plugin-section.collapsed .plugin-section-chevron { transform: rotate(-90deg); }
-.plugin-section.collapsed .plugin-section-body { display: none; }
-.plugin-section h2 { margin: 0 0 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border-soft); font-size: 14px; font-weight: 600; }
-.plugin-section-toggle h2 { margin: 0; padding: 0; border: 0; }
+.management-page-content > .collapsible-section + .collapsible-section { margin-top: 12px; }
 .plugin-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 34px; }
 .plugin-card { min-width: 0; display: grid; grid-template-columns: 38px minmax(0,1fr) auto; gap: 12px; align-items: center; min-height: 70px; padding: 10px 6px; border-bottom: 1px solid rgba(255,255,255,.035); }
 .plugin-icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; color: var(--muted); background: rgba(255,255,255,.045); }

@@ -1,4 +1,5 @@
 import { svgIcon } from "../primitives/dom.js";
+import { CollapsibleSection } from "../layout/collapsible-section.js";
 
 export type PluginCatalogApi = (path: string, method?: string, body?: unknown) => Promise<Record<string, any>>;
 
@@ -39,8 +40,6 @@ export interface PluginCatalogElements {
   installedPlugins: HTMLElement;
   pluginCatalog: HTMLElement;
   installedSkills: HTMLElement;
-  installedPluginsToggle: HTMLButtonElement;
-  pluginCatalogToggle: HTMLButtonElement;
   loadMorePlugins: HTMLButtonElement;
   refresh: HTMLButtonElement;
 }
@@ -57,7 +56,6 @@ export class PluginCatalogController {
   readonly elements: PluginCatalogElements;
   private readonly options: PluginCatalogOptions;
   private readonly searchDelayMs: number;
-  private readonly collapsedSections: Set<string> = this.storedSet("fitz-collapsed-plugin-sections");
   private installedPackages: InstalledPiPackage[] = [];
   private catalogPackages: PiCatalogPackage[] = [];
   private installedSkills: PiSkillSummary[] = [];
@@ -68,9 +66,8 @@ export class PluginCatalogController {
     this.elements = elements;
     this.options = options;
     this.searchDelayMs = options.searchDelayMs ?? 250;
+    CollapsibleSection.adoptAll(this.elements.pluginsView, { storageKey: "fitz-collapsed-plugin-sections" });
     this.bind();
-    this.applySectionState(this.elements.installedPluginsToggle, "installed");
-    this.applySectionState(this.elements.pluginCatalogToggle, "discover");
   }
 
   showLoading(): void {
@@ -111,40 +108,12 @@ export class PluginCatalogController {
     this.elements.refresh.addEventListener("click", () => void this.load(false));
     this.elements.pluginsTab.addEventListener("click", () => this.setView("plugins"));
     this.elements.skillsTab.addEventListener("click", () => this.setView("skills"));
-    this.bindSectionToggle(this.elements.installedPluginsToggle, "installed");
-    this.bindSectionToggle(this.elements.pluginCatalogToggle, "discover");
     this.elements.pluginSearch.addEventListener("input", () => {
       if (this.searchTimer) clearTimeout(this.searchTimer);
       this.searchTimer = setTimeout(() => void this.load(false), this.searchDelayMs);
     });
     this.elements.skillSearch.addEventListener("input", () => this.renderSkills());
     this.elements.loadMorePlugins.addEventListener("click", () => void this.loadCatalog(true));
-  }
-
-  private bindSectionToggle(toggle: HTMLButtonElement, key: string): void {
-    toggle.addEventListener("click", () => {
-      if (this.collapsedSections.has(key)) this.collapsedSections.delete(key);
-      else this.collapsedSections.add(key);
-      this.saveSet("fitz-collapsed-plugin-sections", this.collapsedSections);
-      this.applySectionState(toggle, key);
-    });
-  }
-
-  private applySectionState(toggle: HTMLButtonElement, key: string): void {
-    const collapsed = this.collapsedSections.has(key);
-    toggle.closest(".plugin-section")?.classList.toggle("collapsed", collapsed);
-    toggle.setAttribute("aria-expanded", String(!collapsed));
-  }
-
-  private storedSet(key: string): Set<string> {
-    try {
-      const value = JSON.parse(localStorage.getItem(key) ?? "[]");
-      return new Set(Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
-    } catch { return new Set(); }
-  }
-
-  private saveSet(key: string, values: Set<string>): void {
-    localStorage.setItem(key, JSON.stringify([...values]));
   }
 
   private async loadCatalog(append: boolean): Promise<void> {

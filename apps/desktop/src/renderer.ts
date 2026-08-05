@@ -81,7 +81,7 @@ playbookLayout.addContent({
   id: "management-browser",
   title: "Playbooks",
   titleId: "management-title",
-  description: "Engine folders appear automatically. Configure and test their recipes here.",
+  description: "Configure and test recipes from your engine folders.",
   descriptionId: "management-description",
   search: { id: "playbook-search", placeholder: "Search playbooks" },
   body: [element("playbook-list")],

@@ -1,13 +1,6 @@
 .connection-form-status { margin: 0; color: var(--codex-text-secondary); font-size: 11px; }
 .connection-form-status.error { color: #e9a09c; }
 .connections-empty { margin: 18px 0; color: var(--codex-text-tertiary); font-size: 12px; text-align: center; }
-.connection-collapse-toggle { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 2px 4px; margin: -2px -4px; border: 0; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; text-align: left; }
-.connection-collapse-toggle:hover, .connection-collapse-toggle:focus-visible { background: rgba(255,255,255,.06); }
-.connection-collapse-toggle h3 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.connection-collapse-chevron { flex: 0 0 auto; display: grid; place-items: center; color: var(--muted); transition: transform 120ms ease; }
-.connection-collapse-chevron svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.consumer-playbook-card.collapsed { padding-bottom: 10px; }
-.consumer-playbook-card.collapsed .connection-collapse-chevron { transform: rotate(-90deg); }
 .recipe-route-toggle { display: flex; align-items: center; gap: 1px; padding: 2px; border: 0; border-radius: 11px; background: #1c1e1c; }
 .route-symbol { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 9px; background: transparent; color: #777b74; cursor: pointer; transition: background-color 100ms ease, color 100ms ease; }
 .route-symbol:hover { background: #303230; color: #d5d7d2; }

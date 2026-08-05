@@ -118,8 +118,8 @@ describe("PlaybookWorkspaceController", () => {
     expect(cards[0]!.querySelector(".recipe-card-label")?.textContent).toBe("Qwen3.6");
     expect(cards[0]!.textContent).toContain("131k ctx");
     // Registered engines offer Configure and Add recipe; unregistered folders offer Set up.
-    expect([...cards[0]!.querySelectorAll<HTMLButtonElement>(".playbook-actions button")].map((button) => button.textContent)).toEqual(["Configure", "Add recipe"]);
-    expect([...cards[1]!.querySelectorAll<HTMLButtonElement>(".playbook-actions button")].map((button) => button.textContent)).toEqual(["Set up"]);
+    expect([...cards[0]!.querySelectorAll<HTMLButtonElement>(".collapsible-actions button")].map((button) => button.textContent)).toEqual(["Configure", "Add recipe"]);
+    expect([...cards[1]!.querySelectorAll<HTMLButtonElement>(".collapsible-actions button")].map((button) => button.textContent)).toEqual(["Set up"]);
     expect(elements.title.textContent).toBe("Playbooks");
   });
 
@@ -175,7 +175,7 @@ describe("PlaybookWorkspaceController", () => {
     const { controller, elements, api, reloadConfiguration } = setup();
     controller.render();
 
-    const configure = [...elements.list.querySelectorAll<HTMLButtonElement>(".playbook-actions button")].find((button) => button.textContent === "Configure")!;
+    const configure = [...elements.list.querySelectorAll<HTMLButtonElement>(".collapsible-actions button")].find((button) => button.textContent === "Configure")!;
     click(configure);
 
     expect(elements.editor.hidden).toBe(false);
@@ -205,7 +205,7 @@ describe("PlaybookWorkspaceController", () => {
     const { controller, elements, api, reloadConfiguration } = setup();
     controller.render();
 
-    const addRecipe = [...elements.list.querySelectorAll<HTMLButtonElement>(".playbook-actions button")].find((button) => button.textContent === "Add recipe")!;
+    const addRecipe = [...elements.list.querySelectorAll<HTMLButtonElement>(".collapsible-actions button")].find((button) => button.textContent === "Add recipe")!;
     click(addRecipe);
 
     expect(elements.recipeForm.hidden).toBe(false);
@@ -231,7 +231,7 @@ describe("PlaybookWorkspaceController", () => {
   it("rejects recipe configuration that is not valid JSON", async () => {
     const { controller, elements, showToast, api } = setup();
     controller.render();
-    click([...elements.list.querySelectorAll<HTMLButtonElement>(".playbook-actions button")].find((button) => button.textContent === "Add recipe")!);
+    click([...elements.list.querySelectorAll<HTMLButtonElement>(".collapsible-actions button")].find((button) => button.textContent === "Add recipe")!);
 
     elements.recipeId.value = "ninfer-extra";
     elements.recipeConfiguration.value = "{oops";
@@ -264,7 +264,7 @@ describe("PlaybookWorkspaceController", () => {
     const { controller, elements } = setup();
     controller.render();
     let cards = elements.list.querySelectorAll<HTMLElement>(".playbook-card");
-    const toggle = cards[0]!.querySelector<HTMLButtonElement>(".playbook-collapse-toggle")!;
+    const toggle = cards[0]!.querySelector<HTMLButtonElement>(".collapsible-toggle")!;
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(cards[0]!.querySelectorAll(".recipe-card")).toHaveLength(1);
 
@@ -272,7 +272,7 @@ describe("PlaybookWorkspaceController", () => {
     cards = elements.list.querySelectorAll<HTMLElement>(".playbook-card");
     expect(cards[0]!.classList.contains("collapsed")).toBe(true);
     expect(cards[0]!.querySelectorAll(".recipe-card")).toHaveLength(0);
-    expect(cards[0]!.querySelector<HTMLButtonElement>(".playbook-collapse-toggle")!.getAttribute("aria-expanded")).toBe("false");
+    expect(cards[0]!.querySelector<HTMLButtonElement>(".collapsible-toggle")!.getAttribute("aria-expanded")).toBe("false");
 
     // A re-render (search filtering) keeps the collapsed playbook collapsed.
     elements.search.value = "ninfer";
@@ -281,18 +281,18 @@ describe("PlaybookWorkspaceController", () => {
     expect(cards).toHaveLength(1);
     expect(cards[0]!.classList.contains("collapsed")).toBe(true);
 
-    click(cards[0]!.querySelector<HTMLButtonElement>(".playbook-collapse-toggle")!);
+    click(cards[0]!.querySelector<HTMLButtonElement>(".collapsible-toggle")!);
     cards = elements.list.querySelectorAll<HTMLElement>(".playbook-card");
     expect(cards[0]!.classList.contains("collapsed")).toBe(false);
     expect(cards[0]!.querySelectorAll(".recipe-card")).toHaveLength(1);
-    expect(cards[0]!.querySelector<HTMLButtonElement>(".playbook-collapse-toggle")!.getAttribute("aria-expanded")).toBe("true");
+    expect(cards[0]!.querySelector<HTMLButtonElement>(".collapsible-toggle")!.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("persists collapsed playbooks and keeps Configure actions usable", () => {
     const { controller, elements } = setup();
     controller.render();
     const cards = elements.list.querySelectorAll<HTMLElement>(".playbook-card");
-    click(cards[0]!.querySelector<HTMLButtonElement>(".playbook-collapse-toggle")!);
+    click(cards[0]!.querySelector<HTMLButtonElement>(".collapsible-toggle")!);
     expect(JSON.parse(localStorage.getItem("fitz-collapsed-playbooks") ?? "[]")).toContain("ninfer");
 
     controller.render();
@@ -300,7 +300,7 @@ describe("PlaybookWorkspaceController", () => {
     expect(collapsedCards[0]!.classList.contains("collapsed")).toBe(true);
 
     // Heading actions still work without toggling the collapse state.
-    click(collapsedCards[0]!.querySelector<HTMLButtonElement>(".playbook-actions button")!);
+    click(collapsedCards[0]!.querySelector<HTMLButtonElement>(".collapsible-actions button")!);
     expect(collapsedCards[0]!.classList.contains("collapsed")).toBe(true);
     expect(elements.editor.hidden).toBe(false);
   });

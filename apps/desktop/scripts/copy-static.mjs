@@ -30,4 +30,5 @@ cpSync(new URL("../src/ui/playbooks/playbook-workspace.css", import.meta.url), n
 cpSync(new URL("../src/ui/sidebar/project-sidebar.css", import.meta.url), new URL("../dist/ui/sidebar/project-sidebar.css", import.meta.url));
 cpSync(new URL("../src/ui/inspector/inspector-panel.css", import.meta.url), new URL("../dist/ui/inspector/inspector-panel.css", import.meta.url));
 cpSync(new URL("../src/ui/layout/management-page.css", import.meta.url), new URL("../dist/ui/layout/management-page.css", import.meta.url));
+cpSync(new URL("../src/ui/layout/collapsible-section.css", import.meta.url), new URL("../dist/ui/layout/collapsible-section.css", import.meta.url));
 cpSync(new URL("../src/bootstrap.cjs", import.meta.url), new URL("../dist/bootstrap.cjs", import.meta.url));

@@ -9,34 +9,42 @@ function node<T extends HTMLElement>(tag: string): T {
   return element;
 }
 
-function section(toggleId: string, regionId: string): { section: HTMLElement; toggle: HTMLButtonElement; region: HTMLElement } {
+function section(key: string, toggleId: string, regionId: string): { section: HTMLElement; toggle: HTMLButtonElement; region: HTMLElement } {
   const section = document.createElement("section");
-  section.className = "plugin-section";
+  section.className = "collapsible-section";
+  const heading = document.createElement("div");
+  heading.className = "collapsible-heading";
   const toggle = document.createElement("button");
   toggle.type = "button";
+  toggle.className = "collapsible-toggle";
   toggle.id = toggleId;
+  toggle.dataset.collapsibleKey = key;
   toggle.setAttribute("aria-expanded", "true");
   toggle.setAttribute("aria-controls", regionId);
+  toggle.append(Object.assign(document.createElement("h2"), { textContent: key }));
+  heading.append(toggle);
   const region = document.createElement("div");
-  region.className = "plugin-section-body";
+  region.className = "collapsible-body";
   region.id = regionId;
-  section.append(toggle, region);
+  section.append(heading, region);
   document.body.append(section);
   return { section, toggle, region };
 }
 
 function setup(api: PluginCatalogApi, searchDelayMs = 250) {
-  const installed = section("installed-plugins-toggle", "installed-plugins-body");
-  const catalog = section("plugin-catalog-toggle", "plugin-catalog-body");
+  const installed = section("installed", "installed-plugins-toggle", "installed-plugins-body");
+  const catalog = section("discover", "plugin-catalog-toggle", "plugin-catalog-body");
+  const pluginsView = node("section");
+  pluginsView.append(installed.section, catalog.section);
   const installedPlugins = document.createElement("div"); installedPlugins.id = "installed-plugins"; installedPlugins.className = "plugin-grid";
   const pluginCatalog = document.createElement("div"); pluginCatalog.id = "plugin-catalog"; pluginCatalog.className = "plugin-grid";
   const loadMorePlugins = document.createElement("button"); loadMorePlugins.id = "load-more-plugins"; loadMorePlugins.hidden = true;
   installed.region.append(installedPlugins);
   catalog.region.append(pluginCatalog, loadMorePlugins);
   const elements: PluginCatalogElements = {
-    pluginsView: node("section"), skillsView: node("section"), pluginsTab: node("button"), skillsTab: node("button"),
+    pluginsView, skillsView: node("section"), pluginsTab: node("button"), skillsTab: node("button"),
     pluginSearch: node("input"), skillSearch: node("input"), installedPlugins, pluginCatalog, installedSkills: node("div"),
-    installedPluginsToggle: installed.toggle, pluginCatalogToggle: catalog.toggle, loadMorePlugins, refresh: node("button"),
+    loadMorePlugins, refresh: node("button"),
   };
   elements.skillsView.hidden = true;
   const calls = { openExternal: vi.fn(), showToast: vi.fn(), errorMessage: vi.fn((error: unknown) => error instanceof Error ? error.message : String(error)) };
@@ -155,28 +163,32 @@ describe("PluginCatalogController", () => {
 
   it("collapses and expands the Installed and Discover sections from their toggles", () => {
     const { elements } = setup(vi.fn(async () => ({ data: {} })));
+    const installedToggle = elements.pluginsView.querySelector<HTMLButtonElement>("#installed-plugins-toggle")!;
+    const catalogToggle = elements.pluginsView.querySelector<HTMLButtonElement>("#plugin-catalog-toggle")!;
 
-    expect(elements.installedPluginsToggle.getAttribute("aria-expanded")).toBe("true");
-    click(elements.installedPluginsToggle);
-    expect(elements.installedPluginsToggle.closest(".plugin-section")?.classList.contains("collapsed")).toBe(true);
-    expect(elements.installedPluginsToggle.getAttribute("aria-expanded")).toBe("false");
-    click(elements.installedPluginsToggle);
-    expect(elements.installedPluginsToggle.closest(".plugin-section")?.classList.contains("collapsed")).toBe(false);
-    expect(elements.installedPluginsToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(installedToggle.getAttribute("aria-expanded")).toBe("true");
+    click(installedToggle);
+    expect(installedToggle.closest(".collapsible-section")?.classList.contains("collapsed")).toBe(true);
+    expect(installedToggle.getAttribute("aria-expanded")).toBe("false");
+    click(installedToggle);
+    expect(installedToggle.closest(".collapsible-section")?.classList.contains("collapsed")).toBe(false);
+    expect(installedToggle.getAttribute("aria-expanded")).toBe("true");
 
-    click(elements.pluginCatalogToggle);
-    expect(elements.pluginCatalogToggle.closest(".plugin-section")?.classList.contains("collapsed")).toBe(true);
-    expect(elements.pluginCatalogToggle.getAttribute("aria-expanded")).toBe("false");
+    click(catalogToggle);
+    expect(catalogToggle.closest(".collapsible-section")?.classList.contains("collapsed")).toBe(true);
+    expect(catalogToggle.getAttribute("aria-expanded")).toBe("false");
     expect(JSON.parse(localStorage.getItem("fitz-collapsed-plugin-sections") ?? "[]")).toEqual(["discover"]);
   });
 
   it("restores previously collapsed sections from storage on construction", () => {
     localStorage.setItem("fitz-collapsed-plugin-sections", '["discover"]');
     const { elements } = setup(vi.fn(async () => ({ data: {} })));
+    const installedToggle = elements.pluginsView.querySelector<HTMLButtonElement>("#installed-plugins-toggle")!;
+    const catalogToggle = elements.pluginsView.querySelector<HTMLButtonElement>("#plugin-catalog-toggle")!;
 
-    expect(elements.installedPluginsToggle.closest(".plugin-section")?.classList.contains("collapsed")).toBe(false);
-    expect(elements.installedPluginsToggle.getAttribute("aria-expanded")).toBe("true");
-    expect(elements.pluginCatalogToggle.closest(".plugin-section")?.classList.contains("collapsed")).toBe(true);
-    expect(elements.pluginCatalogToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(installedToggle.closest(".collapsible-section")?.classList.contains("collapsed")).toBe(false);
+    expect(installedToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(catalogToggle.closest(".collapsible-section")?.classList.contains("collapsed")).toBe(true);
+    expect(catalogToggle.getAttribute("aria-expanded")).toBe("false");
   });
 });

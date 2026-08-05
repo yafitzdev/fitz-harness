@@ -1,5 +1,6 @@
 import type { ConsumerConnectionInput, ConsumerConnectionSummary } from "../../preload.js";
 import { ManagementPageLayout, managementRefreshIcon } from "../layout/management-page.js";
+import { CollapsibleSection } from "../layout/collapsible-section.js";
 import { svgIcon } from "../primitives/dom.js";
 
 type Json = Record<string, any>;
@@ -80,7 +81,6 @@ export class ConnectionWorkspaceController {
   private readonly options: ConnectionWorkspaceOptions;
   private records: ConsumerConnectionSummary[] = [];
   private configuration: Json | undefined;
-  private readonly collapsedConnections: Set<string> = this.storedSet("fitz-collapsed-connections");
 
   constructor(options: ConnectionWorkspaceOptions) {
     this.options = options;
@@ -167,25 +167,7 @@ export class ConnectionWorkspaceController {
     for (const connection of visible) this.elements.connections.append(this.connectionCard(connection, routes));
   }
 
-  private toggleConnection(id: string): void {
-    if (this.collapsedConnections.has(id)) this.collapsedConnections.delete(id);
-    else this.collapsedConnections.add(id);
-    this.saveSet("fitz-collapsed-connections", this.collapsedConnections);
-    this.render();
-  }
-
-  private storedSet(key: string): Set<string> {
-    try {
-      const value = JSON.parse(localStorage.getItem(key) ?? "[]");
-      return new Set(Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
-    } catch { return new Set(); }
-  }
-
-  private saveSet(key: string, values: Set<string>): void {
-    localStorage.setItem(key, JSON.stringify([...values]));
-  }
-
-  openEditor(connection?: ConsumerConnectionSummary): void {
+  private openEditor(connection?: ConsumerConnectionSummary): void {
     this.resetForm();
     this.elements.listView.hidden = true;
     this.elements.editor.hidden = false;
@@ -227,41 +209,27 @@ export class ConnectionWorkspaceController {
   }
 
   private connectionCard(connection: ConnectionView, routes: Json[]): HTMLElement {
-    const card = document.createElement("section");
-    card.className = "playbook-card consumer-playbook-card";
-    const heading = document.createElement("div");
-    heading.className = "playbook-heading";
-    const collapsed = this.collapsedConnections.has(connection.id);
-    const toggle = document.createElement("button");
-    toggle.type = "button";
-    toggle.className = "connection-collapse-toggle";
-    toggle.setAttribute("aria-expanded", String(!collapsed));
-    toggle.setAttribute("aria-label", `${collapsed ? "Expand" : "Collapse"} ${connection.displayName}`);
-    toggle.addEventListener("click", () => this.toggleConnection(connection.id));
-    const chevron = document.createElement("span");
-    chevron.className = "connection-collapse-chevron";
-    chevron.append(svgIcon('<path d="m6 8 4 4 4-4"></path>'));
-    const name = document.createElement("h3");
-    name.textContent = connection.displayName;
-    toggle.append(chevron, name);
-    const actions = document.createElement("div");
-    actions.className = "playbook-actions";
+    const actions: HTMLButtonElement[] = [];
     if (!connection.hosted) {
-      actions.append(
+      actions.push(
         actionButton("Refresh", (button) => this.testConnection(connection.source, button)),
         actionButton("Edit", () => { this.openEditor(connection.source); }),
         this.removeButton(connection.id),
       );
     }
-    heading.append(toggle, actions);
-    card.append(heading);
-    if (collapsed) {
-      card.classList.add("collapsed");
-      return card;
+    const section = CollapsibleSection.create({
+      id: connection.id,
+      storageKey: "fitz-collapsed-connections",
+      title: connection.displayName,
+      className: "consumer-playbook-card",
+      onToggle: () => this.render(),
+      actions,
+    });
+    if (!section.collapsed) {
+      if (!connection.availableModels.length) section.appendBody(emptyState("No chat models available"));
+      for (const model of connection.availableModels) section.appendBody(this.modelCard(model, routes));
     }
-    if (!connection.availableModels.length) card.append(emptyState("No chat models available"));
-    for (const model of connection.availableModels) card.append(this.modelCard(model, routes));
-    return card;
+    return section.root;
   }
 
   private modelCard(model: ConnectionModelView, routes: Json[]): HTMLElement {

@@ -1,17 +1,4 @@
 .playbook-list { display: grid; gap: 12px; }
-.playbook-card { padding: 4px 0 18px; border-bottom: 1px solid var(--border-soft); }
-.playbook-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 10px; }
-.playbook-heading > div:first-child { min-width: 0; }
-.playbook-card h3 { margin: 0; font-size: 15px; }
-.playbook-collapse-toggle { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 2px 4px; margin: -2px -4px; border: 0; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; text-align: left; }
-.playbook-collapse-toggle:hover, .playbook-collapse-toggle:focus-visible { background: rgba(255,255,255,.06); }
-.playbook-collapse-toggle h3 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.playbook-collapse-chevron { flex: 0 0 auto; display: grid; place-items: center; color: var(--muted); transition: transform 120ms ease; }
-.playbook-collapse-chevron svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.playbook-card.collapsed { padding-bottom: 10px; }
-.playbook-card.collapsed .playbook-collapse-chevron { transform: rotate(-90deg); }
-.playbook-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
-.playbook-actions .danger { color: #d99a96; }
 .recipe-card { width: 100%; min-height: 66px; display: grid; grid-template-columns: minmax(0,1fr) auto; overflow: hidden; border-radius: 10px; background: #242624; color: var(--text); transition: background-color 120ms ease; }
 .recipe-card + .recipe-card { margin-top: 7px; }
 .recipe-card:hover, .recipe-card:focus-within { background: #292b29; }

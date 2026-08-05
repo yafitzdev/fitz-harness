@@ -368,32 +368,34 @@ describe("AdministrationPageController", () => {
   });
 });
 
-// Builds the static admin-section markup shape used by renderer/index.html:
+// Builds the static collapsible-section markup shape used by renderer/index.html:
 // a heading row with a chevron toggle button plus optional action buttons, and
 // a sibling body wrapper the toggle controls.
 function sectionsFixture(config: Record<string, { actions?: string[] }>): HTMLElement {
   const root = document.createElement("div");
   for (const [key, { actions = [] }] of Object.entries(config)) {
     const section = document.createElement("section");
-    section.className = "admin-section";
+    section.className = "collapsible-section";
 
     const heading = document.createElement("div");
-    heading.className = "admin-section-heading";
+    heading.className = "collapsible-heading";
     const toggle = document.createElement("button");
     toggle.type = "button";
-    toggle.className = "admin-section-toggle";
-    toggle.dataset.section = key;
+    toggle.className = "collapsible-toggle";
+    toggle.dataset.collapsibleKey = key;
     toggle.setAttribute("aria-expanded", "true");
     toggle.setAttribute("aria-controls", `admin-${key}-body`);
-    toggle.append(Object.assign(document.createElement("svg"), { className: "admin-section-chevron" }));
     toggle.append(Object.assign(document.createElement("h2"), { textContent: key }));
     heading.append(toggle);
+    const actionsDiv = document.createElement("div");
+    actionsDiv.className = "collapsible-actions";
     for (const id of actions) {
-      heading.append(Object.assign(document.createElement("button"), { id, type: "button", textContent: id }));
+      actionsDiv.append(Object.assign(document.createElement("button"), { id, type: "button", textContent: id }));
     }
+    heading.append(actionsDiv);
 
     const body = document.createElement("div");
-    body.className = "admin-section-body";
+    body.className = "collapsible-body";
     body.id = `admin-${key}-body`;
     body.textContent = `${key} content`;
 
@@ -440,9 +442,9 @@ function setupWithSections(
 }
 
 function sectionOf(root: HTMLElement, key: string): HTMLElement {
-  return root.querySelector<HTMLElement>(`[data-section="${key}"]`)!.closest<HTMLElement>(".admin-section")!;
+  return root.querySelector<HTMLElement>(`[data-collapsible-key="${key}"]`)!.closest<HTMLElement>(".collapsible-section")!;
 }
 
 function toggleOf(root: HTMLElement, key: string): HTMLButtonElement {
-  return root.querySelector<HTMLButtonElement>(`[data-section="${key}"]`)!;
+  return root.querySelector<HTMLButtonElement>(`[data-collapsible-key="${key}"]`)!;
 }

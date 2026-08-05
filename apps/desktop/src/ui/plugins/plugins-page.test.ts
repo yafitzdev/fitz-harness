@@ -13,14 +13,14 @@ function buildPage(): HTMLElement {
     actions: [{ id: "refresh-plugins", icon: managementRefreshIcon, label: "Refresh packages" }],
   });
   const installed = document.createElement("section");
-  installed.className = "plugin-section";
-  installed.innerHTML = '<button id="installed-plugins-toggle" type="button" aria-expanded="true"></button><div id="installed-plugins" class="plugin-grid"></div>';
+  installed.className = "collapsible-section";
+  installed.innerHTML = '<div class="collapsible-heading"><button class="collapsible-toggle" id="installed-plugins-toggle" type="button" data-collapsible-key="installed" aria-expanded="true"><h2>Installed</h2></button></div><div class="collapsible-body"><div id="installed-plugins" class="plugin-grid"></div></div>';
   const discover = document.createElement("section");
-  discover.className = "plugin-section";
-  discover.innerHTML = '<button id="plugin-catalog-toggle" type="button" aria-expanded="true"></button><div id="plugin-catalog" class="plugin-grid"></div><button id="load-more-plugins" type="button" hidden>Load more</button>';
+  discover.className = "collapsible-section";
+  discover.innerHTML = '<div class="collapsible-heading"><button class="collapsible-toggle" id="plugin-catalog-toggle" type="button" data-collapsible-key="discover" aria-expanded="true"><h2>Discover</h2></button></div><div class="collapsible-body"><div id="plugin-catalog" class="plugin-grid"></div><button id="load-more-plugins" type="button" hidden>Load more</button></div>';
   const skills = document.createElement("section");
-  skills.className = "plugin-section";
-  skills.innerHTML = '<div id="installed-skills" class="plugin-grid"></div>';
+  skills.className = "collapsible-section";
+  skills.innerHTML = '<div class="collapsible-heading"><h2>Installed</h2></div><div id="installed-skills" class="plugin-grid"></div>';
   layout.addContent({
     id: "plugins-view",
     title: "Plugins",
@@ -135,7 +135,7 @@ describe("PluginsPageController", () => {
     const { page } = setup(vi.fn(async () => ({ data: {} })));
 
     const installedToggle = page.querySelector<HTMLButtonElement>("#installed-plugins-toggle")!;
-    const installedSection = installedToggle.closest(".plugin-section")!;
+    const installedSection = installedToggle.closest(".collapsible-section")!;
     click(installedToggle);
     expect(installedSection.classList.contains("collapsed")).toBe(true);
     expect(installedToggle.getAttribute("aria-expanded")).toBe("false");
@@ -145,7 +145,7 @@ describe("PluginsPageController", () => {
 
     const catalogToggle = page.querySelector<HTMLButtonElement>("#plugin-catalog-toggle")!;
     click(catalogToggle);
-    expect(catalogToggle.closest(".plugin-section")?.classList.contains("collapsed")).toBe(true);
+    expect(catalogToggle.closest(".collapsible-section")?.classList.contains("collapsed")).toBe(true);
   });
 
   it("fails loudly when the page is missing a required catalog control", () => {
