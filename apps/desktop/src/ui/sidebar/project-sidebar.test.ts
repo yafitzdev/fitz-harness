@@ -10,6 +10,9 @@ function element<T extends HTMLElement>(tag: string, id?: string): T {
   return value;
 }
 
+/** Flushes microtasks plus the next macrotask so commit callbacks settle. */
+const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
 function setup() {
   // The controller resolves its own elements from the shell by id, so the test
   // document must mirror the static markup in renderer/index.html.
@@ -30,7 +33,7 @@ function setup() {
   const menuElement = element<HTMLElement>("div", "sidebar-context-menu");
   menuElement.hidden = true;
   const calls = {
-    selectProject: vi.fn(), selectSession: vi.fn(), newChat: vi.fn(), openProjectPath: vi.fn(), createWorktree: vi.fn(), editProject: vi.fn(), archiveProjectChats: vi.fn(), removeProject: vi.fn(), renameSession: vi.fn(), archiveSession: vi.fn(), copyValue: vi.fn(), continueSession: vi.fn(), closePopovers: vi.fn(),
+    selectProject: vi.fn(), selectSession: vi.fn(), newChat: vi.fn(), openProjectPath: vi.fn(), createWorktree: vi.fn(), archiveProjectChats: vi.fn(), removeProject: vi.fn(), renameSession: vi.fn(), renameProject: vi.fn(), createProject: vi.fn(), chooseFolder: vi.fn(async () => undefined), archiveSession: vi.fn(), copyValue: vi.fn(), continueSession: vi.fn(), closePopovers: vi.fn(),
   };
   const controller = new ProjectSidebarController({ mount: tree, ...calls });
   const elements: ProjectSidebarElements = {
@@ -54,6 +57,14 @@ function state(): ProjectSidebarState {
 }
 
 function click(target: Element): void { target.dispatchEvent(new MouseEvent("click", { bubbles: true })); }
+
+function keydown(target: Element, key: string): void { target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })); }
+
+function menuButton(menuElement: HTMLElement, label: string): HTMLButtonElement {
+  const button = [...menuElement.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes(label));
+  if (!button) throw new Error(`No menu item "${label}"`);
+  return button;
+}
 
 function createMemoryStorage(): Storage {
   const values = new Map<string, string>();
@@ -106,20 +117,22 @@ describe("ProjectSidebarController", () => {
     expect(calls.selectSession).toHaveBeenCalledWith("a1", "alpha");
   });
 
-  it("persists unread state through the task menu and restores its indicator", () => {
+  it("shows a filled pin indicator on pinned chat rows and sorts them first", () => {
     const { controller, elements, menuElement } = setup();
     controller.ensureExpanded("alpha");
     controller.render(state());
-    const sessionItem = elements.tree.querySelector(".task-row")!.closest(".tree-item")!;
-    click(sessionItem.querySelector(".tree-menu-toggle")!);
-    const unread = [...menuElement.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("Mark as unread"));
-    expect(unread).toBeDefined();
-    click(unread!);
+    const sessionItems = [...elements.tree.querySelectorAll<HTMLElement>(".task-row")].map((row) => row.closest(".tree-item")!);
+    click(sessionItems[1]!.querySelector(".tree-menu-toggle")!);
+    const pin = menuButton(menuElement, "Pin chat");
+    click(pin);
 
-    expect(JSON.parse(localStorage.getItem("fitz-unread-sessions") ?? "[]")).toContain("a1");
-    expect(elements.tree.querySelector(".task-row .activity-dot")).not.toBeNull();
-    expect(controller.markSessionRead("a1")).toBe(true);
-    expect(JSON.parse(localStorage.getItem("fitz-unread-sessions") ?? "[]")).not.toContain("a1");
+    const rows = elements.tree.querySelectorAll<HTMLElement>(".task-row");
+    expect(rows).toHaveLength(3);
+    expect(rows[0]!.textContent).toContain("Second chat");
+    const indicator = rows[0]!.querySelector(".pin-indicator");
+    expect(indicator).not.toBeNull();
+    expect(indicator!.getAttribute("aria-label")).toBe("Pinned");
+    expect(rows[1]!.querySelector(".pin-indicator")).toBeNull();
   });
 
   it("fills project and chat hover cards and exposes project actions", () => {
@@ -141,6 +154,132 @@ describe("ProjectSidebarController", () => {
     expect(elements.chatHoverCard.hidden).toBe(false);
     expect(elements.chatHoverTitle.textContent).toBe("First chat");
     expect(elements.chatHoverProject.textContent).toBe("Alpha");
+  });
+
+  it("renames a chat inline from the context menu, committing on Enter", async () => {
+    const { controller, elements, menuElement, calls } = setup();
+    controller.ensureExpanded("alpha");
+    controller.render(state());
+    const sessionItem = elements.tree.querySelector(".task-row")!.closest(".tree-item")!;
+    click(sessionItem.querySelector(".tree-menu-toggle")!);
+    click(menuButton(menuElement, "Rename chat"));
+
+    const input = elements.tree.querySelector<HTMLInputElement>(".tree-rename-input")!;
+    expect(input).not.toBeNull();
+    expect(input.value).toBe("First chat");
+
+    input.value = "Renamed chat";
+    keydown(input, "Enter");
+    await flush();
+
+    expect(calls.renameSession).toHaveBeenCalledWith("a1", "alpha", "Renamed chat");
+    expect(elements.tree.querySelector(".tree-rename-input")).toBeNull();
+  });
+
+  it("cancels an inline rename on Escape without committing", () => {
+    const { controller, elements, menuElement, calls } = setup();
+    controller.ensureExpanded("alpha");
+    controller.render(state());
+    const sessionItem = elements.tree.querySelector(".task-row")!.closest(".tree-item")!;
+    click(sessionItem.querySelector(".tree-menu-toggle")!);
+    click(menuButton(menuElement, "Rename chat"));
+
+    keydown(elements.tree.querySelector(".tree-rename-input")!, "Escape");
+
+    expect(calls.renameSession).not.toHaveBeenCalled();
+    expect(elements.tree.querySelector(".tree-rename-input")).toBeNull();
+  });
+
+  it("begins renaming the selected session via the public API", () => {
+    const { controller, elements } = setup();
+    controller.ensureExpanded("alpha");
+    controller.render(state());
+
+    controller.beginRenameCurrentSession();
+
+    const input = elements.tree.querySelector<HTMLInputElement>(".tree-rename-input")!;
+    expect(input.value).toBe("First chat");
+  });
+
+  it("renames a project inline from the hover card", async () => {
+    const { controller, elements, calls } = setup();
+    controller.ensureExpanded("alpha");
+    controller.render(state());
+    const projectItem = elements.tree.querySelector(".project-row")!.closest(".tree-item")!;
+    projectItem.dispatchEvent(new MouseEvent("mouseenter"));
+    click(elements.projectHoverEdit);
+
+    const input = elements.tree.querySelector<HTMLInputElement>(".tree-rename-input")!;
+    expect(input.value).toBe("Alpha");
+    input.value = "Alpha Plus";
+    keydown(input, "Enter");
+    await flush();
+
+    expect(calls.renameProject).toHaveBeenCalledWith("alpha", "Alpha Plus");
+  });
+
+  it("shows the inline create-project form and commits with the chosen folder", async () => {
+    const { controller, elements, calls } = setup();
+    calls.chooseFolder.mockResolvedValue("/home/user/my-app");
+    controller.render(state());
+
+    controller.beginCreateProject();
+    expect(elements.tree.querySelector(".tree-create-form")).not.toBeNull();
+
+    click(elements.tree.querySelector(".tree-create-folder")!);
+    await flush();
+    const folderLabel = elements.tree.querySelector<HTMLElement>(".tree-create-folder span")!;
+    expect(folderLabel.textContent).toBe("/home/user/my-app");
+
+    const name = elements.tree.querySelector<HTMLInputElement>(".tree-create-name")!;
+    expect(name.value).toBe("my-app");
+    click(elements.tree.querySelector(".tree-form-submit")!);
+    await flush();
+
+    expect(calls.createProject).toHaveBeenCalledWith("my-app", "/home/user/my-app");
+    expect(elements.tree.querySelector(".tree-create-form")).toBeNull();
+  });
+
+  it("cancels the create form and keeps the tree intact", () => {
+    const { controller, elements } = setup();
+    controller.render(state());
+
+    controller.beginCreateProject();
+    click(elements.tree.querySelector(".tree-form-cancel")!);
+
+    expect(elements.tree.querySelector(".tree-create-form")).toBeNull();
+    expect(elements.tree.querySelectorAll(".project-group")).toHaveLength(2);
+  });
+
+  it("confirms project removal inline and commits on the danger button", async () => {
+    const { controller, elements, menuElement, calls } = setup();
+    controller.ensureExpanded("alpha");
+    controller.render(state());
+    const projectItem = elements.tree.querySelector(".project-row")!.closest(".tree-item")!;
+    click(projectItem.querySelector(".tree-menu-toggle")!);
+    click(menuButton(menuElement, "Remove"));
+
+    const confirmRow = elements.tree.querySelector<HTMLElement>(".tree-confirm-row")!;
+    expect(confirmRow.textContent).toContain('Remove "Alpha" and its chats?');
+    click(confirmRow.querySelector(".tree-form-danger")!);
+    await flush();
+
+    expect(calls.removeProject).toHaveBeenCalledWith("alpha");
+    expect(elements.tree.querySelector(".tree-confirm-row")).toBeNull();
+  });
+
+  it("cancels removal from the confirm row", () => {
+    const { controller, elements, menuElement, calls } = setup();
+    controller.ensureExpanded("alpha");
+    controller.render(state());
+    const projectItem = elements.tree.querySelector(".project-row")!.closest(".tree-item")!;
+    click(projectItem.querySelector(".tree-menu-toggle")!);
+    click(menuButton(menuElement, "Remove"));
+
+    click(elements.tree.querySelector(".tree-confirm-cancel")!);
+
+    expect(calls.removeProject).not.toHaveBeenCalled();
+    expect(elements.tree.querySelector(".tree-confirm-row")).toBeNull();
   });
 
   it("hides the context menu and hover overlays through the public API", () => {
@@ -165,7 +304,7 @@ describe("ProjectSidebarController", () => {
     // #project-hover-card is intentionally omitted.
     const options: ProjectSidebarOptions = {
       mount: tree,
-      selectProject: vi.fn(), selectSession: vi.fn(), newChat: vi.fn(), openProjectPath: vi.fn(), createWorktree: vi.fn(), editProject: vi.fn(), archiveProjectChats: vi.fn(), removeProject: vi.fn(), renameSession: vi.fn(), archiveSession: vi.fn(), copyValue: vi.fn(), continueSession: vi.fn(), closePopovers: vi.fn(),
+      selectProject: vi.fn(), selectSession: vi.fn(), newChat: vi.fn(), openProjectPath: vi.fn(), createWorktree: vi.fn(), archiveProjectChats: vi.fn(), removeProject: vi.fn(), renameSession: vi.fn(), renameProject: vi.fn(), createProject: vi.fn(), chooseFolder: vi.fn(async () => undefined), archiveSession: vi.fn(), copyValue: vi.fn(), continueSession: vi.fn(), closePopovers: vi.fn(),
     };
     expect(() => new ProjectSidebarController(options)).toThrow("Missing #project-hover-card");
   });

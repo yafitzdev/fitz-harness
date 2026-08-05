@@ -61,7 +61,6 @@ describe("desktop renderer shell", () => {
       "context-toggle",
       "context-add",
       "add-artifact",
-      "choose-project-folder",
       "task-info-toggle",
       "task-menu-toggle",
       "rename-task",
@@ -89,17 +88,12 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("taskInfo.hidden = true");
   });
 
-  it("uses accessible dialogs and avoids blocking browser prompts", () => {
-    expect(html).toContain('<dialog id="project-dialog"');
-    expect(html).toContain('<dialog id="task-dialog"');
-    expect(html).toContain('<dialog id="rename-dialog"');
-    expect(html).toContain('<dialog id="remove-project-dialog"');
+  it("uses inline sidebar editing and avoids blocking dialogs or browser prompts", () => {
+    expect(html).not.toContain("<dialog");
     expect(html).toContain('id="management-editor"');
     expect(html).toContain('id="engine-form" class="management-editor-form"');
     expect(html).toContain('id="recipe-form" class="management-editor-form"');
     expect(html).not.toContain('id="route-form"');
-    expect(html).not.toContain('<dialog id="recipe-dialog"');
-    expect(html).not.toContain('<dialog id="route-dialog"');
     expect(renderer).not.toContain("window.prompt(");
     expect(renderer).not.toContain("window.alert(");
   });
@@ -272,7 +266,7 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('connectionStatus.addEventListener("click"');
     expect(renderer).toContain("artifactFile.click()");
     expect(renderer).toContain('api(`/api/v1/artifacts/${artifact.id}`, "DELETE")');
-    expect(projects).toContain("this.options.bridge.chooseFolder()");
+    expect(projectSidebar).toContain("this.#options.chooseFolder()");
     expect(projects).toContain("this.options.bridge.openPath(path)");
     expect(renderer).toContain("window.fitz.copyText(value)");
     expect(renderer).toContain("new ResizablePane({");
@@ -563,7 +557,7 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('id="hover-project-edit"');
     expect(projectSidebar).toContain("this.#showProjectHover(project, projectItem)");
     expect(projectSidebar).toContain("this.#state.sessionsByProject.get(project.id)");
-    expect(projectSidebar).toContain("options.editProject(this.#hoveredProjectId)");
+    expect(projectSidebar).toContain('this.#beginEdit("project", this.#hoveredProjectId)');
   });
 
   it("matches the project hover controls and menu actions", () => {

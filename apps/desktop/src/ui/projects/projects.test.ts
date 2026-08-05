@@ -1,56 +1,9 @@
 // @vitest-environment happy-dom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ProjectsController, type ProjectsElements, type ProjectsOptions } from "./projects.js";
-
-// happy-dom does not ship the global `Option` constructor used by the task
-// dialog; polyfill it with real option elements so select.add() and value
-// binding behave like the browser.
-if (typeof globalThis.Option === "undefined") {
-  (globalThis as any).Option = function Option(this: HTMLOptionElement, text = "", value?: string, defaultSelected = false, selected = false) {
-    const option = document.createElement("option");
-    option.text = text;
-    if (value !== undefined) option.value = value;
-    option.defaultSelected = defaultSelected;
-    option.selected = selected;
-    return option;
-  };
-}
+import { ProjectsController, type ProjectsOptions } from "./projects.js";
 
 type Json = Record<string, any>;
-
-function buildElements(): ProjectsElements {
-  const projectDialog = document.createElement("dialog");
-  const projectForm = document.createElement("form");
-  const projectName = document.createElement("input");
-  const projectRootPath = document.createElement("input");
-  const projectFolderLabel = document.createElement("span");
-  const chooseProjectFolder = document.createElement("button");
-  const taskDialog = document.createElement("dialog");
-  const taskForm = document.createElement("form");
-  const taskProject = document.createElement("select");
-  const taskName = document.createElement("input");
-  const renameDialog = document.createElement("dialog");
-  const renameForm = document.createElement("form");
-  const renameTaskName = document.createElement("input");
-  const renameHeading = document.createElement("h2");
-  const renameLabel = document.createElement("label");
-  const removeProjectDialog = document.createElement("dialog");
-  const removeProjectForm = document.createElement("form");
-  const removeProjectName = document.createElement("span");
-  document.body.append(
-    projectDialog, projectForm, projectName, projectRootPath, projectFolderLabel, chooseProjectFolder,
-    taskDialog, taskForm, taskProject, taskName,
-    renameDialog, renameForm, renameTaskName, renameHeading, renameLabel,
-    removeProjectDialog, removeProjectForm, removeProjectName,
-  );
-  return {
-    projectDialog, projectForm, projectName, projectRootPath, projectFolderLabel, chooseProjectFolder,
-    taskDialog, taskForm, taskProject, taskName,
-    renameDialog, renameForm, renameTaskName, renameHeading, renameLabel,
-    removeProjectDialog, removeProjectForm, removeProjectName,
-  };
-}
 
 /** A small in-memory host: mutates on POST/PATCH/DELETE so reloads observe changes. */
 function fakeApi(initial: { projects: Json[]; sessions: Record<string, Json[]> }) {
@@ -98,14 +51,12 @@ function fakeApi(initial: { projects: Json[]; sessions: Record<string, Json[]> }
 }
 
 function setup(initial?: { projects: Json[]; sessions: Record<string, Json[]> }) {
-  const elements = buildElements();
   const api = fakeApi(initial ?? { projects: [], sessions: {} });
-  const bridge = { chooseFolder: vi.fn(async () => undefined), openPath: vi.fn(async () => {}) };
+  const bridge = { openPath: vi.fn(async () => {}) };
   const calls = {
     sidebar: {
       ensureExpanded: vi.fn(),
       hasExpandedProjects: vi.fn(() => false),
-      markSessionRead: vi.fn(),
       removeProjectState: vi.fn(),
     },
     showToast: vi.fn(),
@@ -116,12 +67,11 @@ function setup(initial?: { projects: Json[]; sessions: Record<string, Json[]> })
     renderTree: vi.fn(),
     refreshComposerState: vi.fn(),
     rememberLocation: vi.fn(),
-    onStartNewChat: vi.fn(),
     onSessionSelected: vi.fn(async () => {}),
     onNoSession: vi.fn(async () => {}),
   };
-  const controller = new ProjectsController({ api, bridge, elements, ...calls } satisfies ProjectsOptions);
-  return { controller, elements, api, bridge, calls };
+  const controller = new ProjectsController({ api, bridge, ...calls } satisfies ProjectsOptions);
+  return { controller, api, bridge, calls };
 }
 
 beforeEach(() => document.body.replaceChildren());
@@ -180,94 +130,54 @@ describe("ProjectsController", () => {
     expect(calls.onNoSession).toHaveBeenCalledTimes(2);
   });
 
-  it("creates a project and starts a new chat when one was pending", async () => {
-    const { controller, elements, api, calls } = setup();
+  it("creates a project, resolves true, and selects it", async () => {
+    const { controller, api, calls } = setup();
 
-    controller.openProjectDialog(true);
-    expect(elements.projectDialog.hasAttribute("open")).toBe(true);
+    const created = await controller.createProject("My Project", "/home/user/my-project");
 
-    elements.projectName.value = "My Project";
-    elements.projectRootPath.value = "/home/user/my-project";
-    await controller.createProject();
-
+    expect(created).toBe(true);
     expect(api).toHaveBeenCalledWith("/api/v1/projects", "POST", { name: "My Project", rootPath: "/home/user/my-project" });
-    expect(elements.projectDialog.hasAttribute("open")).toBe(false);
     expect(calls.showToast).toHaveBeenCalledWith("Created My Project");
-    expect(calls.onStartNewChat).toHaveBeenCalledOnce();
     expect(controller.currentProjectId).toBe("project-new");
     expect(controller.activeProject()?.name).toBe("My Project");
   });
 
-  it("fills the task dialog project select and opens it", async () => {
-    const { controller, elements } = setup({
-      projects: [{ id: "project-a", name: "Alpha" }, { id: "project-b", name: "Beta" }],
-      sessions: { "project-a": [], "project-b": [] },
-    });
-    await controller.load();
+  it("creates a project without a root path and resolves false on failure", async () => {
+    const { controller, api, calls } = setup();
+    api.mockRejectedValueOnce(new Error("boom"));
 
-    controller.openTaskDialog();
+    const created = await controller.createProject("My Project");
 
-    expect(elements.taskProject.options).toHaveLength(2);
-    expect(elements.taskProject.value).toBe("project-a");
-    expect(elements.taskDialog.hasAttribute("open")).toBe(true);
+    expect(created).toBe(false);
+    expect(calls.showToast).toHaveBeenCalledWith("boom");
   });
 
-  it("creates a session in the chosen project and selects it", async () => {
-    const { controller, elements, api, calls } = setup({
-      projects: [{ id: "project-a", name: "Alpha" }],
-      sessions: { "project-a": [] },
-    });
-    await controller.load();
-
-    elements.taskProject.add(new Option("Alpha", "project-a", false, true));
-    elements.taskName.value = "New chat";
-    await controller.createSession();
-
-    expect(api).toHaveBeenCalledWith("/api/v1/projects/project-a/sessions", "POST", { title: "New chat", routeId: "default" });
-    expect(controller.currentSessionId).toBe("session-new");
-    expect(controller.sessionsByProject.get("project-a")?.[0]?.title).toBe("New chat");
-    expect(elements.taskDialog.hasAttribute("open")).toBe(false);
-    expect(calls.showToast).toHaveBeenCalledWith("Started New chat");
-  });
-
-  it("renames the current session through the shared dialog", async () => {
-    const { controller, elements, api, calls } = setup({
+  it("renames a session and reloads it into the tree", async () => {
+    const { controller, api, calls } = setup({
       projects: [{ id: "project-a", name: "Alpha" }],
       sessions: { "project-a": [{ id: "session-1", title: "Old title" }] },
     });
     await controller.load();
 
-    controller.openRenameDialog();
-    expect(elements.renameHeading.textContent).toBe("Rename chat");
-    expect(elements.renameLabel.textContent).toBe("Chat title");
-    expect(elements.renameTaskName.value).toBe("Old title");
-    expect(elements.renameDialog.hasAttribute("open")).toBe(true);
-
-    elements.renameTaskName.value = "Renamed title";
-    await controller.renameCurrentTask();
+    await controller.renameSession("session-1", "project-a", "Renamed title");
 
     expect(api).toHaveBeenCalledWith("/api/v1/sessions/session-1", "PATCH", { title: "Renamed title" });
-    expect(elements.renameDialog.hasAttribute("open")).toBe(false);
     expect(calls.showToast).toHaveBeenCalledWith("Renamed to Renamed title");
     expect(controller.currentSessionRecord()?.title).toBe("Renamed title");
   });
 
-  it("renames a project through the same dialog", async () => {
-    const { controller, elements, api } = setup({
+  it("renames a project and keeps the active selection", async () => {
+    const { controller, api } = setup({
       projects: [{ id: "project-a", name: "Alpha" }],
-      sessions: { "project-a": [] },
+      sessions: { "project-a": [{ id: "session-1", title: "Chat" }] },
     });
     await controller.load();
 
-    controller.openProjectRenameDialog("project-a");
-    expect(elements.renameHeading.textContent).toBe("Rename project");
-    expect(elements.renameTaskName.value).toBe("Alpha");
-
-    elements.renameTaskName.value = "Alpha Plus";
-    await controller.renameCurrentTask();
+    await controller.renameProject("project-a", "Alpha Plus");
 
     expect(api).toHaveBeenCalledWith("/api/v1/projects/project-a", "PATCH", { name: "Alpha Plus" });
     expect(controller.activeProject()?.name).toBe("Alpha Plus");
+    expect(controller.currentSessionId).toBe("session-1");
   });
 
   it("archives the current session and lands on the project", async () => {
@@ -286,21 +196,16 @@ describe("ProjectsController", () => {
   });
 
   it("removes a project and clears its sidebar state", async () => {
-    const { controller, elements, api, calls } = setup({
+    const { controller, api, calls } = setup({
       projects: [{ id: "project-a", name: "Alpha" }],
       sessions: { "project-a": [{ id: "session-1", title: "Chat" }] },
     });
     await controller.load();
 
-    controller.openRemoveProjectDialog("project-a");
-    expect(elements.removeProjectName.textContent).toBe("Alpha");
-    expect(elements.removeProjectDialog.hasAttribute("open")).toBe(true);
-
-    await controller.removeProject();
+    await controller.removeProject("project-a");
 
     expect(api).toHaveBeenCalledWith("/api/v1/projects/project-a", "DELETE");
     expect(calls.sidebar.removeProjectState).toHaveBeenCalledWith("project-a");
-    expect(elements.removeProjectDialog.hasAttribute("open")).toBe(false);
     expect(controller.currentProjectId).toBeUndefined();
     expect(calls.showToast).toHaveBeenCalledWith("Project removed");
   });
@@ -331,32 +236,6 @@ describe("ProjectsController", () => {
     expect(controller.currentSessionId).toBe("session-new");
     expect(controller.sessionsByProject.get("project-a")?.[0]?.id).toBe("session-new");
     expect(calls.renderTree).toHaveBeenCalled();
-  });
-
-  it("fills the project dialog from a chosen folder", async () => {
-    const { controller, elements, bridge } = setup();
-    bridge.chooseFolder.mockResolvedValue("/home/user/my-app");
-
-    await controller.selectProjectFolder();
-
-    expect(elements.projectRootPath.value).toBe("/home/user/my-app");
-    expect(elements.projectFolderLabel.textContent).toBe("/home/user/my-app");
-    expect(elements.chooseProjectFolder.classList.contains("has-folder")).toBe(true);
-    expect(elements.projectName.value).toBe("my-app");
-  });
-
-  it("updates a project's source folder through the bridge", async () => {
-    const { controller, bridge, api, calls } = setup({
-      projects: [{ id: "project-a", name: "Alpha" }],
-      sessions: { "project-a": [{ id: "session-1", title: "Chat" }] },
-    });
-    await controller.load();
-    bridge.chooseFolder.mockResolvedValue("/new/path");
-
-    await controller.editProjectFolder("project-a");
-
-    expect(api).toHaveBeenCalledWith("/api/v1/projects/project-a", "PATCH", { rootPath: "/new/path" });
-    expect(calls.showToast).toHaveBeenCalledWith("Source folder updated");
   });
 
   it("opens a project path through the bridge", async () => {

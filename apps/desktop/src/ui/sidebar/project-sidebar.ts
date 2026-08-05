@@ -46,13 +46,21 @@ export interface ProjectSidebarOptions {
   newChat: (projectId: string) => void;
   openProjectPath: (path: string) => void;
   createWorktree: (projectId: string) => void;
-  editProject: (projectId: string) => void;
   archiveProjectChats: (projectId: string) => void;
-  removeProject: (projectId: string) => void;
-  renameSession: (sessionId: string, projectId: string) => void;
+  removeProject: (projectId: string) => Promise<void> | void;
+  renameSession: (sessionId: string, projectId: string, title: string) => Promise<void> | void;
+  renameProject: (projectId: string, name: string) => Promise<void> | void;
+  createProject: (name: string, rootPath: string | undefined) => Promise<void> | void;
+  chooseFolder: () => Promise<string | undefined>;
   archiveSession: (sessionId: string, projectId: string) => void;
   copyValue: (value: string, message: string) => void;
   continueSession: (session: ProjectSidebarSession, projectId: string) => void;
+}
+
+interface SidebarEdit {
+  kind: "session" | "project";
+  id: string;
+  projectId: string | undefined;
 }
 
 /** Owns the project/session tree, its persistent presentation state, menus, and hover cards. */
@@ -63,11 +71,13 @@ export class ProjectSidebarController {
   readonly #menuElement: HTMLElement;
   readonly #pinnedProjects = this.#storedSet("fitz-pinned-projects");
   readonly #pinnedSessions = this.#storedSet("fitz-pinned-sessions");
-  readonly #unreadSessions = this.#storedSet("fitz-unread-sessions");
   readonly #expandedProjects = this.#storedSet("fitz-expanded-projects");
   #state: ProjectSidebarState = { projects: [], sessionsByProject: new Map(), currentProjectId: undefined, currentSessionId: undefined, newChat: false };
   #hoveredProjectId: string | undefined;
   #projectHoverHideTimer: ReturnType<typeof setTimeout> | undefined;
+  #editing: SidebarEdit | undefined;
+  #creatingProject: { rootPath?: string } | undefined;
+  #confirmingRemoval: { projectId: string; name: string } | undefined;
 
   constructor(options: ProjectSidebarOptions) {
     this.#options = options;
@@ -102,7 +112,7 @@ export class ProjectSidebarController {
       if (path) options.openProjectPath(path);
     });
     elements.projectHoverEdit.addEventListener("click", () => {
-      if (this.#hoveredProjectId) options.editProject(this.#hoveredProjectId);
+      if (this.#hoveredProjectId) this.#beginEdit("project", this.#hoveredProjectId);
     });
   }
 
@@ -110,13 +120,37 @@ export class ProjectSidebarController {
     this.#state = state;
     const tree = this.#elements.tree;
     tree.replaceChildren();
+    if (this.#creatingProject) tree.append(this.#createProjectForm());
     if (state.projects.length === 0) {
       tree.append(this.#empty("No projects yet"));
       return;
     }
 
     const projects = [...state.projects].sort((left, right) => Number(this.#pinnedProjects.has(right.id)) - Number(this.#pinnedProjects.has(left.id)));
-    for (const project of projects) tree.append(this.#projectGroup(project));
+    for (const project of projects) {
+      if (this.#confirmingRemoval?.projectId === project.id) tree.append(this.#confirmRemoveRow(project));
+      else tree.append(this.#projectGroup(project));
+    }
+  }
+
+  /** Starts the inline create-project form at the top of the tree (toggles it off when already open). */
+  beginCreateProject(): void {
+    if (this.#creatingProject) { this.#creatingProject = undefined; this.render(this.#state); return; }
+    this.#editing = undefined;
+    this.#confirmingRemoval = undefined;
+    this.#creatingProject = {};
+    this.#options.closePopovers();
+    this.render(this.#state);
+    this.#elements.tree.querySelector<HTMLInputElement>(".tree-create-name")?.focus();
+  }
+
+  /** Begins inline rename of the currently selected chat (used by the header menu and shortcut). */
+  beginRenameCurrentSession(): void {
+    const projectId = this.#state.currentProjectId;
+    const sessionId = this.#state.currentSessionId;
+    if (!projectId || !sessionId) return;
+    const session = (this.#state.sessionsByProject.get(projectId) ?? []).find((item) => item.id === sessionId);
+    if (session) this.#beginEdit("session", session.id, projectId);
   }
 
   hasExpandedProjects(): boolean { return this.#expandedProjects.size > 0; }
@@ -125,12 +159,6 @@ export class ProjectSidebarController {
     if (this.#expandedProjects.has(projectId)) return;
     this.#expandedProjects.add(projectId);
     this.#saveSet("fitz-expanded-projects", this.#expandedProjects);
-  }
-
-  markSessionRead(sessionId: string): boolean {
-    const removed = this.#unreadSessions.delete(sessionId);
-    if (removed) this.#saveSet("fitz-unread-sessions", this.#unreadSessions);
-    return removed;
   }
 
   removeProjectState(projectId: string): void {
@@ -167,6 +195,9 @@ export class ProjectSidebarController {
   }
 
   #projectGroup(project: ProjectSidebarProject): HTMLElement {
+    if (this.#editing?.kind === "project" && this.#editing.id === project.id) {
+      return this.#editingRow("project-row", project.name, 80, (value) => this.#commitEdit(value));
+    }
     const expanded = this.#expandedProjects.has(project.id);
     const group = document.createElement("div");
     group.className = "project-group";
@@ -198,14 +229,18 @@ export class ProjectSidebarController {
   }
 
   #sessionItem(session: ProjectSidebarSession, project: ProjectSidebarProject): HTMLElement {
+    if (this.#editing?.kind === "session" && this.#editing.id === session.id) {
+      return this.#editingRow("task-row", session.title, 120, (value) => this.#commitEdit(value));
+    }
     const item = this.#treeItem(session.title, "task-row", undefined, () => this.#options.selectSession(session.id, project.id), (toggle, event) => this.#openMenu("task", session.id, project.id, toggle, event));
     const button = item.querySelector<HTMLButtonElement>(".task-row")!;
     button.classList.toggle("active", session.id === this.#state.currentSessionId);
-    if (this.#unreadSessions.has(session.id)) {
-      const dot = document.createElement("span");
-      dot.className = "activity-dot";
-      dot.setAttribute("aria-label", "Unread");
-      button.append(dot);
+    if (this.#pinnedSessions.has(session.id)) {
+      const pin = svgIcon('<path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path>');
+      pin.classList.add("pin-indicator");
+      pin.setAttribute("role", "img");
+      pin.setAttribute("aria-label", "Pinned");
+      button.append(pin);
     }
     item.addEventListener("mouseenter", () => this.#showChatHover(session, project, item));
     item.addEventListener("mouseleave", () => this.hideChatHover());
@@ -261,10 +296,10 @@ export class ProjectSidebarController {
     menu.add({ label: this.#pinnedProjects.has(projectId) ? "Unpin project" : "Pin project", action: () => this.#toggleStored(this.#pinnedProjects, projectId, "fitz-pinned-projects"), icon: '<path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path>' });
     menu.add({ label: "Open in Explorer", action: () => { if (project.rootPath) this.#options.openProjectPath(project.rootPath); }, icon: '<path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path><path d="M3.5 6.5V4h5l1.5 2"></path>', disabled: !project.rootPath });
     menu.add({ label: "Create permanent worktree", action: () => this.#options.createWorktree(projectId), icon: '<path d="M4 6h8M12 3l3 3-3 3M16 14H8M8 11l-3 3 3 3"></path>', disabled: !project.rootPath });
-    menu.add({ label: "Edit project", action: () => this.#options.editProject(projectId), icon: '<circle cx="10" cy="10" r="3"></circle><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M15.3 4.7l-1.4 1.4M6.1 13.9l-1.4 1.4"></path>' });
+    menu.add({ label: "Edit project", action: () => this.#beginEdit("project", projectId), icon: '<circle cx="10" cy="10" r="3"></circle><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M15.3 4.7l-1.4 1.4M6.1 13.9l-1.4 1.4"></path>' });
     menu.separator();
     menu.add({ label: "Archive chats", action: () => this.#options.archiveProjectChats(projectId), icon: '<rect x="3" y="5" width="14" height="11" rx="2"></rect><path d="M3 8h14M8 11h4"></path>', disabled: sessions.length === 0 });
-    menu.add({ label: "Remove", action: () => this.#options.removeProject(projectId), icon: '<path d="m5 5 10 10M15 5 5 15"></path>' });
+    menu.add({ label: "Remove", action: () => this.#beginRemove(projectId), icon: '<path d="m5 5 10 10M15 5 5 15"></path>' });
   }
 
   #buildSessionMenu(sessionId: string, projectId: string): void {
@@ -273,9 +308,8 @@ export class ProjectSidebarController {
     if (!session) return;
     const menu = this.#menu;
     menu.add({ label: this.#pinnedSessions.has(sessionId) ? "Unpin chat" : "Pin chat", action: () => this.#toggleStored(this.#pinnedSessions, sessionId, "fitz-pinned-sessions"), icon: '<path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path>' });
-    menu.add({ label: "Rename chat", action: () => this.#options.renameSession(sessionId, projectId), icon: '<path d="M4 14.5V17h2.5L15 8.5 11.5 5z"></path><path d="m10.5 6 3.5 3.5"></path>' });
+    menu.add({ label: "Rename chat", action: () => this.#beginEdit("session", sessionId, projectId), icon: '<path d="M4 14.5V17h2.5L15 8.5 11.5 5z"></path><path d="m10.5 6 3.5 3.5"></path>' });
     menu.add({ label: "Archive chat", action: () => this.#options.archiveSession(sessionId, projectId), danger: true, icon: '<rect x="3" y="5" width="14" height="11" rx="2"></rect><path d="M3 8h14M8 11h4"></path>' });
-    menu.add({ label: this.#unreadSessions.has(sessionId) ? "Mark as read" : "Mark as unread", action: () => this.#toggleStored(this.#unreadSessions, sessionId, "fitz-unread-sessions"), icon: '<path d="M4 4.5h12v9H9l-4 3v-3H4z"></path>' });
     if (project?.rootPath) {
       menu.separator();
       menu.add({ label: "Open in Explorer", action: () => this.#options.openProjectPath(project.rootPath!), icon: '<path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path><path d="M3.5 6.5V4h5l1.5 2"></path>' });
@@ -322,6 +356,160 @@ export class ProjectSidebarController {
     const cardBounds = elements.projectHoverCard.getBoundingClientRect();
     elements.projectHoverCard.style.left = `${Math.max(8, Math.min(window.innerWidth - cardBounds.width - 8, bounds.right + 10))}px`;
     elements.projectHoverCard.style.top = `${Math.max(52, Math.min(window.innerHeight - cardBounds.height - 8, bounds.top))}px`;
+  }
+
+  #beginEdit(kind: "session" | "project", id: string, projectId?: string): void {
+    this.#creatingProject = undefined;
+    this.#confirmingRemoval = undefined;
+    this.#editing = { kind, id, projectId };
+    this.#options.closePopovers();
+    this.hideProjectHover();
+    this.render(this.#state);
+    const input = this.#elements.tree.querySelector<HTMLInputElement>(".tree-rename-input");
+    input?.focus();
+    input?.select();
+  }
+
+  #beginRemove(projectId: string): void {
+    const project = this.#project(projectId);
+    if (!project) return;
+    this.#editing = undefined;
+    this.#creatingProject = undefined;
+    this.#confirmingRemoval = { projectId, name: project.name };
+    this.#options.closePopovers();
+    this.render(this.#state);
+    this.#elements.tree.querySelector<HTMLButtonElement>(".tree-confirm-cancel")?.focus();
+  }
+
+  #cancelTransient(): void {
+    if (!this.#editing && !this.#creatingProject && !this.#confirmingRemoval) return;
+    this.#editing = undefined;
+    this.#creatingProject = undefined;
+    this.#confirmingRemoval = undefined;
+    this.render(this.#state);
+  }
+
+  #commitEdit(value: string): void {
+    const editing = this.#editing;
+    if (!editing) return;
+    if (!value) { this.#cancelTransient(); return; }
+    const action = editing.kind === "session" && editing.projectId
+      ? this.#options.renameSession(editing.id, editing.projectId, value)
+      : editing.kind === "project"
+        ? this.#options.renameProject(editing.id, value)
+        : undefined;
+    if (!action) { this.#cancelTransient(); return; }
+    void Promise.resolve(action).then(
+      () => this.#finishEdit(editing),
+      () => this.#finishEdit(editing),
+    );
+  }
+
+  #finishEdit(editing: SidebarEdit): void {
+    if (this.#editing === editing) {
+      this.#editing = undefined;
+      this.render(this.#state);
+    }
+  }
+
+  #commitCreate(name: string): void {
+    const creating = this.#creatingProject;
+    if (!creating) return;
+    if (!name) { this.#cancelTransient(); return; }
+    const action = this.#options.createProject(name, creating.rootPath);
+    void Promise.resolve(action).then(
+      () => { if (this.#creatingProject === creating) { this.#creatingProject = undefined; this.render(this.#state); } },
+      () => { if (this.#creatingProject === creating) { this.#creatingProject = undefined; this.render(this.#state); } },
+    );
+  }
+
+  #commitRemove(projectId: string): void {
+    const confirming = this.#confirmingRemoval;
+    if (!confirming || confirming.projectId !== projectId) return;
+    const action = this.#options.removeProject(projectId);
+    void Promise.resolve(action).then(
+      () => { if (this.#confirmingRemoval === confirming) { this.#confirmingRemoval = undefined; this.render(this.#state); } },
+      () => { if (this.#confirmingRemoval === confirming) { this.#confirmingRemoval = undefined; this.render(this.#state); } },
+    );
+  }
+
+  #editingRow(className: string, initial: string, maxLength: number, commit: (value: string) => void): HTMLElement {
+    const item = document.createElement("div"); item.className = "tree-item tree-editing";
+    const value = document.createElement("div"); value.className = className;
+    value.append(this.#renameInput(initial, maxLength, commit));
+    item.append(value);
+    return item;
+  }
+
+  #renameInput(initial: string, maxLength: number, commit: (value: string) => void): HTMLInputElement {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "tree-rename-input";
+    input.value = initial;
+    input.maxLength = maxLength;
+    input.spellcheck = false;
+    input.setAttribute("aria-label", "Rename");
+    input.addEventListener("click", (event) => event.stopPropagation());
+    input.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      if (event.key === "Enter") { event.preventDefault(); commit(input.value.trim()); }
+      else if (event.key === "Escape") { event.preventDefault(); this.#cancelTransient(); }
+    });
+    input.addEventListener("blur", () => this.#cancelTransient());
+    return input;
+  }
+
+  #createProjectForm(): HTMLElement {
+    const form = document.createElement("div"); form.className = "tree-create-form";
+    const name = document.createElement("input");
+    name.type = "text";
+    name.className = "tree-create-name";
+    name.placeholder = "Project name";
+    name.maxLength = 80;
+    name.spellcheck = false;
+    name.setAttribute("aria-label", "Project name");
+    const folder = document.createElement("button"); folder.type = "button"; folder.className = "tree-create-folder";
+    const folderLabel = document.createElement("span"); folderLabel.textContent = "Add folder";
+    folder.append(folderLabel);
+    folder.addEventListener("click", async () => {
+      const path = await this.#options.chooseFolder();
+      if (!path || !this.#creatingProject) return;
+      this.#creatingProject.rootPath = path;
+      folderLabel.textContent = path;
+      folder.classList.add("has-folder");
+      folder.title = path;
+      if (!name.value.trim()) name.value = path.split(/[\\/]/).filter(Boolean).at(-1) ?? "Project";
+    });
+    const actions = document.createElement("div"); actions.className = "tree-form-actions";
+    const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "tree-form-cancel"; cancel.textContent = "Cancel";
+    const create = document.createElement("button"); create.type = "button"; create.className = "tree-form-submit"; create.textContent = "Create";
+    cancel.addEventListener("click", () => this.#cancelTransient());
+    create.addEventListener("click", () => this.#commitCreate(name.value.trim()));
+    name.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      if (event.key === "Enter") { event.preventDefault(); this.#commitCreate(name.value.trim()); }
+      else if (event.key === "Escape") { event.preventDefault(); this.#cancelTransient(); }
+    });
+    actions.append(cancel, create);
+    form.append(name, folder, actions);
+    return form;
+  }
+
+  #confirmRemoveRow(project: ProjectSidebarProject): HTMLElement {
+    const row = document.createElement("div"); row.className = "tree-confirm-row";
+    const copy = document.createElement("span"); copy.className = "tree-confirm-copy";
+    copy.textContent = `Remove "${project.name}" and its chats?`;
+    const actions = document.createElement("div"); actions.className = "tree-form-actions";
+    const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "tree-form-cancel tree-confirm-cancel"; cancel.textContent = "Cancel";
+    const remove = document.createElement("button"); remove.type = "button"; remove.className = "tree-form-danger"; remove.textContent = "Remove";
+    cancel.addEventListener("click", () => this.#cancelTransient());
+    remove.addEventListener("click", () => this.#commitRemove(project.id));
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") { event.preventDefault(); this.#cancelTransient(); }
+    });
+    actions.append(cancel, remove);
+    row.append(copy, actions);
+    return row;
   }
 
   #toggleStored(values: Set<string>, id: string, key: string): void {

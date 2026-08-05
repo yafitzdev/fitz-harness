@@ -179,41 +179,6 @@
       <button id="hover-project-edit" class="project-hover-action" type="button"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="3"></circle><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M15.3 4.7l-1.4 1.4M6.1 13.9l-1.4 1.4"></path></svg><span>Edit project</span></button>
     </aside>
 
-    <dialog id="project-dialog" class="modal">
-      <form id="project-form">
-        <div class="modal-heading"><div><h2>Create project</h2></div><button class="icon-button" type="button" data-close-dialog="project-dialog" aria-label="Close"><svg viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15"></path></svg></button></div>
-        <label class="project-name-field"><span class="input-icon"><svg viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg></span><input id="project-name" name="name" autocomplete="off" placeholder="Project name" required maxlength="80"></label>
-        <label>Source folder</label>
-        <button id="choose-project-folder" class="folder-picker" type="button"><svg viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path><path d="M15 13h6M18 10v6"></path></svg><span id="project-folder-label">Add a folder Fitz can read and edit</span></button>
-        <input id="project-root-path" name="rootPath" type="hidden">
-        <div class="modal-actions"><button class="quiet-button" type="button" data-close-dialog="project-dialog">Cancel</button><button class="primary-button" type="submit">Create project</button></div>
-      </form>
-    </dialog>
-
-    <dialog id="task-dialog" class="modal">
-      <form id="task-form">
-        <div class="modal-heading"><div><small>New conversation</small><h2>Start a task</h2></div><button class="icon-button" type="button" data-close-dialog="task-dialog" aria-label="Close"><svg viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15"></path></svg></button></div>
-        <label>Project<select id="task-project" name="project" required></select></label>
-        <label>Task title<input id="task-name" name="title" autocomplete="off" placeholder="What are you working on?" required maxlength="120"></label>
-        <div class="modal-actions"><button class="quiet-button" type="button" data-close-dialog="task-dialog">Cancel</button><button class="primary-button" type="submit">Create task</button></div>
-      </form>
-    </dialog>
-
-    <dialog id="rename-dialog" class="modal compact-modal">
-      <form id="rename-form">
-        <div class="modal-heading"><div><h2 id="rename-heading">Rename task</h2></div><button class="icon-button" type="button" data-close-dialog="rename-dialog" aria-label="Close"><svg viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15"></path></svg></button></div>
-        <label><span id="rename-label">Task title</span><input id="rename-task-name" autocomplete="off" required maxlength="120"></label>
-        <div class="modal-actions"><button class="quiet-button" type="button" data-close-dialog="rename-dialog">Cancel</button><button id="rename-submit" class="primary-button" type="submit">Rename</button></div>
-      </form>
-    </dialog>
-    <dialog id="remove-project-dialog" class="modal compact-modal">
-      <form id="remove-project-form">
-        <div class="modal-heading"><div><small>Project</small><h2>Remove project?</h2></div><button class="icon-button" type="button" data-close-dialog="remove-project-dialog" aria-label="Close"><svg viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15"></path></svg></button></div>
-        <p class="dialog-copy">This removes <strong id="remove-project-name"></strong> and its chats from Fitz. Source files are not deleted.</p>
-        <div class="modal-actions"><button class="quiet-button" type="button" data-close-dialog="remove-project-dialog">Cancel</button><button class="danger-button" type="submit">Remove</button></div>
-      </form>
-    </dialog>
-
     <script type="module" src="../renderer.js"></script>
   </body>
 </html>

@@ -35,6 +35,7 @@ let navigationIndex = -1;
 let replayingNavigation = false;
 const navigationHistory: AppLocation[] = [];
 let routeCards: Json[] = [];
+let createProjectThenNewChat = false;
 
 const shell = query(".app-shell");
 const workspaceHeader = query(".workspace-header");
@@ -179,41 +180,22 @@ const projectSidebar = new ProjectSidebarController({
   newChat: openNewChatForProject,
   openProjectPath: (path) => void projects.openProjectPath(path),
   createWorktree: openProjectWorktreeSetup,
-  editProject: (projectId) => void projects.openProjectRenameDialog(projectId),
   archiveProjectChats: (projectId) => void projects.archiveProjectChats(projectId),
-  removeProject: (projectId) => void projects.openRemoveProjectDialog(projectId),
-  renameSession: (sessionId, projectId) => { projects.setCurrentProject(projectId); projects.setCurrentSession(sessionId); projects.openRenameDialog(); },
+  removeProject: (projectId) => void projects.removeProject(projectId),
+  renameSession: (sessionId, projectId, title) => void projects.renameSession(sessionId, projectId, title),
+  renameProject: (projectId, name) => void projects.renameProject(projectId, name),
+  createProject: (name, rootPath) => { void projects.createProject(name, rootPath).then((created) => { if (created && createProjectThenNewChat) { createProjectThenNewChat = false; openNewChat(); } }); },
+  chooseFolder: () => window.fitz.chooseFolder(),
   archiveSession: (sessionId, projectId) => { projects.setCurrentProject(projectId); projects.setCurrentSession(sessionId); void projects.archiveCurrentTask(); },
   copyValue: (value, message) => void copyValue(value, message),
   continueSession: (session, projectId) => void projects.continueInNewChat(session, projectId),
 });
 const projects = new ProjectsController({
   api,
-  bridge: { chooseFolder: () => window.fitz.chooseFolder(), openPath: (path) => window.fitz.openPath(path) },
-  elements: {
-    projectDialog: element("project-dialog") as HTMLDialogElement,
-    projectForm: element("project-form") as HTMLFormElement,
-    projectName: element("project-name") as HTMLInputElement,
-    projectRootPath: element("project-root-path") as HTMLInputElement,
-    projectFolderLabel: element("project-folder-label"),
-    chooseProjectFolder: element("choose-project-folder") as HTMLButtonElement,
-    taskDialog: element("task-dialog") as HTMLDialogElement,
-    taskForm: element("task-form") as HTMLFormElement,
-    taskProject: element("task-project") as HTMLSelectElement,
-    taskName: element("task-name") as HTMLInputElement,
-    renameDialog: element("rename-dialog") as HTMLDialogElement,
-    renameForm: element("rename-form") as HTMLFormElement,
-    renameTaskName: element("rename-task-name") as HTMLInputElement,
-    renameHeading: element("rename-heading"),
-    renameLabel: element("rename-label"),
-    removeProjectDialog: element("remove-project-dialog") as HTMLDialogElement,
-    removeProjectForm: element("remove-project-form") as HTMLFormElement,
-    removeProjectName: element("remove-project-name"),
-  },
+  bridge: { openPath: (path) => window.fitz.openPath(path) },
   sidebar: {
     ensureExpanded: (projectId) => projectSidebar.ensureExpanded(projectId),
     hasExpandedProjects: () => projectSidebar.hasExpandedProjects(),
-    markSessionRead: (sessionId) => projectSidebar.markSessionRead(sessionId),
     removeProjectState: (projectId) => projectSidebar.removeProjectState(projectId),
   },
   showToast,
@@ -224,7 +206,6 @@ const projects = new ProjectsController({
   renderTree,
   refreshComposerState,
   rememberLocation: (location) => rememberLocation(location),
-  onStartNewChat: () => openNewChat(),
   onSessionSelected: async (sessionId) => {
     projectSidebar.hideChatHover();
     composer.controls.resetContextStatus();
@@ -456,12 +437,12 @@ window.fitz.onNavigationCommand((command) => void navigateHistory(command === "b
 document.addEventListener("keydown", (event) => {
   if (event.ctrlKey && event.key.toLowerCase() === "n") { event.preventDefault(); openNewChat(); }
   if (event.ctrlKey && event.key.toLowerCase() === "b") { event.preventDefault(); toggleSidebar(); }
-  if (event.ctrlKey && event.altKey && event.key.toLowerCase() === "r") { event.preventDefault(); projects.openRenameDialog(); }
+  if (event.ctrlKey && event.altKey && event.key.toLowerCase() === "r") { event.preventDefault(); if (shell.classList.contains("sidebar-collapsed")) toggleSidebar(); projectSidebar.beginRenameCurrentSession(); }
   if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "a") { event.preventDefault(); void projects.archiveCurrentTask(); }
   if (event.key === "Escape") { if (playbookWorkspace.editorOpen) playbookWorkspace.closeEditor(); else if (connectionWorkspace.editorOpen) connectionWorkspace.closeEditor(); else closePopovers(); }
 });
 
-element("new-project").addEventListener("click", () => projects.openProjectDialog());
+element("new-project").addEventListener("click", () => projectSidebar.beginCreateProject());
 element("new-session").addEventListener("click", openNewChat);
 element("manage-playbooks").addEventListener("click", () => void openPlaybookPage());
 connectionsButton.addEventListener("click", () => void openConnectionsPage());
@@ -479,7 +460,6 @@ window.addEventListener("fitz:open-resource", (event) => {
 element("context-add").addEventListener("click", chooseArtifact);
 addArtifactButton.addEventListener("click", chooseArtifact);
 artifactFile.addEventListener("change", () => void uploadArtifact());
-projects.elements.chooseProjectFolder.addEventListener("click", () => void projects.selectProjectFolder());
 taskMenuToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(taskMenu, taskMenuToggle); });
 taskMenu.addEventListener("click", (event) => event.stopPropagation());
 taskInfoToggle.addEventListener("click", (event) => {
@@ -496,19 +476,9 @@ element("task-info-uuid").append(createCopyButton({
   title: "Copy session ID",
   className: "icon-button",
 }));
-element("rename-task").addEventListener("click", () => projects.openRenameDialog());
+element("rename-task").addEventListener("click", () => { if (shell.classList.contains("sidebar-collapsed")) toggleSidebar(); projectSidebar.beginRenameCurrentSession(); });
 element("archive-task").addEventListener("click", () => void projects.archiveCurrentTask());
-projects.elements.renameForm.addEventListener("submit", (event) => { event.preventDefault(); void projects.renameCurrentTask(); });
-projects.elements.removeProjectForm.addEventListener("submit", (event) => { event.preventDefault(); void projects.removeProject(); });
-projects.elements.projectForm.addEventListener("submit", (event) => { event.preventDefault(); void projects.createProject(); });
-projects.elements.taskForm.addEventListener("submit", (event) => { event.preventDefault(); void projects.createSession(); });
 pairingForm.addEventListener("submit", (event) => { event.preventDefault(); void pairDevice(); });
-for (const closeButton of document.querySelectorAll<HTMLElement>("[data-close-dialog]")) {
-  closeButton.addEventListener("click", () => {
-    const dialog = document.getElementById(closeButton.dataset.closeDialog ?? "") as HTMLDialogElement | null;
-    dialog?.close();
-  });
-}
 document.addEventListener("click", closePopovers);
 
 async function initialize(): Promise<void> {
@@ -570,7 +540,7 @@ function openNewChat(): void {
   if (agentRuns.active) { showToast("Stop the current response before starting a new chat"); return; }
   showConversationWorkspace();
   inspectorPanel.close();
-  if (projects.projects.length === 0) { projects.openProjectDialog(true); return; }
+  if (projects.projects.length === 0) { createProjectThenNewChat = true; projectSidebar.beginCreateProject(); return; }
   projects.setCurrentProject(projects.currentProjectId ?? projects.projects[0]!.id);
   if (!projects.currentProjectId) return;
   projects.beginNewChat();
@@ -751,7 +721,7 @@ function openAppMenu(name: string, toggle: HTMLButtonElement, event: MouseEvent)
   const edit = (command: "undo" | "redo" | "cut" | "copy" | "paste" | "select-all" | "reload" | "devtools") => () => void window.fitz.editCommand(command);
   if (name === "File") {
     item("New chat", '<path d="M4 4h12v12H4z"></path><path d="M7 10h6M10 7v6"></path>', openNewChat, "Ctrl+N");
-    item("New project", '<path d="M3 6h5l1.5 2H17v8H3z"></path><path d="M3 6V4h5l1.5 2"></path>', () => projects.openProjectDialog());
+    item("New project", '<path d="M3 6h5l1.5 2H17v8H3z"></path><path d="M3 6V4h5l1.5 2"></path>', () => projectSidebar.beginCreateProject());
     separator();
     item("Close window", '<path d="m5 5 10 10M15 5 5 15"></path>', () => void window.fitz.windowAction("close"));
   } else if (name === "Edit") {
@@ -945,7 +915,11 @@ function showLanding(hasTask = false): void {
   landing.append(mark, heading, detail);
   if (!hasTask) {
     const action = document.createElement("button"); action.type = "button"; action.className = "primary-button"; action.textContent = projects.currentProjectId ? "New task" : "Create project";
-    action.addEventListener("click", () => projects.currentProjectId ? openNewChat() : projects.openProjectDialog(true)); landing.append(action);
+    action.addEventListener("click", () => {
+      if (projects.currentProjectId) { openNewChat(); return; }
+      createProjectThenNewChat = true;
+      projectSidebar.beginCreateProject();
+    }); landing.append(action);
   }
   messages.append(landing);
   updateTitles();

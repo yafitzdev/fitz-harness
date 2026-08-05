@@ -103,9 +103,6 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .select-group-label { display: block; padding: 5px 8px 3px; color: var(--codex-text-tertiary); font-size: 9px; }
 .header-actions { display: flex; align-items: center; gap: 6px; }
 .quiet-button { padding: 7px 10px; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer; }
-.dialog-copy { margin: 0 0 18px; color: var(--muted); line-height: 1.5; }
-.dialog-copy strong { color: var(--text); }
-.danger-button { padding: 8px 13px; border-radius: 8px; background: #b33b35; color: white; font-weight: 600; cursor: pointer; }
 
 .messages { position: absolute; top: 50px; bottom: 0; left: 0; width: var(--conversation-viewport); min-height: 0; display: grid; grid-auto-rows: max-content; grid-template-columns: var(--conversation-gutter) minmax(0, var(--conversation-width)) minmax(0, 1fr); align-content: start; overflow-y: auto; padding: 32px 0 calc(var(--composer-height) + 44px); }
 .messages > * { grid-column: 2; }
@@ -222,26 +219,6 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .queue-cancel svg { width: 14px; height: 14px; }
 .panel-empty { padding: 16px 8px; color: var(--subtle); font-size: 12px; text-align: center; }
 
-.modal { width: min(620px, calc(100% - 32px)); padding: 0; border: 1px solid #414440; border-radius: 18px; background: #292b29; color: var(--text); box-shadow: 0 20px 70px rgba(0,0,0,.55); }
-.compact-modal { width: min(430px, calc(100% - 32px)); }
-.modal::backdrop { background: rgba(4,5,4,.64); backdrop-filter: blur(3px); }
-.modal form { display: grid; gap: 17px; padding: 20px; }
-.modal-heading { display: flex; align-items: flex-start; justify-content: space-between; }
-.modal-heading small { color: var(--muted); }
-.modal h2 { margin: 2px 0 0; font-size: 20px; font-weight: 600; letter-spacing: -.02em; }
-.modal label { display: grid; gap: 7px; color: #c9cbc6; font-size: 12px; }
-.modal input, .modal select { width: 100%; padding: 10px 11px; border: 1px solid var(--border); border-radius: 8px; outline: 0; background: #181a18; color: var(--text); }
-.modal input:focus, .modal select:focus { border-color: #5a5e58; }
-.project-name-field { position: relative; }
-.project-name-field input { padding-left: 44px; min-height: 50px; font-size: 15px; }
-.input-icon { position: absolute; z-index: 1; left: 14px; top: 16px; color: var(--muted); }
-.folder-picker { min-height: 128px; display: grid; place-content: center; justify-items: center; gap: 12px; padding: 20px; border: 1px solid #454844; border-radius: 12px; background: #2d2f2d; color: #e1e2dd; cursor: pointer; }
-.folder-picker:hover { background: #323532; border-color: #595d57; }
-.folder-picker svg { width: 26px; height: 26px; color: var(--muted); }
-.folder-picker.has-folder { place-content: center start; justify-items: start; min-height: 74px; }
-.folder-picker.has-folder span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.form-help { margin: -7px 0 0; color: var(--muted); font-size: 12px; }
-.modal-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 2px; }
 .pairing-page { display: grid; place-items: center; padding: 48px 24px; }
 .pairing-content { width: min(520px, 100%); }
 .pairing-mark { width: 42px; height: 42px; display: grid; place-items: center; margin-bottom: 20px; border-radius: 13px; background: var(--codex-gray-800); color: var(--codex-text-secondary); }
