@@ -62,6 +62,7 @@ describe("desktop renderer shell", () => {
       "context-add",
       "add-artifact",
       "choose-project-folder",
+      "task-info-toggle",
       "task-menu-toggle",
       "rename-task",
       "archive-task",
@@ -75,6 +76,17 @@ describe("desktop renderer shell", () => {
       expect(composer, `missing composer control #${id}`).toContain(`id="${id}"`);
       expect(composer, `missing composer binding for #${id}`).toContain(`this.el<HTMLButtonElement>("#${id}")`);
     }
+  });
+
+  it("exposes the active session UUID in a chat info popover", () => {
+    for (const id of ["task-info-toggle", "task-info", "task-info-title", "task-info-id", "task-info-uuid", "task-info-project", "task-info-created"]) {
+      expect(html, `missing control #${id}`).toContain(`id="${id}"`);
+      expect(renderer, `missing renderer binding for #${id}`).toContain(`element("${id}")`);
+    }
+    expect(renderer).toContain("populateTaskInfo");
+    expect(renderer).toContain("positionFixedPopover(taskInfo, taskInfoToggle)");
+    expect(renderer).toContain("taskInfoToggle.hidden = !session");
+    expect(renderer).toContain("taskInfo.hidden = true");
   });
 
   it("uses accessible dialogs and avoids blocking browser prompts", () => {
@@ -385,7 +397,7 @@ describe("desktop renderer shell", () => {
     expect(markdown).toContain('window.dispatchEvent(new CustomEvent("fitz:open-resource"');
     expect(markdown).toContain('link.className = "resource-link"');
     expect(markdown).toContain('container.className = "markdown-code"');
-    expect(markdown).toContain('copy.textContent = "Copy"');
+    expect(markdown).toContain("createCopyButton({");
     expect(markdown).toContain('document.createElement("table")');
     expect(styles).toContain(".message-body.markdown h1");
     expect(styles).toContain(".markdown-code pre");
@@ -403,7 +415,7 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("messageActions.attach(article, content");
     expect(renderer).toContain("copyText: (text) => window.fitz.copyText(text)");
     expect(messageActions).toContain("this.#copyButton(content)");
-    expect(messageActions).toContain('button.classList.add("copied")');
+    expect(messageActions).toContain("createCopyButton({");
     expect(messageActions).toContain('this.#actionButton("Edit message"');
     expect(messageActions).toContain('time.className = "message-time"');
     expect(messageActions).toContain("this.#formatTimestamp(createdAt)");

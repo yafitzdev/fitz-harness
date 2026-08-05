@@ -1,3 +1,5 @@
+import { createCopyButton } from "../primitives/copy-button.js";
+
 export type ActionableMessageRole = "user" | "assistant";
 
 export interface MessageActionsOptions {
@@ -74,21 +76,12 @@ export class MessageActions {
   }
 
   #copyButton(content: HTMLElement): HTMLButtonElement {
-    const button = this.#actionButton("Copy message", this.#copyIcon(), () => {
-      void Promise.resolve(this.#options.copyText(content.innerText)).then(() => {
-        button.replaceChildren(this.#checkIcon());
-        button.classList.add("copied");
-        button.title = "Copied";
-        button.setAttribute("aria-label", "Copied");
-        window.setTimeout(() => {
-          button.replaceChildren(this.#copyIcon());
-          button.classList.remove("copied");
-          button.title = "Copy message";
-          button.setAttribute("aria-label", "Copy message");
-        }, 1_200);
-      });
+    return createCopyButton({
+      copyText: this.#options.copyText,
+      value: () => content.innerText,
+      title: "Copy message",
+      className: "message-action",
     });
-    return button;
   }
 
   #textButton(label: string, className: string): HTMLButtonElement {
@@ -114,7 +107,5 @@ export class MessageActions {
     return value;
   }
 
-  #copyIcon(): SVGElement { return this.#icon('<rect x="7" y="7" width="9" height="9" rx="1.6"></rect><path d="M5.8 13.4H5A2 2 0 0 1 3 11.4V5a2 2 0 0 1 2-2h6.4a2 2 0 0 1 2 2v.8"></path>'); }
-  #checkIcon(): SVGElement { return this.#icon('<path d="m4.2 10.1 3.25 3.25 8.35-8.35"></path>'); }
   #editIcon(): SVGElement { return this.#icon('<path d="m4.2 14.8.7-3.2 7.8-7.8a1.45 1.45 0 0 1 2.05 2.05L7 13.65z"></path><path d="m11.7 4.8 2.05 2.05"></path>'); }
 }

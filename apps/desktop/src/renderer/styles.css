@@ -73,8 +73,20 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .workspace-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 #task-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 .task-menu-toggle { flex: 0 0 auto; }
+.task-info-toggle { flex: 0 0 auto; }
 .popover { position: absolute; z-index: 18; padding: 4px; border: 0; border-radius: var(--codex-radius-lg); background: var(--codex-control); box-shadow: var(--codex-elevation-stroke), var(--codex-shadow-xl); backdrop-filter: blur(16px); }
 .task-menu { top: 34px; left: 120px; width: 220px; }
+.task-info { position: fixed; z-index: 60; width: 320px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.task-info-header strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; padding: 2px 2px 0; }
+.task-info-section { display: flex; flex-direction: column; gap: 4px; }
+.task-info-label { padding: 0 2px; color: var(--muted); font-size: 11px; }
+.task-info-uuid { display: flex; align-items: center; gap: 4px; padding: 5px 6px; border-radius: 8px; background: rgba(255,255,255,.06); }
+.task-info-uuid code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--text); user-select: text; }
+.task-info-uuid .icon-button { flex: 0 0 auto; }
+.task-info-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 0 2px; color: var(--muted); font-size: 12px; }
+.task-info-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-weight: 500; text-align: right; }
+.copy-button-text { display: inline-flex; align-items: center; gap: 5px; }
+.markdown-copy.copied { color: var(--text); }
 .menu-surface button { width: 100%; min-height: 32px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 8px; border-radius: 8px; outline: 0; background: transparent; color: var(--text); cursor: pointer; text-align: left; font-size: 13px; }
 .menu-surface button:hover, .menu-surface button:focus-visible, .menu-surface button.selected { background: rgba(255,255,255,.10); }
 .menu-surface button:disabled { color: #777a75; cursor: default; }

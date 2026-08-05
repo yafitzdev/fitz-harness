@@ -1,6 +1,7 @@
 import type { DesktopUpdateStatus } from "../../preload.js";
 import { FIXED_ROUTES } from "../connections/connection-workspace.js";
 import { CollapsibleSection } from "../layout/collapsible-section.js";
+import { createCopyButton } from "../primitives/copy-button.js";
 import { textBlock } from "../primitives/dom.js";
 
 type Json = Record<string, any>;
@@ -134,7 +135,16 @@ export class AdministrationPageController {
   private bind(): void {
     this.elements.refresh.addEventListener("click", () => void this.load());
     this.elements.pairingCodeForm.addEventListener("submit", (event) => { event.preventDefault(); void this.issuePairingCode(); });
-    this.elements.copyPairingCode.addEventListener("click", () => void this.options.bridge.copyText(this.elements.issuedPairingCode.textContent ?? ""));
+    const copyPairingCode = createCopyButton({
+      copyText: (text) => void this.options.bridge.copyText(text),
+      value: () => this.elements.issuedPairingCode.textContent ?? "",
+      title: "Copy pairing code",
+      className: "pairing-code-copy",
+      text: true,
+    });
+    copyPairingCode.id = "copy-pairing-code";
+    this.elements.copyPairingCode.replaceWith(copyPairingCode);
+    this.elements.copyPairingCode = copyPairingCode;
     this.elements.createUserForm.addEventListener("submit", (event) => { event.preventDefault(); void this.createAdminUser(); });
     this.elements.toolPolicySubjectType.addEventListener("change", () => this.renderToolPolicySubjects());
     this.elements.toolPolicyForm.addEventListener("submit", (event) => { event.preventDefault(); void this.saveToolPolicy(); });

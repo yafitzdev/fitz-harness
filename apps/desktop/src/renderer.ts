@@ -9,8 +9,9 @@ import { ConversationLayout } from "./ui/layout/conversation-layout.js";
 import { ManagementPageLayout, managementRefreshIcon } from "./ui/layout/management-page.js";
 import { WorkspacePageController } from "./ui/layout/workspace-pages.js";
 import { CustomSelectController } from "./ui/primitives/custom-select.js";
+import { createCopyButton } from "./ui/primitives/copy-button.js";
 import { requiredElement as element, requiredQuery as query, svgIcon as svg, textBlock } from "./ui/primitives/dom.js";
-import { togglePopover as toggleManagedPopover } from "./ui/primitives/popover.js";
+import { positionFixedPopover, togglePopover as toggleManagedPopover } from "./ui/primitives/popover.js";
 import { ResizablePane } from "./ui/primitives/resizable-pane.js";
 import { PluginsPageController } from "./ui/plugins/plugins-page.js";
 import { AdministrationPageController } from "./ui/administration/administration-page.js";
@@ -54,6 +55,12 @@ const addArtifactButton = element("add-artifact") as HTMLButtonElement;
 const updateButton = element("update") as HTMLButtonElement;
 const taskMenuToggle = element("task-menu-toggle") as HTMLButtonElement;
 const taskMenu = element("task-menu");
+const taskInfoToggle = element("task-info-toggle") as HTMLButtonElement;
+const taskInfo = element("task-info");
+const taskInfoTitle = element("task-info-title");
+const taskInfoId = element("task-info-id");
+const taskInfoProject = element("task-info-project");
+const taskInfoCreated = element("task-info-created");
 const appMenuPopover = element("app-menu-popover");
 const selectPopover = element("select-popover");
 const sidebarResizer = element("sidebar-resizer");
@@ -475,6 +482,20 @@ artifactFile.addEventListener("change", () => void uploadArtifact());
 projects.elements.chooseProjectFolder.addEventListener("click", () => void projects.selectProjectFolder());
 taskMenuToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(taskMenu, taskMenuToggle); });
 taskMenu.addEventListener("click", (event) => event.stopPropagation());
+taskInfoToggle.addEventListener("click", (event) => {
+  event.stopPropagation();
+  const opening = taskInfo.hidden;
+  populateTaskInfo();
+  togglePopover(taskInfo, taskInfoToggle);
+  if (opening) positionFixedPopover(taskInfo, taskInfoToggle);
+});
+taskInfo.addEventListener("click", (event) => event.stopPropagation());
+element("task-info-uuid").append(createCopyButton({
+  copyText: (text) => void window.fitz.copyText(text),
+  value: () => projects.currentSessionRecord()?.id ?? "",
+  title: "Copy session ID",
+  className: "icon-button",
+}));
 element("rename-task").addEventListener("click", () => projects.openRenameDialog());
 element("archive-task").addEventListener("click", () => void projects.archiveCurrentTask());
 projects.elements.renameForm.addEventListener("submit", (event) => { event.preventDefault(); void projects.renameCurrentTask(); });
@@ -764,9 +785,11 @@ function closePopovers(): void {
   appMenuPopover.hidden = true;
   composer.closePopovers();
   taskMenu.hidden = true;
+  taskInfo.hidden = true;
   projectSidebar.hideMenu();
   projectSidebar.hideOverlays();
   taskMenuToggle.setAttribute("aria-expanded", "false");
+  taskInfoToggle.setAttribute("aria-expanded", "false");
   projectSidebar.resetMenuToggles();
   for (const toggle of document.querySelectorAll("[data-app-menu]")) toggle.setAttribute("aria-expanded", "false");
 }
@@ -990,12 +1013,23 @@ function refreshComposerState(): void {
   composer.setState({ ready, running: agentRuns.active, hasSession: Boolean(projects.currentSessionId) });
 }
 
+function populateTaskInfo(): void {
+  const session = projects.currentSessionRecord();
+  const project = projects.activeProject();
+  if (!session) return;
+  taskInfoTitle.textContent = session.title;
+  taskInfoId.textContent = session.id;
+  taskInfoProject.textContent = project?.name ?? "—";
+  taskInfoCreated.textContent = session.createdAt ? new Date(session.createdAt).toLocaleString() : "—";
+}
+
 function updateTitles(): void {
   const project = projects.activeProject();
   const session = projects.currentSessionRecord();
   projectTitle.textContent = project?.name ?? "Fitz Codex";
   taskTitle.textContent = "";
   taskMenuToggle.hidden = !session;
+  taskInfoToggle.hidden = !session;
 }
 
 function toggleSidebar(): void { shell.classList.toggle("sidebar-collapsed"); closePopovers(); }

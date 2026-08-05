@@ -1,5 +1,6 @@
 import { applyPostGeneration } from "./post-generation.js";
 import { highlightSource } from "./syntax-highlighting.js";
+import { createCopyButton } from "./ui/primitives/copy-button.js";
 
 const markdownSources = new WeakMap<HTMLElement, string>();
 
@@ -95,7 +96,7 @@ function renderBlocks(target: HTMLElement, lines: string[]): void {
 function codeBlock(source: string, language: string): HTMLElement {
   const container = document.createElement("section"); container.className = "markdown-code";
   const header = document.createElement("header"); const label = document.createElement("span"); label.textContent = language || "Code";
-  const copy = document.createElement("button"); copy.type = "button"; copy.textContent = "Copy"; copy.addEventListener("click", async () => { await window.fitz.copyText(source); copy.textContent = "Copied"; window.setTimeout(() => { copy.textContent = "Copy"; }, 1_200); });
+  const copy = createCopyButton({ copyText: (text) => void window.fitz.copyText(text), value: () => source, title: "Copy code", className: "markdown-copy", text: true });
   const pre = document.createElement("pre"); const code = document.createElement("code"); const highlighted = highlightSource(source, language); code.className = `hljs${highlighted.language ? ` language-${highlighted.language}` : ""}`; code.innerHTML = highlighted.html; pre.append(code); header.append(label, copy); container.append(header, pre); return container;
 }
 
