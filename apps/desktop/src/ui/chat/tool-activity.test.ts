@@ -1,21 +1,47 @@
 import { describe, expect, it } from "vitest";
-import { activityKind, burstLabel, describeTool, displayName, iconPathFor } from "./tool-activity.js";
+import {
+  activityKind,
+  burstIconPath,
+  describeTool,
+  displayName,
+  iconPathFor,
+  registerToolMeta,
+  summarizeBurst,
+  toolPath,
+} from "./tool-activity.js";
 
-describe("burstLabel", () => {
+describe("summarizeBurst", () => {
   it("uses the present tense while a burst is running", () => {
-    expect(burstLabel(0, 1, true)).toBe("Running command");
-    expect(burstLabel(0, 3, true)).toBe("Running commands");
-    expect(burstLabel(1, 0, true)).toBe("Editing file");
-    expect(burstLabel(2, 0, true)).toBe("Editing files");
-    expect(burstLabel(1, 1, true)).toBe("Editing files, running commands");
+    expect(summarizeBurst({ bash: 1 }, true)).toBe("Running command");
+    expect(summarizeBurst({ bash: 3 }, true)).toBe("Running 3 commands");
+    expect(summarizeBurst({ edit: 1 }, true)).toBe("Editing file");
+    expect(summarizeBurst({ edit: 2 }, true)).toBe("Editing 2 files");
+    expect(summarizeBurst({ edit: 1, bash: 1 }, true)).toBe("Editing file, running command");
   });
 
   it("settles to the past tense once every tool in the burst completes", () => {
-    expect(burstLabel(0, 1, false)).toBe("Ran command");
-    expect(burstLabel(0, 3, false)).toBe("Ran commands");
-    expect(burstLabel(1, 0, false)).toBe("Edited file");
-    expect(burstLabel(2, 0, false)).toBe("Edited files");
-    expect(burstLabel(2, 2, false)).toBe("Edited files, ran commands");
+    expect(summarizeBurst({ bash: 1 }, false)).toBe("Ran command");
+    expect(summarizeBurst({ bash: 3 }, false)).toBe("Ran 3 commands");
+    expect(summarizeBurst({ edit: 2 }, false)).toBe("Edited 2 files");
+    expect(summarizeBurst({ edit: 2, bash: 2 }, false)).toBe("Edited 2 files, ran 2 commands");
+  });
+
+  it("describes a burst by what it did rather than as bare commands", () => {
+    expect(summarizeBurst({ web_search: 1 }, false)).toBe("Searched the web");
+    expect(summarizeBurst({ web_search: 1, fetch_content: 1, get_search_content: 1 }, false)).toBe("Fetched 2 pages, searched the web");
+    expect(summarizeBurst({ read: 4, grep: 2 }, false)).toBe("Read 4 files, searched code");
+    expect(summarizeBurst({ bash: 5, grep: 1 }, false)).toBe("Ran 5 commands, searched code");
+  });
+
+  it("orders buckets by volume, then a stable priority for ties", () => {
+    expect(summarizeBurst({ grep: 1, bash: 1 }, false)).toBe("Ran command, searched code");
+    expect(summarizeBurst({ edit: 1, read: 2, bash: 3 }, false)).toBe("Ran 3 commands, read 2 files");
+    expect(summarizeBurst({ bash: 1, grep: 1, edit: 1, read: 1 }, false)).toBe("Edited file, ran command");
+  });
+
+  it("treats an empty burst as a command burst (unreachable today, pinned for safety)", () => {
+    expect(summarizeBurst({}, true)).toBe("Running commands");
+    expect(summarizeBurst({}, false)).toBe("Ran commands");
   });
 });
 
@@ -27,6 +53,11 @@ describe("describeTool", () => {
     expect(describeTool("write", { file_path: "README.md" }, false)).toBe("Wrote README.md");
     expect(describeTool("grep", { pattern: "TODO" }, false)).toBe("Searched TODO");
     expect(describeTool("read", { path: "src/app.ts" }, true)).toBe("Reading src/app.ts");
+  });
+
+  it("keeps single-word tool names lowercase when a known tool has no target", () => {
+    expect(describeTool("bash", undefined, true)).toBe("Running bash");
+    expect(describeTool("bash", undefined, false)).toBe("Ran bash");
   });
 
   it("falls back to a generic verb plus a prettified display name for unknown tools", () => {
@@ -42,6 +73,32 @@ describe("describeTool", () => {
 
   it("uses the prettified display name when an unknown tool has no recognizable target", () => {
     expect(describeTool("gh_issue", { number: 42 }, false)).toBe("Ran Gh issue");
+  });
+});
+
+describe("registerToolMeta", () => {
+  it("overrides presentation for a tool and describes it from the registered metadata", () => {
+    registerToolMeta("__review_test_web_search__", {
+      kind: "command",
+      presentVerb: "Searching",
+      pastVerb: "Searched",
+      displayName: "Web search",
+    });
+    expect(describeTool("__review_test_web_search__", undefined, true)).toBe("Searching Web search");
+    expect(describeTool("__review_test_web_search__", undefined, false)).toBe("Searched Web search");
+    expect(activityKind("__review_test_web_search__")).toBe("command");
+  });
+
+  it("merges partial metadata over the defaults without disturbing built-ins", () => {
+    registerToolMeta("__review_test_partial__", { displayName: "Partial tool" });
+    expect(describeTool("__review_test_partial__", undefined, true)).toBe("Running Partial tool");
+    expect(describeTool("bash", undefined, true)).toBe("Running bash");
+  });
+
+  it("lets plugins steer their burst bucket alongside presentation", () => {
+    registerToolMeta("__review_test_bucket__", { bucket: "web" });
+    expect(summarizeBurst({ __review_test_bucket__: 1 }, false)).toBe("Searched the web");
+    expect(summarizeBurst({ __review_test_bucket__: 1, bash: 1 }, false)).toBe("Ran command, searched the web");
   });
 });
 
@@ -71,5 +128,30 @@ describe("iconPathFor", () => {
     expect(iconPathFor("edit")).toContain('d="m4.2 14.8');
     expect(iconPathFor("bash")).toContain('d="m6 7 2.2 2');
     expect(iconPathFor("web_search")).toContain('d="M10 2.8');
+  });
+});
+
+describe("burstIconPath", () => {
+  it("uses the edit icon when a burst edits files, the terminal icon otherwise", () => {
+    expect(burstIconPath(1, 0)).toContain('d="m4.2 14.8');
+    expect(burstIconPath(1, 2)).toContain('d="m4.2 14.8');
+    expect(burstIconPath(0, 1)).toContain('d="m6 7 2.2 2');
+    expect(burstIconPath(0, 0)).toContain('d="m6 7 2.2 2');
+  });
+});
+
+describe("toolPath", () => {
+  it("extracts and trims the file path across the supported field names", () => {
+    expect(toolPath({ path: "src/app.ts" })).toBe("src/app.ts");
+    expect(toolPath({ file_path: " README.md " })).toBe("README.md");
+    expect(toolPath({ filePath: "a/b.ts" })).toBe("a/b.ts");
+  });
+
+  it("returns undefined when there is no usable path", () => {
+    expect(toolPath(undefined)).toBeUndefined();
+    expect(toolPath("nope")).toBeUndefined();
+    expect(toolPath({ command: "ls" })).toBeUndefined();
+    expect(toolPath({ path: "   " })).toBeUndefined();
+    expect(toolPath({ path: 42 })).toBeUndefined();
   });
 });

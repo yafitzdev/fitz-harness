@@ -1,17 +1,19 @@
 import { svgIcon } from "../primitives/dom.js";
 import { ReasoningView } from "./reasoning-view.js";
-import { activityKind, burstLabel, describeTool, iconPathFor } from "./tool-activity.js";
+import { activityKind, burstIconPath, describeTool, iconPathFor, summarizeBurst, toolPath } from "./tool-activity.js";
 
 type Json = Record<string, any>;
 type WorkSummary = { root: HTMLElement; toggle: HTMLButtonElement; details: HTMLElement; startedAt: number; lastAt: number };
 type ActivityBurst = {
   root: HTMLElement;
   toggle: HTMLButtonElement;
+  icon: HTMLElement;
   label: HTMLElement;
   details: HTMLElement;
   commands: number;
   edits: number;
   running: number;
+  tools: Record<string, number>;
 };
 
 export interface ActivityTimelineOptions {
@@ -140,6 +142,7 @@ export class ActivityTimeline {
     if (kind === "edit") burst.edits += 1;
     else burst.commands += 1;
     if (running) burst.running += 1;
+    burst.tools[toolName] = (burst.tools[toolName] ?? 0) + 1;
     burst.details.append(row);
     this.#burstsByTool.set(row, burst);
     this.#updateBurst(burst);
@@ -287,7 +290,7 @@ export class ActivityTimeline {
     });
     root.append(toggle, details);
     work.details.append(root);
-    this.#burst = { root, toggle, label, details, commands: 0, edits: 0, running: 0 };
+    this.#burst = { root, toggle, icon, label, details, commands: 0, edits: 0, running: 0, tools: {} };
     return this.#burst;
   }
 
@@ -297,7 +300,8 @@ export class ActivityTimeline {
 
   #updateBurst(burst: ActivityBurst): void {
     const running = burst.running > 0;
-    burst.label.textContent = burstLabel(burst.edits, burst.commands, running);
+    burst.label.textContent = summarizeBurst(burst.tools, running);
+    burst.icon.replaceChildren(svgIcon(burstIconPath(burst.edits, burst.commands)));
     burst.root.classList.toggle("running", running);
   }
 
@@ -328,16 +332,14 @@ export class ActivityTimeline {
   }
 
   #resourceReference(toolName: string, input: unknown): string | undefined {
-    if (!["edit", "write", "read"].includes(toolName) || !input || typeof input !== "object") return undefined;
-    const value = input as Json; const path = value.path ?? value.file_path ?? value.filePath;
-    return typeof path === "string" && path.trim() ? path.trim() : undefined;
+    if (!["edit", "write", "read"].includes(toolName)) return undefined;
+    return toolPath(input);
   }
 
   #registerSearchRoot(input: unknown): void {
-    if (!input || typeof input !== "object") return;
-    const value = input as Json; const path = value.path ?? value.file_path ?? value.filePath;
-    if (typeof path !== "string" || !/^(?:[A-Za-z]:[\\/]|\\\\)/.test(path.trim())) return;
-    const normalized = path.trim(); this.#searchRoots.delete(normalized); this.#searchRoots.add(normalized);
+    const path = toolPath(input);
+    if (!path || !/^(?:[A-Za-z]:[\\/]|\\\\)/.test(path)) return;
+    this.#searchRoots.delete(path); this.#searchRoots.add(path);
     while (this.#searchRoots.size > 32) this.#searchRoots.delete(this.#searchRoots.values().next().value!);
   }
 

@@ -61,13 +61,13 @@ describe("ActivityTimeline", () => {
 
     const bursts = [...messages.querySelectorAll<HTMLElement>(".activity-burst")];
     expect(bursts).toHaveLength(2);
-    expect(bursts[0]!.querySelector(".activity-burst-label")?.textContent).toBe("Edited files, ran commands");
+    expect(bursts[0]!.querySelector(".activity-burst-label")?.textContent).toBe("Edited file, ran command");
     expect(bursts[0]!.querySelectorAll(".agent-activity")).toHaveLength(3);
     expect(bursts[1]!.querySelector(".activity-burst-label")?.textContent).toBe("Ran command");
     expect(bursts[1]!.querySelectorAll(".agent-activity")).toHaveLength(1);
     expect([...messages.querySelectorAll(".work-summary-details > *")].map((node) => node.textContent)).toEqual([
       "First reasoning block",
-      expect.stringContaining("Edited files, ran commands"),
+      expect.stringContaining("Edited file, ran command"),
       "Second reasoning block",
       expect.stringContaining("Ran command"),
     ]);
@@ -142,12 +142,12 @@ describe("ActivityTimeline", () => {
     const command = timeline.appendTool("bash", { command: "pnpm test" }, "tool-1", true, "2026-08-03T08:00:00.000Z");
     const edit = timeline.appendTool("write", { path: "README.md" }, "tool-2", true, "2026-08-03T08:00:02.000Z");
     const label = messages.querySelector<HTMLElement>(".activity-burst-label")!;
-    expect(label.textContent).toBe("Editing files, running commands");
+    expect(label.textContent).toBe("Editing file, running command");
 
     timeline.completeTool(command, "bash", { command: "pnpm test" }, "passed", false);
-    expect(label.textContent).toBe("Editing files, running commands");
+    expect(label.textContent).toBe("Editing file, running command");
     timeline.completeTool(edit, "write", { path: "README.md" }, "done", false);
-    expect(label.textContent).toBe("Edited files, ran commands");
+    expect(label.textContent).toBe("Edited file, ran command");
 
     timeline.finishWork("2026-08-03T08:00:05.000Z");
     expect(messages.querySelectorAll(".work-summary")).toHaveLength(1);
