@@ -68,16 +68,23 @@ describe("analyzeBashCommand", () => {
   });
 
   it("tracks write destinations for cp, mv, tee, curl and dd", () => {
-    const cp = analyzeBashCommand("cp a.txt /home/user/dst.txt").intents[0]!;
+    const writeOf = (command: string) => analyzeBashCommand(command).intents.find((intent) => intent.type === "write");
+    const readOf = (command: string) => analyzeBashCommand(command).intents.find((intent) => intent.type === "read");
+
+    const cp = writeOf("cp a.txt /home/user/dst.txt")!;
     expect(cp).toMatchObject({ type: "write", kind: "write" });
     expect(cp.targets[0]!.unquoted).toBe("/home/user/dst.txt");
+    // The source is classified as a read so `cp /etc/passwd .` cannot smuggle a system read.
+    expect(readOf("cp a.txt /home/user/dst.txt")!.targets[0]!.unquoted).toBe("a.txt");
 
-    const mv = analyzeBashCommand("mv src.ts /mnt/c/Users/yanfi/projects/example/dst.ts").intents[0]!;
+    const mv = writeOf("mv src.ts /mnt/c/Users/yanfi/projects/example/dst.ts")!;
     expect(mv.targets[0]!.unquoted).toBe("/mnt/c/Users/yanfi/projects/example/dst.ts");
 
-    expect(analyzeBashCommand("curl -o out.bin https://example.com/x").intents[0]).toMatchObject({ type: "write" });
-    expect(analyzeBashCommand("curl --output out.bin https://example.com/x").intents[0]).toMatchObject({ type: "write" });
-    expect(analyzeBashCommand("dd if=/dev/zero of=disk.img bs=1M count=1").intents[0]!.targets[0]!.unquoted).toBe("disk.img");
+    expect(writeOf("curl -o out.bin https://example.com/x")).toMatchObject({ type: "write" });
+    expect(writeOf("curl --output out.bin https://example.com/x")).toMatchObject({ type: "write" });
+    expect(writeOf("dd if=/dev/zero of=disk.img bs=1M count=1")!.targets[0]!.unquoted).toBe("disk.img");
+    // dd's input file is a read source too.
+    expect(readOf("dd if=/dev/zero of=disk.img bs=1M count=1")!.targets[0]!.unquoted).toBe("/dev/zero");
   });
 
   it("detects redirection writes and reads", () => {

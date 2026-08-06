@@ -145,8 +145,12 @@ function normalizePath(raw: string, cwd: string, fold: boolean): string | undefi
 /** Collapse `.` and `..` segments. `rooted` keeps a leading `/` (POSIX absolute). */
 function normalizeSegments(path: string, rooted: boolean): string {
   const drive = /^([A-Za-z]:)\/(.*)$/.exec(path);
-  const prefix = rooted ? "/" : drive ? `${drive[1]}/` : "";
-  const rest = rooted ? path : (drive?.[2] ?? path);
+  // A path that starts with `/` and has no drive letter is POSIX-absolute even when
+  // built from a relative join against a POSIX base (e.g. `/tmp` + `x`), so keep the
+  // leading slash — otherwise it would silently become relative and resolve elsewhere.
+  const isRooted = rooted || (!drive && path.startsWith("/"));
+  const prefix = isRooted ? "/" : drive ? `${drive[1]}/` : "";
+  const rest = isRooted ? path : (drive?.[2] ?? path);
   const out: string[] = [];
   for (const segment of rest.split("/")) {
     if (!segment || segment === ".") continue;
@@ -157,7 +161,7 @@ function normalizeSegments(path: string, rooted: boolean): string {
     out.push(segment);
   }
   const joined = out.join("/");
-  if (!joined) return prefix || (rooted ? "/" : "");
+  if (!joined) return prefix || (isRooted ? "/" : "");
   return `${prefix}${joined}`;
 }
 

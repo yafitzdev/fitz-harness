@@ -51,6 +51,8 @@ export interface PolicyContext {
 
 const ALLOWED_WRITE_ZONES: ReadonlySet<PathZone> = new Set(["workspace", "runtime", "temp"]);
 const ALLOWED_READ_ZONES: ReadonlySet<PathZone> = new Set(["workspace", "runtime", "temp", "outside"]);
+/** Zones a script file may be executed from (its contents are opaque to static analysis). */
+const ALLOWED_EXECUTE_ZONES: ReadonlySet<PathZone> = new Set(["workspace", "runtime", "temp"]);
 
 export async function evaluateToolCall(request: PiToolCall & { cwd: string; runId?: string }, ctx: PolicyContext, signal?: AbortSignal): Promise<ToolEvaluation> {
   if (signal?.aborted) return { action: "block", reason: "The run was cancelled" };
@@ -118,15 +120,38 @@ async function evaluateBash(command: string, ctx: PolicyContext, signal?: AbortS
 
   for (const intent of analysis.intents) {
     if (signal?.aborted) return { action: "block", reason: "The run was cancelled" };
+    // Script files: contents are opaque, so the path itself is zone-checked.
+    if (intent.kind === "script-file") {
+      for (const target of intent.targets) {
+        const base = await intentBase(intent, ctx);
+        if (!base.ok) { reasons.push(base.reason); continue; }
+        const resolved = resolveTarget(target, { ...ctx, cwd: base.path });
+        if (!resolved) { reasons.push(pathUnresolvable(target)); continue; }
+        const info = classifyTarget(resolved, base, ctx);
+        if (!ALLOWED_EXECUTE_ZONES.has(info.zone)) {
+          reasons.push(`${target.raw} ${zoneExplanation(info, "execute")}`);
+        }
+      }
+      continue;
+    }
+    // Deletes discovered inside an embedded script cannot be rewritten (the rewrite
+    // would corrupt the script text), so they are blocked. Block-kind intents keep
+    // their specific reasons (find -exec rm, nested-shell, ...).
+    if (intent.nested && intent.type === "delete") {
+      reasons.push(nestedScriptDeleteReason(intent));
+      continue;
+    }
     if (intent.type === "block") {
       reasons.push(blockIntentReason(intent));
       continue;
     }
     if (intent.type === "write") {
       for (const target of intent.targets) {
-        const resolved = resolveTarget(target, ctx);
+        const base = await intentBase(intent, ctx);
+        if (!base.ok) { reasons.push(base.reason); continue; }
+        const resolved = resolveTarget(target, { ...ctx, cwd: base.path });
         if (!resolved) { reasons.push(pathUnresolvable(target)); continue; }
-        const info = classifyPath(resolved, classifyOptions(ctx));
+        const info = classifyTarget(resolved, base, ctx);
         if (!ALLOWED_WRITE_ZONES.has(info.zone)) {
           reasons.push(`${target.raw} ${zoneExplanation(info, "write")}`);
         } else {
@@ -137,9 +162,11 @@ async function evaluateBash(command: string, ctx: PolicyContext, signal?: AbortS
     }
     if (intent.type === "read") {
       for (const target of intent.targets) {
-        const resolved = resolveTarget(target, ctx);
+        const base = await intentBase(intent, ctx);
+        if (!base.ok) { reasons.push(base.reason); continue; }
+        const resolved = resolveTarget(target, { ...ctx, cwd: base.path });
         if (!resolved) { reasons.push(pathUnresolvable(target)); continue; }
-        const info = classifyPath(resolved, classifyOptions(ctx));
+        const info = classifyTarget(resolved, base, ctx);
         if (!ALLOWED_READ_ZONES.has(info.zone)) {
           reasons.push(`${target.raw} ${zoneExplanation(info, "read")}`);
         }
@@ -147,7 +174,9 @@ async function evaluateBash(command: string, ctx: PolicyContext, signal?: AbortS
       continue;
     }
     // Delete intents: the interesting case.
-    const outcome = await evaluateDelete(intent, command, ctx, signal);
+    const base = await intentBase(intent, ctx);
+    if (!base.ok) { reasons.push(base.reason); continue; }
+    const outcome = await evaluateDelete(intent, command, ctx, signal, base);
     if (outcome.action === "block" && outcome.reason) reasons.push(outcome.reason);
     else if (outcome.action === "rewrite" && outcome.edit) { edits.push(outcome.edit); sawTrash = true; }
     else if (outcome.action === "allow") sawAllow = true;
@@ -172,7 +201,24 @@ interface DeleteOutcome {
   edit?: { start: number; end: number; replacement: string };
 }
 
-async function evaluateDelete(intent: BashIntent, command: string, ctx: PolicyContext, signal?: AbortSignal): Promise<DeleteOutcome> {
+/** Effective working directory for an intent, honoring a preceding `cd`. Always absolute. */
+async function intentBase(intent: BashIntent, ctx: PolicyContext): Promise<{ ok: true; path: string } | { ok: false; reason: string }> {
+  if (intent.cdUnsafe) {
+    return { ok: false, reason: `a preceding cd goes to an unknown location (cd -, bare cd, or an unresolvable variable), so the relative paths in this command cannot be classified safely. Use absolute paths or drop the cd.` };
+  }
+  if (!intent.cdBase) return { ok: true, path: ctx.cwd };
+  const resolved = resolveTarget(intent.cdBase, ctx);
+  if (!resolved) return { ok: false, reason: pathUnresolvable(intent.cdBase) };
+  // The shell resolves the cd target against the workspace root, where the run starts.
+  const absolute = resolveAbsolutePath(resolved, ctx.cwd) ?? resolved;
+  const info = classifyPath(absolute, classifyOptions(ctx));
+  if (info.zone === "workspace" || info.zone === "temp" || info.zone === "runtime") {
+    return { ok: true, path: absolute };
+  }
+  return { ok: false, reason: `cd to ${intent.cdBase.raw} would run relative paths in the ${info.zone} zone (${info.canonical}); Fitz blocks relative paths after a cd outside the workspace. Use absolute paths or drop the cd.` };
+}
+
+async function evaluateDelete(intent: BashIntent, command: string, ctx: PolicyContext, signal?: AbortSignal, base: { path: string } = { path: ctx.cwd }): Promise<DeleteOutcome> {
   switch (intent.kind) {
     case "shred":
       return { action: "block", reason: `shred is intentionally unrecoverable, so Fitz refuses to run it. Use rm (Fitz rewrites it to a trash move) or the fitz.trash tool.` };
@@ -185,11 +231,11 @@ async function evaluateDelete(intent: BashIntent, command: string, ctx: PolicyCo
       let info: PathInfo;
       if (!first) {
         // find with no explicit path searches the current directory.
-        info = classifyPath(ctx.cwd, classifyOptions(ctx));
+        info = classifyPath(base.path, classifyOptions(ctx));
       } else {
-        const resolved = resolveTarget(first, ctx);
+        const resolved = resolveTarget(first, { ...ctx, cwd: base.path });
         if (!resolved) return { action: "block", reason: pathUnresolvable(first) };
-        info = classifyPath(resolved, classifyOptions(ctx));
+        info = classifyTarget(resolved, base, ctx);
       }
       if (info.zone === "temp") return { action: "allow" };
       if (info.zone !== "workspace" && info.zone !== "runtime") {
@@ -199,15 +245,22 @@ async function evaluateDelete(intent: BashIntent, command: string, ctx: PolicyCo
       return { action: "rewrite", edit: { start: intent.segmentStart, end: intent.segmentEnd, replacement: `-exec mv -t ${trash} {} +` } };
     }
     case "delete":
-      return evaluatePlainDelete(intent, ctx);
+      return evaluatePlainDelete(intent, command, ctx, base);
     default:
       return { action: "allow" };
   }
 }
 
-async function evaluatePlainDelete(intent: BashIntent, ctx: PolicyContext): Promise<DeleteOutcome> {
+async function evaluatePlainDelete(intent: BashIntent, command: string, ctx: PolicyContext, base: { path: string }): Promise<DeleteOutcome> {
   const targets = intent.targets;
   if (targets.length === 0) return { action: "allow" };
+
+  // A command substitution (or backticks) anywhere in a delete command runs whatever the
+  // substitution produces; the trash rewrite cannot neutralize code that executes inside
+  // an argument, so block it outright.
+  if (/\$\(|`/.test(command)) {
+    return { action: "block", reason: `this delete contains a command substitution or backticks, which Fitz cannot safely rewrite to a trash move. Inline the paths or use explicit rm / fitz.trash commands.` };
+  }
 
   // Whole-directory deletes that cannot be trashed by rename: `rm -rf .`, `rm -rf ..`.
   const dotTargets = targets.filter((target) => target.unquoted === "." || target.unquoted === "./" || target.unquoted === ".." || target.unquoted === "../");
@@ -222,9 +275,9 @@ async function evaluatePlainDelete(intent: BashIntent, ctx: PolicyContext): Prom
   let firstReason: string | undefined;
 
   for (const target of targets) {
-    const resolved = resolveTarget(target, ctx);
+    const resolved = resolveTarget(target, { ...ctx, cwd: base.path });
     if (!resolved) { blocked = true; firstReason ??= pathUnresolvable(target); continue; }
-    const info = classifyPath(resolved, classifyOptions(ctx));
+    const info = classifyTarget(resolved, base, ctx);
     classified.push({ target, info });
     switch (info.zone) {
       case "workspace":
@@ -275,14 +328,19 @@ async function evaluatePlainDelete(intent: BashIntent, ctx: PolicyContext): Prom
   // One trash move per source, each with a unique sequence-prefixed destination so
   // same-basename paths never collide, and a recorded entry so the management API can
   // restore each file. `;` (not `&&`) keeps deleting the rest if one move fails.
+  // Glob targets (rm -rf *) are rewritten but not recorded: the shell expands them to
+  // an unknown number of files, so no per-file entry can be accurate. They land in
+  // .fitz-trash on disk and stay recoverable there.
   const moves = trashable.map(({ target }) => {
     const sequence = ctx.nextSequence();
     const dest = `${ctx.trashDir.replace(/\\/g, "/")}/${sequence}-${rawBasename(target.unquoted)}`;
-    ctx.trash.record({
-      workspaceRoot: ctx.cwd,
-      originalPath: resolveAbsolutePath(target.unquoted, ctx.cwd) ?? target.raw,
-      trashPath: dest,
-    });
+    if (!target.wildcard) {
+      ctx.trash.record({
+        workspaceRoot: ctx.cwd,
+        originalPath: resolveAbsolutePath(target.unquoted, base.path) ?? target.raw,
+        trashPath: dest,
+      });
+    }
     return `mv ${target.raw} ${shellQuote(dest)}`;
   });
   const replacement = moves.join("; ");
@@ -298,12 +356,23 @@ function classifyOptions(ctx: PolicyContext) {
   return { workspaceRoot: ctx.cwd, runtimeDirs: ctx.runtimeDirs, tempDirs: ctx.tempDirs, homeDir: ctx.homeDir };
 }
 
+/**
+ * Classify a target that has already been variable-expanded by `resolveTarget`.
+ * The target may still be relative, so it is resolved against the intent's effective
+ * working directory (the `cd` base) — never against the workspace root, which is what
+ * `classifyPath` would do on its own.
+ */
+function classifyTarget(resolved: string, base: { path: string }, ctx: PolicyContext): PathInfo {
+  const absolute = resolveAbsolutePath(resolved, base.path) ?? resolved;
+  return classifyPath(absolute, classifyOptions(ctx));
+}
+
 /** Expand `~`, `$HOME`, `$USERPROFILE`, `$PWD`, `$TEMP`/`$TMP` in a target. Returns undefined when a variable cannot be resolved. */
 export function resolveTarget(target: Pick<BashTarget, "unquoted" | "expansion">, ctx: Pick<PolicyContext, "homeDir" | "cwd" | "tempDirs">): string | undefined {
   let text = target.unquoted;
   if (target.expansion) {
     let unresolved = false;
-    const expanded = text.replace(/\$(?:([A-Za-z_][A-Za-z0-9_]*)|{([A-Za-z_][A-Za-z0-9_]*)}|[0-9]+)/g, (_match, a: string | undefined, b: string | undefined) => {
+    const expanded = text.replace(/\$(?:([A-Za-z_][A-Za-z0-9_]*)|{([A-Za-z_][A-Za-z0-9_]*)[^}]*}|[0-9]+)/g, (_match, a: string | undefined, b: string | undefined) => {
       const name = a ?? b;
       switch (name) {
         case "HOME":
@@ -326,7 +395,7 @@ export function resolveTarget(target: Pick<BashTarget, "unquoted" | "expansion">
   return text || undefined;
 }
 
-function zoneExplanation(info: PathInfo, action: "read" | "write" | "delete" | "modify" | "search"): string {
+function zoneExplanation(info: PathInfo, action: "read" | "write" | "delete" | "modify" | "search" | "execute"): string {
   switch (info.zone) {
     case "sensitive":
       return `is a secrets location (${info.canonical}); Fitz never ${action === "read" ? "reads" : "touches"} credentials, keys, or env files outside the project.`;
@@ -335,6 +404,9 @@ function zoneExplanation(info: PathInfo, action: "read" | "write" | "delete" | "
     case "protected":
       return `is inside the Fitz trash; the agent never touches trashed files.`;
     case "outside":
+      if (action === "execute") {
+        return `is outside the project workspace (${info.canonical}); Fitz only executes scripts inside the workspace, its runtime dirs, and the temp dir.`;
+      }
       return `is outside the project workspace (${info.canonical}); Fitz only ${action === "read" ? "allows reads of" : "allows writes and trash-moves inside"} the workspace, its runtime dirs, and the temp dir.`;
     default:
       return `is in the ${info.zone} zone, which Fitz blocks for ${action}.`;
@@ -349,6 +421,8 @@ function blockIntentReason(intent: BashIntent): string {
   switch (intent.kind) {
     case "git-destructive":
       return `this git command permanently discards uncommitted work (git clean -f / reset --hard / checkout -- / restore / branch -D / stash drop). Fitz blocks it; commit or stash first, then remove files via rm or fitz.trash.`;
+    case "git-rm":
+      return `git rm permanently removes files from the working tree and stages the deletion. Use rm <path> (Fitz moves it to trash) and then git add, or fitz.trash.`;
     case "python-rm":
       return `inline Python file deletion (os.remove / shutil.rmtree) bypasses Fitz's trash rewrite. Use rm (rewritten to a trash move) or the fitz.trash tool instead.`;
     case "node-rm":
@@ -363,9 +437,20 @@ function blockIntentReason(intent: BashIntent): string {
       return `find -exec rm bypasses Fitz's trash rewrite. Use find -delete (rewritten to a trash move) or remove the paths individually.`;
     case "truncate":
       return `truncate discards a file's contents permanently. Move the file to trash instead (rm or fitz.trash).`;
+    case "script-stdin":
+      return `Fitz cannot inspect a script read from stdin (a pipe or -). Inline the commands so they can be classified, or use explicit tools.`;
+    case "script-file":
+      return `Fitz blocks executing this script file because it cannot inspect its contents.`;
+    case "nested-shell":
+      return `this interpreter command contains a file-deleting operation Fitz cannot rewrite. Use explicit rm or fitz.trash commands instead.`;
     default:
       return `Fitz blocked this operation (${intent.kind}).`;
   }
+}
+
+/** Reason for a delete or block discovered inside an embedded script (`sh -c`, `eval`, `find -exec`). */
+function nestedScriptDeleteReason(intent: BashIntent): string {
+  return `this delete runs inside an embedded script (${intent.command}); Fitz cannot rewrite it to a trash move. Use a direct rm or fitz.trash command instead.`;
 }
 
 /** Apply span edits right-to-left so earlier offsets stay valid. */
