@@ -27,6 +27,21 @@
   `after` or `Last-Event-ID`, and interrupted-run recovery after host restart.
 - Fitz-owned agent runtime boundary and an opt-in Pi SDK 0.83.0 adapter using in-memory Pi sessions,
   restricted tool allowlists, event translation, cancellation, and native-run integration.
+- Consolidated Pi implementation: all Fitz-owned Pi code (runtime adapter, registry-backed
+  `PiPackageService`, pinned SDK version) lives in `packages/agent-pi` and exports from its index;
+  the host wires it with runtime paths, the approval gate, and the session reader and contains no Pi
+  logic of its own.
+- Cross-session conversation lookup for the agent: the host's `createSessionReader` serves canonical
+  transcripts from the SQLite store to the read-only `fitz.session` tool, registered only when a
+  reader is supplied, with truncation-safe formatting and reader-failure handling.
+- Unified dev data root: `FITZ_DATA_ROOT` derives database, pi packages, logs, and cache from one
+  root (repo-contained `data/` in dev); `pnpm migrate:dev-data` checkpoints and migrates the legacy
+  `data/fitz-ninfer.db` into `data/database/fitz.db` with verification and recoverable `.pre-unify`
+  renames, seeds `data/pi` from the packaged app, and offers opt-in recoverable cleanup of stale
+  packaged pi leftovers.
+- Build-first dev scripts with a port guard: `pnpm dev` / `pnpm dev:fake` compile workspace
+  packages before starting the watch host, share one data root, and refuse to start when another
+  host already answers on the port.
 - Owner-scoped projects and sessions, ordered canonical transcripts, native run/session binding,
   user-over-role tool policies, secure-default approval requests, durable decisions, audit events,
   Pi pre-execution blocking, desktop Full access/Ask first/Read only selection, and inline approval UI.
@@ -65,7 +80,7 @@
 
 - Full JSON Schema/OpenAPI generation and exhaustive request compatibility.
 - Persistent/distributed rate windows.
-- Pi tool execution gating against the durable approval service and model-assisted summary quality.
+- Model-assisted summary quality (the summarizer is an injectable interface; the shipped default is deterministic).
 - Tailscale installation/onboarding on the target machine and live tailnet validation.
 - Desktop UX refinement, richer event rendering, and accessibility polish.
 - OS-backed secret storage.

@@ -17,4 +17,6 @@ The Windows host launched both recipes through the Ubuntu WSL bridge. Fitz passe
 - Final state was `UNLOADED`; no direct NiNfer process remained.
 - A clean host database exposed one playbook, two recipes, and exactly the `fast`, `default`, and `smart` routes.
 
-Use `pnpm dev:ninfer` to start this configuration with its separate `data/fitz-ninfer.db` store.
+Use `pnpm dev:ninfer` to start this configuration. Dev data now lives in the unified repo root
+(`data/database/fitz.db` via `FITZ_DATA_ROOT`); at the time of this validation the ninfer store
+still lived at `data/fitz-ninfer.db`, since migrated by `pnpm migrate:dev-data`.

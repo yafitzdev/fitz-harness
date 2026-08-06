@@ -13,3 +13,10 @@ model-assisted summarizer without changing host or storage contracts.
 Every compaction is retained as a canonical `compaction` transcript entry with its summary, original
 message count, compacted count, estimated input tokens, and effective budget. The original incoming
 turn remains canonical even though the runtime receives the compacted prompt.
+
+## Cross-session lookup
+
+The context manager injects only the current session's history. When the user refers to an earlier
+conversation, the agent reads it with the read-only `fitz.session` tool, which the host wires to the
+same canonical store (`createSessionReader` in `apps/host/src/session-reader.ts`). The store is the
+single source of truth for conversation history; Pi's own session store is never used for it.
