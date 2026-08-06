@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { broadFilesystemScanReason, buildFitzSystemInstructions, PiAgentRuntime, readEnabledExtensionDirs, type PiSession } from "./pi-agent-runtime.js";
+import { broadFilesystemScanReason, buildFitzSystemInstructions, createSessionLookupTool, formatSessionSnapshot, PiAgentRuntime, readEnabledExtensionDirs, SESSION_LOOKUP_TOOL, type PiSession, type PiSessionReader, type PiSessionSnapshot } from "./pi-agent-runtime.js";
 
 describe("PiAgentRuntime", () => {
   it("passes Fitz runtime locations to the session factory", async () => {
@@ -224,6 +224,98 @@ describe("PiAgentRuntime", () => {
       ]));
     } finally { await new Promise<void>((resolve) => server.close(() => resolve())); await rm(cwd, { recursive: true, force: true }); }
   }, 30_000);
+});
+
+describe("fitz.session session lookup tool", () => {
+  const snapshot: PiSessionSnapshot = {
+    title: "Find the session",
+    status: "completed",
+    updatedAt: "2026-08-06T00:31:00Z",
+    messages: [
+      { sequence: 1, role: "user", text: "Where is my session?" },
+      { sequence: 2, role: "assistant", text: "Let me look it up." },
+    ],
+  };
+
+  it("formats a snapshot as a readable transcript", () => {
+    expect(formatSessionSnapshot(snapshot)).toBe([
+      "Session: Find the session",
+      "Status: completed",
+      "Updated: 2026-08-06T00:31:00Z",
+      "[1] USER: Where is my session?",
+      "[2] ASSISTANT: Let me look it up.",
+    ].join("\n"));
+  });
+
+  it("returns the formatted transcript when the session exists", async () => {
+    const tool = createSessionLookupTool(async (sessionId) => (sessionId === "abc-123" ? snapshot : undefined));
+    expect(tool.name).toBe(SESSION_LOOKUP_TOOL);
+    const result = await tool.execute("call-1", { sessionId: "abc-123" });
+    expect(result).toEqual({
+      content: [{ type: "text", text: formatSessionSnapshot(snapshot) }],
+      details: { source: "fitz.session" },
+    });
+  });
+
+  it("reports a missing session gracefully", async () => {
+    const tool = createSessionLookupTool(async () => undefined);
+    const result = await tool.execute("call-1", { sessionId: "missing" });
+    expect(result.content[0]).toMatchObject({ type: "text", text: "No Fitz session found with id missing." });
+  });
+
+  it("turns reader failures into an agent-readable message instead of crashing the tool", async () => {
+    const tool = createSessionLookupTool(async () => { throw new Error("store locked"); });
+    const result = await tool.execute("call-1", { sessionId: "abc-123" });
+    expect(result.content[0]).toMatchObject({ type: "text", text: "Could not read Fitz session abc-123: store locked" });
+  });
+
+  it("forwards the session reader to the session factory boundary", async () => {
+    const reader: PiSessionReader = async () => snapshot;
+    let seenReader: PiSessionReader | undefined;
+    const runtime = new PiAgentRuntime({
+      sessionReader: reader,
+      createSession: async (options) => {
+        seenReader = options.sessionReader;
+        return { subscribe: (listener) => { listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "ok" } }); return () => undefined; }, prompt: async () => undefined, abort: async () => undefined, dispose: () => undefined };
+      },
+    });
+    const events = []; for await (const event of runtime.run({ model: "fast", messages: [{ role: "user", content: "hi" }] })) events.push(event);
+    expect(seenReader).toBe(reader);
+    expect(events).toEqual([{ type: "assistant.delta", text: "ok" }]);
+  });
+
+  it("does not surface a session reader when none is configured", async () => {
+    let seenReader: unknown = "unset";
+    const runtime = new PiAgentRuntime({
+      createSession: async (options) => {
+        seenReader = options.sessionReader;
+        return { subscribe: (listener) => { listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "ok" } }); return () => undefined; }, prompt: async () => undefined, abort: async () => undefined, dispose: () => undefined };
+      },
+    });
+    const events = []; for await (const event of runtime.run({ model: "fast", messages: [{ role: "user", content: "hi" }] })) events.push(event);
+    expect(seenReader).toBeUndefined();
+    expect(events).toEqual([{ type: "assistant.delta", text: "ok" }]);
+  });
+
+  it("is treated as read-only by the approval gate", async () => {
+    let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+    const runtime = new PiAgentRuntime({
+      sessionReader: async () => snapshot,
+      createSession: async (options) => ({
+        subscribe: (next) => { listener = next; return () => undefined; },
+        prompt: async () => {
+          const decision = await options.approveTool({ toolCallId: "fitz-session-1", toolName: SESSION_LOOKUP_TOOL, input: { sessionId: "abc-123" } });
+          expect(decision).toEqual({ allowed: true });
+          listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "read" } });
+        },
+        abort: async () => undefined,
+        dispose: () => undefined,
+      }),
+    });
+    const events = [];
+    for await (const event of runtime.run({ model: "fast", accessMode: "read-only", messages: [{ role: "user", content: "read my session" }] })) events.push(event);
+    expect(events).toEqual([{ type: "assistant.delta", text: "read" }]);
+  });
 });
 
 describe("readEnabledExtensionDirs", () => {

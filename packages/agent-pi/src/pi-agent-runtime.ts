@@ -1,6 +1,8 @@
 import type { AgentRuntime, AgentRuntimeEvent, AgentRuntimeRun } from "@fitz/agent-core";
 import type { AgentRunRequest, ToolAccessMode } from "@fitz/protocol";
 import type { Model } from "@earendil-works/pi-ai/compat";
+import type { AgentToolResult, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -18,6 +20,15 @@ export interface PiToolCall { toolCallId: string; toolName: string; input: unkno
 export interface PiToolApprovalResult { allowed: boolean; reason?: string }
 export interface ToolApprovalHandle { approvalId: string; decision: Promise<"approved" | "denied"> }
 export type ToolApprovalRequester = (request: PiToolCall & { sessionId: string }, signal: AbortSignal) => ToolApprovalHandle;
+/** One canonical transcript entry, reduced to what an agent needs to read. */
+export interface PiSessionMessage { sequence: number; role: "user" | "assistant" | "tool" | "system"; text: string }
+/** A past Fitz Codex conversation, as served to the agent's `fitz.session` tool. */
+export interface PiSessionSnapshot { title: string; status: string; updatedAt: string; messages: PiSessionMessage[] }
+/**
+ * Reads a past conversation from the Fitz session store. The host provides the store-backed
+ * implementation; the pi package owns the contract and the tool that uses it.
+ */
+export type PiSessionReader = (sessionId: string, options?: { after?: number; limit?: number }) => Promise<PiSessionSnapshot | undefined>;
 export type PiSessionFactory = (options: {
   cwd: string;
   tools?: readonly string[];
@@ -30,6 +41,7 @@ export type PiSessionFactory = (options: {
   llmRoot: string;
   thinkingLevel?: ThinkingLevel;
   approveTool: (request: PiToolCall) => Promise<PiToolApprovalResult>;
+  sessionReader?: PiSessionReader;
 }) => Promise<PiSession>;
 export interface PiAgentRuntimeOptions {
   cwd?: string | ((request: AgentRunRequest) => string);
@@ -42,10 +54,13 @@ export interface PiAgentRuntimeOptions {
   requestToolApproval?: ToolApprovalRequester;
   agentDir?: string;
   llmRoot?: string;
+  sessionReader?: PiSessionReader;
 }
 
 const CODING_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"] as const;
-const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
+/** Read-only tool that reads a past conversation from the Fitz session store. */
+export const SESSION_LOOKUP_TOOL = "fitz.session";
+const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls", SESSION_LOOKUP_TOOL]);
 
 export class PiAgentRuntime implements AgentRuntime {
   readonly id = "pi";
@@ -59,6 +74,7 @@ export class PiAgentRuntime implements AgentRuntime {
   readonly #requestToolApproval: ToolApprovalRequester | undefined;
   readonly #agentDir: string;
   readonly #llmRoot: string;
+  readonly #sessionReader: PiSessionReader | undefined;
   constructor(options: PiAgentRuntimeOptions = {}) {
     this.#cwd = options.cwd ?? process.cwd();
     this.#tools = options.tools ?? CODING_TOOLS;
@@ -70,6 +86,7 @@ export class PiAgentRuntime implements AgentRuntime {
     this.#requestToolApproval = options.requestToolApproval;
     this.#agentDir = options.agentDir ?? process.env.FITZ_PI_AGENT_DIR ?? `${process.cwd()}/.fitz-pi`;
     this.#llmRoot = options.llmRoot ?? process.env.FITZ_LLM_ROOT ?? `${process.cwd()}/.llm`;
+    this.#sessionReader = options.sessionReader;
   }
   run(request: AgentRunRequest, signal?: AbortSignal): AgentRuntimeRun {
     const channel = new EventChannel(); let session: PiSession | undefined; const controller = new AbortController();
@@ -87,6 +104,7 @@ export class PiAgentRuntime implements AgentRuntime {
         llmRoot: this.#llmRoot,
         thinkingLevel: this.#thinkingLevel,
         approveTool: (toolCall) => this.#approveTool(request.accessMode ?? "full", request.sessionId, toolCall, controller.signal, channel),
+        ...(this.#sessionReader ? { sessionReader: this.#sessionReader } : {}),
       }); session = created; if (controller.signal.aborted) { await created.abort(); throw abortError(); }
       return created;
     })();
@@ -191,9 +209,63 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
     thinkingLevel: options.thinkingLevel ?? "off",
     modelRuntime,
     resourceLoader,
+    ...(options.sessionReader ? { customTools: [createSessionLookupTool(options.sessionReader)] } : {}),
     sessionManager: sdk.SessionManager.inMemory(options.cwd),
   });
   return result.session as PiSession;
+}
+
+/**
+ * The `fitz.session` read-only tool: lets the agent read a past conversation from the Fitz
+ * session store (the host SQLite store) by session id. Registered only when the host supplies
+ * a `sessionReader`, so sessions without store access never see a dead tool.
+ */
+export function createSessionLookupTool(reader: PiSessionReader): ToolDefinition {
+  const parameters = Type.Object({
+    sessionId: Type.String({ description: "The Fitz session id (a UUID, e.g. shown in the session header popover) to read" }),
+    after: Type.Optional(Type.Number({ description: "Only return transcript entries with sequence greater than this value" })),
+    limit: Type.Optional(Type.Number({ description: "Maximum number of transcript entries to return (default 200, max 1000)" })),
+  });
+  const tool: ToolDefinition<typeof parameters> = {
+    name: SESSION_LOOKUP_TOOL,
+    label: "Fitz session lookup",
+    description:
+      "Read the transcript of a past Fitz Codex conversation by its session id. Use this when the user refers to an earlier conversation, past session, or previous chat: the transcript includes user and assistant messages, tool activity, and any compaction summaries. The current session's history is injected automatically, so this tool is for looking up OTHER sessions. Returns a formatted transcript, or a message saying the session was not found.",
+    promptSnippet: "Read past Fitz Codex conversations from the session store",
+    promptGuidelines: [
+      "When the user references a previous conversation, use this tool with the session id they provide (they can find it in the session header popover).",
+      "Prefer reading a session over guessing what was discussed — the store is the single source of truth for conversation history.",
+    ],
+    parameters,
+    execute: async (_toolCallId, params) => {
+      try {
+        const snapshot = await reader(params.sessionId, {
+          ...(params.after !== undefined ? { after: params.after } : {}),
+          ...(params.limit !== undefined ? { limit: params.limit } : {}),
+        });
+        return snapshot
+          ? toolResult(formatSessionSnapshot(snapshot))
+          : toolResult(`No Fitz session found with id ${params.sessionId}.`);
+      } catch (error) {
+        return toolResult(`Could not read Fitz session ${params.sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  };
+  return tool;
+}
+
+function toolResult(text: string): AgentToolResult<{ source: "fitz.session" }> {
+  return { content: [{ type: "text", text }], details: { source: "fitz.session" } };
+}
+
+export function formatSessionSnapshot(snapshot: PiSessionSnapshot): string {
+  const lines = [
+    `Session: ${snapshot.title}`,
+    `Status: ${snapshot.status}`,
+    `Updated: ${snapshot.updatedAt}`,
+    ...snapshot.messages.map((message) => `[${message.sequence}] ${message.role.toUpperCase()}: ${message.text}`),
+  ];
+  return lines.join("\n");
 }
 
 /**
@@ -232,6 +304,7 @@ export function buildFitzSystemInstructions(options: Pick<Parameters<PiSessionFa
     `- Inference engines: ${enginesDir}`,
     `- Model artifacts: ${modelsDir}`,
     `When asked about installed Pi extensions, inspect ${extensionsDir} directly. Do not inspect ~/.pi or infer installation state from upstream defaults.`,
+    "Past conversations are stored by Fitz in its session store. Use the fitz.session tool with a session id to read any earlier conversation the user asks about; the current session's history is injected automatically when it is continued.",
     "The shell tool runs in Git Bash on Windows. Prefer the exact paths above and the active project directory.",
     "Never recursively search /, an entire drive, or the whole home directory to discover Fitz resources. Search the active project or an authoritative directory above. Ask before expanding beyond those locations.",
     "Do not read or reveal authentication files, API keys, bearer tokens, or other secrets unless the user explicitly asks for the exact secret-bearing operation.",

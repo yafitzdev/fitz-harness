@@ -9,11 +9,11 @@ import { LlamaCppEngineAdapter } from "@fitz/engine-llama-cpp";
 import type { Recipe, Route } from "@fitz/protocol";
 import { SqliteStore } from "@fitz/storage";
 import { createHost } from "./create-app.js";
-import { PiAgentRuntime } from "@fitz/agent-pi";
+import { PiAgentRuntime, PiPackageService } from "@fitz/agent-pi";
 import { createNInferPlaybook, NINFER_PLAYBOOK_ID } from "./ninfer-playbook.js";
 import { createToolApprovalRequester } from "./tool-approval-gate.js";
+import { createSessionReader } from "./session-reader.js";
 import { WindowsStartupManager } from "@fitz/connectivity";
-import { PiPackageService } from "./pi-packages.js";
 import { resolveRuntimePaths } from "./runtime-paths.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
@@ -68,6 +68,7 @@ const runtime = createHost({
         return project?.rootPath ?? process.cwd();
       },
       requestToolApproval: createToolApprovalRequester(store),
+      sessionReader: createSessionReader(store),
       agentDir: runtimePaths.piAgentDir,
       llmRoot: runtimePaths.llmRoot,
     }),

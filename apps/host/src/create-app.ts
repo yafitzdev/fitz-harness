@@ -39,7 +39,7 @@ import { SqliteStore } from "@fitz/storage";
 import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
 import { AgentRunCoordinator } from "./agent-runs.js";
 import type { AgentRuntime } from "@fitz/agent-core";
-import type { PiPackageService } from "./pi-packages.js";
+import type { PiPackageService } from "@fitz/agent-pi";
 import { ContextManager } from "@fitz/context";
 import { TailscaleMonitor, TailscaleServeManager, WindowsStartupManager } from "@fitz/connectivity";
 import { classifyArtifact, normalizeMimeType } from "@fitz/media";
