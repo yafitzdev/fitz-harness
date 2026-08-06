@@ -20,8 +20,8 @@ describe("Fitz runtime paths", () => {
     expect(paths.modelRoot).toBe("C:\\Users\\tester\\llm\\models");
   });
 
-  it("allows every canonical root to be overridden for packaging and tests", () => {
-    const paths = resolveRuntimePaths({ FITZ_DATA_ROOT: "D:\\fitz-data", FITZ_DATABASE_PATH: "D:\\db\\fitz.db", FITZ_PI_AGENT_DIR: "D:\\pi", FITZ_LLM_ROOT: "D:\\llm" });
-    expect(paths).toMatchObject({ dataRoot: "D:\\fitz-data", databasePath: "D:\\db\\fitz.db", piAgentDir: "D:\\pi", llmRoot: "D:\\llm" });
+  it("derives the database from the data root and allows canonical roots to be overridden", () => {
+    const paths = resolveRuntimePaths({ FITZ_DATA_ROOT: "D:\\fitz-data", FITZ_PI_AGENT_DIR: "D:\\pi", FITZ_LLM_ROOT: "D:\\llm" });
+    expect(paths).toMatchObject({ dataRoot: "D:\\fitz-data", databasePath: "D:\\fitz-data\\database\\fitz.db", piAgentDir: "D:\\pi", llmRoot: "D:\\llm" });
   });
 });

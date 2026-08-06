@@ -17,7 +17,7 @@ export function resolveRuntimePaths(environment: NodeJS.ProcessEnv = process.env
   const llmRoot = resolve(environment.FITZ_LLM_ROOT ?? join(homedir(), ".llm"));
   return {
     dataRoot,
-    databasePath: resolve(environment.FITZ_DATABASE_PATH ?? join(dataRoot, "database", "fitz.db")),
+    databasePath: resolve(join(dataRoot, "database", "fitz.db")),
     piAgentDir: resolve(environment.FITZ_PI_AGENT_DIR ?? join(dataRoot, "pi")),
     logsDir: resolve(environment.FITZ_LOGS_DIR ?? join(dataRoot, "logs")),
     cacheDir: resolve(environment.FITZ_CACHE_DIR ?? join(dataRoot, "cache")),

@@ -35,10 +35,8 @@
   transcripts from the SQLite store to the read-only `fitz.session` tool, registered only when a
   reader is supplied, with truncation-safe formatting and reader-failure handling.
 - Unified dev data root: `FITZ_DATA_ROOT` derives database, pi packages, logs, and cache from one
-  root (repo-contained `data/` in dev); `pnpm migrate:dev-data` checkpoints and migrates the legacy
-  `data/fitz-ninfer.db` into `data/database/fitz.db` with verification and recoverable `.pre-unify`
-  renames, seeds `data/pi` from the packaged app, and offers opt-in recoverable cleanup of stale
-  packaged pi leftovers.
+  root (repo-contained `data/` in dev); the legacy `data/fitz-ninfer.db` store was migrated into
+  `data/database/fitz.db` once and the migration tooling has since been removed.
 - Build-first dev scripts with a port guard: `pnpm dev` / `pnpm dev:fake` compile workspace
   packages before starting the watch host, share one data root, and refuse to start when another
   host already answers on the port.

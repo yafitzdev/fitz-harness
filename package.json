@@ -13,7 +13,6 @@
     "dev": "node scripts/dev.mjs",
     "dev:ninfer": "node scripts/dev.mjs",
     "dev:fake": "node scripts/dev.mjs --fake",
-    "migrate:dev-data": "node scripts/migrate-dev-data.mjs",
     "start": "pnpm --filter @fitz/host start",
     "smoke": "pnpm build && node scripts/smoke-host.mjs",
     "test": "vitest run",

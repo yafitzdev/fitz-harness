@@ -48,15 +48,11 @@ gating because it never mutates state.
 All mutable Fitz data derives from one data root (`FITZ_DATA_ROOT`, default
 `%LOCALAPPDATA%\Fitz Codex` on Windows): the database lives at `{root}/database/fitz.db`, Pi packages
 at `{root}/pi`, logs at `{root}/logs`, and cache at `{root}/cache`. Narrow overrides
-(`FITZ_DATABASE_PATH`, `FITZ_PI_AGENT_DIR`, `FITZ_LOGS_DIR`, `FITZ_CACHE_DIR`) remain available for
-packaging and tests.
+(`FITZ_PI_AGENT_DIR`, `FITZ_LOGS_DIR`, `FITZ_CACHE_DIR`) remain available for packaging and tests.
 
 Development uses a repo-contained root: `pnpm dev` sets `FITZ_DATA_ROOT=<repo>/data`, keeping the
-packaged app's per-user data untouched. Run `pnpm migrate:dev-data` once to move an existing
-`data/fitz-ninfer.db` into `data/database/fitz.db` and to seed `data/pi` from the packaged app's pi
-dir. `node scripts/migrate-dev-data.mjs --cleanup-appdata-pi` additionally renames the packaged app's
-stale pi leftovers (`npm/`, 0-byte `fitz.db`, `settings.json.pre-terminal-merge`) out of the way —
-recoverably, never deleted.
+packaged app's per-user data untouched. The legacy `data/fitz-ninfer.db` store was migrated into the
+unified layout once; that migration tooling has since been removed.
 
 The Plugins workspace searches the public npm `pi-package` catalog and lets administrators install,
 update, enable, disable, or remove extensions and skills. Extension tools join the normal tool
