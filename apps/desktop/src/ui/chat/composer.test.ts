@@ -200,6 +200,33 @@ describe("Composer", () => {
     expect(calls.onPreviewPasted).toHaveBeenCalledWith("pdf", expect.any(String), "application/pdf", "report.pdf");
   });
 
+  it("stages attach-button files as chips and consumes them on submit", async () => {
+    const { composer } = setup();
+    composer.attachFile(new File(["code"], "notes.txt", { type: "text/plain" }));
+    await vi.waitFor(() => expect(composer.root.querySelectorAll(".file-chip").length).toBe(1));
+    expect(composer.root.querySelector<HTMLElement>(".file-chip .file-name")!.textContent).toBe("notes.txt");
+
+    composer.attachFile(new File(["%PDF-1.4"], "doc.pdf", { type: "application/pdf" }));
+    await vi.waitFor(() => expect(composer.root.querySelectorAll(".pdf-chip").length).toBe(1));
+
+    const attachments = composer.consumePastedAttachments();
+    expect(attachments.map((item) => item.kind)).toEqual(["file", "pdf"]);
+    expect(attachments[0]!.name).toBe("notes.txt");
+    expect(attachments[1]!.name).toBe("doc.pdf");
+    expect(composer.root.querySelectorAll(".attachment-chip").length).toBe(0);
+  });
+
+  it("rejects attach-button files over 5 MB and ignores attach while running", () => {
+    const { composer, calls } = setup();
+    composer.attachFile(new File([new Uint8Array(5_000_001)], "big.png", { type: "image/png" }));
+    expect(calls.onError).toHaveBeenCalledWith("Attached file is too large (max 5 MB)");
+    expect(composer.root.querySelectorAll(".attachment-chip").length).toBe(0);
+
+    const running = setup({ isRunning: () => true });
+    running.composer.attachFile(new File(["x"], "notes.txt", { type: "text/plain" }));
+    expect(running.composer.root.querySelectorAll(".attachment-chip").length).toBe(0);
+  });
+
   it("rejects pasted files over 5 MB and ignores pastes while running", () => {
     const { composer, calls } = setup();
     pasteFiles(composer, [{ bytes: [new Uint8Array(5_000_001)], name: "big.png", mimeType: "image/png" }]);

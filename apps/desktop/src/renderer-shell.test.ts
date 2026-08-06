@@ -61,10 +61,6 @@ describe("desktop renderer shell", () => {
       "context-toggle",
       "context-add",
       "add-artifact",
-      "task-info-toggle",
-      "task-menu-toggle",
-      "rename-task",
-      "archive-task",
       "update",
     ];
     for (const id of rendererActions) {
@@ -77,15 +73,16 @@ describe("desktop renderer shell", () => {
     }
   });
 
-  it("exposes the active session UUID in a chat info popover", () => {
-    for (const id of ["task-info-toggle", "task-info", "task-info-title", "task-info-id", "task-info-uuid", "task-info-project", "task-info-created"]) {
-      expect(html, `missing control #${id}`).toContain(`id="${id}"`);
-      expect(renderer, `missing renderer binding for #${id}`).toContain(`element("${id}")`);
-    }
-    expect(renderer).toContain("populateTaskInfo");
-    expect(renderer).toContain("positionFixedPopover(taskInfo, taskInfoToggle)");
-    expect(renderer).toContain("taskInfoToggle.hidden = !session");
-    expect(renderer).toContain("taskInfo.hidden = true");
+  it("keeps chat actions in the sidebar menu and keyboard shortcuts, not the header", () => {
+    expect(html).not.toContain('id="task-menu-toggle"');
+    expect(html).not.toContain('id="task-menu"');
+    expect(html).not.toContain('id="task-info-toggle"');
+    expect(html).not.toContain('id="task-info"');
+    expect(renderer).not.toContain("populateTaskInfo");
+    expect(renderer).not.toContain('element("rename-task")');
+    // The rename/archive shortcuts survive the menu removal.
+    expect(renderer).toContain('event.ctrlKey && event.altKey && event.key.toLowerCase() === "r"');
+    expect(renderer).toContain('event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "a"');
   });
 
   it("uses inline sidebar editing and avoids blocking dialogs or browser prompts", () => {
@@ -637,13 +634,13 @@ describe("desktop renderer shell", () => {
   it("previews pasted images and PDFs from their composer chips in the Inspector", () => {
     expect(composer).toContain('item.type.startsWith("image/") ? "image" : item.type === "application/pdf" ? "pdf" : undefined');
     expect(composer).toContain("readPastedFile(file, kind)");
-    expect(composer).toContain('chip.className = `attachment-chip ${kind === "pdf" ? "pdf-chip" : "image-chip"}`;');
+    expect(composer).toContain('chip.className = `attachment-chip ${kind === "image" ? "image-chip" : kind === "pdf" ? "pdf-chip" : "file-chip"}`;');
     expect(composer).toContain('preview.className = `attachment-preview ${kind === "pdf" ? "pdf-preview" : "image-preview"}`;');
     expect(composer).toContain('preview.title = kind === "pdf" ? "Preview PDF" : "Preview image";');
     expect(renderer).toContain("inspectorPanel.previewImage(dataUrl, mimeType, name)");
     expect(renderer).toContain("inspectorPanel.previewPdf(dataUrl, mimeType, name)");
-    expect(renderer).toContain('name: pasted.kind === "pdf" ? pasted.name : `screenshot-${Date.now()}.png`');
-    expect(composer).toContain('this.pastedFiles.push({ dataUrl, mimeType: file.type || "application/pdf", name, kind, chip })');
+    expect(renderer).toContain('name: pasted.kind === "image" ? `screenshot-${Date.now()}.png` : pasted.name');
+    expect(composer).toContain('this.pastedFiles.push({ dataUrl, mimeType: file.type || (kind === "pdf" ? "application/pdf" : "application/octet-stream"), name, kind, chip })');
     expect(inspectorPanel).toContain("previewImage(dataUrl: string, mimeType: string, name: string): void");
     expect(inspectorPanel).toContain("previewPdf(dataUrl: string, mimeType: string, name: string): void");
     expect(resourceInspector).toContain("previewImage(dataUrl: string, mimeType: string, name: string): void");
@@ -659,6 +656,17 @@ describe("desktop renderer shell", () => {
     expect(composerCss).toContain(".pdf-chip .attachment-preview { display: grid; grid-template-rows: 1fr auto; place-items: center; gap: 3px; padding: 8px; text-align: center; cursor: zoom-in; }");
     expect(composerCss).toContain(".pdf-chip .attachment-preview svg");
     expect(composerCss).toContain(".pdf-chip .pdf-name");
+  });
+
+  it("stages picker files as chips in a new chat and uploads them with the first message", () => {
+    // The attach button unlocks in new chat mode so "+" works before a session exists.
+    expect(renderer).toContain('hasSession: Boolean(projects.currentSessionId || (newChatMode && projects.currentProjectId))');
+    expect(renderer).toContain('if (!projects.currentSessionId && !(newChatMode && projects.currentProjectId)) { showToast("Create or select a task before attaching a file"); return; }');
+    expect(renderer).toContain('if (newChatMode && projects.currentProjectId) { composer.attachFile(file); return; }');
+    expect(composer).toContain("attachFile(file: File): void");
+    expect(composer).toContain('const kind = file.type.startsWith("image/") ? "image" : file.type === "application/pdf" ? "pdf" : "file";');
+    expect(composer).toContain('this.options.onError("Attached file is too large (max 5 MB)");');
+    expect(composerCss).toContain(".file-chip .file-chip-body");
   });
 
   it("pairs a desktop without exposing its durable bearer credential to the renderer", () => {

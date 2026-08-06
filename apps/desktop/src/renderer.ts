@@ -9,9 +9,7 @@ import { ConversationLayout } from "./ui/layout/conversation-layout.js";
 import { ManagementPageLayout, managementRefreshIcon } from "./ui/layout/management-page.js";
 import { WorkspacePageController } from "./ui/layout/workspace-pages.js";
 import { CustomSelectController } from "./ui/primitives/custom-select.js";
-import { createCopyButton } from "./ui/primitives/copy-button.js";
 import { requiredElement as element, requiredQuery as query, svgIcon as svg, textBlock } from "./ui/primitives/dom.js";
-import { positionFixedPopover, togglePopover as toggleManagedPopover } from "./ui/primitives/popover.js";
 import { ResizablePane } from "./ui/primitives/resizable-pane.js";
 import { PluginsPageController } from "./ui/plugins/plugins-page.js";
 import { AdministrationPageController } from "./ui/administration/administration-page.js";
@@ -54,14 +52,6 @@ const queueCount = element("queue-count");
 const artifactFile = element("artifact-file") as HTMLInputElement;
 const addArtifactButton = element("add-artifact") as HTMLButtonElement;
 const updateButton = element("update") as HTMLButtonElement;
-const taskMenuToggle = element("task-menu-toggle") as HTMLButtonElement;
-const taskMenu = element("task-menu");
-const taskInfoToggle = element("task-info-toggle") as HTMLButtonElement;
-const taskInfo = element("task-info");
-const taskInfoTitle = element("task-info-title");
-const taskInfoId = element("task-info-id");
-const taskInfoProject = element("task-info-project");
-const taskInfoCreated = element("task-info-created");
 const appMenuPopover = element("app-menu-popover");
 const selectPopover = element("select-popover");
 const sidebarResizer = element("sidebar-resizer");
@@ -460,24 +450,6 @@ window.addEventListener("fitz:open-resource", (event) => {
 element("context-add").addEventListener("click", chooseArtifact);
 addArtifactButton.addEventListener("click", chooseArtifact);
 artifactFile.addEventListener("change", () => void uploadArtifact());
-taskMenuToggle.addEventListener("click", (event) => { event.stopPropagation(); togglePopover(taskMenu, taskMenuToggle); });
-taskMenu.addEventListener("click", (event) => event.stopPropagation());
-taskInfoToggle.addEventListener("click", (event) => {
-  event.stopPropagation();
-  const opening = taskInfo.hidden;
-  populateTaskInfo();
-  togglePopover(taskInfo, taskInfoToggle);
-  if (opening) positionFixedPopover(taskInfo, taskInfoToggle);
-});
-taskInfo.addEventListener("click", (event) => event.stopPropagation());
-element("task-info-uuid").append(createCopyButton({
-  copyText: (text) => void window.fitz.copyText(text),
-  value: () => projects.currentSessionRecord()?.id ?? "",
-  title: "Copy session ID",
-  className: "icon-button",
-}));
-element("rename-task").addEventListener("click", () => { if (shell.classList.contains("sidebar-collapsed")) toggleSidebar(); projectSidebar.beginRenameCurrentSession(); });
-element("archive-task").addEventListener("click", () => void projects.archiveCurrentTask());
 pairingForm.addEventListener("submit", (event) => { event.preventDefault(); void pairDevice(); });
 document.addEventListener("click", closePopovers);
 
@@ -746,20 +718,12 @@ function openAppMenu(name: string, toggle: HTMLButtonElement, event: MouseEvent)
   toggle.setAttribute("aria-expanded", "true");
 }
 
-function togglePopover(popover: HTMLElement, toggle: HTMLButtonElement): void {
-  toggleManagedPopover(popover, toggle, closePopovers);
-}
-
 function closePopovers(): void {
   customSelects.close();
   appMenuPopover.hidden = true;
   composer.closePopovers();
-  taskMenu.hidden = true;
-  taskInfo.hidden = true;
   projectSidebar.hideMenu();
   projectSidebar.hideOverlays();
-  taskMenuToggle.setAttribute("aria-expanded", "false");
-  taskInfoToggle.setAttribute("aria-expanded", "false");
   projectSidebar.resetMenuToggles();
   for (const toggle of document.querySelectorAll("[data-app-menu]")) toggle.setAttribute("aria-expanded", "false");
 }
@@ -787,7 +751,7 @@ async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLE
   for (const pasted of attachments) {
     try {
       const response = await api(`/api/v1/sessions/${projects.currentSessionId}/artifacts`, "POST", {
-        name: pasted.kind === "pdf" ? pasted.name : `screenshot-${Date.now()}.png`,
+        name: pasted.kind === "image" ? `screenshot-${Date.now()}.png` : pasted.name,
         mimeType: pasted.mimeType,
         contentBase64: pasted.dataUrl.split(",")[1]!,
       });
@@ -890,19 +854,25 @@ async function removeArtifact(artifact: Json): Promise<void> {
 }
 
 function chooseArtifact(): void {
-  if (!projects.currentSessionId) { showToast("Create or select a task before attaching a file"); return; }
+  if (!projects.currentSessionId && !(newChatMode && projects.currentProjectId)) { showToast("Create or select a task before attaching a file"); return; }
   artifactFile.click();
 }
 
 async function uploadArtifact(): Promise<void> {
   const file = artifactFile.files?.[0]; artifactFile.value = "";
-  if (!file || !projects.currentSessionId) return;
+  if (!file) return;
   if (file.size > 5_000_000) { showToast("Artifacts are currently limited to 5 MB"); return; }
-  try {
-    const contentBase64 = bytesToBase64(new Uint8Array(await file.arrayBuffer()));
-    await api(`/api/v1/sessions/${projects.currentSessionId}/artifacts`, "POST", { name: file.name, mimeType: file.type || "application/octet-stream", contentBase64 });
-    await loadArtifacts(); inspectorPanel.open(); showToast(`Attached ${file.name}`);
-  } catch (error) { showToast(errorMessage(error)); }
+  if (projects.currentSessionId) {
+    try {
+      const contentBase64 = bytesToBase64(new Uint8Array(await file.arrayBuffer()));
+      await api(`/api/v1/sessions/${projects.currentSessionId}/artifacts`, "POST", { name: file.name, mimeType: file.type || "application/octet-stream", contentBase64 });
+      await loadArtifacts(); inspectorPanel.open(); showToast(`Attached ${file.name}`);
+    } catch (error) { showToast(errorMessage(error)); }
+    return;
+  }
+  // No session yet (new chat): stage the file as a chip and upload it with the first message.
+  if (newChatMode && projects.currentProjectId) { composer.attachFile(file); return; }
+  showToast("Create or select a task before attaching a file");
 }
 
 function showLanding(hasTask = false): void {
@@ -984,26 +954,14 @@ function appendChangeSummary(files: Array<{ path: string; action: "edited" | "cr
 function refreshComposerState(): void {
   const ready = Boolean((projects.currentSessionId || (newChatMode && projects.currentProjectId)) && composer.controls.routeId);
   addArtifactButton.disabled = !projects.currentSessionId;
-  composer.setState({ ready, running: agentRuns.active, hasSession: Boolean(projects.currentSessionId) });
-}
-
-function populateTaskInfo(): void {
-  const session = projects.currentSessionRecord();
-  const project = projects.activeProject();
-  if (!session) return;
-  taskInfoTitle.textContent = session.title;
-  taskInfoId.textContent = session.id;
-  taskInfoProject.textContent = project?.name ?? "—";
-  taskInfoCreated.textContent = session.createdAt ? new Date(session.createdAt).toLocaleString() : "—";
+  // The attach button also unlocks in a new chat so files can be staged for the first message.
+  composer.setState({ ready, running: agentRuns.active, hasSession: Boolean(projects.currentSessionId || (newChatMode && projects.currentProjectId)) });
 }
 
 function updateTitles(): void {
   const project = projects.activeProject();
-  const session = projects.currentSessionRecord();
   projectTitle.textContent = project?.name ?? "Fitz Codex";
   taskTitle.textContent = "";
-  taskMenuToggle.hidden = !session;
-  taskInfoToggle.hidden = !session;
 }
 
 function toggleSidebar(): void { shell.classList.toggle("sidebar-collapsed"); closePopovers(); }

@@ -3,7 +3,7 @@ import { svgIcon as svg, textBlock } from "../primitives/dom.js";
 import { togglePopover } from "../primitives/popover.js";
 import type { DesktopBridge } from "../../preload.js";
 
-export type PastedAttachment = { dataUrl: string; mimeType: string; name: string; kind: "image" | "pdf" };
+export type PastedAttachment = { dataUrl: string; mimeType: string; name: string; kind: "image" | "pdf" | "file" };
 
 export interface ComposerOptions {
   mount: HTMLElement;
@@ -295,6 +295,18 @@ export class Composer {
     return captured.map((pasted) => ({ dataUrl: pasted.dataUrl, mimeType: pasted.mimeType, name: pasted.name, kind: pasted.kind }));
   }
 
+  /**
+   * Stages a file picked from the file chooser as a pasted attachment chip.
+   * Used by the "+" button before a session exists (new chat), so the file
+   * rides along with the first message instead of being uploaded immediately.
+   */
+  attachFile(file: File): void {
+    if (this.options.isRunning()) return;
+    const kind = file.type.startsWith("image/") ? "image" : file.type === "application/pdf" ? "pdf" : "file";
+    if (file.size > 5_000_000) { this.options.onError("Attached file is too large (max 5 MB)"); return; }
+    this.readPastedFile(file, kind);
+  }
+
   closePopovers(): void {
     this.controls.closePopovers();
     this.newChatEnvironmentMenu.hidden = true;
@@ -414,51 +426,66 @@ export class Composer {
     }
   }
 
-  private readPastedFile(file: File, kind: "image" | "pdf"): void {
+  private readPastedFile(file: File, kind: "image" | "pdf" | "file"): void {
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = reader.result as string;
       const name = kind === "pdf"
         ? (file.name && /\.pdf$/i.test(file.name) ? file.name : `document-${Date.now()}.pdf`)
-        : `screenshot-${Date.now()}.png`;
-      const chip = this.createPastedFileChip(dataUrl, file.type || "application/pdf", name, kind, () => this.removePastedFile(chip));
+        : kind === "image" ? `screenshot-${Date.now()}.png`
+        : (file.name || `file-${Date.now()}`);
+      const chip = this.createPastedFileChip(dataUrl, file.type || (kind === "pdf" ? "application/pdf" : "application/octet-stream"), name, kind, () => this.removePastedFile(chip));
       this.composerAttachments.append(chip);
-      this.pastedFiles.push({ dataUrl, mimeType: file.type || "application/pdf", name, kind, chip });
+      this.pastedFiles.push({ dataUrl, mimeType: file.type || (kind === "pdf" ? "application/pdf" : "application/octet-stream"), name, kind, chip });
       this.refreshAttachments();
     };
     reader.readAsDataURL(file);
   }
 
-  private createPastedFileChip(dataUrl: string, mimeType: string, name: string, kind: "image" | "pdf", onRemove: () => void): HTMLElement {
+  private createPastedFileChip(dataUrl: string, mimeType: string, name: string, kind: "image" | "pdf" | "file", onRemove: () => void): HTMLElement {
     const chip = document.createElement("div");
-    chip.className = `attachment-chip ${kind === "pdf" ? "pdf-chip" : "image-chip"}`;
+    chip.className = `attachment-chip ${kind === "image" ? "image-chip" : kind === "pdf" ? "pdf-chip" : "file-chip"}`;
     if (kind === "image") {
       chip.style.width = "96px";
       chip.style.height = "96px";
       chip.style.minWidth = "96px";
     }
 
-    const preview = document.createElement("button");
-    preview.type = "button";
-    preview.className = `attachment-preview ${kind === "pdf" ? "pdf-preview" : "image-preview"}`;
-    preview.title = kind === "pdf" ? "Preview PDF" : "Preview image";
-    preview.setAttribute("aria-label", preview.title);
-    preview.addEventListener("click", () => {
-      this.options.onPreviewPasted(kind, dataUrl, mimeType, name);
-    });
-
-    if (kind === "image") {
-      const img = document.createElement("img");
-      img.src = dataUrl;
-      img.alt = "Pasted image";
-      preview.append(img);
-    } else {
+    if (kind === "file") {
+      // Generic files have no preview yet: a static body with an icon and name.
+      const body = document.createElement("div");
+      body.className = "file-chip-body";
       const icon = svg('<path d="M5 2.8h6l4 4v10.4H5z"></path><path d="M11 2.8v4h4"></path><path d="M7.5 9.5h5M7.5 12h5M7.5 14.5h3"></path>');
       icon.setAttribute("aria-hidden", "true");
       const label = document.createElement("span");
-      label.className = "pdf-name";
+      label.className = "file-name";
       label.textContent = name;
-      preview.append(icon, label);
+      body.append(icon, label);
+      chip.append(body);
+    } else {
+      const preview = document.createElement("button");
+      preview.type = "button";
+      preview.className = `attachment-preview ${kind === "pdf" ? "pdf-preview" : "image-preview"}`;
+      preview.title = kind === "pdf" ? "Preview PDF" : "Preview image";
+      preview.setAttribute("aria-label", preview.title);
+      preview.addEventListener("click", () => {
+        this.options.onPreviewPasted(kind, dataUrl, mimeType, name);
+      });
+
+      if (kind === "image") {
+        const img = document.createElement("img");
+        img.src = dataUrl;
+        img.alt = "Pasted image";
+        preview.append(img);
+      } else {
+        const icon = svg('<path d="M5 2.8h6l4 4v10.4H5z"></path><path d="M11 2.8v4h4"></path><path d="M7.5 9.5h5M7.5 12h5M7.5 14.5h3"></path>');
+        icon.setAttribute("aria-hidden", "true");
+        const label = document.createElement("span");
+        label.className = "pdf-name";
+        label.textContent = name;
+        preview.append(icon, label);
+      }
+      chip.append(preview);
     }
 
     const remove = document.createElement("button");
@@ -467,7 +494,7 @@ export class Composer {
     remove.textContent = "\u00d7";
     remove.addEventListener("click", () => { onRemove(); });
 
-    chip.append(preview, remove);
+    chip.append(remove);
     return chip;
   }
 

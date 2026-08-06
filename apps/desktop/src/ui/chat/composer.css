@@ -50,6 +50,9 @@
 .pdf-chip .attachment-preview svg { width: 22px; height: 22px; color: var(--muted); }
 .pdf-chip .attachment-preview:hover svg, .pdf-chip .attachment-preview:focus-visible svg { color: var(--text); }
 .pdf-chip .pdf-name { max-width: 100%; }
+.file-chip .file-chip-body { width: 100%; height: 100%; display: grid; grid-template-rows: 1fr auto; place-items: center; gap: 3px; padding: 8px; text-align: center; }
+.file-chip .file-chip-body svg { width: 22px; height: 22px; color: var(--muted); }
+.file-chip .file-name { max-width: 100%; }
 .attachment-remove { position: absolute; top: -7px; right: -7px; width: 22px; height: 22px; display: grid; place-items: center; padding: 0 0 2px; border: 1px solid #686b66; border-radius: 50%; background: #e7e8e3; color: #202220; font-size: 17px; line-height: 1; cursor: pointer; }
 .attachment-remove:hover { background: white; transform: scale(1.06); }
 #prompt { position: relative; z-index: 1; display: block; width: 100%; min-height: 54px; max-height: 180px; padding: 16px 18px 6px; resize: none; border: 0; outline: 0; background: transparent; color: var(--text); line-height: 1.5; }
