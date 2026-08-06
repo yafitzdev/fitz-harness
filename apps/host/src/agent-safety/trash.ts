@@ -95,6 +95,71 @@ export class TrashService {
     this.#store.markTrashRestored(id, restoredAt);
     return { ...entry, restoredAt };
   }
+
+  /**
+   * Permanently delete every trashed file for this workspace and clear its rows.
+   * This is the one sanctioned hard delete: it is explicitly user-initiated (an
+   * "empty trash" action), never something an agent run can trigger.
+   */
+  async empty(): Promise<{ removed: number }> {
+    const entries = this.#store.listTrashEntries(this.#workspaceRoot, 10_000);
+    let removed = 0;
+    for (const entry of entries) {
+      if (await this.#removeEntry(entry)) removed++;
+    }
+    await this.#pruneRunDirs();
+    return { removed };
+  }
+
+  /**
+   * Permanently delete trashed files older than `before` (retention GC). Entries the
+   * user explicitly emptied already have their rows gone; this catches everything the
+   * retention window outlived. The files are in the trash, so deleting them loses
+   * nothing the user did not already give up by leaving them there past retention.
+   */
+  async collectExpired(before: string): Promise<{ removed: number }> {
+    const expired = this.#store.listTrashEntries(this.#workspaceRoot, 10_000).filter((entry) => entry.createdAt < before);
+    let removed = 0;
+    for (const entry of expired) {
+      if (await this.#removeEntry(entry)) removed++;
+    }
+    await this.#pruneRunDirs();
+    return { removed };
+  }
+
+  /** Delete one trashed file and its row; returns true when the row existed. */
+  async #removeEntry(entry: TrashEntryRecord): Promise<boolean> {
+    try {
+      await fs.rm(entry.trashPath, { recursive: true, force: true });
+    } catch {
+      // The file may already be gone; the row is still removed so the DB stays the
+      // source of truth for what remains in the trash.
+    }
+    return this.#store.deleteTrashEntry(entry.id);
+  }
+
+  /** Remove now-empty run dirs (and the trash root itself) so retention leaves no shell behind. */
+  async #pruneRunDirs(): Promise<void> {
+    const root = join(this.#workspaceRoot, ".fitz-trash");
+    let children: string[];
+    try {
+      children = await fs.readdir(root);
+    } catch {
+      return; // No trash dir at all.
+    }
+    for (const child of children) {
+      try {
+        await fs.rmdir(join(root, child));
+      } catch {
+        // Not empty or not a directory — leave it.
+      }
+    }
+    try {
+      await fs.rmdir(root);
+    } catch {
+      // Still holds files (or was recreated) — leave it.
+    }
+  }
 }
 
 function isCrossDevice(error: unknown): boolean {

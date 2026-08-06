@@ -43,6 +43,15 @@ export interface AdministrationPageElements {
   toolPolicyDecision: HTMLSelectElement;
   toolPolicies: HTMLElement;
   adminAuditEvents: HTMLElement;
+  adminTrash: HTMLElement;
+  adminSnapshots: HTMLElement;
+  adminToolActions: HTMLElement;
+  emptyTrashButton: HTMLButtonElement;
+  gcRetentionButton: HTMLButtonElement;
+  emptyTrashConfirmation: HTMLElement;
+  emptyTrashConfirmationText: HTMLElement;
+  cancelEmptyTrash: HTMLButtonElement;
+  confirmEmptyTrash: HTMLButtonElement;
   diagnosticGeneratedAt: HTMLElement;
   diagnosticSummary: HTMLElement;
   diagnosticMetrics: HTMLElement;
@@ -85,6 +94,7 @@ export class AdministrationPageController {
   private diagnosticBundle: Json | undefined;
   private pendingRemoteAction: "enable" | "disable" | undefined;
   private pendingStartupAction: "install" | "remove" | undefined;
+  private pendingEmptyTrash = false;
 
   constructor(elements: AdministrationPageElements, options: AdministrationPageOptions) {
     this.elements = elements;
@@ -105,13 +115,16 @@ export class AdministrationPageController {
   async load(): Promise<void> {
     if (!this.options.isAdministrator()) return;
     try {
-      const [users, policies, audit, diagnostics, remote, startup] = await Promise.all([
+      const [users, policies, audit, diagnostics, remote, startup, trash, snapshots, toolActions] = await Promise.all([
         this.options.api("/api/v1/management/users"),
         this.options.api("/api/v1/management/tool-policies"),
         this.options.api("/api/v1/management/audit-events?limit=50"),
         this.options.api("/api/v1/management/diagnostics"),
         this.options.api("/api/v1/management/connectivity/status"),
         this.options.api("/api/v1/management/startup"),
+        this.options.api("/api/v1/management/trash"),
+        this.options.api("/api/v1/management/snapshots"),
+        this.options.api("/api/v1/management/tool-actions?limit=100"),
       ]);
       this.users = users.data ?? [];
       this.policies = policies.data ?? [];
@@ -123,6 +136,9 @@ export class AdministrationPageController {
       this.renderToolPolicySubjects();
       this.renderToolPolicies();
       this.renderAdminAuditEvents(audit.data ?? []);
+      this.renderSafetyTrash(trash.data ?? []);
+      this.renderSafetySnapshots(snapshots.data ?? []);
+      this.renderSafetyToolActions(toolActions.data ?? []);
       this.diagnosticBundle = diagnostics;
       this.renderDiagnostics(diagnostics);
       this.renderRemoteAccess(remote.data);
@@ -134,6 +150,10 @@ export class AdministrationPageController {
 
   private bind(): void {
     this.elements.refresh.addEventListener("click", () => void this.load());
+    this.elements.emptyTrashButton.addEventListener("click", () => this.showEmptyTrashConfirmation());
+    this.elements.cancelEmptyTrash.addEventListener("click", () => this.hideEmptyTrashConfirmation());
+    this.elements.confirmEmptyTrash.addEventListener("click", () => void this.applyEmptyTrash());
+    this.elements.gcRetentionButton.addEventListener("click", () => void this.runRetention());
     this.elements.pairingCodeForm.addEventListener("submit", (event) => { event.preventDefault(); void this.issuePairingCode(); });
     const copyPairingCode = createCopyButton({
       copyText: (text) => void this.options.bridge.copyText(text),
@@ -347,6 +367,129 @@ export class AdministrationPageController {
       this.elements.adminAuditEvents.append(row);
     }
     if (!events.length) this.elements.adminAuditEvents.append(emptyState("No activity yet"));
+  }
+
+  private renderSafetyTrash(entries: Json[]): void {
+    this.elements.adminTrash.replaceChildren();
+    for (const entry of entries) {
+      const row = document.createElement("div");
+      row.className = "admin-safety-row";
+      const restored = Boolean(entry.restoredAt);
+      const detail = document.createElement("span");
+      detail.className = "admin-safety-detail";
+      detail.append(
+        Object.assign(document.createElement("strong"), { textContent: entry.originalPath }),
+        Object.assign(document.createElement("small"), {
+          textContent: `${entry.workspaceRoot ?? ""} · ${restored ? "restored" : "in trash"} · ${entry.createdAt ? new Date(entry.createdAt).toLocaleString() : ""}`.trim(),
+        }),
+      );
+      row.append(detail);
+      if (!restored) {
+        const restore = document.createElement("button");
+        restore.type = "button";
+        restore.textContent = "Restore";
+        restore.addEventListener("click", () => void this.restoreTrashEntry(entry.id));
+        row.append(restore);
+      }
+      this.elements.adminTrash.append(row);
+    }
+    if (!entries.length) this.elements.adminTrash.append(emptyState("Nothing in the trash"));
+  }
+
+  private renderSafetySnapshots(snapshots: Json[]): void {
+    this.elements.adminSnapshots.replaceChildren();
+    for (const snapshot of snapshots) {
+      const row = document.createElement("div");
+      row.className = "admin-safety-row";
+      const detail = document.createElement("span");
+      detail.className = "admin-safety-detail";
+      const restorable = snapshot.status === "active" || snapshot.status === "restored";
+      detail.append(
+        Object.assign(document.createElement("strong"), { textContent: snapshot.runId }),
+        Object.assign(document.createElement("small"), {
+          textContent: `${snapshot.status} · ${Number(snapshot.fileCount ?? 0).toLocaleString()} files · ${snapshot.createdAt ? new Date(snapshot.createdAt).toLocaleString() : ""}`.trim(),
+        }),
+      );
+      row.append(detail);
+      if (snapshot.status === "active") {
+        const restore = document.createElement("button");
+        restore.type = "button";
+        restore.textContent = "Restore snapshot";
+        restore.addEventListener("click", () => void this.restoreSnapshot(snapshot.runId));
+        row.append(restore);
+      }
+      this.elements.adminSnapshots.append(row);
+    }
+    if (!snapshots.length) this.elements.adminSnapshots.append(emptyState("No snapshots yet"));
+  }
+
+  private renderSafetyToolActions(actions: Json[]): void {
+    this.elements.adminToolActions.replaceChildren();
+    for (const action of actions) {
+      const row = document.createElement("div");
+      row.className = "admin-safety-row";
+      const detail = document.createElement("span");
+      detail.className = "admin-safety-detail";
+      detail.append(
+        Object.assign(document.createElement("strong"), { textContent: `${action.toolName} · ${action.effect}` }),
+        Object.assign(document.createElement("small"), {
+          textContent: `${action.runId ?? ""}${action.path ? ` · ${action.path}` : ""} · ${action.timestamp ? new Date(action.timestamp).toLocaleString() : ""}`.trim(),
+        }),
+      );
+      row.append(detail);
+      this.elements.adminToolActions.append(row);
+    }
+    if (!actions.length) this.elements.adminToolActions.append(emptyState("No tool actions recorded yet"));
+  }
+
+  private showEmptyTrashConfirmation(): void {
+    this.pendingEmptyTrash = true;
+    this.elements.emptyTrashConfirmationText.textContent = "Permanently delete every file in the agent trash? This cannot be undone — restored files are not affected.";
+    this.elements.emptyTrashConfirmation.hidden = false;
+  }
+
+  private hideEmptyTrashConfirmation(): void {
+    this.pendingEmptyTrash = false;
+    this.elements.emptyTrashConfirmation.hidden = true;
+  }
+
+  private async applyEmptyTrash(): Promise<void> {
+    if (!this.pendingEmptyTrash) return;
+    this.elements.confirmEmptyTrash.disabled = true;
+    try {
+      const response = await this.options.api("/api/v1/management/trash", "DELETE");
+      this.hideEmptyTrashConfirmation();
+      await this.load();
+      this.options.showToast(`Trash emptied (${response.data?.removed ?? 0} file${response.data?.removed === 1 ? "" : "s"} removed)`);
+    } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
+    finally { this.elements.confirmEmptyTrash.disabled = false; }
+  }
+
+  private async runRetention(): Promise<void> {
+    this.elements.gcRetentionButton.disabled = true;
+    try {
+      const response = await this.options.api("/api/v1/management/trash/gc", "POST", { maxAgeDays: 30 });
+      await this.load();
+      const result = response.data ?? {};
+      this.options.showToast(`Retention swept ${Number(result.trash ?? 0)} trashed file${Number(result.trash) === 1 ? "" : "s"} and ${Number(result.snapshots ?? 0)} snapshot${Number(result.snapshots) === 1 ? "" : "s"}`);
+    } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
+    finally { this.elements.gcRetentionButton.disabled = false; }
+  }
+
+  private async restoreTrashEntry(id: string): Promise<void> {
+    try {
+      await this.options.api(`/api/v1/management/trash/${encodeURIComponent(id)}/restore`, "POST");
+      await this.load();
+      this.options.showToast("File restored");
+    } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
+  }
+
+  private async restoreSnapshot(runId: string): Promise<void> {
+    try {
+      await this.options.api(`/api/v1/management/snapshots/${encodeURIComponent(runId)}/restore`, "POST");
+      await this.load();
+      this.options.showToast(`Workspace restored from run ${runId}`);
+    } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
   }
 
   private renderDiagnostics(diagnostics: Json): void {

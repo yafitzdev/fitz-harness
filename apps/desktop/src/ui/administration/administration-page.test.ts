@@ -67,6 +67,18 @@ function adminApi() {
       serve: { available: true, configuration: { "https://host": {} } },
     } },
     "/api/v1/management/startup": { data: { configured: true, available: true, message: "Per-user Windows startup" } },
+    "/api/v1/management/trash": { data: [
+      { id: "trash-1", runId: "run-1", workspaceRoot: "C:\\workspace", originalPath: "C:\\workspace\\notes.md", trashPath: "C:\\workspace\\.fitz-trash\\run-1\\1-notes.md", createdAt: "2026-08-04T09:00:00Z" },
+      { id: "trash-2", runId: "run-2", workspaceRoot: "C:\\workspace", originalPath: "C:\\workspace\\old.log", trashPath: "C:\\workspace\\.fitz-trash\\run-2\\1-old.log", createdAt: "2026-07-01T09:00:00Z", restoredAt: "2026-07-02T09:00:00Z" },
+    ] },
+    "/api/v1/management/snapshots": { data: [
+      { runId: "run-1", workspaceRoot: "C:\\workspace", snapshotDir: "C:\\data\\snapshots\\run-1", createdAt: "2026-08-04T09:00:00Z", status: "active", fileCount: 42 },
+      { runId: "run-3", workspaceRoot: "C:\\workspace", snapshotDir: "C:\\data\\snapshots\\run-3", createdAt: "2026-08-03T09:00:00Z", status: "restored", fileCount: 7 },
+    ] },
+    "/api/v1/management/tool-actions?limit=100": { data: [
+      { runId: "run-1", sequence: 1, timestamp: "2026-08-04T09:00:01Z", toolName: "bash", effect: "rewrite", path: "C:\\workspace\\notes.md", detail: {} },
+      { runId: "run-1", sequence: 2, timestamp: "2026-08-04T09:00:02Z", toolName: "read", effect: "allow", detail: {} },
+    ] },
     "/api/v1/management/pairing-codes": { data: { code: "ABCD-EFGH", expiresAt: "2026-08-04T11:00:00Z" } },
   };
   const api = vi.fn(async (path: string) => {
@@ -88,6 +100,9 @@ function setup(
     createUserForm: node("form"), createUserName: node("input"), createUserRole: node("select"), adminUsers: node("div"),
     toolPolicyForm: node("form"), toolPolicySubjectType: node("select"), toolPolicySubject: node("select"), toolPolicyName: node("input"), toolPolicyDecision: node("select"), toolPolicies: node("div"),
     adminAuditEvents: node("div"), diagnosticGeneratedAt: node("p"), diagnosticSummary: node("div"), diagnosticMetrics: node("div"), diagnosticFailures: node("div"), exportDiagnostics: node("button"),
+    adminTrash: node("div"), adminSnapshots: node("div"), adminToolActions: node("div"),
+    emptyTrashButton: node("button"), gcRetentionButton: node("button"),
+    emptyTrashConfirmation: node("div"), emptyTrashConfirmationText: node("span"), cancelEmptyTrash: node("button"), confirmEmptyTrash: node("button"),
     remoteAccessStatus: node("div"), remoteAccessConfirmation: node("div"), remoteAccessConfirmationText: node("span"),
     enableRemoteAccess: node("button"), disableRemoteAccess: node("button"), confirmRemoteAccess: node("button"),
     hostStartupStatus: node("div"), hostStartupConfirmation: node("div"), hostStartupConfirmationText: node("span"),
@@ -158,6 +173,9 @@ describe("AdministrationPageController", () => {
     expect(api).toHaveBeenCalledWith("/api/v1/management/diagnostics");
     expect(api).toHaveBeenCalledWith("/api/v1/management/connectivity/status");
     expect(api).toHaveBeenCalledWith("/api/v1/management/startup");
+    expect(api).toHaveBeenCalledWith("/api/v1/management/trash");
+    expect(api).toHaveBeenCalledWith("/api/v1/management/snapshots");
+    expect(api).toHaveBeenCalledWith("/api/v1/management/tool-actions?limit=100");
 
     const users = elements.adminUsers.querySelectorAll(".admin-user");
     expect(users).toHaveLength(2);
@@ -185,6 +203,15 @@ describe("AdministrationPageController", () => {
     expect(elements.hostStartupStatus.textContent).toContain("Starts at sign-in");
     expect(elements.installHostStartup.disabled).toBe(true);
     expect(elements.removeHostStartup.disabled).toBe(false);
+
+    // Safety & recovery: trash entries (restorable ones get a button), snapshots, audit.
+    expect(elements.adminTrash.querySelectorAll(".admin-safety-row")).toHaveLength(2);
+    expect(elements.adminTrash.textContent).toContain("notes.md");
+    expect(elements.adminTrash.textContent).toContain("restored");
+    expect(elements.adminSnapshots.textContent).toContain("run-1");
+    expect(elements.adminSnapshots.querySelectorAll("button")).toHaveLength(1); // only the active snapshot restores
+    expect(elements.adminToolActions.textContent).toContain("bash · rewrite");
+    expect(elements.adminToolActions.textContent).toContain("read · allow");
   });
 
   it("skips loading when the caller is not an administrator", async () => {
@@ -290,6 +317,55 @@ describe("AdministrationPageController", () => {
     await vi.waitFor(() => expect(calls).toHaveBeenCalledWith("/api/v1/management/startup", "POST", {}));
     await vi.waitFor(() => expect(showToast).toHaveBeenCalledWith("Host will start at sign-in"));
     expect(elements.hostStartupConfirmation.hidden).toBe(true);
+  });
+
+  it("empties the trash only after an explicit confirmation", async () => {
+    const { controller, elements, api, showToast } = setup();
+    await controller.load();
+
+    click(elements.emptyTrashButton);
+    expect(elements.emptyTrashConfirmation.hidden).toBe(false);
+    expect(elements.emptyTrashConfirmationText.textContent).toContain("Permanently delete");
+
+    click(elements.cancelEmptyTrash);
+    expect(elements.emptyTrashConfirmation.hidden).toBe(true);
+    expect(api).not.toHaveBeenCalledWith("/api/v1/management/trash", "DELETE");
+
+    click(elements.emptyTrashButton);
+    click(elements.confirmEmptyTrash);
+    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/trash", "DELETE"));
+    await vi.waitFor(() => expect(showToast).toHaveBeenCalledWith(expect.stringContaining("Trash emptied")));
+    expect(elements.emptyTrashConfirmation.hidden).toBe(true);
+  });
+
+  it("restores trash entries and snapshots from the safety section", async () => {
+    const { controller, elements, api, showToast } = setup();
+    await controller.load();
+
+    const restoreButton = elements.adminTrash.querySelector<HTMLButtonElement>("button")!;
+    click(restoreButton);
+    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/trash/trash-1/restore", "POST"));
+    await vi.waitFor(() => expect(showToast).toHaveBeenCalledWith("File restored"));
+
+    const snapshotButton = elements.adminSnapshots.querySelector<HTMLButtonElement>("button")!;
+    click(snapshotButton);
+    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/snapshots/run-1/restore", "POST"));
+    await vi.waitFor(() => expect(showToast).toHaveBeenCalledWith("Workspace restored from run run-1"));
+  });
+
+  it("runs retention and reports what was swept", async () => {
+    const base = adminApi();
+    const api = vi.fn(async (path: string, method?: string, body?: unknown) => {
+      if (path === "/api/v1/management/trash/gc" && method === "POST") return { data: { trash: 3, snapshots: 1 } };
+      return base(path, method, body);
+    });
+    const { controller, elements, showToast } = setup(api);
+    await controller.load();
+
+    click(elements.gcRetentionButton);
+    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/trash/gc", "POST", { maxAgeDays: 30 }));
+    await vi.waitFor(() => expect(showToast).toHaveBeenCalledWith("Retention swept 3 trashed files and 1 snapshot"));
+    expect(elements.gcRetentionButton.disabled).toBe(false);
   });
 
   it("renders desktop update state and triggers installs", async () => {
@@ -417,6 +493,9 @@ function setupWithSections(
     createUserForm: node("form"), createUserName: node("input"), createUserRole: node("select"), adminUsers: node("div"),
     toolPolicyForm: node("form"), toolPolicySubjectType: node("select"), toolPolicySubject: node("select"), toolPolicyName: node("input"), toolPolicyDecision: node("select"), toolPolicies: node("div"),
     adminAuditEvents: node("div"), diagnosticGeneratedAt: node("p"), diagnosticSummary: node("div"), diagnosticMetrics: node("div"), diagnosticFailures: node("div"), exportDiagnostics: node("button"),
+    adminTrash: node("div"), adminSnapshots: node("div"), adminToolActions: node("div"),
+    emptyTrashButton: node("button"), gcRetentionButton: node("button"),
+    emptyTrashConfirmation: node("div"), emptyTrashConfirmationText: node("span"), cancelEmptyTrash: node("button"), confirmEmptyTrash: node("button"),
     remoteAccessStatus: node("div"), remoteAccessConfirmation: node("div"), remoteAccessConfirmationText: node("span"),
     enableRemoteAccess: node("button"), disableRemoteAccess: node("button"), confirmRemoteAccess: node("button"),
     hostStartupStatus: node("div"), hostStartupConfirmation: node("div"), hostStartupConfirmationText: node("span"),

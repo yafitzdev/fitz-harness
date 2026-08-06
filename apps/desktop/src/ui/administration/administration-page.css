@@ -54,6 +54,11 @@
 .admin-audit-event { min-height: 45px; display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) auto; align-items: center; gap: 12px; padding: 8px 12px; background: var(--codex-gray-800); }
 .admin-audit-event strong { font-size: 11px; font-weight: 500; }
 .admin-audit-event span, .admin-audit-event time { overflow: hidden; color: var(--codex-text-tertiary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.admin-safety-list { display: grid; gap: 1px; overflow: hidden; border-radius: var(--codex-radius-lg); background: var(--border-soft); }
+.admin-safety-row { min-height: 45px; display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 12px; padding: 8px 12px; background: var(--codex-gray-800); }
+.admin-safety-detail { display: grid; gap: 2px; overflow: hidden; }
+.admin-safety-detail strong { overflow: hidden; font: 500 10px/1.35 "Cascadia Mono", Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.admin-safety-detail small { overflow: hidden; color: var(--codex-text-tertiary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .diagnostic-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 8px; }
 .diagnostic-stat { min-height: 70px; display: grid; align-content: space-between; gap: 8px; padding: 11px 12px; border-radius: var(--codex-radius-lg); background: var(--codex-gray-800); }
 .diagnostic-stat small { color: var(--codex-text-tertiary); font-size: 10px; }

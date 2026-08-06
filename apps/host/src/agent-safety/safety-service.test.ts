@@ -141,4 +141,46 @@ describe("AgentSafetyService", () => {
     await waitFor(() => store.getSnapshot("run-1") !== undefined);
     await waitFor(() => store.getSnapshot("run-2") !== undefined);
   });
+
+  it("empties the trash on demand (the one sanctioned permanent delete)", async () => {
+    const { workspace, store, safety } = await makeService();
+    await writeFile(join(workspace, "a.txt"), "a");
+    await writeFile(join(workspace, "b.txt"), "b");
+    await safety.trash([join(workspace, "a.txt"), join(workspace, "b.txt")], "run-1", workspace);
+    expect(store.listTrashEntries(workspace)).toHaveLength(2);
+    const result = await safety.emptyTrash();
+    expect(result.removed).toBe(2);
+    expect(store.listTrashEntries(workspace)).toHaveLength(0);
+    await expect(stat(join(workspace, ".fitz-trash", "run-1"))).rejects.toThrow();
+  });
+
+  it("retention GC collects expired trash and snapshots together", async () => {
+    const { workspace, store, safety } = await makeService();
+    await writeFile(join(workspace, "a.txt"), "a");
+    await safety.trash([join(workspace, "a.txt")], "run-1", workspace);
+    await writeFile(join(workspace, "code.ts"), "v1");
+    const evaluate = safety.createToolEvaluator();
+    await evaluate({ toolName: "bash", input: { command: "git status" }, cwd: workspace, runId: "run-2" });
+    await waitFor(() => store.getSnapshot("run-2")?.status === "active");
+    const snapshotDir = store.getSnapshot("run-2")!.snapshotDir;
+    expect(await readdir(snapshotDir)).not.toHaveLength(0);
+    // A zero retention window expires everything (the cutoff is "now").
+    const result = await safety.collect(0);
+    expect(result.trash).toBe(1);
+    expect(result.snapshots).toBeGreaterThanOrEqual(1);
+    expect(store.listTrashEntries(workspace)).toHaveLength(0);
+    expect(store.getSnapshot("run-2")).toBeUndefined();
+    await expect(readdir(snapshotDir)).rejects.toThrow();
+  });
+
+  it("exposes the tool-action audit readout across runs", async () => {
+    const { workspace, safety } = await makeService();
+    const evaluate = safety.createToolEvaluator();
+    await evaluate({ toolName: "bash", input: { command: `rm ${join(workspace, "x.txt").replace(/\\/g, "/")}` }, cwd: workspace, runId: "run-1" });
+    await evaluate({ toolName: "read", input: { path: join(workspace, "ok.txt") }, cwd: workspace, runId: "run-2" });
+    const actions = safety.listToolActions(100);
+    expect(actions.length).toBeGreaterThanOrEqual(2);
+    expect(actions.some((action) => action.effect === "rewrite" && action.toolName === "bash")).toBe(true);
+    expect(actions.some((action) => action.effect === "allow" && action.toolName === "read")).toBe(true);
+  });
 });

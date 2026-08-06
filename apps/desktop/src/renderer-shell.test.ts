@@ -690,13 +690,16 @@ describe("desktop renderer shell", () => {
   });
 
   it("provides inline administrator controls for pairing, users, devices, routes, quotas, and tools", () => {
-    for (const id of ["administration-page", "pairing-code-form", "create-user-form", "admin-users", "tool-policy-form", "tool-policies", "admin-audit-events"]) {
+    for (const id of ["administration-page", "pairing-code-form", "create-user-form", "admin-users", "tool-policy-form", "tool-policies", "admin-audit-events", "admin-trash", "admin-snapshots", "admin-tool-actions", "empty-trash-button", "gc-retention-button"]) {
       expect(html).toContain(`id="${id}"`);
     }
     expect(administrationPage).toContain('api("/api/v1/management/pairing-codes", "POST"');
     expect(administrationPage).toContain('api("/api/v1/management/users")');
     expect(administrationPage).toContain('api("/api/v1/management/tool-policies")');
     expect(administrationPage).toContain('api("/api/v1/management/audit-events?limit=50")');
+    expect(administrationPage).toContain('api("/api/v1/management/trash")');
+    expect(administrationPage).toContain('api("/api/v1/management/snapshots")');
+    expect(administrationPage).toContain('api("/api/v1/management/tool-actions?limit=100")');
     expect(administrationPage).toContain('/routes`, "PUT", { routeIds }');
     expect(administrationPage).toContain('/quota`, "PUT", quota');
     expect(administrationPage).toContain('revokeAdminDevice(device.id)');

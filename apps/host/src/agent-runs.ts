@@ -12,7 +12,8 @@ export class AgentRunCoordinator {
   readonly #listeners = new Map<string, Set<(event: AgentEventEnvelope) => void>>();
   #current: AgentQueueJob | undefined;
   #processing = false;
-  constructor(private readonly store: SqliteStore, private readonly scheduler: InferenceScheduler, private readonly runtime?: AgentRuntime) {}
+  /** Fired once per run after it reaches a terminal state, so the safety layer can sweep retention. */
+  constructor(private readonly store: SqliteStore, private readonly scheduler: InferenceScheduler, private readonly runtime?: AgentRuntime, private readonly onRunCompleted?: (runId: string) => void) {}
 
   start(request: AgentRunRequest, ownerUserId?: string, canonicalMessages = request.messages): AgentRunRecord {
     const id = randomUUID(); const now = new Date().toISOString();
@@ -38,7 +39,7 @@ export class AgentRunCoordinator {
   cancel(id: string): boolean {
     if (this.#current?.id === id && this.#current.stream) { this.#current.stream.cancel(); return true; }
     const index = this.#queue.findIndex((job) => job.id === id); if (index < 0) return false;
-    this.#queue.splice(index, 1); this.store.updateAgentRun(id, "cancelled"); this.#emit(id, "run.cancelled", { queued: true }); this.#publishQueue(); return true;
+    this.#queue.splice(index, 1); this.store.updateAgentRun(id, "cancelled"); this.#emit(id, "run.cancelled", { queued: true }); this.#publishQueue(); this.onRunCompleted?.(id); return true;
   }
   /** Queue a steering message into the currently running stream. The run must be actively streaming and its runtime must support steering. */
   async steer(runId: string, text: string): Promise<boolean> {
@@ -55,8 +56,8 @@ export class AgentRunCoordinator {
     try {
       while (this.#queue.length > 0) {
         const job = this.#queue.shift(); if (!job) continue; this.#current = job; this.#publishQueue();
-        try { job.stream = this.#createStream(job.request, job.ownerUserId, job.id); await this.#consume(job.id, job.stream); }
-        catch (error) { const message = error instanceof Error ? error.message : String(error); this.store.updateAgentRun(job.id, "failed", message); this.#emit(job.id, "run.failed", { error: message }); }
+        try { job.stream = this.#createStream(job.request, job.ownerUserId, job.id); await this.#consume(job.id, job.stream); this.onRunCompleted?.(job.id); }
+        catch (error) { const message = error instanceof Error ? error.message : String(error); this.store.updateAgentRun(job.id, "failed", message); this.#emit(job.id, "run.failed", { error: message }); this.onRunCompleted?.(job.id); }
         finally { job.stream = undefined; this.#current = undefined; this.#publishQueue(); }
       }
     } finally { this.#processing = false; if (this.#queue.length > 0) void this.#pump(); }

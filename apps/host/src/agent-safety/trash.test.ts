@@ -61,4 +61,31 @@ describe("TrashService", () => {
     await service.restore(entry!.id);
     await expect(service.restore(entry!.id)).rejects.toThrow("already restored");
   });
+
+  it("empties the trash: files and rows are gone, run dirs pruned", async () => {
+    const { root, store, service } = await makeWorkspace();
+    await writeFile(join(root, "a.txt"), "a");
+    await writeFile(join(root, "b.txt"), "b");
+    await service.move({ runId: "run-1", workspaceRoot: root, path: join(root, "a.txt"), sequence: 1 });
+    await service.move({ runId: "run-1", workspaceRoot: root, path: join(root, "b.txt"), sequence: 2 });
+    const result = await service.empty();
+    expect(result.removed).toBe(2);
+    expect(store.listTrashEntries(root)).toHaveLength(0);
+    await expect(readdir(join(root, ".fitz-trash"))).rejects.toThrow();
+  });
+
+  it("collectExpired honors the cutoff: nothing new, everything old", async () => {
+    const { root, store, service } = await makeWorkspace();
+    await writeFile(join(root, "a.txt"), "a");
+    await writeFile(join(root, "b.txt"), "b");
+    await service.move({ runId: "run-1", workspaceRoot: root, path: join(root, "a.txt"), sequence: 1 });
+    await service.move({ runId: "run-1", workspaceRoot: root, path: join(root, "b.txt"), sequence: 2 });
+    // A cutoff one minute ago keeps everything (entries are brand new).
+    expect((await service.collectExpired(new Date(Date.now() - 60_000).toISOString())).removed).toBe(0);
+    expect(store.listTrashEntries(root)).toHaveLength(2);
+    // A cutoff one minute from now expires everything.
+    expect((await service.collectExpired(new Date(Date.now() + 60_000).toISOString())).removed).toBe(2);
+    expect(store.listTrashEntries(root)).toHaveLength(0);
+    await expect(readdir(join(root, ".fitz-trash"))).rejects.toThrow();
+  });
 });

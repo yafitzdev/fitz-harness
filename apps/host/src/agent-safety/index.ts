@@ -6,12 +6,12 @@
  * Pi runtime's extension hooks. All machine guarantees — no approval prompts involved.
  */
 
-import { mkdirSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { SqliteStore } from "@fitz/storage";
-import type { SnapshotRecord, TrashEntryRecord } from "@fitz/protocol";
+import type { SnapshotRecord, ToolActionRecord, TrashEntryRecord } from "@fitz/protocol";
 import type { ToolDefinition, ToolEvaluator, ToolResultRedactor, TrashMoveResult } from "@fitz/agent-pi";
 import { createTrashTool } from "@fitz/agent-pi";
 import { canonicalizePath, classifyPath, resolveAbsolutePath } from "./paths.js";
@@ -44,6 +44,9 @@ interface RunSafetyContext {
 }
 
 const MAX_CONTEXTS = 64;
+
+/** Default retention for trash and snapshots: 30 days. */
+export const DEFAULT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 export class AgentSafetyService {
   readonly #store: SqliteStore;
@@ -216,6 +219,9 @@ export class AgentSafetyService {
   }
 
   listTrash(workspaceRoot?: string, limit = 200): TrashEntryRecord[] {
+    // Opportunistic retention GC: listing the trash is the natural moment to sweep
+    // expired entries in the background; the response never waits on it.
+    void this.collectTrash(DEFAULT_RETENTION_MS).catch(() => undefined);
     return this.#store.listTrashEntries(workspaceRoot, limit);
   }
 
@@ -223,5 +229,61 @@ export class AgentSafetyService {
     const entry = this.#store.getTrashEntry(id);
     if (!entry) throw new Error("Trash entry not found");
     return new TrashService({ store: this.#store, workspaceRoot: entry.workspaceRoot }).restore(id);
+  }
+
+  /** Audit readout over every recorded tool evaluation (all runs, newest first). */
+  listToolActions(limit = 200): ToolActionRecord[] {
+    return this.#store.listAllToolActions(limit);
+  }
+
+  /**
+   * Explicitly empty the trash for one workspace (or all workspaces): the single
+   * sanctioned permanent delete, initiated by a human from the management UI.
+   */
+  async emptyTrash(workspaceRoot?: string): Promise<{ removed: number }> {
+    if (workspaceRoot) {
+      return new TrashService({ store: this.#store, workspaceRoot }).empty();
+    }
+    const workspaces = new Set(this.#store.listTrashEntries(undefined, 10_000).map((entry) => entry.workspaceRoot));
+    let removed = 0;
+    for (const root of workspaces) {
+      const result = await new TrashService({ store: this.#store, workspaceRoot: root }).empty();
+      removed += result.removed;
+    }
+    return { removed };
+  }
+
+  /** Retention GC for trashed files: permanently deletes entries older than `maxAgeMs`. */
+  async collectTrash(maxAgeMs: number): Promise<{ removed: number }> {
+    const before = new Date(Date.now() - maxAgeMs).toISOString();
+    const workspaces = new Set(this.#store.listTrashEntries(undefined, 10_000).map((entry) => entry.workspaceRoot));
+    let removed = 0;
+    for (const root of workspaces) {
+      const result = await new TrashService({ store: this.#store, workspaceRoot: root }).collectExpired(before);
+      removed += result.removed;
+    }
+    return { removed };
+  }
+
+  /** Retention GC for pre-run snapshots: deletes snapshot dirs older than `maxAgeMs`. */
+  async collectSnapshots(maxAgeMs: number): Promise<{ removed: number }> {
+    const before = new Date(Date.now() - maxAgeMs).toISOString();
+    let removed = 0;
+    for (const snapshot of this.#store.listSnapshots(10_000)) {
+      if (snapshot.createdAt >= before) continue;
+      try {
+        rmSync(snapshot.snapshotDir, { recursive: true, force: true });
+      } catch {
+        // Best effort: a locked dir must not abort the sweep.
+      }
+      if (this.#store.deleteSnapshot(snapshot.runId)) removed++;
+    }
+    return { removed };
+  }
+
+  /** Full retention sweep (trash + snapshots), used by the GC endpoint and run completion. */
+  async collect(maxAgeMs: number = DEFAULT_RETENTION_MS): Promise<{ trash: number; snapshots: number }> {
+    const [trash, snapshots] = await Promise.all([this.collectTrash(maxAgeMs), this.collectSnapshots(maxAgeMs)]);
+    return { trash: trash.removed, snapshots: snapshots.removed };
   }
 }
