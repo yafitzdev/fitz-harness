@@ -293,7 +293,14 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
   });
   await resourceLoader.reload();
   const extensionTools = resourceLoader.getExtensions().extensions.flatMap((extension) => [...extension.tools.keys()]);
-  const enabledTools = [...new Set([...(options.tools ?? CODING_TOOLS), ...extensionTools])];
+  // The SDK treats `tools` as a strict allowlist that also filters custom tools, so every
+  // custom tool we register (fitz.trash, fitz.session, the sandboxed bash) must be named
+  // here or it is silently dropped from the session's tool registry.
+  const customToolNames = [
+    ...(options.sessionReader ? [SESSION_LOOKUP_TOOL] : []),
+    ...(options.customTools?.map((tool) => tool.name) ?? []),
+  ];
+  const enabledTools = [...new Set([...(options.tools ?? CODING_TOOLS), ...extensionTools, ...customToolNames])];
   const result = await sdk.createAgentSession({
     cwd: options.cwd,
     tools: enabledTools,

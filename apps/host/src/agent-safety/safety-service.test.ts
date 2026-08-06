@@ -2,9 +2,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import type { ChildProcess } from "node:child_process";
 import { SqliteStore } from "@fitz/storage";
-import { AgentSafetyService } from "./index.js";
+import { AgentSafetyService, type AgentSafetyOptions } from "./index.js";
 import type { ToolEvaluation } from "@fitz/agent-pi";
+import type { SandboxSpawn } from "./sandbox.js";
 
 const tempRoots: string[] = [];
 afterEach(async () => {
@@ -20,7 +24,7 @@ afterEach(async () => {
   }
 });
 
-async function makeService() {
+async function makeService(options?: Partial<AgentSafetyOptions>) {
   const workspace = await mkdtemp(join(tmpdir(), "fitz-ws-"));
   const snapshotsDir = await mkdtemp(join(tmpdir(), "fitz-snap-"));
   tempRoots.push(workspace, snapshotsDir);
@@ -28,7 +32,7 @@ async function makeService() {
   const now = new Date().toISOString();
   store.createAgentRun({ id: "run-1", routeId: "fast", status: "queued", createdAt: now, updatedAt: now, lastSequence: 0 });
   store.createAgentRun({ id: "run-2", routeId: "fast", status: "queued", createdAt: now, updatedAt: now, lastSequence: 0 });
-  const safety = new AgentSafetyService({ store, snapshotsDir });
+  const safety = new AgentSafetyService({ store, snapshotsDir, ...options });
   return { workspace, snapshotsDir, store, safety };
 }
 
@@ -83,15 +87,42 @@ describe("AgentSafetyService", () => {
     expect(store.listToolActions("run-1").some((action) => action.effect === "rewrite")).toBe(true);
   });
 
-  it("registers the fitz.trash tool bound to the run's trash", async () => {
+  it("registers the fitz.trash tool and the sandboxed bash tool for the run", async () => {
     const { workspace, safety } = await makeService();
     await writeFile(join(workspace, "notes.md"), "keep");
     const tools = safety.createCustomTools()({ cwd: workspace, runId: "run-1" });
-    expect(tools).toHaveLength(1);
-    expect(tools[0]!.name).toBe("fitz.trash");
-    const result = await tools[0]!.execute("call-1", { paths: [join(workspace, "notes.md")] });
+    expect(tools.map((tool) => tool.name)).toEqual(["fitz.trash", "bash"]);
+    const trashTool = tools[0]!;
+    const result = await trashTool.execute("call-1", { paths: [join(workspace, "notes.md")] });
     expect(result.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("Moved 1 path") });
     await expect(stat(join(workspace, "notes.md"))).rejects.toThrow();
+  });
+
+  it("runs the sandboxed bash tool through the containment wrapper", async () => {
+    const { workspace, safety } = await makeService({
+      sandboxSpawn: (() => {
+        // Fake child that echoes back a canned stdout, then closes with code 0.
+        const child = new EventEmitter() as unknown as ChildProcess;
+        const stdout = new PassThrough();
+        const stderr = new PassThrough();
+        Object.defineProperty(child, "stdout", { value: stdout });
+        Object.defineProperty(child, "stderr", { value: stderr });
+        Object.defineProperty(child, "pid", { value: 1 });
+        (child as unknown as { kill: () => boolean }).kill = () => true;
+        setImmediate(() => {
+          stdout.write("fake shell output");
+          stdout.end();
+          stderr.end();
+          setImmediate(() => child.emit("close", 0, null));
+        });
+        return child;
+      }) as unknown as SandboxSpawn,
+    });
+    const tools = safety.createCustomTools()({ cwd: workspace, runId: "run-1" });
+    const bashTool = tools[1]!;
+    const result = await bashTool.execute("call-1", { command: "true" });
+    expect((result.content[0] as { text: string }).text).toBe("fake shell output");
+    expect(result.details).toMatchObject({ exitCode: 0 });
   });
 
   it("refuses to trash paths outside allowed zones", async () => {

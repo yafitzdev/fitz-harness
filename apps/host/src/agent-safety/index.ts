@@ -12,13 +12,14 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { SqliteStore } from "@fitz/storage";
 import type { SnapshotRecord, ToolActionRecord, TrashEntryRecord } from "@fitz/protocol";
-import type { ToolDefinition, ToolEvaluator, ToolResultRedactor, TrashMoveResult } from "@fitz/agent-pi";
-import { createTrashTool } from "@fitz/agent-pi";
+import type { SandboxedBashExecutor, ToolDefinition, ToolEvaluator, ToolResultRedactor, TrashMoveResult } from "@fitz/agent-pi";
+import { createSandboxedBashTool, createTrashTool } from "@fitz/agent-pi";
 import { canonicalizePath, classifyPath, resolveAbsolutePath } from "./paths.js";
 import { createWorkspaceSnapshot, restoreWorkspaceSnapshot } from "./snapshot.js";
 import { TrashService } from "./trash.js";
 import { evaluateToolCall, type ActionLog, type PolicyContext } from "./policy.js";
 import { redactToolResultContent } from "./redaction.js";
+import { bwrapAvailable, runSandboxed, type SandboxSpawn } from "./sandbox.js";
 
 export interface AgentSafetyOptions {
   store: SqliteStore;
@@ -31,6 +32,8 @@ export interface AgentSafetyOptions {
   homeDir?: string;
   maxSnapshotBytes?: number;
   maxSnapshotFiles?: number;
+  /** Injectable spawn seam for the sandbox (tests); defaults to the real child_process.spawn. */
+  sandboxSpawn?: SandboxSpawn;
 }
 
 interface RunSafetyContext {
@@ -56,7 +59,9 @@ export class AgentSafetyService {
   readonly #homeDir: string;
   readonly #maxSnapshotBytes: number;
   readonly #maxSnapshotFiles: number;
+  readonly #sandboxSpawn: SandboxSpawn | undefined;
   readonly #contexts = new Map<string, RunSafetyContext>();
+  #containmentWarned = false;
 
   constructor(options: AgentSafetyOptions) {
     this.#store = options.store;
@@ -66,6 +71,7 @@ export class AgentSafetyService {
     this.#homeDir = options.homeDir ?? homedir();
     this.#maxSnapshotBytes = options.maxSnapshotBytes ?? 1_073_741_824;
     this.#maxSnapshotFiles = options.maxSnapshotFiles ?? 50_000;
+    this.#sandboxSpawn = options.sandboxSpawn;
   }
 
   #getContext(runId: string | undefined, cwd: string): RunSafetyContext {
@@ -170,9 +176,36 @@ export class AgentSafetyService {
     return ({ content }) => redactToolResultContent(content as Array<{ type: string; text?: string }>);
   }
 
-  /** The runtime's `customTools`: registers `fitz.trash` bound to this run's trash. */
+  /** The runtime's `customTools`: registers `fitz.trash` and the sandboxed `bash` for this run. */
   createCustomTools(): (context: { cwd: string; runId?: string }) => ToolDefinition[] {
-    return (context) => [createTrashTool(async (input) => this.trash(input.paths, context.runId, context.cwd))];
+    return (context) => [
+      createTrashTool(async (input) => this.trash(input.paths, context.runId, context.cwd)),
+      createSandboxedBashTool(this.#sandboxedBashExecutor(context.cwd)),
+    ];
+  }
+
+  /** The executor behind the sandboxed `bash` tool: run the policy-cleared command in the container. */
+  #sandboxedBashExecutor(cwd: string): SandboxedBashExecutor {
+    const containment = {
+      workspace: cwd,
+      runtimeDirs: this.#runtimeDirs,
+      tempDirs: this.#tempDirs,
+      homeDir: this.#homeDir,
+    };
+    return async ({ command, timeout, signal }) => {
+      if (!bwrapAvailable() && !this.#containmentWarned) {
+        this.#containmentWarned = true;
+        console.warn(
+          "[fitz-safety] bubblewrap (bwrap) is not available: bash commands run WITHOUT OS-level containment. " +
+            "The deterministic policy still rewrites deletes to the trash and blocks destructive commands, " +
+            "but there is no kernel-level write barrier. Install bubblewrap for full sandboxing.",
+        );
+      }
+      return runSandboxed(
+        { command, ...containment, ...(timeout !== undefined ? { timeout } : {}), ...(signal ? { signal } : {}) },
+        this.#sandboxSpawn,
+      );
+    };
   }
 
   /** Handler backing the `fitz.trash` tool: move paths into the run trash, zone-validated. */
