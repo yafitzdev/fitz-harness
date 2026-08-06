@@ -10,6 +10,8 @@ export interface CatalogModel {
   downloads: number;
   likes: number;
   pipelineTag?: string;
+  /** HF repo creation date; the release-date proxy for recency filters. */
+  createdAt?: string;
   updatedAt?: string;
 }
 
@@ -74,6 +76,20 @@ const DEFAULT_ENDPOINT = "https://huggingface.co";
 const USER_AGENT = "Fitz-Codex";
 
 /**
+ * HF's `/api/models` ignores the `offset` param and caps `limit` at 1000, so a
+ * catalog "page" is really a window of the top `WINDOW_SIZE` results for the
+ * active query/sort. The window is fetched once per (query, pipeline, sort)
+ * and cached briefly, then filtered by the min likes/downloads thresholds and
+ * paged for the client — a filtered page is therefore always full of matches
+ * and the `total` is exact, so "Load more" works (it never did before, since
+ * HF also returns bare arrays with no count).
+ */
+const WINDOW_SIZE = 1000;
+const WINDOW_CACHE_TTL_MS = 60_000;
+const WINDOW_CACHE_MAX_KEYS = 10;
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
  * Browse and download GGUF models from Hugging Face. The catalog search maps
  * HF's `/api/models` results (filtered to GGUF text-generation models) the same
  * way the Pi catalog maps npm search results, and downloads stream into
@@ -85,6 +101,8 @@ export class ModelCatalogService {
   readonly #endpoint: string;
   readonly #fetch: typeof globalThis.fetch;
   readonly #downloads = new Map<string, ActiveDownload>();
+  /** Raw result windows keyed by query/pipeline/sort, so threshold tweaks are instant. */
+  readonly #windowCache = new Map<string, { fetchedAt: number; models: CatalogModel[] }>();
 
   constructor(options: ModelCatalogServiceOptions) {
     this.#modelRoot = resolve(options.modelRoot);
@@ -92,25 +110,56 @@ export class ModelCatalogService {
     this.#fetch = options.fetch ?? globalThis.fetch;
   }
 
-  async search(query = "", offset = 0, limit = 50, pipelineTag = "text-generation", sort: CatalogSortKey = "downloads", direction: CatalogSortDirection = "desc"): Promise<{ total: number; models: CatalogModel[] }> {
+  /**
+   * Searches the GGUF catalog. The top `WINDOW_SIZE` results for the query are
+   * fetched once (and cached briefly), models below `minLikes`/`minDownloads`
+   * or released more than `releasedWithinWeeks` weeks ago are dropped, and
+   * `offset`/`limit` page that filtered list. `total` counts the matching
+   * models in the window, so the client can show an exact "Load more" state
+   * without blank pages.
+   */
+  async search(query = "", offset = 0, limit = 50, pipelineTag = "text-generation", sort: CatalogSortKey = "downloads", direction: CatalogSortDirection = "desc", minLikes = 0, minDownloads = 0, releasedWithinWeeks = 0): Promise<{ total: number; models: CatalogModel[] }> {
     const safeLimit = Math.max(1, Math.min(50, Math.trunc(limit)));
     const safeOffset = Math.max(0, Math.trunc(offset));
+    const safeMinLikes = Math.max(0, Math.trunc(minLikes));
+    const safeMinDownloads = Math.max(0, Math.trunc(minDownloads));
+    const safeWeeks = Math.max(0, Math.trunc(releasedWithinWeeks));
+    const window = await this.#window(query.trim(), pipelineTag, sort, direction);
+    const cutoff = safeWeeks > 0 ? Date.now() - safeWeeks * WEEK_MS : 0;
+    const matches = window.models.filter((model) => {
+      if (model.likes < safeMinLikes || model.downloads < safeMinDownloads) return false;
+      if (cutoff === 0) return true;
+      // "Released in the last X weeks" — HF's `createdAt` is the release date;
+      // models without any date can't be verified recent, so they're dropped.
+      const releasedAt = Date.parse(model.createdAt ?? model.updatedAt ?? "");
+      return !Number.isNaN(releasedAt) && releasedAt >= cutoff;
+    });
+    return { total: matches.length, models: matches.slice(safeOffset, safeOffset + safeLimit) };
+  }
+
+  async #window(query: string, pipelineTag: string, sort: CatalogSortKey, direction: CatalogSortDirection): Promise<{ fetchedAt: number; models: CatalogModel[] }> {
+    const key = `${query}\u0000${pipelineTag}\u0000${sort}\u0000${direction}`;
+    const cached = this.#windowCache.get(key);
+    if (cached && Date.now() - cached.fetchedAt < WINDOW_CACHE_TTL_MS) return cached;
     const url = new URL(`${this.#endpoint}/api/models`);
-    const text = query.trim();
-    if (text) url.searchParams.set("search", text);
+    if (query) url.searchParams.set("search", query);
     url.searchParams.set("filter", "gguf");
     url.searchParams.set("pipeline_tag", pipelineTag);
     url.searchParams.set("sort", HF_SORT_BY[sort]);
     url.searchParams.set("direction", direction === "desc" ? "-1" : "1");
-    url.searchParams.set("limit", String(safeLimit));
-    url.searchParams.set("offset", String(safeOffset));
+    url.searchParams.set("limit", String(WINDOW_SIZE));
     const response = await this.#fetch(url, { headers: { accept: "application/json", "user-agent": USER_AGENT }, signal: AbortSignal.timeout(10_000) });
     if (!response.ok) throw new Error(`Hugging Face catalog request failed (${response.status})`);
-    const payload = await response.json() as { count?: unknown; items?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
+    const payload = await response.json() as { items?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
     const items = Array.isArray(payload) ? payload : Array.isArray(payload.items) ? payload.items : [];
     const models = items.map(catalogModel).filter((value): value is CatalogModel => Boolean(value));
-    const total = Array.isArray(payload) ? models.length : Number(payload.count ?? models.length);
-    return { total, models };
+    const window = { fetchedAt: Date.now(), models };
+    this.#windowCache.set(key, window);
+    if (this.#windowCache.size > WINDOW_CACHE_MAX_KEYS) {
+      const oldest = this.#windowCache.keys().next().value;
+      if (oldest !== undefined) this.#windowCache.delete(oldest);
+    }
+    return window;
   }
 
   /** Lists the `.gguf` files in a model repo (sizes are included for LFS files). */
@@ -301,6 +350,7 @@ function catalogModel(entry: Record<string, unknown>): CatalogModel | undefined 
     downloads: typeof entry.downloads === "number" ? entry.downloads : 0,
     likes: typeof entry.likes === "number" ? entry.likes : 0,
     ...(typeof entry.pipeline_tag === "string" ? { pipelineTag: entry.pipeline_tag } : {}),
+    ...(typeof entry.createdAt === "string" ? { createdAt: entry.createdAt } : {}),
     ...(typeof entry.lastModified === "string" ? { updatedAt: entry.lastModified } : {}),
   };
 }

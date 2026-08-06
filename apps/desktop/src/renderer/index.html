@@ -33,14 +33,6 @@
           <span>New chat</span>
           <kbd>Ctrl N</kbd>
         </button>
-        <button id="manage-playbooks" class="nav-action" type="button">
-          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="2"></rect><rect x="11" y="3" width="6" height="6" rx="2"></rect><rect x="3" y="11" width="6" height="6" rx="2"></rect><rect x="11" y="11" width="6" height="6" rx="2"></rect></svg>
-          <span>Playbooks</span>
-        </button>
-        <button id="manage-connections" class="nav-action" type="button">
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m8.2 11.8-1.4 1.4a3 3 0 0 1-4.2-4.2l2.3-2.3a3 3 0 0 1 4.2 0"></path><path d="m11.8 8.2 1.4-1.4a3 3 0 1 1 4.2 4.2l-2.3 2.3a3 3 0 0 1-4.2 0"></path><path d="m7.5 12.5 5-5"></path></svg>
-          <span>Connections</span>
-        </button>
         <button id="manage-plugins" class="nav-action" type="button" hidden>
           <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"></circle><path d="M7.2 10a2.8 2.8 0 0 1 4.8-2M12.8 10a2.8 2.8 0 0 1-4.8 2M6.2 5.8l1.2 1.8M13.8 14.2l-1.2-1.8"></path></svg>
           <span>Plugins</span>
@@ -48,6 +40,14 @@
         <button id="manage-models" class="nav-action" type="button" hidden>
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5 17 6v8l-7 3.5L3 14V6z"></path><path d="M3 6l7 3.5L17 6M10 9.5V17.5"></path></svg>
           <span>Models</span>
+        </button>
+        <button id="manage-playbooks" class="nav-action" type="button">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="2"></rect><rect x="11" y="3" width="6" height="6" rx="2"></rect><rect x="3" y="11" width="6" height="6" rx="2"></rect><rect x="11" y="11" width="6" height="6" rx="2"></rect></svg>
+          <span>Playbooks</span>
+        </button>
+        <button id="manage-connections" class="nav-action" type="button">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m8.2 11.8-1.4 1.4a3 3 0 0 1-4.2-4.2l2.3-2.3a3 3 0 0 1 4.2 0"></path><path d="m11.8 8.2 1.4-1.4a3 3 0 1 1 4.2 4.2l-2.3 2.3a3 3 0 0 1-4.2 0"></path><path d="m7.5 12.5 5-5"></path></svg>
+          <span>Connections</span>
         </button>
         <button id="manage-administration" class="nav-action" type="button" hidden>
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.8 16 5v4.4c0 3.8-2.4 6.3-6 7.8-3.6-1.5-6-4-6-7.8V5z"></path><circle cx="10" cy="8" r="2"></circle><path d="M6.8 14c.6-1.8 1.7-2.7 3.2-2.7s2.6.9 3.2 2.7"></path></svg>
@@ -137,7 +137,7 @@
         <section id="plugins-page" class="management-page plugins-page" aria-label="Pi packages" hidden>
           <section class="collapsible-section" id="plugins-installed-section"><div class="collapsible-heading"><button class="collapsible-toggle" id="installed-plugins-toggle" type="button" data-collapsible-key="installed" aria-expanded="true" aria-controls="installed-plugins-body"><h2>Installed</h2></button></div><div id="installed-plugins-body" class="collapsible-body"><div id="installed-plugins" class="plugin-grid"></div></div></section>
           <section class="collapsible-section" id="plugins-discover-section"><div class="collapsible-heading"><button class="collapsible-toggle" id="plugin-catalog-toggle" type="button" data-collapsible-key="discover" aria-expanded="true" aria-controls="plugin-catalog-body"><h2>Discover</h2></button></div><div id="plugin-catalog-body" class="collapsible-body"><div id="plugin-catalog" class="plugin-grid"></div><button id="load-more-plugins" class="quiet-button" type="button" hidden>Load more</button></div></section>
-          <section class="collapsible-section" id="plugins-skills-section"><div class="collapsible-heading"><h2>Installed</h2></div><div id="installed-skills" class="plugin-grid"></div></section>
+          <section class="collapsible-section" id="plugins-skills-section"><div class="collapsible-heading"><button class="collapsible-toggle" id="installed-skills-toggle" type="button" data-collapsible-key="skills" aria-expanded="true" aria-controls="installed-skills-body"><h2>Installed</h2></button></div><div id="installed-skills-body" class="collapsible-body"><div id="installed-skills" class="plugin-grid"></div></div></section>
         </section>
 
         <section id="models-page" class="management-page" aria-label="Model catalog" hidden>

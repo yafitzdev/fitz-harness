@@ -9,32 +9,32 @@ function buildPage(): HTMLElement {
   page.id = "plugins-page";
   page.className = "management-page";
   const layout = new ManagementPageLayout(page, {
-    tabs: [{ id: "plugins-tab", label: "Plugins", active: true }, { id: "skills-tab", label: "Skills" }],
+    tabs: [
+      { id: "extension-tab", label: "Extensions", dataset: { type: "extension" }, active: true },
+      { id: "skill-tab", label: "Skills", dataset: { type: "skill" } },
+      { id: "prompt-tab", label: "Prompts", dataset: { type: "prompt" } },
+    ],
     actions: [{ id: "refresh-plugins", icon: managementRefreshIcon, label: "Refresh packages" }],
   });
   const installed = document.createElement("section");
+  installed.id = "plugins-installed-section";
   installed.className = "collapsible-section";
-  installed.innerHTML = '<div class="collapsible-heading"><button class="collapsible-toggle" id="installed-plugins-toggle" type="button" data-collapsible-key="installed" aria-expanded="true"><h2>Installed</h2></button></div><div class="collapsible-body"><div id="installed-plugins" class="plugin-grid"></div></div>';
-  const discover = document.createElement("section");
-  discover.className = "collapsible-section";
-  discover.innerHTML = '<div class="collapsible-heading"><button class="collapsible-toggle" id="plugin-catalog-toggle" type="button" data-collapsible-key="discover" aria-expanded="true"><h2>Discover</h2></button></div><div class="collapsible-body"><div id="plugin-catalog" class="plugin-grid"></div><button id="load-more-plugins" type="button" hidden>Load more</button></div>';
+  installed.innerHTML = '<div class="collapsible-heading"><button class="collapsible-toggle" id="installed-plugins-toggle" type="button" data-collapsible-key="installed" aria-expanded="true" aria-controls="installed-plugins-body"><h2>Installed</h2></button></div><div id="installed-plugins-body" class="collapsible-body"><div id="installed-plugins" class="plugin-grid"></div></div>';
   const skills = document.createElement("section");
+  skills.id = "plugins-skills-section";
   skills.className = "collapsible-section";
-  skills.innerHTML = '<div class="collapsible-heading"><h2>Installed</h2></div><div id="installed-skills" class="plugin-grid"></div>';
+  skills.innerHTML = '<div class="collapsible-heading"><button class="collapsible-toggle" id="installed-skills-toggle" type="button" data-collapsible-key="skills" aria-expanded="true" aria-controls="installed-skills-body"><h2>Installed</h2></button></div><div id="installed-skills-body" class="collapsible-body"><div id="installed-skills" class="plugin-grid"></div></div>';
+  const discover = document.createElement("section");
+  discover.id = "plugins-discover-section";
+  discover.className = "collapsible-section";
+  discover.innerHTML = '<div class="collapsible-heading"><button class="collapsible-toggle" id="plugin-catalog-toggle" type="button" data-collapsible-key="discover" aria-expanded="true" aria-controls="plugin-catalog-body"><h2>Discover</h2></button></div><div id="plugin-catalog-body" class="collapsible-body"><div id="plugin-catalog" class="plugin-grid"></div><button id="load-more-plugins" type="button" hidden>Load more</button></div>';
   layout.addContent({
     id: "plugins-view",
-    title: "Plugins",
+    title: "Extensions",
+    titleId: "plugins-title",
     description: "Extend Pi with packages from the community catalog.",
     search: { id: "plugin-search", placeholder: "Search plugins" },
-    body: [installed, discover],
-  });
-  layout.addContent({
-    id: "skills-view",
-    hidden: true,
-    title: "Skills",
-    description: "Task-specific guidance currently available to Pi.",
-    search: { id: "skill-search", placeholder: "Search skills" },
-    body: [skills],
+    body: [installed, skills, discover],
   });
   document.body.append(page);
   return page;
@@ -116,7 +116,7 @@ describe("PluginsPageController", () => {
     expect(calls.openExternal).toHaveBeenCalledWith("https://example.com/pi-extra");
   });
 
-  it("keeps tab state and skills search working through the catalog", async () => {
+  it("filters the catalog by header type tabs and searches installed skills", async () => {
     const api = vi.fn(async (path: string) => {
       if (path === "/api/v1/management/pi/packages") return { data: [] };
       if (path === "/api/v1/management/pi/skills") return { data: [{ name: "Docs", description: "Read docs", source: "npm:docs", enabled: false, filePath: "docs.md" }] };
@@ -124,11 +124,22 @@ describe("PluginsPageController", () => {
     });
     const { controller, page } = setup(api);
     await controller.load();
+    expect(api).toHaveBeenCalledWith("/api/v1/management/pi/catalog?query=&offset=0&limit=30&sort=downloads&direction=desc&type=extension");
 
-    click(page.querySelector("#skills-tab")!);
-    expect(page.querySelector("#plugins-view")?.hidden).toBe(true);
-    expect(page.querySelector("#skills-view")?.hidden).toBe(false);
-    expect(page.querySelector("#skills-tab")?.classList.contains("active")).toBe(true);
+    // The page title mirrors the active type tab.
+    expect(page.querySelector("#plugins-title")?.textContent).toBe("Extensions");
+
+    // The default Extensions tab shows only extension packages.
+    expect(page.querySelector("#plugins-installed-section")?.hasAttribute("hidden")).toBe(false);
+    expect(page.querySelector("#plugins-skills-section")?.hasAttribute("hidden")).toBe(true);
+
+    click(page.querySelector("#skill-tab")!);
+    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/pi/catalog?query=&offset=0&limit=30&sort=downloads&direction=desc&type=skill"));
+    expect(page.querySelector("#skill-tab")?.classList.contains("active")).toBe(true);
+    expect(page.querySelector("#extension-tab")?.classList.contains("active")).toBe(false);
+    expect(page.querySelector("#plugins-title")?.textContent).toBe("Skills");
+    expect(page.querySelector("#plugins-installed-section")?.hasAttribute("hidden")).toBe(true);
+    expect(page.querySelector("#plugins-skills-section")?.hasAttribute("hidden")).toBe(false);
 
     const search = page.querySelector<HTMLInputElement>("#skill-search")!;
     search.value = "docs";
@@ -157,6 +168,6 @@ describe("PluginsPageController", () => {
     const page = document.createElement("section");
     page.id = "plugins-page";
     expect(() => new PluginsPageController({ page, api: vi.fn(), openExternal: vi.fn(), showToast: vi.fn(), errorMessage: vi.fn() } satisfies PluginsPageOptions))
-      .toThrow("Plugins page is missing #plugins-view");
+      .toThrow("Plugins page is missing type tabs");
   });
 });

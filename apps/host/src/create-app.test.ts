@@ -649,7 +649,7 @@ describe("Fitz host", () => {
       adminToken: "model-test-token",
       modelCatalog: new ModelCatalogService({
         modelRoot,
-        fetch: async (input: RequestInfo | URL) => { requested.push(String(input)); return new Response(JSON.stringify({ count: 1, items: [{ id: "Qwen/Qwen2.5-7B-Instruct-GGUF", downloads: 10, likes: 2, pipeline_tag: "text-generation" }] }), { status: 200 }); },
+        fetch: async (input: RequestInfo | URL) => { requested.push(String(input)); return new Response(JSON.stringify({ count: 1, items: [{ id: "Qwen/Qwen2.5-7B-Instruct-GGUF", downloads: 10, likes: 2, pipeline_tag: "text-generation", createdAt: new Date().toISOString() }] }), { status: 200 }); },
       }),
     });
     try {
@@ -667,6 +667,17 @@ describe("Fitz host", () => {
       // Unknown sort keys fall back to the store default rather than erroring.
       const unknownSort = await runtime.app.inject({ method: "GET", url: "/api/v1/management/models/catalog?sort=bogus", headers });
       expect(unknownSort.statusCode, unknownSort.body).toBe(200);
+      // Minimum likes/downloads drop models below the thresholds before they reach the client.
+      const filtered = await runtime.app.inject({ method: "GET", url: "/api/v1/management/models/catalog?min_likes=5&min_downloads=100", headers });
+      expect(filtered.statusCode, filtered.body).toBe(200);
+      expect(filtered.json().data).toEqual({ total: 0, models: [] });
+      const kept = await runtime.app.inject({ method: "GET", url: "/api/v1/management/models/catalog?min_likes=1&min_downloads=10", headers });
+      expect(kept.statusCode, kept.body).toBe(200);
+      expect(kept.json().data.models.map((model: { id: string }) => model.id)).toEqual(["Qwen/Qwen2.5-7B-Instruct-GGUF"]);
+      // Models released more than N weeks ago (or dateless) are dropped too.
+      const recent = await runtime.app.inject({ method: "GET", url: "/api/v1/management/models/catalog?released_within_weeks=4", headers });
+      expect(recent.statusCode, recent.body).toBe(200);
+      expect(recent.json().data.models.map((model: { id: string }) => model.id)).toEqual(["Qwen/Qwen2.5-7B-Instruct-GGUF"]);
     } finally {
       await runtime.app.close();
       rmSync(modelRoot, { recursive: true, force: true });

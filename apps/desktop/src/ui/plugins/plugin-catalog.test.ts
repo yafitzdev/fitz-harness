@@ -31,22 +31,46 @@ function section(key: string, toggleId: string, regionId: string): { section: HT
   return { section, toggle, region };
 }
 
+function typeTab(id: string, label: string, type: string, active = false): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.id = id;
+  button.textContent = label;
+  button.dataset.type = type;
+  button.classList.toggle("active", active);
+  return button;
+}
+
 function setup(api: PluginCatalogApi, searchDelayMs = 250) {
   const installed = section("installed", "installed-plugins-toggle", "installed-plugins-body");
+  const skills = section("skills", "installed-skills-toggle", "installed-skills-body");
   const catalog = section("discover", "plugin-catalog-toggle", "plugin-catalog-body");
   const pluginsView = node("section");
-  pluginsView.append(installed.section, catalog.section);
+  const title = document.createElement("h1");
+  title.textContent = "Extensions";
+  pluginsView.prepend(title, installed.section, skills.section, catalog.section);
   const installedPlugins = document.createElement("div"); installedPlugins.id = "installed-plugins"; installedPlugins.className = "plugin-grid";
   const pluginCatalog = document.createElement("div"); pluginCatalog.id = "plugin-catalog"; pluginCatalog.className = "plugin-grid";
+  const installedSkills = document.createElement("div"); installedSkills.id = "installed-skills"; installedSkills.className = "plugin-grid";
   const loadMorePlugins = document.createElement("button"); loadMorePlugins.id = "load-more-plugins"; loadMorePlugins.hidden = true;
   installed.region.append(installedPlugins);
+  skills.region.append(installedSkills);
   catalog.region.append(pluginCatalog, loadMorePlugins);
+  const typeTabs = [
+    typeTab("extension-tab", "Extensions", "extension", true),
+    typeTab("skill-tab", "Skills", "skill"),
+    typeTab("prompt-tab", "Prompts", "prompt"),
+  ];
   const elements: PluginCatalogElements = {
-    pluginsView, skillsView: node("section"), pluginsTab: node("button"), skillsTab: node("button"),
-    pluginSearch: node("input"), skillSearch: node("input"), installedPlugins, pluginCatalog, installedSkills: node("div"),
-    loadMorePlugins, refresh: node("button"),
+    pluginsView,
+    title,
+    installedSection: installed.section,
+    skillsSection: skills.section,
+    pluginSearch: node("input"),
+    skillSearch: node("input"),
+    installedPlugins, pluginCatalog, installedSkills, loadMorePlugins, refresh: node("button"),
+    typeTabs,
   };
-  elements.skillsView.hidden = true;
   const calls = { openExternal: vi.fn(), showToast: vi.fn(), errorMessage: vi.fn((error: unknown) => error instanceof Error ? error.message : String(error)) };
   const controller = new PluginCatalogController(elements, { api, ...calls, searchDelayMs });
   return { controller, elements, calls };
@@ -131,15 +155,15 @@ describe("PluginCatalogController", () => {
     elements.pluginSearch.value = "pi tools";
     elements.pluginSearch.dispatchEvent(new Event("input", { bubbles: true }));
     await vi.advanceTimersByTimeAsync(25);
-    expect(api).toHaveBeenCalledWith("/api/v1/management/pi/catalog?query=pi%20tools&offset=0&limit=30&sort=downloads&direction=desc");
+    expect(api).toHaveBeenCalledWith("/api/v1/management/pi/catalog?query=pi%20tools&offset=0&limit=30&sort=downloads&direction=desc&type=extension");
 
     click(elements.loadMorePlugins);
     await settle();
-    expect(api).toHaveBeenCalledWith("/api/v1/management/pi/catalog?query=pi%20tools&offset=1&limit=30&sort=downloads&direction=desc");
+    expect(api).toHaveBeenCalledWith("/api/v1/management/pi/catalog?query=pi%20tools&offset=1&limit=30&sort=downloads&direction=desc&type=extension");
     expect(elements.pluginCatalog.querySelectorAll(".plugin-card")).toHaveLength(2);
   });
 
-  it("owns Plugins and Skills tab state and skill filtering", async () => {
+  it("filters installed skills by the section search", async () => {
     const api = vi.fn(async (path: string) => {
       if (path === "/api/v1/management/pi/packages") return { data: [] };
       if (path === "/api/v1/management/pi/skills") return { data: [
@@ -151,16 +175,49 @@ describe("PluginCatalogController", () => {
     const { controller, elements } = setup(api);
     await controller.load();
 
-    click(elements.skillsTab);
-    expect(elements.pluginsView.hidden).toBe(true);
-    expect(elements.skillsView.hidden).toBe(false);
-    expect(elements.skillsTab.classList.contains("active")).toBe(true);
+    // The skills section only appears on the Skill tab.
+    expect(elements.skillsSection.hidden).toBe(true);
+    click(elements.typeTabs.find((tab) => tab.dataset.type === "skill")!);
+    await vi.waitFor(() => expect(elements.skillsSection.hidden).toBe(false));
 
+    expect(elements.installedSkills.querySelectorAll(".plugin-card")).toHaveLength(2);
     elements.skillSearch.value = "docs";
     elements.skillSearch.dispatchEvent(new Event("input", { bubbles: true }));
     expect(elements.installedSkills.querySelectorAll(".plugin-card")).toHaveLength(1);
     expect(elements.installedSkills.textContent).toContain("Docs");
     expect(elements.installedSkills.textContent).toContain("Disabled");
+  });
+
+  it("shows per-type installed sections on each tab", async () => {
+    const api = vi.fn(async (path: string) => {
+      if (path === "/api/v1/management/pi/packages") return { data: [
+        { source: "npm:pi-ext@1.0.0", displayName: "Ext", version: "1.0.0", enabled: true, resources: { extensions: 1, skills: 0, prompts: 0, themes: 0 } },
+        { source: "npm:pi-prompt@1.0.0", displayName: "Prompt", version: "1.0.0", enabled: true, resources: { extensions: 0, skills: 0, prompts: 1, themes: 0 } },
+      ] };
+      if (path === "/api/v1/management/pi/skills") return { data: [] };
+      return { data: { total: 0, packages: [] } };
+    });
+    const { controller, elements } = setup(api);
+    await controller.load();
+
+    // The default Extensions tab shows only extension packages.
+    expect(elements.installedSection.hidden).toBe(false);
+    expect(elements.skillsSection.hidden).toBe(true);
+    expect(elements.installedPlugins.querySelectorAll(".plugin-card")).toHaveLength(1);
+    expect(elements.installedPlugins.textContent).toContain("Ext");
+    expect(elements.installedPlugins.textContent).not.toContain("Prompt");
+
+    // The Skills tab swaps in the skills section.
+    click(elements.typeTabs.find((tab) => tab.dataset.type === "skill")!);
+    await vi.waitFor(() => expect(elements.installedSection.hidden).toBe(true));
+    expect(elements.skillsSection.hidden).toBe(false);
+
+    // The Prompts tab filters the installed section again.
+    click(elements.typeTabs.find((tab) => tab.dataset.type === "prompt")!);
+    await vi.waitFor(() => expect(elements.installedPlugins.textContent).toContain("Prompt"));
+    expect(elements.installedSection.hidden).toBe(false);
+    expect(elements.skillsSection.hidden).toBe(true);
+    expect(elements.installedPlugins.textContent).not.toContain("Ext");
   });
 
   it("collapses and expands the Installed and Discover sections from their toggles", () => {
@@ -206,28 +263,29 @@ describe("PluginCatalogController", () => {
     select.value = "updated:desc";
     select.dispatchEvent(new Event("change", { bubbles: true }));
 
-    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/pi/catalog?query=&offset=0&limit=30&sort=updated&direction=desc"));
+    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/pi/catalog?query=&offset=0&limit=30&sort=updated&direction=desc&type=extension"));
   });
 
-  it("filters the catalog rows by the selected type facets", async () => {
+  it("re-queries the catalog when a type tab is clicked", async () => {
     const api = vi.fn(async (path: string) => {
       if (path === "/api/v1/management/pi/packages" || path === "/api/v1/management/pi/skills") return { data: [] };
-      return { data: { total: 3, packages: [
+      return { data: { total: 2, packages: [
         { name: "pi-extension", description: "Ext", version: "1.0.0", keywords: ["pi-package", "pi-extension"], types: ["extension"], links: {} },
         { name: "pi-skill", description: "Skill", version: "1.0.0", keywords: ["pi-package", "skill"], types: ["skill"], links: {} },
-        { name: "pi-both", description: "Both", version: "1.0.0", keywords: ["pi-package", "pi-extension", "skill"], types: ["extension", "skill"], links: {} },
       ] } };
     });
     const { controller, elements } = setup(api);
     await controller.load();
+    expect(api).toHaveBeenCalledWith("/api/v1/management/pi/catalog?query=&offset=0&limit=30&sort=downloads&direction=desc&type=extension");
+    expect(elements.title.textContent).toBe("Extensions");
 
-    const chip = elements.pluginsView.querySelector<HTMLButtonElement>('[data-facet="skill"]')!;
-    click(chip);
-    expect(chip.getAttribute("aria-pressed")).toBe("true");
-
-    await vi.waitFor(() => expect(elements.pluginCatalog.querySelectorAll(".plugin-card")).toHaveLength(2));
-    expect(elements.pluginCatalog.textContent).toContain("pi-skill");
-    expect(elements.pluginCatalog.textContent).toContain("pi-both");
-    expect(elements.pluginCatalog.textContent).not.toContain("pi-extension");
+    // The active type tab's value is pushed into the npm query so the first
+    // page is not a blank client-side filter of extension-heavy pages.
+    click(elements.typeTabs.find((tab) => tab.dataset.type === "skill")!);
+    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/pi/catalog?query=&offset=0&limit=30&sort=downloads&direction=desc&type=skill"));
+    // The page title mirrors the active type tab.
+    expect(elements.title.textContent).toBe("Skills");
+    // The render shows exactly what the server returned for the active type.
+    expect(elements.pluginCatalog.querySelectorAll(".plugin-card")).toHaveLength(2);
   });
 });

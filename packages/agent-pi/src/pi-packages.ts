@@ -12,9 +12,11 @@ export interface PiCatalogPackage {
   updatedAt?: string;
   downloads?: number;
   keywords: string[];
-  types: Array<"extension" | "skill" | "prompt" | "theme">;
+  types: PiPackageType[];
   links: Record<string, string>;
 }
+
+export type PiPackageType = "extension" | "skill" | "prompt" | "theme";
 
 /** Shared catalog sort keys; `downloads`/`likes` map to npm's popularity score. */
 export type CatalogSortKey = "downloads" | "updated" | "name" | "likes";
@@ -29,6 +31,19 @@ export function normalizeCatalogSort(value: unknown): CatalogSortKey {
 export function normalizeCatalogDirection(value: unknown): CatalogSortDirection {
   return value === "asc" ? "asc" : "desc";
 }
+
+/**
+ * npm keywords for the type facets. npm search ANDs every term, so a single
+ * selected type is pushed into the query (the first page then fills with
+ * matching packages instead of a sparse client-side filter of extension-heavy
+ * pages); multiple selected types stay client-side.
+ */
+const TYPE_KEYWORDS: Record<PiPackageType, string> = {
+  extension: "extension",
+  skill: "skill",
+  prompt: "prompt",
+  theme: "theme",
+};
 
 export interface InstalledPiPackage {
   source: string;
@@ -81,10 +96,12 @@ export class PiPackageService {
     this.#npmCommand = options.npmCommand?.length ? options.npmCommand : ["npm"];
   }
 
-  async catalog(query = "", offset = 0, limit = 50, sort: CatalogSortKey = "downloads", direction: CatalogSortDirection = "desc"): Promise<{ total: number; packages: PiCatalogPackage[] }> {
+  async catalog(query = "", offset = 0, limit = 50, sort: CatalogSortKey = "downloads", direction: CatalogSortDirection = "desc", types: PiPackageType[] = []): Promise<{ total: number; packages: PiCatalogPackage[] }> {
     const safeLimit = Math.max(1, Math.min(50, Math.trunc(limit)));
     const safeOffset = Math.max(0, Math.trunc(offset));
-    const text = [query.trim(), "keywords:pi-package"].filter(Boolean).join(" ");
+    const safeTypes = types.filter((type): type is PiPackageType => type in TYPE_KEYWORDS);
+    const typeTerm = safeTypes.length === 1 ? `keywords:${TYPE_KEYWORDS[safeTypes[0]!]}` : "";
+    const text = [query.trim(), "keywords:pi-package", typeTerm].filter(Boolean).join(" ");
     const url = new URL("https://registry.npmjs.org/-/v1/search");
     url.searchParams.set("text", text);
     url.searchParams.set("size", String(safeLimit));
@@ -430,9 +447,9 @@ function catalogPackage(entry: Record<string, unknown>): PiCatalogPackage | unde
   };
 }
 
-function packageTypes(keywords: string[]): PiCatalogPackage["types"] {
+function packageTypes(keywords: string[]): PiPackageType[] {
   const joined = keywords.join(" ").toLowerCase();
-  const types: PiCatalogPackage["types"] = [];
+  const types: PiPackageType[] = [];
   if (joined.includes("extension") || joined.includes("plugin")) types.push("extension");
   if (joined.includes("skill")) types.push("skill");
   if (joined.includes("prompt")) types.push("prompt");

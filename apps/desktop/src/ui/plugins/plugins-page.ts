@@ -1,3 +1,4 @@
+import { ManagementPageLayout } from "../layout/management-page.js";
 import { PluginCatalogController, type PluginCatalogApi } from "./plugin-catalog.js";
 
 export interface PluginsPageOptions {
@@ -24,11 +25,20 @@ export class PluginsPageController {
       if (!value) throw new Error(`Plugins page is missing #${id}`);
       return value;
     };
+    const typeTabs = [...options.page.querySelectorAll<HTMLButtonElement>(".management-page-tabs [data-type]")];
+    if (typeTabs.length === 0) throw new Error("Plugins page is missing type tabs");
+    // The Installed skills section keeps its own search pill, composed here
+    // with the layout's helper so the shell markup stays a set of empty
+    // containers and every pill renders identically.
+    const skillsBody = options.page.querySelector<HTMLElement>("#installed-skills-body");
+    if (!skillsBody) throw new Error("Plugins page is missing #installed-skills-body");
+    const skillsSearch = ManagementPageLayout.createSearch({ id: "skill-search", placeholder: "Search skills" });
+    skillsBody.prepend(skillsSearch);
     this.catalog = new PluginCatalogController({
       pluginsView: require("plugins-view"),
-      skillsView: require("skills-view"),
-      pluginsTab: require("plugins-tab"),
-      skillsTab: require("skills-tab"),
+      title: require("plugins-title"),
+      installedSection: require("plugins-installed-section"),
+      skillsSection: require("plugins-skills-section"),
       pluginSearch: require("plugin-search"),
       skillSearch: require("skill-search"),
       installedPlugins: require("installed-plugins"),
@@ -36,6 +46,7 @@ export class PluginsPageController {
       installedSkills: require("installed-skills"),
       loadMorePlugins: require("load-more-plugins"),
       refresh: require("refresh-plugins"),
+      typeTabs,
     }, {
       api: options.api,
       openExternal: options.openExternal,

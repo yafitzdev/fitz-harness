@@ -54,10 +54,10 @@ describe("ModelCatalogService", () => {
   it("maps the Hugging Face catalog search", async () => {
     const service = new ModelCatalogService({
       modelRoot: await temporaryModelRoot(),
-      fetch: async () => jsonResponse({ count: 1, items: [{ id: "Qwen/Qwen2.5-7B-Instruct-GGUF", downloads: 1234, likes: 56, pipeline_tag: "text-generation", lastModified: "2025-01-01T00:00:00Z" }] }),
+      fetch: async () => jsonResponse({ count: 1, items: [{ id: "Qwen/Qwen2.5-7B-Instruct-GGUF", downloads: 1234, likes: 56, pipeline_tag: "text-generation", createdAt: "2024-12-01T00:00:00Z", lastModified: "2025-01-01T00:00:00Z" }] }),
     });
     const result = await service.search("qwen", 0, 10);
-    expect(result).toEqual({ total: 1, models: [expect.objectContaining({ id: "Qwen/Qwen2.5-7B-Instruct-GGUF", downloads: 1234, likes: 56, pipelineTag: "text-generation", updatedAt: "2025-01-01T00:00:00Z" })] });
+    expect(result).toEqual({ total: 1, models: [expect.objectContaining({ id: "Qwen/Qwen2.5-7B-Instruct-GGUF", downloads: 1234, likes: 56, pipelineTag: "text-generation", createdAt: "2024-12-01T00:00:00Z", updatedAt: "2025-01-01T00:00:00Z" })] });
   });
 
   it("accepts the plain-array form of the catalog response", async () => {
@@ -100,6 +100,89 @@ describe("ModelCatalogService", () => {
     expect(requested[2]).toContain("direction=1");
     expect(requested[3]).toContain("sort=likes");
     expect(requested[3]).toContain("direction=-1");
+  });
+
+  it("skips models below the minimum likes and downloads thresholds", async () => {
+    const service = new ModelCatalogService({
+      modelRoot: await temporaryModelRoot(),
+      fetch: async () => jsonResponse([
+        { id: "org/small", downloads: 50, likes: 2 },
+        { id: "org/popular", downloads: 50_000, likes: 900 },
+        { id: "org/liked", downloads: 2_000, likes: 1_500 },
+      ]),
+    });
+    const result = await service.search("", 0, 10, "text-generation", "downloads", "desc", 100, 1000);
+    expect(result.models.map((entry) => entry.id)).toEqual(["org/popular", "org/liked"]);
+    expect(result.total).toBe(2);
+  });
+
+  it("pages the filtered window without overlap and an exact total", async () => {
+    const requested: string[] = [];
+    const service = new ModelCatalogService({
+      modelRoot: await temporaryModelRoot(),
+      fetch: async (input: RequestInfo | URL) => {
+        requested.push(String(input));
+        return jsonResponse(Array.from({ length: 100 }, (_, i) => ({ id: `org/model-${i}`, downloads: 1000, likes: 10 })));
+      },
+    });
+    const first = await service.search("", 0, 30);
+    expect(first.models.map((entry) => entry.id)).toEqual(Array.from({ length: 30 }, (_, i) => `org/model-${i}`));
+    expect(first.total).toBe(100);
+    const next = await service.search("", 30, 30);
+    expect(next.models.map((entry) => entry.id)).toEqual(Array.from({ length: 30 }, (_, i) => `org/model-${30 + i}`));
+    expect(next.total).toBe(100);
+    // HF ignores `offset`, so the whole window is fetched once and reused for both pages.
+    expect(requested).toHaveLength(1);
+  });
+
+  it("keeps only models released within the last weeks", async () => {
+    const now = Date.now();
+    const week = 7 * 24 * 60 * 60 * 1000;
+    const service = new ModelCatalogService({
+      modelRoot: await temporaryModelRoot(),
+      fetch: async () => jsonResponse([
+        { id: "org/fresh", downloads: 1000, likes: 10, createdAt: new Date(now - week).toISOString() },
+        { id: "org/borderline", downloads: 1000, likes: 10, createdAt: new Date(now - 3 * week).toISOString() },
+        { id: "org/ancient", downloads: 1000, likes: 10, createdAt: new Date(now - 52 * week).toISOString() },
+        { id: "org/dateless", downloads: 1000, likes: 10 },
+      ]),
+    });
+    const result = await service.search("", 0, 10, "text-generation", "downloads", "desc", 0, 0, 4);
+    expect(result.models.map((entry) => entry.id)).toEqual(["org/fresh", "org/borderline"]);
+    expect(result.total).toBe(2);
+  });
+
+  it("reuses the cached window across threshold changes", async () => {
+    const requested: string[] = [];
+    const service = new ModelCatalogService({
+      modelRoot: await temporaryModelRoot(),
+      fetch: async (input: RequestInfo | URL) => {
+        requested.push(String(input));
+        return jsonResponse([
+          { id: "org/small", downloads: 50, likes: 2 },
+          { id: "org/popular", downloads: 50_000, likes: 900 },
+        ]);
+      },
+    });
+    const unfiltered = await service.search("", 0, 10);
+    expect(unfiltered.total).toBe(2);
+    const filtered = await service.search("", 0, 10, "text-generation", "downloads", "desc", 100, 1000);
+    expect(filtered.total).toBe(1);
+    expect(filtered.models.map((entry) => entry.id)).toEqual(["org/popular"]);
+    expect(requested).toHaveLength(1);
+  });
+
+  it("re-fetches the window when the query or sort changes", async () => {
+    const requested: string[] = [];
+    const service = new ModelCatalogService({
+      modelRoot: await temporaryModelRoot(),
+      fetch: async (input: RequestInfo | URL) => { requested.push(String(input)); return jsonResponse([]); },
+    });
+    await service.search("qwen");
+    await service.search("qwen"); // same query/sort → cached
+    await service.search("gemma");
+    await service.search("", 0, 10, "text-generation", "likes", "desc");
+    expect(requested).toHaveLength(3);
   });
 
   it("lists the GGUF files of a model repository", async () => {

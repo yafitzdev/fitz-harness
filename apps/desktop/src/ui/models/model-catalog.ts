@@ -1,7 +1,7 @@
 import { CollapsibleSection } from "../layout/collapsible-section.js";
 import { svgIcon } from "../primitives/dom.js";
 import { CatalogFilterBar } from "../catalog/catalog-filter-bar.js";
-import { catalogQueryString, type CatalogSortOption } from "../catalog/catalog-filters.js";
+import { catalogQueryString, type CatalogNumericFilter, type CatalogSortOption } from "../catalog/catalog-filters.js";
 
 export type ModelCatalogApi = (path: string, method?: string, body?: unknown) => Promise<Record<string, any>>;
 
@@ -34,6 +34,8 @@ export interface DownloadRecord {
 export interface ModelCatalogElements {
   /** The content column that owns the collapsible sections. */
   view: HTMLElement;
+  /** The page h1; mirrors the active pipeline tab's label. */
+  title: HTMLElement;
   modelSearch: HTMLInputElement;
   downloadedList: HTMLElement;
   catalogList: HTMLElement;
@@ -60,14 +62,26 @@ const MODEL_SORT_OPTIONS: CatalogSortOption[] = [
   { key: "name", direction: "asc", label: "Name A–Z" },
 ];
 
-/** Uploader facet chips are capped so the filter row stays tidy. */
-const MAX_UPLOADER_FACETS = 8;
+/**
+ * Threshold sliders; the host skips models below these so pages stay full.
+ * Stops are log-spaced because catalog stats are heavily skewed (the top-1000
+ * GGUF text-generation window spans ~0–3.4K likes and ~3K–5M downloads), and
+ * the recency slider mirrors them in weeks.
+ */
+const LIKES_STOPS = [0, 10, 50, 100, 250, 500, 1000, 2000, 3000, 4000, 5000];
+const DOWNLOADS_STOPS = [0, 1_000, 5_000, 10_000, 25_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 2_500_000, 5_000_000];
+const RECENCY_STOPS = [0, 1, 2, 4, 8, 12, 26, 52];
+const MODEL_NUMERIC_FILTERS: CatalogNumericFilter[] = [
+  { key: "min_likes", label: "Min likes", stops: LIKES_STOPS },
+  { key: "min_downloads", label: "Min downloads", stops: DOWNLOADS_STOPS, format: formatNumber },
+  { key: "released_within_weeks", label: "Released within", stops: RECENCY_STOPS, format: formatRecency },
+];
 
 const modelIcon = '<path d="M10 2.5 17 6v8l-7 3.5L3 14V6z"></path><path d="M3 6l7 3.5L17 6M10 9.5V17.5"></path>';
 
 /**
  * Owns the Models management tab: the Hugging Face GGUF catalog filtered by
- * pipeline tag (LLM, embedder, reranker, vision, …), per-model downloads with
+ * pipeline tag (LLMs, vision, audio, …), per-model downloads with
  * progress polling and cancel, and the list of model files on the host. The
  * page body mirrors the Plugins tab: a collapsible Downloaded section above a
  * collapsible Discover section, with the type filter in the header tabs.
@@ -92,10 +106,13 @@ export class ModelCatalogController {
     this.options = options;
     this.searchDelayMs = options.searchDelayMs ?? 250;
     this.pollIntervalMs = options.pollIntervalMs ?? 500;
-    this.pipelineTag = elements.pipelineTabs.find((tab) => tab.classList.contains("active"))?.dataset.pipeline ?? "text-generation";
+    const activeTab = elements.pipelineTabs.find((tab) => tab.classList.contains("active"));
+    this.pipelineTag = activeTab?.dataset.pipeline ?? "text-generation";
+    if (activeTab) elements.title.textContent = activeTab.textContent?.trim() || elements.title.textContent;
     CollapsibleSection.adoptAll(elements.view, { storageKey: "fitz-collapsed-model-sections" });
     this.filterBar = new CatalogFilterBar({
       sortOptions: MODEL_SORT_OPTIONS,
+      numericFilters: MODEL_NUMERIC_FILTERS,
       onChange: () => void this.load(false),
     });
     elements.view.insertBefore(this.filterBar.element, elements.view.querySelector(".collapsible-section"));
@@ -142,6 +159,7 @@ export class ModelCatalogController {
     for (const tab of this.elements.pipelineTabs) {
       tab.addEventListener("click", () => {
         this.pipelineTag = tab.dataset.pipeline ?? "text-generation";
+        this.elements.title.textContent = tab.textContent?.trim() || this.elements.title.textContent;
         void this.load(false);
       });
     }
@@ -154,33 +172,13 @@ export class ModelCatalogController {
     const response = await this.options.api(`/api/v1/management/models/catalog?query=${query}&pipeline=${pipeline}&offset=${offset}&limit=30&${catalogQueryString(this.filterBar.filters)}`);
     this.catalogTotal = response.data?.total ?? 0;
     this.models = append ? [...this.models, ...(response.data?.models ?? [])] : (response.data?.models ?? []);
-    this.updateUploaderFacets();
     this.renderCatalog();
-  }
-
-  /** Facet chips reflect the uploaders on the loaded pages, most common first. */
-  private updateUploaderFacets(): void {
-    const counts = new Map<string, number>();
-    for (const model of this.models) {
-      const owner = model.id.split("/")[0] ?? model.id;
-      counts.set(owner, (counts.get(owner) ?? 0) + 1);
-    }
-    const options = [...counts.entries()]
-      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
-      .slice(0, MAX_UPLOADER_FACETS)
-      .map(([owner]) => ({ key: owner, label: owner }));
-    this.filterBar.setFacetOptions(options);
   }
 
   private renderCatalog(): void {
     this.elements.catalogList.replaceChildren();
     const downloadedRepos = new Set(this.downloaded.map((entry) => entry.repoId));
-    const selectedFacets = new Set(this.filterBar.filters.facets);
-    const visible = this.models.filter((entry) => {
-      if (downloadedRepos.has(entry.id)) return false;
-      const owner = entry.id.split("/")[0] ?? entry.id;
-      return selectedFacets.size === 0 || selectedFacets.has(owner);
-    });
+    const visible = this.models.filter((entry) => !downloadedRepos.has(entry.id));
     if (!visible.length) this.elements.catalogList.append(emptyState("No matching models"));
     for (const entry of visible) {
       const card = this.modelCard(modelName(entry.id), catalogMeta(entry), entry.id, {
@@ -416,6 +414,12 @@ function formatNumber(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
   return String(value);
+}
+
+/** "released in the last X weeks" readout; 0 (no filter) reads as "any time". */
+function formatRecency(weeks: number): string {
+  if (weeks <= 0) return "any time";
+  return weeks === 1 ? "last week" : `last ${weeks} weeks`;
 }
 
 function formatBytes(value: number): string {

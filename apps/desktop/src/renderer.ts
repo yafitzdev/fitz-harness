@@ -89,37 +89,33 @@ playbookLayout.addContent({
   before: element("management-editor"),
 });
 const pluginsLayout = new ManagementPageLayout(pluginsPage, {
-  tabs: [{ id: "plugins-tab", label: "Plugins", active: true }, { id: "skills-tab", label: "Skills" }],
+  tabs: [
+    { id: "extension-tab", label: "Extensions", dataset: { type: "extension" }, active: true },
+    { id: "skill-tab", label: "Skills", dataset: { type: "skill" } },
+    { id: "prompt-tab", label: "Prompts", dataset: { type: "prompt" } },
+  ],
   actions: [{ id: "refresh-plugins", icon: managementRefreshIcon, label: "Refresh packages" }],
 });
 pluginsLayout.addContent({
   id: "plugins-view",
-  title: "Plugins",
+  title: "Extensions",
+  titleId: "plugins-title",
   description: "Extend Pi with packages from the community catalog.",
   search: { id: "plugin-search", placeholder: "Search plugins" },
-  body: [element("plugins-installed-section"), element("plugins-discover-section")],
-});
-pluginsLayout.addContent({
-  id: "skills-view",
-  hidden: true,
-  title: "Skills",
-  description: "Task-specific guidance currently available to Pi.",
-  search: { id: "skill-search", placeholder: "Search skills" },
-  body: [element("plugins-skills-section")],
+  body: [element("plugins-installed-section"), element("plugins-skills-section"), element("plugins-discover-section")],
 });
 const modelsLayout = new ManagementPageLayout(modelsPage, {
   tabs: [
-    { id: "llm-tab", label: "LLM", pipeline: "text-generation", active: true },
-    { id: "embedder-tab", label: "Embedder", pipeline: "feature-extraction" },
-    { id: "reranker-tab", label: "Reranker", pipeline: "reranker" },
-    { id: "vision-tab", label: "Vision", pipeline: "image-text-to-text" },
-    { id: "audio-tab", label: "Audio", pipeline: "automatic-speech-recognition" },
+    { id: "llm-tab", label: "LLMs", dataset: { pipeline: "text-generation" }, active: true },
+    { id: "vision-tab", label: "Vision", dataset: { pipeline: "image-text-to-text" } },
+    { id: "audio-tab", label: "Audio", dataset: { pipeline: "automatic-speech-recognition" } },
   ],
   actions: [{ id: "refresh-models", icon: managementRefreshIcon, label: "Refresh models" }],
 });
 modelsLayout.addContent({
   id: "models-view",
-  title: "Models",
+  title: "LLMs",
+  titleId: "models-title",
   description: "Search GGUF models on Hugging Face by type.",
   search: { id: "model-search", placeholder: "Search models" },
   body: [element("models-downloaded-section"), element("models-discover-section")],

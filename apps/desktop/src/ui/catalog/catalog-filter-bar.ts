@@ -1,29 +1,34 @@
-import type { CatalogFacetOption, CatalogFilters, CatalogSortKey, CatalogSortOption } from "./catalog-filters.js";
+import type { CatalogFilters, CatalogNumericFilter, CatalogSortKey, CatalogSortOption } from "./catalog-filters.js";
+
+/** A threshold slider: the range input holds a stop index; the readout shows the stop. */
+interface NumericSlider {
+  input: HTMLInputElement;
+  stops: number[];
+  format: ((value: number) => string) | undefined;
+}
 
 export interface CatalogFilterBarOptions {
   sortOptions: CatalogSortOption[];
-  facetOptions?: CatalogFacetOption[];
-  /** Fired whenever the sort or a facet selection changes. */
+  /** Threshold inputs rendered next to the sort (e.g. minimum likes/downloads). */
+  numericFilters?: CatalogNumericFilter[];
+  /** Fired whenever the sort or a threshold changes. */
   onChange?: () => void;
 }
 
 /**
- * The sort + facet filter row shared by the Plugins and Models stores. Each
- * catalog reads `filters` when building its query string, so a change here
- * re-queries the same way on either page. Facet options can be refreshed via
- * `setFacetOptions` (the Models store derives uploader chips from the loaded
- * results); selections whose option disappears are dropped.
+ * The sort + threshold filter row shared by the Plugins and Models stores.
+ * Each catalog reads `filters` when building its query string, so a change
+ * here re-queries the same way on either page. Threshold sliders snap to
+ * their stops; the readout follows the thumb while dragging, and the query
+ * fires on release.
  */
 export class CatalogFilterBar {
   readonly element: HTMLElement;
   readonly sortSelect: HTMLSelectElement;
-  private readonly facets: HTMLElement;
-  private readonly facetButtons = new Map<string, HTMLButtonElement>();
-  private facetOptions: CatalogFacetOption[];
+  private readonly numericInputs = new Map<string, NumericSlider>();
   private onChange: (() => void) | undefined;
 
   constructor(options: CatalogFilterBarOptions) {
-    this.facetOptions = options.facetOptions ?? [];
     this.onChange = options.onChange;
 
     this.element = document.createElement("div");
@@ -45,47 +50,48 @@ export class CatalogFilterBar {
     this.sortSelect.addEventListener("change", () => this.onChange?.());
     sort.append(caption, this.sortSelect);
 
-    this.facets = document.createElement("div");
-    this.facets.className = "catalog-filter-facets";
-    this.renderFacets();
+    const numeric = document.createElement("div");
+    numeric.className = "catalog-filter-numeric";
+    for (const filter of options.numericFilters ?? []) {
+      const label = document.createElement("label");
+      label.className = "catalog-filter-number";
+      const labelCaption = document.createElement("span");
+      labelCaption.textContent = filter.label;
+      const input = document.createElement("input");
+      input.type = "range";
+      input.min = "0";
+      input.max = String(Math.max(0, filter.stops.length - 1));
+      input.step = "1";
+      input.value = "0";
+      input.setAttribute("aria-label", filter.label);
+      const readout = document.createElement("span");
+      readout.className = "catalog-filter-value";
+      readout.setAttribute("aria-live", "polite");
+      const updateReadout = (): void => {
+        const value = filter.stops[Number(input.value)] ?? 0;
+        readout.textContent = filter.format ? filter.format(value) : String(value);
+        input.setAttribute("aria-valuetext", String(value));
+      };
+      // The readout follows the thumb while dragging; the query fires on release.
+      input.addEventListener("input", updateReadout);
+      input.addEventListener("change", () => { updateReadout(); this.onChange?.(); });
+      updateReadout();
+      this.numericInputs.set(filter.key, { input, stops: filter.stops, format: filter.format });
+      label.append(labelCaption, input, readout);
+      numeric.append(label);
+    }
 
-    this.element.append(sort, this.facets);
+    this.element.append(sort, numeric);
   }
 
-  /** The current sort + facet selection, ready for `catalogQueryString`. */
+  /** The current sort + threshold selection, ready for `catalogQueryString`. */
   get filters(): CatalogFilters {
     const [key, direction] = this.sortSelect.value.split(":") as [CatalogSortKey, "asc" | "desc"];
-    const facets = [...this.facetButtons.values()]
-      .filter((button) => button.getAttribute("aria-pressed") === "true")
-      .map((button) => button.dataset.facet ?? "");
-    return { sort: { key, direction }, facets };
-  }
-
-  /** Replaces the facet chips, keeping any selection whose option still exists. */
-  setFacetOptions(options: CatalogFacetOption[]): void {
-    this.facetOptions = options;
-    this.renderFacets(new Set(this.filters.facets));
-  }
-
-  private renderFacets(selected: Set<string> = new Set()): void {
-    this.facets.replaceChildren();
-    this.facetButtons.clear();
-    for (const option of this.facetOptions) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "catalog-filter-chip";
-      button.dataset.facet = option.key;
-      button.textContent = option.label;
-      button.setAttribute("aria-pressed", selected.has(option.key) ? "true" : "false");
-      button.classList.toggle("active", selected.has(option.key));
-      button.addEventListener("click", () => {
-        const pressed = button.getAttribute("aria-pressed") === "true";
-        button.setAttribute("aria-pressed", pressed ? "false" : "true");
-        button.classList.toggle("active", !pressed);
-        this.onChange?.();
-      });
-      this.facetButtons.set(option.key, button);
-      this.facets.append(button);
+    const numeric: Record<string, number | undefined> = {};
+    for (const [filterKey, slider] of this.numericInputs) {
+      const value = slider.stops[Number(slider.input.value)] ?? 0;
+      numeric[filterKey] = value > 0 ? value : undefined;
     }
+    return { sort: { key, direction }, numeric };
   }
 }

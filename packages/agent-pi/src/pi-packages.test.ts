@@ -44,6 +44,32 @@ describe("PiPackageService", () => {
     expect(byDate.packages.map((entry) => entry.name)).toEqual(["pi-alpha", "pi-mid", "pi-zeta"]);
   });
 
+  it("pushes a single type facet into the npm search keywords", async () => {
+    const requested: string[] = [];
+    const service = new PiPackageService({
+      agentDir: await temporaryDirectory(), cwd: process.cwd(),
+      fetch: async (input: RequestInfo | URL) => { requested.push(String(input)); return new Response(JSON.stringify({ total: 0, objects: [] })) as typeof fetch; },
+    });
+    await service.catalog("", 0, 10, "downloads", "desc", ["skill"]);
+    expect(new URL(requested[0]!).searchParams.get("text")).toBe("keywords:pi-package keywords:skill");
+    // The text query still applies alongside the type filter.
+    await service.catalog("cookbook", 0, 10, "downloads", "desc", ["theme"]);
+    expect(new URL(requested[1]!).searchParams.get("text")).toBe("cookbook keywords:pi-package keywords:theme");
+  });
+
+  it("keeps the client-side facet filter for multi-select and unknown types", async () => {
+    const requested: string[] = [];
+    const service = new PiPackageService({
+      agentDir: await temporaryDirectory(), cwd: process.cwd(),
+      fetch: async (input: RequestInfo | URL) => { requested.push(String(input)); return new Response(JSON.stringify({ total: 0, objects: [] })) as typeof fetch; },
+    });
+    await service.catalog("", 0, 10, "downloads", "desc", ["skill", "prompt"]);
+    expect(requested[0]).not.toContain("keywords:skill");
+    expect(requested[0]).not.toContain("keywords:prompt");
+    await service.catalog("", 0, 10, "downloads", "desc", ["bogus" as never]);
+    expect(requested[1]).not.toContain("keywords:bogus");
+  });
+
   it("installs a local Pi package into the registry folder and manages it", async () => {
     const root = await temporaryDirectory();
     const agentDir = join(root, "agent");

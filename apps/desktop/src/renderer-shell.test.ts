@@ -198,13 +198,29 @@ describe("desktop renderer shell", () => {
   it("provides an inline Pi package and skills workspace", () => {
     expect(html).toContain('id="manage-plugins"');
     expect(html).toContain('id="plugins-page"');
-    expect(renderer).toContain('{ id: "plugins-tab", label: "Plugins", active: true }');
-    expect(renderer).toContain('{ id: "skills-tab", label: "Skills" }');
+    expect(renderer).toContain('{ id: "extension-tab", label: "Extensions", dataset: { type: "extension" }, active: true }');
+    expect(renderer).toContain('{ id: "skill-tab", label: "Skills", dataset: { type: "skill" } }');
+    expect(renderer).toContain('{ id: "prompt-tab", label: "Prompts", dataset: { type: "prompt" } }');
+    expect(renderer).not.toContain('theme-tab');
+    // Only chat-capable model types are browsable; embedders/rerankers are out.
+    expect(renderer).not.toContain('id: "embedder-tab"');
+    expect(renderer).not.toContain('id: "reranker-tab"');
+    expect(renderer).toContain('{ id: "llm-tab", label: "LLMs", dataset: { pipeline: "text-generation" }, active: true }');
+    expect(renderer).toContain('{ id: "vision-tab", label: "Vision", dataset: { pipeline: "image-text-to-text" } }');
+    expect(renderer).toContain('{ id: "audio-tab", label: "Audio", dataset: { pipeline: "automatic-speech-recognition" } }');
     expect(html).toContain('id="plugin-catalog"');
     expect(html).toContain('id="installed-plugins-toggle"');
     expect(html).toContain('id="plugin-catalog-toggle"');
+    expect(html).toContain('id="installed-skills-toggle"');
     expect(html).toContain('data-collapsible-key="installed"');
     expect(html).toContain('data-collapsible-key="discover"');
+    expect(html).toContain('data-collapsible-key="skills"');
+    expect(renderer).toContain('title: "Extensions"');
+    expect(renderer).toContain('titleId: "plugins-title"');
+    expect(renderer).toContain('title: "LLMs"');
+    expect(renderer).toContain('titleId: "models-title"');
+    expect(renderer).toContain('element("plugins-installed-section"), element("plugins-skills-section"), element("plugins-discover-section")');
+    expect(pluginCatalog).toContain('this.elements.title.textContent = tab.textContent?.trim() || this.elements.title.textContent');
     expect(pluginCatalog).toContain('CollapsibleSection.adoptAll(this.elements.pluginsView, { storageKey: "fitz-collapsed-plugin-sections" })');
     expect(pluginCatalog).toContain('fitz-collapsed-plugin-sections');
     expect(pluginCatalog).toContain('/api/v1/management/pi/catalog');

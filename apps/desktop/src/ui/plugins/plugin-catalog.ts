@@ -1,7 +1,7 @@
 import { svgIcon } from "../primitives/dom.js";
 import { CollapsibleSection } from "../layout/collapsible-section.js";
 import { CatalogFilterBar } from "../catalog/catalog-filter-bar.js";
-import { catalogQueryString, type CatalogFacetOption, type CatalogSortOption } from "../catalog/catalog-filters.js";
+import { catalogQueryString, type CatalogSortOption } from "../catalog/catalog-filters.js";
 
 export type PluginCatalogApi = (path: string, method?: string, body?: unknown) => Promise<Record<string, any>>;
 
@@ -33,10 +33,14 @@ export interface PiSkillSummary {
 }
 
 export interface PluginCatalogElements {
+  /** The content column that owns the collapsible sections. */
   pluginsView: HTMLElement;
-  skillsView: HTMLElement;
-  pluginsTab: HTMLButtonElement;
-  skillsTab: HTMLButtonElement;
+  /** The page h1; mirrors the active type tab's label. */
+  title: HTMLElement;
+  /** The Installed section; hidden on the Skills tab. */
+  installedSection: HTMLElement;
+  /** The Installed skills section; visible only on the Skills tab. */
+  skillsSection: HTMLElement;
   pluginSearch: HTMLInputElement;
   skillSearch: HTMLInputElement;
   installedPlugins: HTMLElement;
@@ -44,6 +48,8 @@ export interface PluginCatalogElements {
   installedSkills: HTMLElement;
   loadMorePlugins: HTMLButtonElement;
   refresh: HTMLButtonElement;
+  /** Header tabs that filter the catalog by package type (data-type). */
+  typeTabs: HTMLButtonElement[];
 }
 
 export interface PluginCatalogOptions {
@@ -61,12 +67,12 @@ const PLUGIN_SORT_OPTIONS: CatalogSortOption[] = [
   { key: "name", direction: "asc", label: "Name A–Z" },
 ];
 
-const PLUGIN_FACET_OPTIONS: CatalogFacetOption[] = [
-  { key: "extension", label: "Extension" },
-  { key: "skill", label: "Skill" },
-  { key: "prompt", label: "Prompt" },
-  { key: "theme", label: "Theme" },
-];
+/** Installed-resource key per type tab (package resources are plural). */
+const TYPE_RESOURCES: Record<string, string> = {
+  extension: "extensions",
+  skill: "skills",
+  prompt: "prompts",
+};
 
 export class PluginCatalogController {
   readonly elements: PluginCatalogElements;
@@ -77,16 +83,19 @@ export class PluginCatalogController {
   private catalogPackages: PiCatalogPackage[] = [];
   private installedSkills: PiSkillSummary[] = [];
   private catalogTotal = 0;
+  private catalogType: string;
   private searchTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(elements: PluginCatalogElements, options: PluginCatalogOptions) {
     this.elements = elements;
     this.options = options;
     this.searchDelayMs = options.searchDelayMs ?? 250;
+    const activeTab = elements.typeTabs.find((tab) => tab.classList.contains("active"));
+    this.catalogType = activeTab?.dataset.type ?? "extension";
+    if (activeTab) elements.title.textContent = activeTab.textContent?.trim() || elements.title.textContent;
     CollapsibleSection.adoptAll(this.elements.pluginsView, { storageKey: "fitz-collapsed-plugin-sections" });
     this.filterBar = new CatalogFilterBar({
       sortOptions: PLUGIN_SORT_OPTIONS,
-      facetOptions: PLUGIN_FACET_OPTIONS,
       onChange: () => void this.load(false),
     });
     this.elements.pluginsView.insertBefore(this.filterBar.element, this.elements.pluginsView.querySelector(".collapsible-section"));
@@ -95,15 +104,6 @@ export class PluginCatalogController {
 
   showLoading(): void {
     this.elements.installedPlugins.replaceChildren(emptyState("Loading plugins…"));
-  }
-
-  setView(view: "plugins" | "skills"): void {
-    const showPlugins = view === "plugins";
-    this.elements.pluginsView.hidden = !showPlugins;
-    this.elements.skillsView.hidden = showPlugins;
-    this.elements.pluginsTab.classList.toggle("active", showPlugins);
-    this.elements.skillsTab.classList.toggle("active", !showPlugins);
-    if (!showPlugins) this.renderSkills();
   }
 
   async load(appendCatalog = false): Promise<void> {
@@ -129,8 +129,13 @@ export class PluginCatalogController {
 
   private bind(): void {
     this.elements.refresh.addEventListener("click", () => void this.load(false));
-    this.elements.pluginsTab.addEventListener("click", () => this.setView("plugins"));
-    this.elements.skillsTab.addEventListener("click", () => this.setView("skills"));
+    for (const tab of this.elements.typeTabs) {
+      tab.addEventListener("click", () => {
+        this.catalogType = tab.dataset.type ?? "extension";
+        this.elements.title.textContent = tab.textContent?.trim() || this.elements.title.textContent;
+        void this.load(false);
+      });
+    }
     this.elements.pluginSearch.addEventListener("input", () => {
       if (this.searchTimer) clearTimeout(this.searchTimer);
       this.searchTimer = setTimeout(() => void this.load(false), this.searchDelayMs);
@@ -142,19 +147,30 @@ export class PluginCatalogController {
   private async loadCatalog(append: boolean): Promise<void> {
     const offset = append ? this.catalogPackages.length : 0;
     const query = encodeURIComponent(this.elements.pluginSearch.value.trim());
-    const response = await this.options.api(`/api/v1/management/pi/catalog?query=${query}&offset=${offset}&limit=30&${catalogQueryString(this.filterBar.filters)}`);
+    // The active header tab's type is pushed into the npm query so the page
+    // fills with matching packages instead of a blank client-side filter.
+    const typeParam = this.catalogType ? `&type=${encodeURIComponent(this.catalogType)}` : "";
+    const response = await this.options.api(`/api/v1/management/pi/catalog?query=${query}&offset=${offset}&limit=30&${catalogQueryString(this.filterBar.filters)}${typeParam}`);
     this.catalogTotal = response.data?.total ?? 0;
     this.catalogPackages = append ? [...this.catalogPackages, ...(response.data?.packages ?? [])] : (response.data?.packages ?? []);
     this.renderCatalog();
   }
 
   private renderInstalledPackages(): void {
+    const type = this.catalogType;
+    // Each type tab owns its installed section: the Skills tab swaps in the
+    // skills list, the other tabs show installed packages of that type.
+    const isSkillTab = type === "skill";
+    this.elements.installedSection.hidden = isSkillTab;
+    this.elements.skillsSection.hidden = !isSkillTab;
     this.elements.installedPlugins.replaceChildren();
-    if (!this.installedPackages.length) {
-      this.elements.installedPlugins.append(emptyState("No plugins installed"));
+    const resourceKey = TYPE_RESOURCES[type];
+    const visible = this.installedPackages.filter((entry) => resourceKey !== undefined && (entry.resources[resourceKey] ?? 0) > 0);
+    if (!visible.length) {
+      this.elements.installedPlugins.append(emptyState(`No ${type}s installed`));
       return;
     }
-    for (const entry of this.installedPackages) {
+    for (const entry of visible) {
       const card = this.packageCard(entry.displayName, entry.description ?? entry.source, entry.version, sourceWebsite(entry.source));
       const counts = Object.entries(entry.resources).filter(([, count]) => count > 0).map(([kind, count]) => `${count} ${kind}`);
       if (counts.length) card.querySelector(".plugin-meta")?.append(document.createTextNode(` · ${counts.join(" · ")}`));
@@ -171,10 +187,7 @@ export class PluginCatalogController {
   private renderCatalog(): void {
     this.elements.pluginCatalog.replaceChildren();
     const installed = new Set(this.installedPackages.map((entry) => packageNameFromSource(entry.source)).filter((name): name is string => Boolean(name)));
-    const selectedFacets = new Set(this.filterBar.filters.facets);
-    const visible = this.catalogPackages.filter(
-      (entry) => !installed.has(entry.name) && (selectedFacets.size === 0 || entry.types.some((type) => selectedFacets.has(type))),
-    );
+    const visible = this.catalogPackages.filter((entry) => !installed.has(entry.name));
     if (!visible.length) this.elements.pluginCatalog.append(emptyState("No matching Pi packages"));
     for (const entry of visible) {
       const card = this.packageCard(entry.name, entry.description, entry.version, entry.links.homepage ?? entry.links.repository ?? entry.links.npm ?? npmPackageWebsite(entry.name));

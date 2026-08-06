@@ -29,6 +29,7 @@ export class ModelsPageController {
     if (pipelineTabs.length === 0) throw new Error("Models page is missing pipeline tabs");
     this.catalog = new ModelCatalogController({
       view: require("models-view"),
+      title: require("models-title"),
       modelSearch: require("model-search"),
       downloadedList: require("downloaded-models"),
       catalogList: require("model-catalog"),

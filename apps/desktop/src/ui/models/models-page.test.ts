@@ -10,10 +10,9 @@ function buildPage(): HTMLElement {
   page.className = "management-page";
   const layout = new ManagementPageLayout(page, {
     tabs: [
-      { id: "llm-tab", label: "LLM", pipeline: "text-generation", active: true },
-      { id: "embedder-tab", label: "Embedder", pipeline: "feature-extraction" },
-      { id: "reranker-tab", label: "Reranker", pipeline: "reranker" },
-      { id: "vision-tab", label: "Vision", pipeline: "image-text-to-text" },
+      { id: "llm-tab", label: "LLMs", dataset: { pipeline: "text-generation" }, active: true },
+      { id: "vision-tab", label: "Vision", dataset: { pipeline: "image-text-to-text" } },
+      { id: "audio-tab", label: "Audio", dataset: { pipeline: "automatic-speech-recognition" } },
     ],
     actions: [{ id: "refresh-models", icon: managementRefreshIcon, label: "Refresh models" }],
   });
@@ -27,7 +26,8 @@ function buildPage(): HTMLElement {
   discoverSection.innerHTML = '<div class="collapsible-heading"><button class="collapsible-toggle" id="model-catalog-toggle" type="button" data-collapsible-key="discover" aria-expanded="true" aria-controls="model-catalog-body"><h2>Discover</h2></button></div><div id="model-catalog-body" class="collapsible-body"><div id="model-catalog" class="model-grid"></div><button id="load-more-models" type="button" hidden>Load more</button></div>';
   layout.addContent({
     id: "models-view",
-    title: "Models",
+    title: "LLMs",
+    titleId: "models-title",
     description: "Search GGUF models on Hugging Face by type.",
     search: { id: "model-search", placeholder: "Search models" },
     body: [downloadedSection, discoverSection],
@@ -132,7 +132,50 @@ describe("ModelsPageController", () => {
     await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/models/catalog?query=&pipeline=text-generation&offset=0&limit=30&sort=updated&direction=desc"));
   });
 
-  it("derives uploader facet chips from the loaded models and filters the rows", async () => {
+  it("filters the catalog by minimum likes and downloads", async () => {
+    const api = vi.fn(async (path: string) => {
+      if (path === "/api/v1/management/models/downloaded" || path === "/api/v1/management/models/downloads") return { data: [] };
+      return { data: { total: 0, models: [] } };
+    });
+    const { controller, page } = setup(api);
+    await controller.load();
+
+    const likes = page.querySelector<HTMLInputElement>('#models-view input[aria-label="Min likes"]')!;
+    const downloads = page.querySelector<HTMLInputElement>('#models-view input[aria-label="Min downloads"]')!;
+    const recency = page.querySelector<HTMLInputElement>('#models-view input[aria-label="Released within"]')!;
+    expect(likes).not.toBeNull();
+    expect(downloads).not.toBeNull();
+    expect(recency).not.toBeNull();
+    expect(likes.type).toBe("range");
+    expect(downloads.type).toBe("range");
+    expect(recency.type).toBe("range");
+
+    // Readouts start at "no filter" and follow the thumb while dragging…
+    const likesReadout = likes.closest("label")?.querySelector(".catalog-filter-value");
+    const downloadsReadout = downloads.closest("label")?.querySelector(".catalog-filter-value");
+    const recencyReadout = recency.closest("label")?.querySelector(".catalog-filter-value");
+    expect(likesReadout?.textContent).toBe("0");
+    expect(recencyReadout?.textContent).toBe("any time");
+    likes.value = "3"; // third stop → 100 likes
+    likes.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(likesReadout?.textContent).toBe("100");
+    expect(api).not.toHaveBeenCalledWith(expect.stringContaining("min_likes=100"));
+
+    // …and the query fires on release (change), with both thresholds applied.
+    likes.dispatchEvent(new Event("change", { bubbles: true }));
+    downloads.value = "2"; // second stop → 5000 downloads
+    downloads.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(downloadsReadout?.textContent).toBe("5K");
+    recency.value = "3"; // third stop → released within the last 4 weeks
+    recency.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(recencyReadout?.textContent).toBe("last 4 weeks");
+
+    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/models/catalog?query=&pipeline=text-generation&offset=0&limit=30&sort=downloads&direction=desc&min_likes=100&min_downloads=5000&released_within_weeks=4"));
+    // Thresholds are dropped from the query while the sliders are at zero.
+    expect(api).toHaveBeenCalledWith("/api/v1/management/models/catalog?query=&pipeline=text-generation&offset=0&limit=30&sort=downloads&direction=desc");
+  });
+
+  it("does not render uploader facet chips", async () => {
     const api = vi.fn(async (path: string) => {
       if (path === "/api/v1/management/models/downloaded" || path === "/api/v1/management/models/downloads") return { data: [] };
       return { data: { total: 3, models: [
@@ -144,13 +187,8 @@ describe("ModelsPageController", () => {
     const { controller, page } = setup(api);
     await controller.load();
 
-    const chips = [...page.querySelectorAll<HTMLButtonElement>("#models-view .catalog-filter-chip")];
-    expect(chips.map((chip) => chip.dataset.facet)).toEqual(["Qwen", "google"]);
-
-    click(chips[0]!);
-    await vi.waitFor(() => expect(page.querySelectorAll("#model-catalog .model-card")).toHaveLength(2));
-    expect(page.querySelector("#model-catalog")?.textContent).toContain("Qwen2.5-7B-GGUF");
-    expect(page.querySelector("#model-catalog")?.textContent).not.toContain("gemma-2b-GGUF");
+    expect(page.querySelectorAll("#models-view .catalog-filter-chip")).toHaveLength(0);
+    expect(page.querySelectorAll("#model-catalog .model-card")).toHaveLength(3);
   });
 
   it("switches the catalog filter when a pipeline tab is clicked", async () => {
@@ -161,11 +199,14 @@ describe("ModelsPageController", () => {
     const { controller, page } = setup(api);
     await controller.load();
     expect(api).toHaveBeenCalledWith("/api/v1/management/models/catalog?query=&pipeline=text-generation&offset=0&limit=30&sort=downloads&direction=desc");
+    // The page title mirrors the active pipeline tab.
+    expect(page.querySelector("#models-title")?.textContent).toBe("LLMs");
 
-    click(page.querySelector("#embedder-tab")!);
-    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/models/catalog?query=&pipeline=feature-extraction&offset=0&limit=30&sort=downloads&direction=desc"));
-    expect(page.querySelector("#embedder-tab")?.classList.contains("active")).toBe(true);
+    click(page.querySelector("#vision-tab")!);
+    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/models/catalog?query=&pipeline=image-text-to-text&offset=0&limit=30&sort=downloads&direction=desc"));
+    expect(page.querySelector("#vision-tab")?.classList.contains("active")).toBe(true);
     expect(page.querySelector("#llm-tab")?.classList.contains("active")).toBe(false);
+    expect(page.querySelector("#models-title")?.textContent).toBe("Vision");
   });
 
   it("searches the catalog after the debounce delay", async () => {
@@ -351,7 +392,7 @@ describe("ModelsPageController", () => {
   it("fails loudly when the page is missing a required catalog control", () => {
     const page = document.createElement("section");
     page.id = "models-page";
-    new ManagementPageLayout(page, { tabs: [{ id: "llm-tab", label: "LLM", pipeline: "text-generation", active: true }] });
+    new ManagementPageLayout(page, { tabs: [{ id: "llm-tab", label: "LLMs", dataset: { pipeline: "text-generation" }, active: true }] });
     expect(() => new ModelsPageController({ page, api: vi.fn(), openExternal: vi.fn(), openPath: vi.fn(), showToast: vi.fn(), errorMessage: vi.fn() } satisfies ModelsPageOptions))
       .toThrow("Models page is missing #models-view");
   });

@@ -9,8 +9,8 @@ export interface ManagementPageTab {
   id: string;
   label: string;
   active?: boolean;
-  /** Value exposed as `data-pipeline` on the tab button, e.g. an HF pipeline tag. */
-  pipeline?: string;
+  /** Extra attributes exposed as `data-*` on the tab button, e.g. `{ pipeline: "text-generation" }` → `data-pipeline`. */
+  dataset?: Record<string, string>;
 }
 
 export interface ManagementPageAction {
@@ -67,7 +67,7 @@ export class ManagementPageLayout {
       button.type = "button";
       button.id = tab.id;
       button.textContent = tab.label;
-      if (tab.pipeline) button.dataset.pipeline = tab.pipeline;
+      for (const [key, value] of Object.entries(tab.dataset ?? {})) button.dataset[key] = value;
       button.classList.toggle("active", Boolean(tab.active));
       button.addEventListener("click", () => {
         this.setActiveTab(tab.id);
@@ -96,6 +96,23 @@ export class ManagementPageLayout {
     root.prepend(this.header);
   }
 
+  /**
+   * Builds a search pill exactly like the ones `addContent` renders, for
+   * searches that live inside a content section rather than at the top of a
+   * column (e.g. the Plugins page's Installed skills section).
+   */
+  static createSearch(options: { id: string; placeholder: string }): HTMLLabelElement {
+    const search = document.createElement("label");
+    search.className = "management-search";
+    const input = document.createElement("input");
+    input.id = options.id;
+    input.type = "search";
+    input.placeholder = options.placeholder;
+    input.autocomplete = "off";
+    search.append(svgIcon(managementSearchIcon), input);
+    return search;
+  }
+
   addContent(options: ManagementPageContentOptions): HTMLElement {
     const column = document.createElement("div");
     column.className = "management-page-content";
@@ -111,17 +128,7 @@ export class ManagementPageLayout {
       description.textContent = options.description;
       column.append(description);
     }
-    if (options.search) {
-      const search = document.createElement("label");
-      search.className = "management-search";
-      const input = document.createElement("input");
-      input.id = options.search.id;
-      input.type = "search";
-      input.placeholder = options.search.placeholder;
-      input.autocomplete = "off";
-      search.append(svgIcon(managementSearchIcon), input);
-      column.append(search);
-    }
+    if (options.search) column.append(ManagementPageLayout.createSearch(options.search));
     if (options.body) column.append(...options.body);
     if (options.before) options.before.before(column);
     else if (this.#lastContent) this.#lastContent.after(column);
