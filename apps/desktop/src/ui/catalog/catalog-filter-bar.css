@@ -1,0 +1,9 @@
+.catalog-filter-bar { display: flex; align-items: center; gap: 10px; margin: 10px 0 14px; flex-wrap: wrap; }
+.catalog-filter-sort { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }
+.catalog-filter-select { height: 26px; padding: 0 8px; border: 1px solid var(--border-soft); border-radius: 8px; background: rgba(255,255,255,.035); color: var(--text); font-size: 11px; cursor: pointer; }
+.catalog-filter-select:focus-visible { outline: 1px solid var(--muted); outline-offset: -1px; }
+.catalog-filter-facets { display: flex; flex-wrap: wrap; gap: 5px; margin-left: auto; }
+.catalog-filter-chip { height: 26px; padding: 0 10px; border: 1px solid var(--border-soft); border-radius: 999px; background: rgba(255,255,255,.035); color: var(--muted); font-size: 11px; cursor: pointer; }
+.catalog-filter-chip:hover { background: rgba(255,255,255,.08); color: var(--text); }
+.catalog-filter-chip.active { border-color: var(--orange); background: rgba(255,255,255,.12); color: var(--text); }
+.catalog-filter-chip:focus-visible { outline: 1px solid var(--muted); outline-offset: -1px; }

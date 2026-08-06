@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { mkdirSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { createHost } from "./create-app.js";
+import { ModelCatalogService } from "./model-catalog.js";
 import { TailscaleMonitor, TailscaleServeManager, WindowsStartupManager } from "@fitz/connectivity";
 import { SecurityService } from "@fitz/security";
 import { SqliteStore } from "@fitz/storage";
@@ -640,4 +641,74 @@ describe("Fitz host", () => {
   it("accepts artifacts up to the 5 MB bound and rejects larger ones", async () => { const runtime = createHost(); const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Limits" } }); const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "Limits" } }); const sessionId = session.json().data.id;
     const accepted = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/artifacts`, payload: { name: "medium.pdf", mimeType: "application/pdf", contentBase64: Buffer.alloc(2_000_000, 1).toString("base64") } }); expect(accepted.statusCode).toBe(201); expect(accepted.json().data).toEqual(expect.objectContaining({ kind: "pdf", byteSize: 2_000_000 }));
     const rejected = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/artifacts`, payload: { name: "big.pdf", mimeType: "application/pdf", contentBase64: Buffer.alloc(5_000_001, 1).toString("base64") } }); expect(rejected.statusCode).toBe(400); expect(String(rejected.json().error)).toContain("byte limit"); await runtime.app.close(); });
+
+  it("exposes the Hugging Face model catalog to administrators", async () => {
+    const modelRoot = await mkdtemp(join(tmpdir(), "fitz-models-"));
+    const requested: string[] = [];
+    const runtime = createHost({
+      adminToken: "model-test-token",
+      modelCatalog: new ModelCatalogService({
+        modelRoot,
+        fetch: async (input: RequestInfo | URL) => { requested.push(String(input)); return new Response(JSON.stringify({ count: 1, items: [{ id: "Qwen/Qwen2.5-7B-Instruct-GGUF", downloads: 10, likes: 2, pipeline_tag: "text-generation" }] }), { status: 200 }); },
+      }),
+    });
+    try {
+      const denied = await runtime.app.inject({ method: "GET", url: "/api/v1/management/models/catalog" });
+      expect(denied.statusCode).toBe(403);
+      const headers = { "x-fitz-admin-token": "model-test-token" };
+      const response = await runtime.app.inject({ method: "GET", url: "/api/v1/management/models/catalog?query=qwen&pipeline=feature-extraction", headers });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json().data).toEqual({ total: 1, models: [expect.objectContaining({ id: "Qwen/Qwen2.5-7B-Instruct-GGUF" })] });
+      expect(requested.some((url) => url.includes("pipeline_tag=feature-extraction"))).toBe(true);
+      // The shared sort/direction params pass through to the upstream fetch.
+      const sorted = await runtime.app.inject({ method: "GET", url: "/api/v1/management/models/catalog?sort=updated&direction=asc", headers });
+      expect(sorted.statusCode, sorted.body).toBe(200);
+      expect(requested.some((url) => url.includes("sort=lastModified") && url.includes("direction=1"))).toBe(true);
+      // Unknown sort keys fall back to the store default rather than erroring.
+      const unknownSort = await runtime.app.inject({ method: "GET", url: "/api/v1/management/models/catalog?sort=bogus", headers });
+      expect(unknownSort.statusCode, unknownSort.body).toBe(200);
+    } finally {
+      await runtime.app.close();
+      rmSync(modelRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("downloads a Hugging Face model through the management API", async () => {
+    const modelRoot = await mkdtemp(join(tmpdir(), "fitz-models-"));
+    const runtime = createHost({
+      adminToken: "model-test-token",
+      modelCatalog: new ModelCatalogService({
+        modelRoot,
+        fetch: async (input: RequestInfo | URL) => {
+          const url = String(input);
+          if (url.includes("/resolve/")) {
+            const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new TextEncoder().encode("hello world")); controller.close(); } });
+            return new Response(stream, { status: 200, headers: { "content-length": "11" } });
+          }
+          if (url.includes("/api/models/")) return new Response(JSON.stringify({ siblings: [{ rfilename: "model-q4_k_m.gguf", size: 11 }] }), { status: 200 });
+          return new Response("{}", { status: 404 });
+        },
+      }),
+    });
+    try {
+      const headers = { "x-fitz-admin-token": "model-test-token" };
+      const started = await runtime.app.inject({ method: "POST", url: "/api/v1/management/models/download", headers, payload: { repo: "Qwen/Qwen2.5-7B-Instruct-GGUF" } });
+      expect(started.statusCode, started.body).toBe(202);
+      const id = started.json().data.id as string;
+      let record = started.json().data as { status: string };
+      for (let i = 0; i < 100 && record.status === "active"; i++) {
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+        record = (await runtime.app.inject({ method: "GET", url: `/api/v1/management/models/downloads/${id}`, headers })).json().data as { status: string };
+      }
+      expect(record.status).toBe("done");
+      const modelPath = join(modelRoot, "Qwen", "Qwen2.5-7B-Instruct-GGUF", "model-q4_k_m.gguf");
+      expect(existsSync(modelPath)).toBe(true);
+      expect(readFileSync(modelPath, "utf8")).toBe("hello world");
+      const downloaded = await runtime.app.inject({ method: "GET", url: "/api/v1/management/models/downloaded", headers });
+      expect(downloaded.json().data).toEqual([expect.objectContaining({ repoId: "Qwen/Qwen2.5-7B-Instruct-GGUF", fileName: "model-q4_k_m.gguf", size: 11 })]);
+    } finally {
+      await runtime.app.close();
+      rmSync(modelRoot, { recursive: true, force: true });
+    }
+  });
 });

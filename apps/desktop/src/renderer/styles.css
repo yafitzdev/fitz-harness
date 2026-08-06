@@ -7,12 +7,14 @@
 @import "../ui/chat/composer.css";
 @import "../ui/connections/connection-workspace.css";
 @import "../ui/plugins/plugin-catalog.css";
+@import "../ui/models/model-catalog.css";
 @import "../ui/administration/administration-page.css";
 @import "../ui/playbooks/playbook-workspace.css";
 @import "../ui/sidebar/project-sidebar.css";
 @import "../ui/inspector/inspector-panel.css";
 @import "../ui/layout/management-page.css";
 @import "../ui/layout/collapsible-section.css";
+@import "../ui/catalog/catalog-filter-bar.css";
 
 * { box-sizing: border-box; }
 html, body { width: 100%; height: 100%; }

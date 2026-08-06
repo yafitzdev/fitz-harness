@@ -17,6 +17,33 @@ describe("PiPackageService", () => {
     expect(result).toEqual({ total: 1, packages: [expect.objectContaining({ name: "pi-example", version: "1.2.3", publisher: "fitz", types: ["skill"] })] });
   });
 
+  it("sorts the npm catalog by popularity when downloads is requested", async () => {
+    const requested: string[] = [];
+    const service = new PiPackageService({
+      agentDir: await temporaryDirectory(), cwd: process.cwd(),
+      fetch: async (input: RequestInfo | URL) => { requested.push(String(input)); return new Response(JSON.stringify({ total: 0, objects: [] })) as typeof fetch; },
+    });
+    await service.catalog("example", 0, 10, "downloads", "desc");
+    expect(requested[0]).toContain("popularity=1.0");
+    expect(requested[0]).toContain("quality=0");
+    expect(requested[0]).toContain("maintenance=0");
+  });
+
+  it("orders the npm catalog by name and update date over the fetched page", async () => {
+    const service = new PiPackageService({
+      agentDir: await temporaryDirectory(), cwd: process.cwd(),
+      fetch: async () => new Response(JSON.stringify({ total: 3, objects: [
+        { package: { name: "pi-zeta", version: "1.0.0", date: "2024-01-01T00:00:00.000Z" } },
+        { package: { name: "pi-alpha", version: "1.0.0", date: "2024-03-01T00:00:00.000Z" } },
+        { package: { name: "pi-mid", version: "1.0.0", date: "2024-02-01T00:00:00.000Z" } },
+      ] })) as typeof fetch,
+    });
+    const byName = await service.catalog("", 0, 10, "name", "asc");
+    expect(byName.packages.map((entry) => entry.name)).toEqual(["pi-alpha", "pi-mid", "pi-zeta"]);
+    const byDate = await service.catalog("", 0, 10, "updated", "desc");
+    expect(byDate.packages.map((entry) => entry.name)).toEqual(["pi-alpha", "pi-mid", "pi-zeta"]);
+  });
+
   it("installs a local Pi package into the registry folder and manages it", async () => {
     const root = await temporaryDirectory();
     const agentDir = join(root, "agent");

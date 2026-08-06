@@ -1,4 +1,4 @@
-export type WorkspacePage = "conversation" | "playbooks" | "connections" | "plugins" | "administration" | "pairing";
+export type WorkspacePage = "conversation" | "playbooks" | "connections" | "plugins" | "models" | "administration" | "pairing";
 
 export interface WorkspacePageControllerOptions {
   pages: Partial<Record<Exclude<WorkspacePage, "conversation">, HTMLElement>>;

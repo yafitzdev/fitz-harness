@@ -90,11 +90,13 @@ describe("PluginCatalogController", () => {
 
     expect(elements.installedPlugins.querySelector("strong")?.textContent).toBe("Pi Tools");
     expect(elements.installedPlugins.querySelector(".plugin-meta")?.textContent).toContain("1 extensions");
-    expect(elements.pluginCatalog.querySelectorAll(".plugin-card")).toHaveLength(2);
-    expect(elements.pluginCatalog.textContent).toContain("✓ Installed");
+    // Installed packages stay out of the Discover catalog.
+    expect(elements.pluginCatalog.querySelectorAll(".plugin-card")).toHaveLength(1);
+    expect(elements.pluginCatalog.textContent).toContain("pi-extra");
+    expect(elements.pluginCatalog.textContent).not.toContain("pi-tools");
     expect(elements.installedSkills.textContent).toContain("Review");
     click(elements.pluginCatalog.querySelector(".plugin-card-linked")!);
-    expect(calls.openExternal).toHaveBeenCalledWith("https://example.com/pi-tools");
+    expect(calls.openExternal).toHaveBeenCalledWith("https://www.npmjs.com/package/pi-extra");
   });
 
   it("requires confirmation before installing and refreshes the shared package state", async () => {
@@ -129,11 +131,11 @@ describe("PluginCatalogController", () => {
     elements.pluginSearch.value = "pi tools";
     elements.pluginSearch.dispatchEvent(new Event("input", { bubbles: true }));
     await vi.advanceTimersByTimeAsync(25);
-    expect(api).toHaveBeenCalledWith("/api/v1/management/pi/catalog?query=pi%20tools&offset=0&limit=30");
+    expect(api).toHaveBeenCalledWith("/api/v1/management/pi/catalog?query=pi%20tools&offset=0&limit=30&sort=downloads&direction=desc");
 
     click(elements.loadMorePlugins);
     await settle();
-    expect(api).toHaveBeenCalledWith("/api/v1/management/pi/catalog?query=pi%20tools&offset=1&limit=30");
+    expect(api).toHaveBeenCalledWith("/api/v1/management/pi/catalog?query=pi%20tools&offset=1&limit=30&sort=downloads&direction=desc");
     expect(elements.pluginCatalog.querySelectorAll(".plugin-card")).toHaveLength(2);
   });
 
@@ -190,5 +192,42 @@ describe("PluginCatalogController", () => {
     expect(installedToggle.getAttribute("aria-expanded")).toBe("true");
     expect(catalogToggle.closest(".collapsible-section")?.classList.contains("collapsed")).toBe(true);
     expect(catalogToggle.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("re-queries the catalog with the shared sort when the filter bar changes", async () => {
+    const api = vi.fn(async (path: string) => {
+      if (path === "/api/v1/management/pi/packages" || path === "/api/v1/management/pi/skills") return { data: [] };
+      return { data: { total: 0, packages: [] } };
+    });
+    const { controller, elements } = setup(api);
+    await controller.load();
+
+    const select = elements.pluginsView.querySelector<HTMLSelectElement>(".catalog-filter-select")!;
+    select.value = "updated:desc";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/pi/catalog?query=&offset=0&limit=30&sort=updated&direction=desc"));
+  });
+
+  it("filters the catalog rows by the selected type facets", async () => {
+    const api = vi.fn(async (path: string) => {
+      if (path === "/api/v1/management/pi/packages" || path === "/api/v1/management/pi/skills") return { data: [] };
+      return { data: { total: 3, packages: [
+        { name: "pi-extension", description: "Ext", version: "1.0.0", keywords: ["pi-package", "pi-extension"], types: ["extension"], links: {} },
+        { name: "pi-skill", description: "Skill", version: "1.0.0", keywords: ["pi-package", "skill"], types: ["skill"], links: {} },
+        { name: "pi-both", description: "Both", version: "1.0.0", keywords: ["pi-package", "pi-extension", "skill"], types: ["extension", "skill"], links: {} },
+      ] } };
+    });
+    const { controller, elements } = setup(api);
+    await controller.load();
+
+    const chip = elements.pluginsView.querySelector<HTMLButtonElement>('[data-facet="skill"]')!;
+    click(chip);
+    expect(chip.getAttribute("aria-pressed")).toBe("true");
+
+    await vi.waitFor(() => expect(elements.pluginCatalog.querySelectorAll(".plugin-card")).toHaveLength(2));
+    expect(elements.pluginCatalog.textContent).toContain("pi-skill");
+    expect(elements.pluginCatalog.textContent).toContain("pi-both");
+    expect(elements.pluginCatalog.textContent).not.toContain("pi-extension");
   });
 });

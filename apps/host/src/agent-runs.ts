@@ -55,15 +55,17 @@ export class AgentRunCoordinator {
     try {
       while (this.#queue.length > 0) {
         const job = this.#queue.shift(); if (!job) continue; this.#current = job; this.#publishQueue();
-        try { job.stream = this.#createStream(job.request, job.ownerUserId); await this.#consume(job.id, job.stream); }
+        try { job.stream = this.#createStream(job.request, job.ownerUserId, job.id); await this.#consume(job.id, job.stream); }
         catch (error) { const message = error instanceof Error ? error.message : String(error); this.store.updateAgentRun(job.id, "failed", message); this.#emit(job.id, "run.failed", { error: message }); }
         finally { job.stream = undefined; this.#current = undefined; this.#publishQueue(); }
       }
     } finally { this.#processing = false; if (this.#queue.length > 0) void this.#pump(); }
   }
 
-  #createStream(request: AgentRunRequest, ownerUserId?: string): AgentRuntimeRun | ScheduledStream {
-    return this.runtime ? this.runtime.run(request) : this.scheduler.enqueue(request.model, { messages: request.messages, ...(request.maxTokens !== undefined ? { maxTokens: request.maxTokens } : {}), ...(request.temperature !== undefined ? { temperature: request.temperature } : {}), ...(ownerUserId ? { userId: ownerUserId } : {}) });
+  #createStream(request: AgentRunRequest, ownerUserId: string | undefined, runId: string): AgentRuntimeRun | ScheduledStream {
+    // The runId is threaded into the runtime so the safety layer can scope its trash,
+    // snapshots and action log to this exact run.
+    return this.runtime ? this.runtime.run(request, undefined, { runId }) : this.scheduler.enqueue(request.model, { messages: request.messages, ...(request.maxTokens !== undefined ? { maxTokens: request.maxTokens } : {}), ...(request.temperature !== undefined ? { temperature: request.temperature } : {}), ...(ownerUserId ? { userId: ownerUserId } : {}) });
   }
   async #consume(id: string, stream: AgentRuntimeRun | ScheduledStream): Promise<void> {
     this.store.updateAgentRun(id, "running"); this.#emit(id, "run.started", {}); let assistantText = ""; let reasoningText = "";

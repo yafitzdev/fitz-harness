@@ -9,6 +9,8 @@ export interface ManagementPageTab {
   id: string;
   label: string;
   active?: boolean;
+  /** Value exposed as `data-pipeline` on the tab button, e.g. an HF pipeline tag. */
+  pipeline?: string;
 }
 
 export interface ManagementPageAction {
@@ -65,6 +67,7 @@ export class ManagementPageLayout {
       button.type = "button";
       button.id = tab.id;
       button.textContent = tab.label;
+      if (tab.pipeline) button.dataset.pipeline = tab.pipeline;
       button.classList.toggle("active", Boolean(tab.active));
       button.addEventListener("click", () => {
         this.setActiveTab(tab.id);

@@ -77,7 +77,10 @@ describe("PluginsPageController", () => {
     const api = vi.fn(async (path: string) => {
       if (path === "/api/v1/management/pi/packages") return { data: [{ source: "npm:pi-tools@1.0.0", displayName: "Pi Tools", version: "1.0.0", enabled: true, resources: { extensions: 1 } }] };
       if (path === "/api/v1/management/pi/skills") return { data: [{ name: "Review", description: "Review code", source: "npm:pi-tools@1.0.0", enabled: true, filePath: "SKILL.md" }] };
-      return { data: { total: 1, packages: [{ name: "pi-tools", description: "Toolbox", version: "1.0.0", links: { homepage: "https://example.com/pi-tools" } }] } };
+      return { data: { total: 2, packages: [
+        { name: "pi-tools", description: "Toolbox", version: "1.0.0", links: { homepage: "https://example.com/pi-tools" } },
+        { name: "pi-extra", description: "Extra tools", version: "2.0.0", links: { homepage: "https://example.com/pi-extra" } },
+      ] } };
     });
     const { controller, page } = setup(api);
 
@@ -85,8 +88,10 @@ describe("PluginsPageController", () => {
 
     expect(page.querySelector("#installed-plugins")?.textContent).toContain("Pi Tools");
     expect(page.querySelector("#installed-plugins")?.textContent).toContain("1 extensions");
+    // Installed packages stay out of the Discover catalog.
     expect(page.querySelector("#plugin-catalog")?.querySelectorAll(".plugin-card")).toHaveLength(1);
-    expect(page.querySelector("#plugin-catalog")?.textContent).toContain("✓ Installed");
+    expect(page.querySelector("#plugin-catalog")?.textContent).toContain("pi-extra");
+    expect(page.querySelector("#plugin-catalog")?.textContent).not.toContain("pi-tools");
     expect(page.querySelector("#installed-skills")?.textContent).toContain("Review");
   });
 

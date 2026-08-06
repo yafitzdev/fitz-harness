@@ -210,4 +210,38 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_sessions_connection ON sessions(connection_id, updated_at DESC);
     `,
   },
+  {
+    version: 7,
+    sql: `
+      CREATE TABLE IF NOT EXISTS tool_action_log (
+        run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        sequence INTEGER NOT NULL,
+        timestamp TEXT NOT NULL,
+        tool_name TEXT NOT NULL,
+        effect TEXT NOT NULL,
+        path TEXT,
+        detail_json TEXT NOT NULL,
+        PRIMARY KEY (run_id, sequence)
+      );
+      CREATE TABLE IF NOT EXISTS snapshots (
+        run_id TEXT PRIMARY KEY REFERENCES agent_runs(id) ON DELETE CASCADE,
+        workspace_root TEXT NOT NULL,
+        snapshot_dir TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('active', 'restored', 'failed', 'skipped')),
+        file_count INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS trash_entries (
+        id TEXT PRIMARY KEY,
+        run_id TEXT REFERENCES agent_runs(id) ON DELETE CASCADE,
+        workspace_root TEXT NOT NULL,
+        original_path TEXT NOT NULL,
+        trash_path TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        restored_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_tool_action_log_run ON tool_action_log(run_id, sequence);
+      CREATE INDEX IF NOT EXISTS idx_trash_entries_workspace ON trash_entries(workspace_root, created_at DESC);
+    `,
+  },
 ] as const;

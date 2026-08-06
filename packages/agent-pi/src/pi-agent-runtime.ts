@@ -1,7 +1,8 @@
-import type { AgentRuntime, AgentRuntimeEvent, AgentRuntimeRun } from "@fitz/agent-core";
+import type { AgentRuntime, AgentRuntimeEvent, AgentRuntimeRun, AgentRuntimeRunOptions } from "@fitz/agent-core";
 import type { AgentRunRequest, ToolAccessMode } from "@fitz/protocol";
 import type { Model } from "@earendil-works/pi-ai/compat";
 import type { AgentToolResult, ToolDefinition } from "@earendil-works/pi-coding-agent";
+export type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -20,6 +21,22 @@ export interface PiToolCall { toolCallId: string; toolName: string; input: unkno
 export interface PiToolApprovalResult { allowed: boolean; reason?: string }
 export interface ToolApprovalHandle { approvalId: string; decision: Promise<"approved" | "denied"> }
 export type ToolApprovalRequester = (request: PiToolCall & { sessionId: string }, signal: AbortSignal) => ToolApprovalHandle;
+/**
+ * The mechanical outcome of evaluating one tool call. The host policy engine decides
+ * allow/rewrite/block without a human; "ask" escalates to the approval gate.
+ */
+export type ToolEvaluation =
+  | { action: "allow" }
+  | { action: "block"; reason: string }
+  | { action: "rewrite"; input: Record<string, unknown> }
+  | { action: "ask" };
+/** Host-provided deterministic policy engine. Runs before the approval gate for every non-read-only tool call. */
+export type ToolEvaluator = (request: PiToolCall & { sessionId?: string; cwd: string; runId?: string }, signal: AbortSignal) => Promise<ToolEvaluation>;
+/** Redacts secrets from tool output before it reaches the model. Return undefined to leave output unchanged. */
+export type ToolResultRedactor = (event: { toolName: string; content: unknown[] }) => unknown[] | undefined;
+/** Outcome of moving paths to the agent trash. */
+export interface TrashMoveResult { moved: number; entries: Array<{ originalPath: string; trashPath: string }> }
+export type TrashToolHandler = (input: { paths: string[] }) => Promise<TrashMoveResult | { error: string }>;
 /** One canonical transcript entry, reduced to what an agent needs to read. */
 export interface PiSessionMessage { sequence: number; role: "user" | "assistant" | "tool" | "system"; text: string }
 /** A past Fitz Codex conversation, as served to the agent's `fitz.session` tool. */
@@ -42,6 +59,12 @@ export type PiSessionFactory = (options: {
   thinkingLevel?: ThinkingLevel;
   approveTool: (request: PiToolCall) => Promise<PiToolApprovalResult>;
   sessionReader?: PiSessionReader;
+  /** Deterministic policy evaluation. When present it runs before `approveTool` for every tool call. */
+  evaluateTool?: (request: PiToolCall) => Promise<ToolEvaluation>;
+  /** Post-execution redaction of tool results before the model sees them. */
+  redactResult?: ToolResultRedactor;
+  /** Extra tools registered per run (e.g. `fitz.trash`). */
+  customTools?: ToolDefinition[];
 }) => Promise<PiSession>;
 export interface PiAgentRuntimeOptions {
   cwd?: string | ((request: AgentRunRequest) => string);
@@ -55,11 +78,19 @@ export interface PiAgentRuntimeOptions {
   agentDir?: string;
   llmRoot?: string;
   sessionReader?: PiSessionReader;
+  /** Deterministic host policy engine; evaluated for every non-read-only tool call before any approval gate. */
+  toolPolicy?: ToolEvaluator;
+  /** Redacts secrets from tool results before the model reads them. */
+  redactToolResult?: ToolResultRedactor;
+  /** Extra tools to register for each run; called with the run's resolved working directory. */
+  customTools?: (context: { cwd: string; runId?: string }) => ToolDefinition[];
 }
 
 const CODING_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"] as const;
 /** Read-only tool that reads a past conversation from the Fitz session store. */
 export const SESSION_LOOKUP_TOOL = "fitz.session";
+/** Explicit trash tool: the agent can offer to move files to the run trash instead of deleting. */
+export const TRASH_TOOL = "fitz.trash";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls", SESSION_LOOKUP_TOOL]);
 
 export class PiAgentRuntime implements AgentRuntime {
@@ -75,6 +106,9 @@ export class PiAgentRuntime implements AgentRuntime {
   readonly #agentDir: string;
   readonly #llmRoot: string;
   readonly #sessionReader: PiSessionReader | undefined;
+  readonly #toolPolicy: ToolEvaluator | undefined;
+  readonly #redactToolResult: ToolResultRedactor | undefined;
+  readonly #customTools: ((context: { cwd: string; runId?: string }) => ToolDefinition[]) | undefined;
   constructor(options: PiAgentRuntimeOptions = {}) {
     this.#cwd = options.cwd ?? process.cwd();
     this.#tools = options.tools ?? CODING_TOOLS;
@@ -87,13 +121,17 @@ export class PiAgentRuntime implements AgentRuntime {
     this.#agentDir = options.agentDir ?? process.env.FITZ_PI_AGENT_DIR ?? `${process.cwd()}/.fitz-pi`;
     this.#llmRoot = options.llmRoot ?? process.env.FITZ_LLM_ROOT ?? `${process.cwd()}/.llm`;
     this.#sessionReader = options.sessionReader;
+    this.#toolPolicy = options.toolPolicy;
+    this.#redactToolResult = options.redactToolResult;
+    this.#customTools = options.customTools;
   }
-  run(request: AgentRunRequest, signal?: AbortSignal): AgentRuntimeRun {
+  run(request: AgentRunRequest, signal?: AbortSignal, options?: AgentRuntimeRunOptions): AgentRuntimeRun {
     const channel = new EventChannel(); let session: PiSession | undefined; const controller = new AbortController();
     const cancel = () => { controller.abort(); void session?.abort(); }; if (signal) { if (signal.aborted) cancel(); else signal.addEventListener("abort", cancel, { once: true }); }
+    const cwd = typeof this.#cwd === "function" ? this.#cwd(request) : this.#cwd;
     const sessionTask = (async () => {
       const created = await this.#createSession({
-        cwd: typeof this.#cwd === "function" ? this.#cwd(request) : this.#cwd,
+        cwd,
         ...(this.#tools ? { tools: this.#tools } : {}),
         routeId: request.model,
         baseUrl: this.#baseUrl,
@@ -103,8 +141,13 @@ export class PiAgentRuntime implements AgentRuntime {
         agentDir: this.#agentDir,
         llmRoot: this.#llmRoot,
         thinkingLevel: this.#thinkingLevel,
-        approveTool: (toolCall) => this.#approveTool(request.accessMode ?? "full", request.sessionId, toolCall, controller.signal, channel),
+        approveTool: (toolCall) => this.#approveTool(request.accessMode ?? "full", toolCall, controller.signal, channel),
         ...(this.#sessionReader ? { sessionReader: this.#sessionReader } : {}),
+        ...(this.#toolPolicy || this.#requestToolApproval
+          ? { evaluateTool: (toolCall) => this.#evaluateTool(cwd, request.accessMode ?? "full", request.sessionId, options?.runId, toolCall, controller.signal, channel) }
+          : {}),
+        ...(this.#redactToolResult ? { redactResult: this.#redactToolResult } : {}),
+        ...(this.#customTools ? { customTools: this.#customTools({ cwd, ...(options?.runId ? { runId: options.runId } : {}) }) } : {}),
       }); session = created; if (controller.signal.aborted) { await created.abort(); throw abortError(); }
       return created;
     })();
@@ -141,15 +184,52 @@ export class PiAgentRuntime implements AgentRuntime {
     return Object.assign(channel, { cancel, steer });
   }
 
-  async #approveTool(mode: ToolAccessMode, sessionId: string | undefined, toolCall: PiToolCall, signal: AbortSignal, channel: EventChannel): Promise<PiToolApprovalResult> {
-    if (mode === "full" || READ_ONLY_TOOLS.has(toolCall.toolName)) return { allowed: true };
+  /**
+   * Legacy SDK-facing approval gate. Reached when no policy engine is configured, or
+   * after a policy "ask" outcome. Read-only tools always pass, full mode always passes,
+   * read-only mode blocks mutations, and anything else goes through the durable gate.
+   */
+  async #approveTool(mode: ToolAccessMode, toolCall: PiToolCall, signal: AbortSignal, channel: EventChannel): Promise<PiToolApprovalResult> {
+    if (READ_ONLY_TOOLS.has(toolCall.toolName)) return { allowed: true };
+    if (mode === "full") return { allowed: true };
     if (mode === "read-only") return { allowed: false, reason: `${toolCall.toolName} is blocked in Read only mode` };
-    if (!sessionId || !this.#requestToolApproval) return { allowed: false, reason: "This tool requires approval, but no approval service is available" };
-    const handle = this.#requestToolApproval({ ...toolCall, sessionId }, signal);
+    if (!this.#requestToolApproval) return { allowed: false, reason: "This tool requires approval, but no approval service is available" };
+    const handle = this.#requestToolApproval({ toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, input: toolCall.input, sessionId: "" }, signal);
     channel.push({ type: "tool.approval.requested", approvalId: handle.approvalId, toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, input: toolCall.input });
     const decision = await handle.decision;
     channel.push({ type: "tool.approval.resolved", approvalId: handle.approvalId, toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, decision });
     return decision === "approved" ? { allowed: true } : { allowed: false, reason: `The user denied ${toolCall.toolName}` };
+  }
+
+  /**
+   * Deterministic evaluation for one tool call, run before any human gate.
+   * When a host policy engine is configured it decides mechanically for every tool —
+   * including read-only tools, which can still exfiltrate secrets (`cat ~/.ssh/id_rsa`)
+   * — and only its "ask" outcome reaches a human. Read-only mode stays enforced above
+   * the policy: writes are blocked outright, reads still pass through the policy.
+   */
+  async #evaluateTool(cwd: string, mode: ToolAccessMode, sessionId: string | undefined, runId: string | undefined, toolCall: PiToolCall, signal: AbortSignal, channel: EventChannel): Promise<ToolEvaluation> {
+    const isReadOnlyTool = READ_ONLY_TOOLS.has(toolCall.toolName);
+    if (this.#toolPolicy && (isReadOnlyTool || mode !== "read-only")) {
+      const outcome = await this.#toolPolicy({ ...toolCall, ...(sessionId ? { sessionId } : {}), cwd, ...(runId ? { runId } : {}) }, signal);
+      if (outcome.action !== "ask") return outcome;
+      return this.#escalate(sessionId, toolCall, signal, channel);
+    }
+    // No policy configured: legacy behavior.
+    if (isReadOnlyTool) return { action: "allow" };
+    if (mode === "read-only") return { action: "block", reason: `${toolCall.toolName} is blocked in Read only mode` };
+    if (mode === "full") return { action: "allow" };
+    return this.#escalate(sessionId, toolCall, signal, channel);
+  }
+
+  /** Human approval gate, used only when the policy engine escalates or no policy is configured. */
+  async #escalate(sessionId: string | undefined, toolCall: PiToolCall, signal: AbortSignal, channel: EventChannel): Promise<ToolEvaluation> {
+    if (!sessionId || !this.#requestToolApproval) return { action: "block", reason: "This tool requires approval, but no approval service is available" };
+    const handle = this.#requestToolApproval({ ...toolCall, sessionId }, signal);
+    channel.push({ type: "tool.approval.requested", approvalId: handle.approvalId, toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, input: toolCall.input });
+    const decision = await handle.decision;
+    channel.push({ type: "tool.approval.resolved", approvalId: handle.approvalId, toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, decision });
+    return decision === "approved" ? { action: "allow" } : { action: "block", reason: `The user denied ${toolCall.toolName}` };
   }
 }
 
@@ -193,8 +273,20 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
         pi.on("tool_call", async (event) => {
           const unsafeReason = broadFilesystemScanReason(event.toolName, event.input);
           if (unsafeReason) return { block: true, reason: unsafeReason };
+          if (options.evaluateTool) {
+            const outcome = await options.evaluateTool({ toolCallId: event.toolCallId, toolName: event.toolName, input: event.input });
+            if (outcome.action === "allow") return undefined;
+            if (outcome.action === "block") return { block: true, reason: outcome.reason };
+            if (outcome.action === "rewrite") { Object.assign(event.input, outcome.input); return undefined; }
+            // "ask": fall through to the approval gate.
+          }
           const decision = await options.approveTool({ toolCallId: event.toolCallId, toolName: event.toolName, input: event.input });
           return decision.allowed ? undefined : { block: true, reason: decision.reason ?? "Tool execution denied" };
+        });
+        pi.on("tool_result", (event) => {
+          if (!options.redactResult) return undefined;
+          const redacted = options.redactResult({ toolName: event.toolName, content: event.content });
+          return redacted ? { content: redacted as typeof event.content } : undefined;
         });
       },
     }],
@@ -209,7 +301,9 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
     thinkingLevel: options.thinkingLevel ?? "off",
     modelRuntime,
     resourceLoader,
-    ...(options.sessionReader ? { customTools: [createSessionLookupTool(options.sessionReader)] } : {}),
+    ...(options.sessionReader || options.customTools?.length
+      ? { customTools: [...(options.sessionReader ? [createSessionLookupTool(options.sessionReader)] : []), ...(options.customTools ?? [])] }
+      : {}),
     sessionManager: sdk.SessionManager.inMemory(options.cwd),
   });
   return result.session as PiSession;
@@ -244,7 +338,7 @@ export function createSessionLookupTool(reader: PiSessionReader): ToolDefinition
           ...(params.limit !== undefined ? { limit: params.limit } : {}),
         });
         return snapshot
-          ? toolResult(formatSessionSnapshot(snapshot))
+          ? toolResult(formatSessionSnapshot(snapshot), { source: "fitz.session" })
           : toolResult(`No Fitz session found with id ${params.sessionId}.`);
       } catch (error) {
         return toolResult(`Could not read Fitz session ${params.sessionId}: ${error instanceof Error ? error.message : String(error)}`);
@@ -254,8 +348,43 @@ export function createSessionLookupTool(reader: PiSessionReader): ToolDefinition
   return tool;
 }
 
-function toolResult(text: string): AgentToolResult<{ source: "fitz.session" }> {
-  return { content: [{ type: "text", text }], details: { source: "fitz.session" } };
+function toolResult(text: string, details: unknown = undefined): AgentToolResult<unknown> {
+  return { content: [{ type: "text", text }], details };
+}
+
+/**
+ * The `fitz.trash` tool: moves paths into the run's agent trash instead of deleting them.
+ * The host wires the handler to its TrashService so deletes the model performs explicitly
+ * go through the same recoverable path as rewritten `rm` commands. Registered only when the
+ * host supplies a trash handler via `customTools`.
+ */
+export function createTrashTool(handler: TrashToolHandler): ToolDefinition {
+  const parameters = Type.Object({
+    paths: Type.Array(Type.String({ description: "Files or directories to move to the agent trash. Use absolute paths or paths relative to the workspace root." })),
+  });
+  const tool: ToolDefinition<typeof parameters> = {
+    name: TRASH_TOOL,
+    label: "Fitz trash",
+    description:
+      "Move files or directories to the current run's trash folder instead of hard-deleting them. Trash lives inside the workspace under .fitz-trash, is recoverable, and is emptied only with the user's explicit approval. Prefer this over rm/rmdir/del for anything the user might want back.",
+    promptSnippet: "Move files to the run trash instead of deleting",
+    promptGuidelines: [
+      "Prefer fitz.trash over destructive shell commands (rm, rmdir, del, rd, unlink, shred) whenever you are removing user-visible files.",
+      "Trashed paths can be restored from the host management UI; never bypass the trash to permanently delete data.",
+    ],
+    parameters,
+    execute: async (_toolCallId, params) => {
+      try {
+        const result = await handler({ paths: params.paths });
+        if ("error" in result) return toolResult(result.error);
+        const lines = result.entries.map((entry) => `  ${entry.originalPath} -> ${entry.trashPath}`);
+        return toolResult(`Moved ${result.moved} path(s) to the run trash:\n${lines.join("\n")}`);
+      } catch (error) {
+        return toolResult(`Could not trash the requested paths: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  };
+  return tool;
 }
 
 export function formatSessionSnapshot(snapshot: PiSessionSnapshot): string {

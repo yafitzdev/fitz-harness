@@ -16,6 +16,20 @@ export interface PiCatalogPackage {
   links: Record<string, string>;
 }
 
+/** Shared catalog sort keys; `downloads`/`likes` map to npm's popularity score. */
+export type CatalogSortKey = "downloads" | "updated" | "name" | "likes";
+export type CatalogSortDirection = "asc" | "desc";
+
+const CATALOG_SORT_KEYS: readonly string[] = ["downloads", "updated", "name", "likes"];
+
+export function normalizeCatalogSort(value: unknown): CatalogSortKey {
+  return typeof value === "string" && CATALOG_SORT_KEYS.includes(value) ? value as CatalogSortKey : "downloads";
+}
+
+export function normalizeCatalogDirection(value: unknown): CatalogSortDirection {
+  return value === "asc" ? "asc" : "desc";
+}
+
 export interface InstalledPiPackage {
   source: string;
   displayName: string;
@@ -67,7 +81,7 @@ export class PiPackageService {
     this.#npmCommand = options.npmCommand?.length ? options.npmCommand : ["npm"];
   }
 
-  async catalog(query = "", offset = 0, limit = 50): Promise<{ total: number; packages: PiCatalogPackage[] }> {
+  async catalog(query = "", offset = 0, limit = 50, sort: CatalogSortKey = "downloads", direction: CatalogSortDirection = "desc"): Promise<{ total: number; packages: PiCatalogPackage[] }> {
     const safeLimit = Math.max(1, Math.min(50, Math.trunc(limit)));
     const safeOffset = Math.max(0, Math.trunc(offset));
     const text = [query.trim(), "keywords:pi-package"].filter(Boolean).join(" ");
@@ -75,10 +89,23 @@ export class PiPackageService {
     url.searchParams.set("text", text);
     url.searchParams.set("size", String(safeLimit));
     url.searchParams.set("from", String(safeOffset));
+    if (sort === "downloads" || sort === "likes") {
+      // npm ranks results by a weighted score rather than raw counts; its
+      // popularity measure is derived from download activity, so "most
+      // downloads" (and "most likes", which npm doesn't track) sort by it.
+      url.searchParams.set("popularity", "1.0");
+      url.searchParams.set("quality", "0");
+      url.searchParams.set("maintenance", "0");
+    }
     const response = await this.#fetch(url, { headers: { accept: "application/json", "user-agent": "Fitz-Codex" }, signal: AbortSignal.timeout(10_000) });
     if (!response.ok) throw new Error(`Pi catalog request failed (${response.status})`);
     const payload = await response.json() as { total?: number; objects?: Array<Record<string, unknown>> };
     const packages = (payload.objects ?? []).map(catalogPackage).filter((value): value is PiCatalogPackage => Boolean(value));
+    // npm only sorts server-side by its weighted score; name and date are
+    // ordered here over the fetched page (approximate with pagination).
+    if (sort === "name") packages.sort((left, right) => direction === "asc" ? left.name.localeCompare(right.name) : right.name.localeCompare(left.name));
+    if (sort === "updated") packages.sort((left, right) => sortByUpdated(left, right, direction));
+    if ((sort === "downloads" || sort === "likes") && direction === "asc") packages.reverse();
     return { total: Number(payload.total ?? packages.length), packages };
   }
 
@@ -411,6 +438,13 @@ function packageTypes(keywords: string[]): PiCatalogPackage["types"] {
   if (joined.includes("prompt")) types.push("prompt");
   if (joined.includes("theme")) types.push("theme");
   return types.length ? types : ["extension"];
+}
+
+/** Newest-first by default; packages without a publish date sort last either way. */
+function sortByUpdated(left: PiCatalogPackage, right: PiCatalogPackage, direction: CatalogSortDirection): number {
+  const a = left.updatedAt ? Date.parse(left.updatedAt) : 0;
+  const b = right.updatedAt ? Date.parse(right.updatedAt) : 0;
+  return direction === "desc" ? b - a : a - b;
 }
 
 interface PackageManifest { name?: string; version?: string; description?: string; dependencies?: Record<string, string>; keywords?: string[]; pi?: Record<string, unknown> }

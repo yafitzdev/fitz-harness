@@ -12,13 +12,14 @@ import { CustomSelectController } from "./ui/primitives/custom-select.js";
 import { requiredElement as element, requiredQuery as query, svgIcon as svg, textBlock } from "./ui/primitives/dom.js";
 import { ResizablePane } from "./ui/primitives/resizable-pane.js";
 import { PluginsPageController } from "./ui/plugins/plugins-page.js";
+import { ModelsPageController } from "./ui/models/models-page.js";
 import { AdministrationPageController } from "./ui/administration/administration-page.js";
 import { PlaybookWorkspaceController } from "./ui/playbooks/playbook-workspace.js";
 import { ProjectsController } from "./ui/projects/projects.js";
 import { ProjectSidebarController } from "./ui/sidebar/project-sidebar.js";
 
 type Json = Record<string, any>;
-type AppLocation = { view: "conversation"; projectId?: string; sessionId?: string; newChat?: boolean } | { view: "playbooks" | "connections" | "plugins" | "administration" };
+type AppLocation = { view: "conversation"; projectId?: string; sessionId?: string; newChat?: boolean } | { view: "playbooks" | "connections" | "plugins" | "models" | "administration" };
 
 let queueRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let sessionTokenEstimate = 0;
@@ -59,6 +60,8 @@ const playbookPage = element("playbook-page");
 const connectionsButton = element("manage-connections") as HTMLButtonElement;
 const pluginsPage = element("plugins-page");
 const pluginsButton = element("manage-plugins") as HTMLButtonElement;
+const modelsPage = element("models-page");
+const modelsButton = element("manage-models") as HTMLButtonElement;
 const pairingPage = element("pairing-page");
 const pairingForm = element("pairing-form") as HTMLFormElement;
 const pairingCode = element("pairing-code") as HTMLInputElement;
@@ -103,6 +106,23 @@ pluginsLayout.addContent({
   description: "Task-specific guidance currently available to Pi.",
   search: { id: "skill-search", placeholder: "Search skills" },
   body: [element("plugins-skills-section")],
+});
+const modelsLayout = new ManagementPageLayout(modelsPage, {
+  tabs: [
+    { id: "llm-tab", label: "LLM", pipeline: "text-generation", active: true },
+    { id: "embedder-tab", label: "Embedder", pipeline: "feature-extraction" },
+    { id: "reranker-tab", label: "Reranker", pipeline: "reranker" },
+    { id: "vision-tab", label: "Vision", pipeline: "image-text-to-text" },
+    { id: "audio-tab", label: "Audio", pipeline: "automatic-speech-recognition" },
+  ],
+  actions: [{ id: "refresh-models", icon: managementRefreshIcon, label: "Refresh models" }],
+});
+modelsLayout.addContent({
+  id: "models-view",
+  title: "Models",
+  description: "Search GGUF models on Hugging Face by type.",
+  search: { id: "model-search", placeholder: "Search models" },
+  body: [element("models-downloaded-section"), element("models-discover-section")],
 });
 const administrationLayout = new ManagementPageLayout(administrationPage, {
   actions: [{ id: "refresh-administration", icon: managementRefreshIcon, label: "Refresh administration" }],
@@ -341,6 +361,7 @@ const workspacePages = new WorkspacePageController({
     playbooks: playbookPage,
     connections: connectionWorkspace.root,
     plugins: pluginsPage,
+    models: modelsPage,
     administration: administrationPage,
     pairing: pairingPage,
   },
@@ -348,6 +369,7 @@ const workspacePages = new WorkspacePageController({
     playbooks: element("manage-playbooks"),
     connections: connectionsButton,
     plugins: pluginsButton,
+    models: modelsButton,
     administration: administrationButton,
   },
   setConversationInert,
@@ -356,6 +378,14 @@ const pluginsPageController = new PluginsPageController({
   page: pluginsPage,
   api,
   openExternal: (url) => window.fitz.openExternal(url),
+  showToast,
+  errorMessage,
+});
+const modelsPageController = new ModelsPageController({
+  page: modelsPage,
+  api,
+  openExternal: (url) => window.fitz.openExternal(url),
+  openPath: (path) => window.fitz.openPath(path),
   showToast,
   errorMessage,
 });
@@ -437,6 +467,7 @@ element("new-session").addEventListener("click", openNewChat);
 element("manage-playbooks").addEventListener("click", () => void openPlaybookPage());
 connectionsButton.addEventListener("click", () => void openConnectionsPage());
 pluginsButton.addEventListener("click", () => void openPluginsPage());
+modelsButton.addEventListener("click", () => void openModelsPage());
 administrationButton.addEventListener("click", () => void openAdministrationPage());
 element("sidebar-menu").addEventListener("click", toggleSidebar);
 for (const menuButton of document.querySelectorAll<HTMLButtonElement>("[data-app-menu]")) menuButton.addEventListener("click", (event) => openAppMenu(menuButton.dataset.appMenu ?? "", menuButton, event));
@@ -577,6 +608,7 @@ async function openPlaybookPage(): Promise<void> {
 
 async function openConnectionsPage(): Promise<void> { if (!pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("connections"); await connectionWorkspace.sync(false); rememberLocation({ view: "connections" }); }
 async function openPluginsPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("plugins"); pluginsPageController.showLoading(); await pluginsPageController.load(false); rememberLocation({ view: "plugins" }); }
+async function openModelsPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("models"); modelsPageController.showLoading(); await modelsPageController.load(false); rememberLocation({ view: "models" }); }
 async function openAdministrationPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); workspacePages.show("administration"); administrationPageController.showLoading(); await administrationPageController.load(); rememberLocation({ view: "administration" }); }
 function showPairingPage(message: string): void { closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); workspacePages.show("pairing"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
 function showConversationWorkspace(): void { playbookWorkspace.closeEditor(); workspacePages.show("conversation"); }
@@ -601,6 +633,7 @@ async function navigateHistory(offset: -1 | 1): Promise<void> {
     if (location.view === "playbooks") await openPlaybookPage();
     else if (location.view === "connections") await openConnectionsPage();
     else if (location.view === "plugins") await openPluginsPage();
+    else if (location.view === "models") await openModelsPage();
     else if (location.view === "administration") await openAdministrationPage();
     else if (location.view === "conversation") {
       if (location.newChat && location.projectId) { projects.setCurrentProject(location.projectId); openNewChat(); }
@@ -616,6 +649,7 @@ function applyNavigation(): void {
   element("manage-playbooks").hidden = false;
   connectionsButton.hidden = false;
   pluginsButton.hidden = !administrator;
+  modelsButton.hidden = !administrator;
   administrationButton.hidden = !administrator;
 }
 

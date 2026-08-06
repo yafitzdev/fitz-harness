@@ -9,12 +9,14 @@ import { LlamaCppEngineAdapter } from "@fitz/engine-llama-cpp";
 import type { Recipe, Route } from "@fitz/protocol";
 import { SqliteStore } from "@fitz/storage";
 import { createHost } from "./create-app.js";
+import { ModelCatalogService } from "./model-catalog.js";
 import { PiAgentRuntime, PiPackageService } from "@fitz/agent-pi";
 import { createNInferPlaybook, NINFER_PLAYBOOK_ID } from "./ninfer-playbook.js";
 import { createToolApprovalRequester } from "./tool-approval-gate.js";
 import { createSessionReader } from "./session-reader.js";
 import { WindowsStartupManager } from "@fitz/connectivity";
 import { resolveRuntimePaths } from "./runtime-paths.js";
+import { AgentSafetyService } from "./agent-safety/index.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const runtimePaths = resolveRuntimePaths();
@@ -34,17 +36,25 @@ const agentBaseUrl = process.env.FITZ_AGENT_BASE_URL ?? `http://127.0.0.1:${port
 const internalAgentToken = agentRuntimeMode === "pi" && !process.env.FITZ_AGENT_BASE_URL ? randomBytes(32).toString("base64url") : undefined;
 
 mkdirSync(dirname(databasePath), { recursive: true });
-for (const directory of [runtimePaths.piAgentDir, runtimePaths.logsDir, runtimePaths.cacheDir, runtimePaths.engineRoot, runtimePaths.modelRoot]) mkdirSync(directory, { recursive: true });
+for (const directory of [runtimePaths.piAgentDir, runtimePaths.logsDir, runtimePaths.cacheDir, runtimePaths.engineRoot, runtimePaths.modelRoot, runtimePaths.snapshotsDir]) mkdirSync(directory, { recursive: true });
 const engineOptions = engineModeOptions(engineMode);
 const store = new SqliteStore(databasePath);
 const authPepper = authMode === "required" ? resolveAuthPepper(store) : undefined;
 if (engineMode === "ninfer") reconcileNInferConfiguration(store);
 extendLocalModelResidency(store);
+// Safety layer: deterministic policy engine (trash-everything deletes, zone blocking),
+// per-run workspace snapshots, run trash, and secret redaction. Machine guarantees only.
+const safety = new AgentSafetyService({
+  store,
+  snapshotsDir: runtimePaths.snapshotsDir,
+  runtimeDirs: [runtimePaths.piAgentDir, runtimePaths.logsDir, runtimePaths.cacheDir, runtimePaths.engineRoot, runtimePaths.modelRoot, runtimePaths.llmRoot],
+});
 const runtime = createHost({
   store,
   logger: true,
   resourcePolicy: { reserveVramMiB },
   authMode,
+  safety,
   ...(internalAgentToken ? { internalAgentToken } : {}),
   localPort: port,
   startupManager: new WindowsStartupManager(resolve(moduleDirectory, "../start-host.ps1")),
@@ -53,6 +63,10 @@ const runtime = createHost({
     agentDir: runtimePaths.piAgentDir,
     cwd: process.cwd(),
     ...(npmCliPath ? { npmCommand: [process.execPath, npmCliPath] } : {}),
+  }),
+  modelCatalog: new ModelCatalogService({
+    modelRoot: runtimePaths.modelRoot,
+    ...(process.env.FITZ_HF_ENDPOINT ? { endpoint: process.env.FITZ_HF_ENDPOINT } : {}),
   }),
   ...(authPepper ? { authPepper } : {}),
   ...engineOptions,
@@ -69,6 +83,9 @@ const runtime = createHost({
       },
       requestToolApproval: createToolApprovalRequester(store),
       sessionReader: createSessionReader(store),
+      toolPolicy: safety.createToolEvaluator(),
+      redactToolResult: safety.createResultRedactor(),
+      customTools: safety.createCustomTools(),
       agentDir: runtimePaths.piAgentDir,
       llmRoot: runtimePaths.llmRoot,
     }),

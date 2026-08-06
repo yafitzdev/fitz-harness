@@ -1,5 +1,7 @@
 import { svgIcon } from "../primitives/dom.js";
 import { CollapsibleSection } from "../layout/collapsible-section.js";
+import { CatalogFilterBar } from "../catalog/catalog-filter-bar.js";
+import { catalogQueryString, type CatalogFacetOption, type CatalogSortOption } from "../catalog/catalog-filters.js";
 
 export type PluginCatalogApi = (path: string, method?: string, body?: unknown) => Promise<Record<string, any>>;
 
@@ -52,10 +54,25 @@ export interface PluginCatalogOptions {
   searchDelayMs?: number;
 }
 
+/** "Most downloads" sorts by npm's popularity score (see PiPackageService.catalog). */
+const PLUGIN_SORT_OPTIONS: CatalogSortOption[] = [
+  { key: "downloads", direction: "desc", label: "Most popular" },
+  { key: "updated", direction: "desc", label: "Recently updated" },
+  { key: "name", direction: "asc", label: "Name A–Z" },
+];
+
+const PLUGIN_FACET_OPTIONS: CatalogFacetOption[] = [
+  { key: "extension", label: "Extension" },
+  { key: "skill", label: "Skill" },
+  { key: "prompt", label: "Prompt" },
+  { key: "theme", label: "Theme" },
+];
+
 export class PluginCatalogController {
   readonly elements: PluginCatalogElements;
   private readonly options: PluginCatalogOptions;
   private readonly searchDelayMs: number;
+  private readonly filterBar: CatalogFilterBar;
   private installedPackages: InstalledPiPackage[] = [];
   private catalogPackages: PiCatalogPackage[] = [];
   private installedSkills: PiSkillSummary[] = [];
@@ -67,6 +84,12 @@ export class PluginCatalogController {
     this.options = options;
     this.searchDelayMs = options.searchDelayMs ?? 250;
     CollapsibleSection.adoptAll(this.elements.pluginsView, { storageKey: "fitz-collapsed-plugin-sections" });
+    this.filterBar = new CatalogFilterBar({
+      sortOptions: PLUGIN_SORT_OPTIONS,
+      facetOptions: PLUGIN_FACET_OPTIONS,
+      onChange: () => void this.load(false),
+    });
+    this.elements.pluginsView.insertBefore(this.filterBar.element, this.elements.pluginsView.querySelector(".collapsible-section"));
     this.bind();
   }
 
@@ -119,7 +142,7 @@ export class PluginCatalogController {
   private async loadCatalog(append: boolean): Promise<void> {
     const offset = append ? this.catalogPackages.length : 0;
     const query = encodeURIComponent(this.elements.pluginSearch.value.trim());
-    const response = await this.options.api(`/api/v1/management/pi/catalog?query=${query}&offset=${offset}&limit=30`);
+    const response = await this.options.api(`/api/v1/management/pi/catalog?query=${query}&offset=${offset}&limit=30&${catalogQueryString(this.filterBar.filters)}`);
     this.catalogTotal = response.data?.total ?? 0;
     this.catalogPackages = append ? [...this.catalogPackages, ...(response.data?.packages ?? [])] : (response.data?.packages ?? []);
     this.renderCatalog();
@@ -148,19 +171,17 @@ export class PluginCatalogController {
   private renderCatalog(): void {
     this.elements.pluginCatalog.replaceChildren();
     const installed = new Set(this.installedPackages.map((entry) => packageNameFromSource(entry.source)).filter((name): name is string => Boolean(name)));
-    if (!this.catalogPackages.length) this.elements.pluginCatalog.append(emptyState("No matching Pi packages"));
-    for (const entry of this.catalogPackages) {
+    const selectedFacets = new Set(this.filterBar.filters.facets);
+    const visible = this.catalogPackages.filter(
+      (entry) => !installed.has(entry.name) && (selectedFacets.size === 0 || entry.types.some((type) => selectedFacets.has(type))),
+    );
+    if (!visible.length) this.elements.pluginCatalog.append(emptyState("No matching Pi packages"));
+    for (const entry of visible) {
       const card = this.packageCard(entry.name, entry.description, entry.version, entry.links.homepage ?? entry.links.repository ?? entry.links.npm ?? npmPackageWebsite(entry.name));
-      const actions = card.querySelector(".plugin-actions") as HTMLElement;
-      if (installed.has(entry.name)) {
-        const mark = document.createElement("span");
-        mark.className = "plugin-installed-mark";
-        mark.textContent = "✓ Installed";
-        actions.append(mark);
-      } else actions.append(this.installAction(entry.name));
+      card.querySelector(".plugin-actions")?.append(this.installAction(entry.name));
       this.elements.pluginCatalog.append(card);
     }
-    this.elements.loadMorePlugins.hidden = this.catalogPackages.length >= this.catalogTotal;
+    this.elements.loadMorePlugins.hidden = visible.length >= this.catalogTotal;
   }
 
   private renderSkills(): void {

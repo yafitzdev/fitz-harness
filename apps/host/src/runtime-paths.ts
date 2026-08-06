@@ -10,6 +10,8 @@ export interface FitzRuntimePaths {
   llmRoot: string;
   engineRoot: string;
   modelRoot: string;
+  /** Per-run pre-flight snapshots of the workspace, used to restore after a bad run. */
+  snapshotsDir: string;
 }
 
 export function resolveRuntimePaths(environment: NodeJS.ProcessEnv = process.env): FitzRuntimePaths {
@@ -24,6 +26,7 @@ export function resolveRuntimePaths(environment: NodeJS.ProcessEnv = process.env
     llmRoot,
     engineRoot: resolve(environment.FITZ_ENGINE_ROOT ?? join(llmRoot, "engines")),
     modelRoot: resolve(environment.FITZ_MODEL_ROOT ?? join(llmRoot, "models")),
+    snapshotsDir: resolve(environment.FITZ_SNAPSHOTS_DIR ?? join(dataRoot, "snapshots")),
   };
 }
 

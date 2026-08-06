@@ -37,6 +37,7 @@ import { MetricsRegistry, redactSecrets } from "@fitz/observability";
 import { DEFAULT_QUOTAS, SecurityPolicyError, SecurityService, type AuthenticatedPrincipal } from "@fitz/security";
 import { SqliteStore } from "@fitz/storage";
 import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
+import { DownloadNotFoundError, type ModelCatalogService } from "./model-catalog.js";
 import { AgentRunCoordinator } from "./agent-runs.js";
 import type { AgentRuntime } from "@fitz/agent-core";
 import type { PiPackageService } from "@fitz/agent-pi";
@@ -44,6 +45,7 @@ import { ContextManager } from "@fitz/context";
 import { TailscaleMonitor, TailscaleServeManager, WindowsStartupManager } from "@fitz/connectivity";
 import { classifyArtifact, normalizeMimeType } from "@fitz/media";
 import { OpenAICompatibleClient, OpenAICompatibleEngineAdapter, supportsChatCompletions } from "@fitz/engine-openai-compatible";
+import type { AgentSafetyService } from "./agent-safety/index.js";
 
 interface ConsumerModelRegistration { modelId: string; routeId: string; recipeId: string }
 interface ConsumerConnectionRegistration {
@@ -82,6 +84,9 @@ export interface CreateHostOptions {
   localPort?: number;
   engineRoot?: string;
   piPackages?: PiPackageService;
+  modelCatalog?: ModelCatalogService;
+  /** The host safety layer (policy engine, snapshots, trash, redaction). Optional so tests can run without it. */
+  safety?: AgentSafetyService;
 }
 
 export interface HostRuntime {
@@ -96,6 +101,7 @@ export interface HostRuntime {
   metrics: MetricsRegistry;
   security?: SecurityService;
   fakeAdapter?: FakeEngineAdapter;
+  safety?: AgentSafetyService;
 }
 
 export function createHost(options: CreateHostOptions = {}): HostRuntime {
@@ -162,6 +168,8 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const tailscaleServe = options.tailscaleServeManager ?? new TailscaleServeManager();
   const startup = options.startupManager;
   const piPackages = options.piPackages;
+  const modelCatalog = options.modelCatalog;
+  const safety = options.safety;
   const metrics = new MetricsRegistry();
   const unsubscribePersistence = events.subscribe((event) => {
     store.appendLifecycleEvent(event);
@@ -733,13 +741,21 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   app.get("/api/v1/management/startup", { preHandler: administratorGuard }, async () => ({ data: startup ? await startup.status() : { available: false, configured: false, message: "Startup management is unavailable" } }));
   app.post("/api/v1/management/startup", { preHandler: administratorGuard }, async (request, reply) => { try { if (!startup) throw new Error("Startup management is unavailable"); const result = await startup.install(); security?.audit("host-startup.installed", principals.get(request)?.user.id, "host", "startup"); return { data: result }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
   app.delete("/api/v1/management/startup", { preHandler: administratorGuard }, async (request, reply) => { try { if (!startup) throw new Error("Startup management is unavailable"); const result = await startup.remove(); security?.audit("host-startup.removed", principals.get(request)?.user.id, "host", "startup"); return { data: result }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
-  app.get("/api/v1/management/pi/catalog", { preHandler: administratorGuard }, async (request, reply) => { try { if (!piPackages) throw new Error("Pi package management is unavailable"); const query = request.query as { query?: string; offset?: string; limit?: string }; return { data: await piPackages.catalog(query.query ?? "", toNonNegativeInteger(query.offset, 0), Math.min(toNonNegativeInteger(query.limit, 30), 50)) }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
+  app.get("/api/v1/management/pi/catalog", { preHandler: administratorGuard }, async (request, reply) => { try { if (!piPackages) throw new Error("Pi package management is unavailable"); const query = request.query as { query?: string; offset?: string; limit?: string; sort?: string; direction?: string }; return { data: await piPackages.catalog(query.query ?? "", toNonNegativeInteger(query.offset, 0), Math.min(toNonNegativeInteger(query.limit, 30), 50), catalogSort(query.sort), catalogDirection(query.direction)) }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
   app.get("/api/v1/management/pi/packages", { preHandler: administratorGuard }, async (_request, reply) => { try { if (!piPackages) throw new Error("Pi package management is unavailable"); return { data: await piPackages.installed() }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
   app.get("/api/v1/management/pi/skills", { preHandler: administratorGuard }, async (_request, reply) => { try { if (!piPackages) throw new Error("Pi package management is unavailable"); return { data: await piPackages.skills() }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
   app.post("/api/v1/management/pi/packages/install", { preHandler: administratorGuard }, async (request, reply) => { try { if (!piPackages) throw new Error("Pi package management is unavailable"); const source = requireString(requireRecord(request.body).source, "source"); await piPackages.install(source); security?.audit("pi-package.installed", principals.get(request)?.user.id, "pi-package", source); return reply.code(201).send({ data: { source } }); } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
   app.post("/api/v1/management/pi/packages/update", { preHandler: administratorGuard }, async (request, reply) => { try { if (!piPackages) throw new Error("Pi package management is unavailable"); const source = requireString(requireRecord(request.body).source, "source"); await piPackages.update(source); security?.audit("pi-package.updated", principals.get(request)?.user.id, "pi-package", source); return { data: { source } }; } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
   app.put("/api/v1/management/pi/packages/enabled", { preHandler: administratorGuard }, async (request, reply) => { try { if (!piPackages) throw new Error("Pi package management is unavailable"); const body = requireRecord(request.body); const source = requireString(body.source, "source"); if (typeof body.enabled !== "boolean") throw new TypeError("enabled must be boolean"); await piPackages.setEnabled(source, body.enabled); security?.audit(body.enabled ? "pi-package.enabled" : "pi-package.disabled", principals.get(request)?.user.id, "pi-package", source); return { data: { source, enabled: body.enabled } }; } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
   app.delete("/api/v1/management/pi/packages", { preHandler: administratorGuard }, async (request, reply) => { try { if (!piPackages) throw new Error("Pi package management is unavailable"); const source = requireString(requireRecord(request.body).source, "source"); await piPackages.remove(source); security?.audit("pi-package.removed", principals.get(request)?.user.id, "pi-package", source); return reply.code(204).send(); } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
+  app.get("/api/v1/management/models/catalog", { preHandler: administratorGuard }, async (request, reply) => { try { if (!modelCatalog) throw new Error("Model catalog is unavailable"); const query = request.query as { query?: string; pipeline?: string; offset?: string; limit?: string; sort?: string; direction?: string }; return { data: await modelCatalog.search(query.query ?? "", toNonNegativeInteger(query.offset, 0), Math.min(toNonNegativeInteger(query.limit, 30), 50), query.pipeline ?? "text-generation", catalogSort(query.sort), catalogDirection(query.direction)) }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
+  app.get("/api/v1/management/models/files", { preHandler: administratorGuard }, async (request, reply) => { try { if (!modelCatalog) throw new Error("Model catalog is unavailable"); const query = request.query as { repo?: string }; return { data: await modelCatalog.files(requireString(query.repo, "repo")) }; } catch (error) { return reply.code(error instanceof TypeError ? 400 : 503).send({ error: errorMessage(error) }); } });
+  app.get("/api/v1/management/models/downloaded", { preHandler: administratorGuard }, async (_request, reply) => { try { if (!modelCatalog) throw new Error("Model catalog is unavailable"); return { data: await modelCatalog.downloaded() }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
+  app.get("/api/v1/management/models/downloads", { preHandler: administratorGuard }, async (_request, reply) => { try { if (!modelCatalog) throw new Error("Model catalog is unavailable"); return { data: modelCatalog.list() }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
+  app.post("/api/v1/management/models/download", { preHandler: administratorGuard }, async (request, reply) => { try { if (!modelCatalog) throw new Error("Model catalog is unavailable"); const body = requireRecord(request.body); const repo = requireString(body.repo, "repo"); const fileName = body.fileName === undefined ? undefined : requireString(body.fileName, "fileName"); const record = await modelCatalog.start(repo, fileName); security?.audit("model.download-started", principals.get(request)?.user.id, "model", `${repo}/${record.fileName}`); return reply.code(202).send({ data: record }); } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
+  app.get("/api/v1/management/models/downloads/:id", { preHandler: administratorGuard }, async (request, reply) => { try { if (!modelCatalog) throw new Error("Model catalog is unavailable"); const id = (request.params as { id: string }).id; return { data: modelCatalog.progress(id) }; } catch (error) { return reply.code(error instanceof DownloadNotFoundError ? 404 : 400).send({ error: errorMessage(error) }); } });
+  app.delete("/api/v1/management/models/downloads/:id", { preHandler: administratorGuard }, async (request, reply) => { try { if (!modelCatalog) throw new Error("Model catalog is unavailable"); const id = (request.params as { id: string }).id; modelCatalog.cancel(id); security?.audit("model.download-cancelled", principals.get(request)?.user.id, "model", id); return reply.code(204).send(); } catch (error) { return reply.code(error instanceof DownloadNotFoundError ? 404 : 400).send({ error: errorMessage(error) }); } });
+  app.delete("/api/v1/management/models/downloaded", { preHandler: administratorGuard }, async (request, reply) => { try { if (!modelCatalog) throw new Error("Model catalog is unavailable"); const body = requireRecord(request.body); const repoId = requireString(body.repoId, "repoId"); const fileName = requireString(body.fileName, "fileName"); await modelCatalog.removeDownloaded(repoId, fileName); security?.audit("model.removed", principals.get(request)?.user.id, "model", `${repoId}/${fileName}`); return reply.code(204).send(); } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
   app.post("/api/v1/management/pairing-codes", { preHandler: administratorGuard }, async (request, reply) => { try { const body = requireRecord(request.body); const role = parseRole(body.intendedRole); const ttlSeconds = body.ttlSeconds === undefined ? 600 : requireInteger(body.ttlSeconds); const pairing = securityRequired(security).issuePairingCode(role, ttlSeconds); security?.audit("pairing-code.issued", principals.get(request)?.user.id, "pairing-code", pairing.id, { intendedRole: role, expiresAt: pairing.expiresAt }); return reply.code(201).send({ data: pairing }); } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
   app.get("/api/v1/management/tool-policies", { preHandler: administratorGuard }, async () => ({ data: store.listToolPolicies() }));
   app.put("/api/v1/management/tool-policies/:subjectType/:subjectId/:toolName", { preHandler: administratorGuard }, async (request, reply) => { try { const params = request.params as { subjectType: string; subjectId: string; toolName: string }; if (params.subjectType !== "role" && params.subjectType !== "user") throw new TypeError("subjectType must be role or user"); const body = requireRecord(request.body); if (body.decision !== "allow" && body.decision !== "deny" && body.decision !== "ask") throw new TypeError("decision must be allow, deny, or ask"); const policy: ToolPolicyRecord = { subjectType: params.subjectType, subjectId: params.subjectId, toolName: params.toolName, decision: body.decision, updatedAt: new Date().toISOString() }; store.upsertToolPolicy(policy); security?.audit("tool-policy.updated", principals.get(request)?.user.id, "tool-policy", `${params.subjectType}:${params.subjectId}:${params.toolName}`, { decision: body.decision }); return { data: policy }; } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
@@ -779,6 +795,10 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
   });
   app.get("/api/v1/management/audit-events", { preHandler: administratorGuard }, async (request) => { const query = request.query as { limit?: string }; return { data: store.listAuditEvents(Math.min(toNonNegativeInteger(query.limit, 100), 1000)) }; });
+  app.get("/api/v1/management/snapshots", { preHandler: administratorGuard }, async (_request, reply) => { try { if (!safety) throw new Error("Safety layer is unavailable"); return { data: safety.listSnapshots() }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
+  app.post("/api/v1/management/snapshots/:runId/restore", { preHandler: administratorGuard }, async (request, reply) => { try { if (!safety) throw new Error("Safety layer is unavailable"); const runId = (request.params as { runId: string }).runId; const result = await safety.restoreSnapshot(runId); security?.audit("snapshot.restored", principals.get(request)?.user.id, "snapshot", runId); return { data: result }; } catch (error) { return reply.code(error instanceof Error && error.message === "Snapshot not found" ? 404 : 400).send({ error: errorMessage(error) }); } });
+  app.get("/api/v1/management/trash", { preHandler: administratorGuard }, async (_request, reply) => { try { if (!safety) throw new Error("Safety layer is unavailable"); return { data: safety.listTrash() }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
+  app.post("/api/v1/management/trash/:id/restore", { preHandler: administratorGuard }, async (request, reply) => { try { if (!safety) throw new Error("Safety layer is unavailable"); const id = (request.params as { id: string }).id; const entry = await safety.restoreTrash(id); security?.audit("trash.restored", principals.get(request)?.user.id, "trash", id); return { data: entry }; } catch (error) { return reply.code(error instanceof Error && error.message === "Trash entry not found" ? 404 : 400).send({ error: errorMessage(error) }); } });
 
   app.addHook("onClose", async () => {
     await lifecycle.cancelPreparations();
@@ -800,6 +820,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     metrics,
     ...(security ? { security } : {}),
     ...(fakeAdapter ? { fakeAdapter } : {}),
+    ...(safety ? { safety } : {}),
   };
 }
 
@@ -1033,6 +1054,16 @@ function toNonNegativeInteger(value: string | undefined, fallback: number): numb
   if (value === undefined) return fallback;
   const number = Number.parseInt(value, 10);
   return Number.isFinite(number) && number >= 0 ? number : fallback;
+}
+
+/** Shared catalog query params: sort keys and direction, both stores. */
+const CATALOG_SORT_KEYS = ["downloads", "updated", "name", "likes"] as const;
+type CatalogSortKey = (typeof CATALOG_SORT_KEYS)[number];
+function catalogSort(value: unknown): CatalogSortKey {
+  return typeof value === "string" && (CATALOG_SORT_KEYS as readonly string[]).includes(value) ? value as CatalogSortKey : "downloads";
+}
+function catalogDirection(value: unknown): "asc" | "desc" {
+  return value === "asc" ? "asc" : "desc";
 }
 
 function parseRoute(value: unknown, routeId: string): Route {

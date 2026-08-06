@@ -224,6 +224,102 @@ describe("PiAgentRuntime", () => {
       ]));
     } finally { await new Promise<void>((resolve) => server.close(() => resolve())); await rm(cwd, { recursive: true, force: true }); }
   }, 30_000);
+
+  it("routes read-only tools through the host policy engine when configured", async () => {
+    const requests: Array<{ toolName: string; cwd?: string; runId?: string }> = [];
+    let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+    const runtime = new PiAgentRuntime({
+      cwd: "C:/project",
+      toolPolicy: async (request) => { requests.push(request); return { action: "block", reason: `blocked ${request.toolName}` }; },
+      createSession: async (options) => ({
+        subscribe: (next) => { listener = next; listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "done" } }); return () => undefined; },
+        prompt: async () => {
+          const read = await options.evaluateTool!({ toolCallId: "read-1", toolName: "read", input: { path: "C:/Users/me/.ssh/id_rsa" } });
+          expect(read).toEqual({ action: "block", reason: "blocked read" });
+          const bash = await options.evaluateTool!({ toolCallId: "bash-1", toolName: "bash", input: { command: "rm x" } });
+          expect(bash).toEqual({ action: "block", reason: "blocked bash" });
+          listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "checked" } });
+        },
+        abort: async () => undefined,
+        dispose: () => undefined,
+      }),
+    });
+    const events = [];
+    for await (const event of runtime.run({ model: "fast", messages: [{ role: "user", content: "check" }] }, undefined, { runId: "run-abc" })) events.push(event);
+    expect(requests).toEqual([
+      expect.objectContaining({ toolName: "read", cwd: "C:/project", runId: "run-abc" }),
+      expect.objectContaining({ toolName: "bash", cwd: "C:/project", runId: "run-abc" }),
+    ]);
+    expect(events).toEqual([{ type: "assistant.delta", text: "done" }, { type: "assistant.delta", text: "checked" }]);
+  });
+
+  it("keeps Read only mode blocking writes while the policy still gates reads", async () => {
+    const evaluated: string[] = [];
+    let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+    const runtime = new PiAgentRuntime({
+      cwd: "C:/project",
+      toolPolicy: async (request) => { evaluated.push(request.toolName); return { action: "allow" }; },
+      createSession: async (options) => ({
+        subscribe: (next) => { listener = next; listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "done" } }); return () => undefined; },
+        prompt: async () => {
+          const bash = await options.evaluateTool!({ toolCallId: "bash-1", toolName: "bash", input: { command: "pwd" } });
+          expect(bash).toEqual({ action: "block", reason: "bash is blocked in Read only mode" });
+          const read = await options.evaluateTool!({ toolCallId: "read-1", toolName: "read", input: { path: "README.md" } });
+          expect(read).toEqual({ action: "allow" });
+          listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "read-only ok" } });
+        },
+        abort: async () => undefined,
+        dispose: () => undefined,
+      }),
+    });
+    const events = [];
+    for await (const event of runtime.run({ model: "fast", accessMode: "read-only", messages: [{ role: "user", content: "inspect" }] })) events.push(event);
+    expect(evaluated).toEqual(["read"]);
+    expect(events).toEqual([{ type: "assistant.delta", text: "done" }, { type: "assistant.delta", text: "read-only ok" }]);
+  });
+
+  it("escalates policy ask outcomes to the durable approval gate", async () => {
+    let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+    const runtime = new PiAgentRuntime({
+      cwd: "C:/project",
+      toolPolicy: async () => ({ action: "ask" }),
+      requestToolApproval: (request) => ({ approvalId: "approval-1", decision: Promise.resolve(request.toolName === "bash" ? "approved" : "denied") }),
+      createSession: async (options) => ({
+        subscribe: (next) => { listener = next; listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "done" } }); return () => undefined; },
+        prompt: async () => {
+          const decision = await options.evaluateTool!({ toolCallId: "bash-1", toolName: "bash", input: { command: "git status" } });
+          expect(decision).toEqual({ action: "allow" });
+          listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "approved" } });
+        },
+        abort: async () => undefined,
+        dispose: () => undefined,
+      }),
+    });
+    const events = [];
+    for await (const event of runtime.run({ model: "fast", sessionId: "session-1", accessMode: "ask", messages: [{ role: "user", content: "check" }] })) events.push(event);
+    expect(events).toEqual([
+      { type: "assistant.delta", text: "done" },
+      { type: "tool.approval.requested", approvalId: "approval-1", toolCallId: "bash-1", toolName: "bash", input: { command: "git status" } },
+      { type: "tool.approval.resolved", approvalId: "approval-1", toolCallId: "bash-1", toolName: "bash", decision: "approved" },
+      { type: "assistant.delta", text: "approved" },
+    ]);
+  });
+
+  it("registers host custom tools with the run context", async () => {
+    const seen: Array<{ cwd: string; runId?: string }> = [];
+    const runtime = new PiAgentRuntime({
+      cwd: "C:/project",
+      customTools: (context) => { seen.push(context); return []; },
+      createSession: async (options) => {
+        expect(options.customTools).toEqual([]);
+        return { subscribe: (listener) => { listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "ok" } }); return () => undefined; }, prompt: async () => undefined, abort: async () => undefined, dispose: () => undefined };
+      },
+    });
+    const events = [];
+    for await (const event of runtime.run({ model: "fast", messages: [{ role: "user", content: "hi" }] }, undefined, { runId: "run-xyz" })) events.push(event);
+    expect(seen).toEqual([{ cwd: "C:/project", runId: "run-xyz" }]);
+    expect(events).toEqual([{ type: "assistant.delta", text: "ok" }]);
+  });
 });
 
 describe("fitz.session session lookup tool", () => {
