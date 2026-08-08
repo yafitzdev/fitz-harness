@@ -4,6 +4,7 @@ import { CollapsibleSection } from "../layout/collapsible-section.js";
 import { svgIcon } from "../primitives/dom.js";
 
 type Json = Record<string, any>;
+export type MediaModality = "image" | "video" | "audio";
 
 const CONNECTION_EDITOR_TEMPLATE = `
   <div id="connection-editor" class="management-editor" hidden>
@@ -13,8 +14,10 @@ const CONNECTION_EDITOR_TEMPLATE = `
       <div class="editor-heading"><small>API connection</small><h1 id="connection-editor-title">New connection</h1><p>Connect a provider or a model server you host yourself. Models are discovered automatically.</p></div>
       <div class="configuration-grid">
         <label>Connection name<input id="consumer-connection-name" maxlength="100" required placeholder="Cohere"></label>
+        <label>Template<select id="consumer-connection-template"><option value="openai-compatible">OpenAI-compatible</option><option value="openai-media">OpenAI media</option><option value="fal">Fal</option><option value="replicate">Replicate</option></select><small>Fal and Replicate fill in their base URL automatically.</small></label>
+        <label id="consumer-connection-url-field" class="wide-field">OpenAI-compatible base URL<input id="consumer-connection-url" type="url" maxlength="2048" required placeholder="http://127.0.0.1:8000/v1"><small>Use a provider, local model server, or another Fitz host.</small></label>
+        <label id="consumer-model-ids-field" class="wide-field" hidden>Model IDs<input id="consumer-model-ids" maxlength="4000" placeholder="fal-ai/minimax-video, fal-ai/flux/dev"><small>Optional: restrict discovery to these model IDs.</small></label>
         <label>Authorization<select id="consumer-connection-auth"><option value="bearer">Bearer token</option><option value="none">None</option></select></label>
-        <label class="wide-field">OpenAI-compatible base URL<input id="consumer-connection-url" type="url" maxlength="2048" required placeholder="http://127.0.0.1:8000/v1"><small>Use a provider, local model server, or another Fitz host.</small></label>
         <label id="consumer-api-key-field" class="wide-field">API key<input id="consumer-connection-key" type="password" autocomplete="off" placeholder="Stored securely"></label>
       </div>
       <p id="connection-form-status" class="connection-form-status" hidden></p>
@@ -31,9 +34,36 @@ export const FIXED_ROUTES: readonly { id: FixedRouteId; label: string; icon: str
   { id: "smart", label: "Smart", icon: '<g class="route-icon-outline"><path d="M8.75 2.75A3.25 3.25 0 0 0 4.3 5.7 3.2 3.2 0 0 0 3 8.3a3.5 3.5 0 0 0 2.1 3.2V14a3.25 3.25 0 0 0 3.65 3.2M11.25 2.75a3.25 3.25 0 0 1 4.45 2.95A3.2 3.2 0 0 1 17 8.3a3.5 3.5 0 0 1-2.1 3.2V14a3.25 3.25 0 0 1-3.65 3.2M8.75 2.75V17.2M11.25 2.75V17.2M5.1 8h3.65M11.25 8h3.65M5.1 12h3.65M11.25 12h3.65"></path></g><g class="route-icon-filled"><path d="M8.8 2.35A3.65 3.65 0 0 0 4 5.55 3.55 3.55 0 0 0 2.65 8.3c0 1.6.8 3 2.15 3.85V14a3.75 3.75 0 0 0 4 3.65V2.35Zm2.4 0v15.3A3.75 3.75 0 0 0 15.2 14v-1.85a4.35 4.35 0 0 0 2.15-3.85A3.55 3.55 0 0 0 16 5.55a3.65 3.65 0 0 0-4.8-3.2Z"></path><path class="route-icon-cut" d="M8.8 6.35H6.6l-1.15-1M8.8 10H5.9l-1.15 1M8.8 13.65H6.7l-1 1M11.2 6.35h2.2l1.15-1M11.2 10h2.9l1.15 1M11.2 13.65h2.1l1 1"></path></g>' },
 ];
 
+/** Well-known media routes (§5.2): single-assignment toggles per modality.
+ *  A recipe is only assignable to a route whose kind matches one of its output
+ *  modalities; incompatible toggles are disabled (§5.10). */
+export const MEDIA_ROUTES: readonly { id: MediaModality; label: string; icon: string }[] = [
+  { id: "image", label: "Image", icon: '<path d="M3.5 14.5 8 9l3 3 2.5-2.5 3.5 5z"></path><circle cx="14.4" cy="5.6" r="1.6"></circle>' },
+  { id: "video", label: "Video", icon: '<rect x="3" y="5.5" width="14" height="9" rx="2"></rect><path d="m9.5 8 3.5 2-3.5 2z"></path>' },
+  { id: "audio", label: "Audio", icon: '<path d="M3.5 8v4h2.8L10 14.6V5.4L6.3 8z"></path><path d="M13.8 8.2a3.2 3.2 0 0 1 0 3.6"></path>' },
+];
+
+export const CONSUMER_TEMPLATES: readonly { id: string; label: string; description: string }[] = [
+  { id: "openai-compatible", label: "OpenAI-compatible", description: "Chat models over any OpenAI-compatible endpoint." },
+  { id: "openai-media", label: "OpenAI media", description: "An OpenAI-compatible endpoint that also serves image, video, or audio models." },
+  { id: "fal", label: "Fal", description: "Fal.ai media models; the base URL is filled in automatically." },
+  { id: "replicate", label: "Replicate", description: "Replicate media models; the base URL is filled in automatically." },
+];
+
 type ConnectionModelView = ConsumerConnectionSummary["models"][number] & { displayName?: string; modelId?: string; contextTokens?: number };
-type HostedConnectionView = Omit<ConsumerConnectionSummary, "models"> & { hosted: true; availableModels: ConnectionModelView[] };
-type SavedConnectionView = Omit<ConsumerConnectionSummary, "models"> & { hosted: false; availableModels: ConnectionModelView[]; source: ConsumerConnectionSummary };
+/** One media model card: a media recipe plus the well-known route toggles it can serve. */
+interface MediaModelView {
+  recipeId: string;
+  displayName: string;
+  modelId: string;
+  /** Output modalities the recipe can generate — one well-known route toggle each. */
+  modalities: MediaModality[];
+  limits?: { maxDurationSeconds?: number; maxResolution?: string; maxRefs?: number; maxFrames?: number };
+  experimental?: boolean;
+  template: string;
+}
+type HostedConnectionView = Omit<ConsumerConnectionSummary, "models" | "mediaModels"> & { hosted: true; availableModels: ConnectionModelView[]; availableMediaModels: MediaModelView[] };
+type SavedConnectionView = Omit<ConsumerConnectionSummary, "models" | "mediaModels"> & { hosted: false; availableModels: ConnectionModelView[]; availableMediaModels: MediaModelView[]; source: ConsumerConnectionSummary };
 type ConnectionView = HostedConnectionView | SavedConnectionView;
 
 export interface ConnectionWorkspaceBridge {
@@ -48,6 +78,10 @@ export interface ConnectionWorkspaceElements {
   id: HTMLInputElement;
   name: HTMLInputElement;
   url: HTMLInputElement;
+  urlField: HTMLElement;
+  template: HTMLSelectElement;
+  modelIds: HTMLInputElement;
+  modelIdsField: HTMLElement;
   auth: HTMLSelectElement;
   apiKey: HTMLInputElement;
   apiKeyField: HTMLElement;
@@ -61,6 +95,7 @@ export interface ConnectionWorkspaceElements {
   newConnection: HTMLButtonElement;
   editorBack: HTMLButtonElement;
   cancelEdit: HTMLButtonElement;
+  experimentalToggle: HTMLInputElement;
 }
 
 export interface ConnectionWorkspaceOptions {
@@ -98,12 +133,15 @@ export class ConnectionWorkspaceController {
     const connectionsList = document.createElement("div");
     connectionsList.id = "consumer-connections";
     connectionsList.className = "playbook-list";
+    const experimentalFilter = document.createElement("label");
+    experimentalFilter.className = "experimental-filter";
+    experimentalFilter.innerHTML = `<input id="show-experimental-media" type="checkbox"><span>Show experimental media models</span>`;
     layout.addContent({
       id: "connection-list-view",
       title: "Connections",
       description: "Provider and self-hosted OpenAI-compatible APIs.",
       search: { id: "connection-search", placeholder: "Search connections" },
-      body: [connectionsList],
+      body: [experimentalFilter, connectionsList],
     });
     this.root.insertAdjacentHTML("beforeend", CONNECTION_EDITOR_TEMPLATE);
     this.elements = {
@@ -111,6 +149,10 @@ export class ConnectionWorkspaceController {
       id: this.require("consumer-connection-id"),
       name: this.require("consumer-connection-name"),
       url: this.require("consumer-connection-url"),
+      urlField: this.require("consumer-connection-url-field"),
+      template: this.require("consumer-connection-template"),
+      modelIds: this.require("consumer-model-ids"),
+      modelIdsField: this.require("consumer-model-ids-field"),
       auth: this.require("consumer-connection-auth"),
       apiKey: this.require("consumer-connection-key"),
       apiKeyField: this.require("consumer-api-key-field"),
@@ -124,6 +166,7 @@ export class ConnectionWorkspaceController {
       newConnection: this.require("new-connection"),
       editorBack: this.require("connection-editor-back"),
       cancelEdit: this.require("cancel-connection-edit"),
+      experimentalToggle: this.require("show-experimental-media"),
     };
     this.bind();
     this.resetForm();
@@ -158,13 +201,17 @@ export class ConnectionWorkspaceController {
     this.elements.connections.replaceChildren();
     const connectionRecords = this.views();
     const query = this.elements.search.value.trim().toLowerCase();
-    const visible = connectionRecords.filter((connection) => !query || [connection.displayName, ...connection.availableModels.flatMap((model) => [model.id, model.displayName, model.modelId])].some((value) => String(value ?? "").toLowerCase().includes(query)));
+    const visible = connectionRecords.filter((connection) => !query || [connection.displayName, ...connection.availableModels.flatMap((model) => [model.id, model.displayName, model.modelId]), ...connection.availableMediaModels.flatMap((model) => [model.modelId, model.displayName])].some((value) => String(value ?? "").toLowerCase().includes(query)));
     if (!visible.length) {
       this.elements.connections.append(emptyState(query ? "No matching connections" : "No APIs connected yet", query ? "panel-empty" : "connections-empty"));
       return;
     }
     const routes = this.configuration?.routes ?? [];
-    for (const connection of visible) this.elements.connections.append(this.connectionCard(connection, routes));
+    const showExperimental = this.elements.experimentalToggle.checked;
+    for (const connection of visible) {
+      const mediaModels = showExperimental ? connection.availableMediaModels : connection.availableMediaModels.filter((model) => !model.experimental);
+      this.elements.connections.append(this.connectionCard(connection, routes, mediaModels));
+    }
   }
 
   private openEditor(connection?: ConsumerConnectionSummary): void {
@@ -175,10 +222,13 @@ export class ConnectionWorkspaceController {
     if (connection) {
       this.elements.id.value = connection.id;
       this.elements.name.value = connection.displayName;
+      this.elements.template.value = connection.template ?? "openai-compatible";
       this.elements.url.value = connection.baseUrl;
+      this.elements.modelIds.value = [...new Set((connection.mediaModels ?? []).map((model) => model.id))].join(", ");
       this.elements.auth.value = connection.authType;
       this.elements.apiKey.placeholder = connection.hasCredential ? "Leave blank to keep current key" : "API key";
     }
+    this.updateTemplateFields();
     this.updateAuthField();
     this.elements.name.focus();
   }
@@ -196,6 +246,8 @@ export class ConnectionWorkspaceController {
     this.elements.cancelEdit.addEventListener("click", () => this.closeEditor());
     this.elements.search.addEventListener("input", () => this.render());
     this.elements.auth.addEventListener("change", () => this.updateAuthField());
+    this.elements.template.addEventListener("change", () => this.updateTemplateFields());
+    this.elements.experimentalToggle.addEventListener("change", () => this.render());
     this.elements.form.addEventListener("submit", (event) => { event.preventDefault(); void this.save(); });
   }
 
@@ -204,11 +256,12 @@ export class ConnectionWorkspaceController {
     const hostedModels = recipes
       .filter((recipe: Json) => !String(recipe.id).startsWith("consumer-recipe--") && recipe.capabilities?.chatCompletions !== false)
       .map((recipe: Json): ConnectionModelView => ({ id: String(recipe.id), routeId: "", recipeId: String(recipe.id), displayName: String(recipe.displayName ?? recipe.modelId ?? recipe.id), modelId: String(recipe.modelId ?? recipe.id), contextTokens: Number(recipe.contextTokens) }));
-    const hostedConnection: HostedConnectionView = { id: LOCAL_CONNECTION_ID, displayName: String(this.configuration?.hostName ?? "This PC"), baseUrl: "", authType: "none", hasCredential: false, availableModels: hostedModels, updatedAt: "", hosted: true };
-    return [hostedConnection, ...this.records.map((connection): SavedConnectionView => ({ ...connection, hosted: false, availableModels: connection.models.map((model) => ({ ...model })), source: connection }))];
+    const hostedMediaModels = hostedMediaViews(recipes);
+    const hostedConnection: HostedConnectionView = { id: LOCAL_CONNECTION_ID, displayName: String(this.configuration?.hostName ?? "This PC"), baseUrl: "", authType: "none", hasCredential: false, template: "openai-compatible", availableModels: hostedModels, availableMediaModels: hostedMediaModels, updatedAt: "", hosted: true };
+    return [hostedConnection, ...this.records.map((connection): SavedConnectionView => ({ ...connection, hosted: false, availableModels: connection.models.map((model) => ({ ...model })), availableMediaModels: savedMediaViews(connection), source: connection }))];
   }
 
-  private connectionCard(connection: ConnectionView, routes: Json[]): HTMLElement {
+  private connectionCard(connection: ConnectionView, routes: Json[], mediaModels: MediaModelView[]): HTMLElement {
     const actions: HTMLButtonElement[] = [];
     if (!connection.hosted) {
       actions.push(
@@ -226,8 +279,15 @@ export class ConnectionWorkspaceController {
       actions,
     });
     if (!section.collapsed) {
-      if (!connection.availableModels.length) section.appendBody(emptyState("No chat models available"));
+      if (!connection.availableModels.length && !mediaModels.length) section.appendBody(emptyState("No models available"));
       for (const model of connection.availableModels) section.appendBody(this.modelCard(model, routes));
+      if (mediaModels.length) {
+        const heading = document.createElement("h4");
+        heading.className = "media-section-heading";
+        heading.textContent = "Media generation";
+        section.appendBody(heading);
+        for (const model of mediaModels) section.appendBody(this.mediaModelCard(model, routes));
+      }
     }
     return section.root;
   }
@@ -284,16 +344,95 @@ export class ConnectionWorkspaceController {
     return card;
   }
 
+  private mediaModelCard(model: MediaModelView, routes: Json[]): HTMLElement {
+    const card = document.createElement("article");
+    card.className = "recipe-card media-recipe-card";
+    if (model.experimental) card.classList.add("experimental");
+    const details = document.createElement("div");
+    details.className = "recipe-card-details";
+    const name = document.createElement("span");
+    name.className = "recipe-display-name";
+    name.textContent = model.displayName;
+    const labels = document.createElement("div");
+    labels.className = "recipe-card-labels";
+    const modelLabel = document.createElement("span");
+    modelLabel.className = "recipe-card-label";
+    modelLabel.textContent = model.modelId;
+    labels.append(modelLabel);
+    for (const modality of model.modalities) {
+      const modalityLabel = document.createElement("span");
+      modalityLabel.className = `recipe-card-label media-modality-badge media-${modality}`;
+      modalityLabel.textContent = modality === "image" ? "Image" : modality === "video" ? "Video" : "Audio";
+      modalityLabel.title = `Generates ${modality}`;
+      labels.append(modalityLabel);
+    }
+    for (const badge of mediaLimitBadges(model.limits)) {
+      const limitLabel = document.createElement("span");
+      limitLabel.className = "recipe-card-label media-limit-badge";
+      limitLabel.textContent = badge;
+      labels.append(limitLabel);
+    }
+    if (model.experimental) {
+      const experimentalLabel = document.createElement("span");
+      experimentalLabel.className = "recipe-card-label media-experimental-badge";
+      experimentalLabel.textContent = "Experimental";
+      labels.append(experimentalLabel);
+    }
+    details.append(name, labels);
+    const actions = document.createElement("div");
+    actions.className = "recipe-card-actions";
+    const test = document.createElement("button");
+    test.type = "button";
+    test.className = "recipe-test-button";
+    test.setAttribute("aria-live", "polite");
+    test.addEventListener("click", () => void this.options.testRecipe({
+      id: model.recipeId,
+      displayName: model.modelId,
+      capabilities: { chatCompletions: false, modalities: { output: model.modalities } },
+    }, card, test));
+    const routeToggle = document.createElement("div");
+    routeToggle.className = "recipe-route-toggle media-route-toggle";
+    routeToggle.setAttribute("role", "group");
+    routeToggle.setAttribute("aria-label", `${model.modelId} media routing`);
+    for (const definition of MEDIA_ROUTES) {
+      const route = routes.find((item: Json) => item.id === definition.id);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `route-symbol route-media route-${definition.id}`;
+      button.title = definition.label;
+      button.setAttribute("aria-label", `${definition.label} route`);
+      button.setAttribute("aria-pressed", String(route?.recipeId === model.recipeId));
+      button.classList.toggle("active", route?.recipeId === model.recipeId);
+      button.append(svgIcon(definition.icon));
+      if (!model.modalities.includes(definition.id)) {
+        button.disabled = true;
+        button.title = `${model.modelId} does not generate ${definition.label.toLowerCase()}`;
+      }
+      button.addEventListener("click", () => void this.assignMediaRoute(definition, model, button));
+      routeToggle.append(button);
+    }
+    actions.append(routeToggle, test);
+    this.options.renderRecipeTestState(model.recipeId, card, test);
+    card.append(details, actions);
+    return card;
+  }
+
   private async save(): Promise<void> {
     setFormBusy(this.elements.form, true);
     this.setFormStatus("Connecting…");
     try {
+      const template = this.elements.template.value as "openai-compatible" | "openai-media" | "fal" | "replicate";
+      const hidesUrl = template === "fal" || template === "replicate";
       await this.options.bridge.saveConsumerConnection({
         ...(this.elements.id.value ? { id: this.elements.id.value } : {}),
         displayName: this.elements.name.value.trim(),
-        baseUrl: this.elements.url.value.trim(),
+        ...(hidesUrl ? {} : { baseUrl: this.elements.url.value.trim() }),
+        template,
         authType: this.elements.auth.value as "none" | "bearer",
         ...(this.elements.apiKey.value.trim() ? { apiKey: this.elements.apiKey.value.trim() } : {}),
+        ...(template !== "openai-compatible" && this.elements.modelIds.value.trim()
+          ? { modelIds: this.elements.modelIds.value.split(",").map((item) => item.trim()).filter(Boolean) }
+          : {}),
       });
       this.closeEditor();
       await this.refreshRecordsAndConfiguration();
@@ -305,7 +444,16 @@ export class ConnectionWorkspaceController {
     button.disabled = true;
     button.textContent = "Refreshing…";
     try {
-      await this.options.bridge.saveConsumerConnection({ id: connection.id, displayName: connection.displayName, baseUrl: connection.baseUrl, authType: connection.authType });
+      const template = connection.template ?? "openai-compatible";
+      const hidesUrl = template === "fal" || template === "replicate";
+      await this.options.bridge.saveConsumerConnection({
+        id: connection.id,
+        displayName: connection.displayName,
+        ...(hidesUrl ? {} : { baseUrl: connection.baseUrl }),
+        template,
+        authType: connection.authType,
+        ...((connection.mediaModels?.length ?? 0) > 0 ? { modelIds: [...new Set(connection.mediaModels.map((model) => model.id))] } : {}),
+      });
       await this.refreshRecordsAndConfiguration();
     } catch (error) {
       button.disabled = false;
@@ -357,13 +505,43 @@ export class ConnectionWorkspaceController {
     }
   }
 
+  private async assignMediaRoute(definition: (typeof MEDIA_ROUTES)[number], model: MediaModelView, button: HTMLButtonElement): Promise<void> {
+    const routeId = definition.id;
+    const current = this.configuration?.routes?.find((route: Json) => route.id === routeId);
+    if (current?.recipeId === model.recipeId) return;
+    button.disabled = true;
+    try {
+      await this.options.api(`/api/v1/management/routes/${routeId}`, "PUT", {
+        displayName: definition.label,
+        recipeId: model.recipeId,
+        enabled: true,
+        ...(model.experimental ? { acceptExperimental: true } : {}),
+      });
+      this.configuration = await this.options.reloadConfiguration();
+      this.render();
+    } catch (error) {
+      button.disabled = false;
+      this.options.showToast(this.options.errorMessage(error));
+    }
+  }
+
   private resetForm(): void {
     this.elements.form.reset();
     this.elements.id.value = "";
+    this.elements.template.value = "openai-compatible";
     this.elements.auth.value = "bearer";
     this.elements.apiKey.placeholder = "Stored securely";
     this.setFormStatus();
+    this.updateTemplateFields();
     this.updateAuthField();
+  }
+
+  private updateTemplateFields(): void {
+    const template = this.elements.template.value;
+    const hidesUrl = template === "fal" || template === "replicate";
+    this.elements.urlField.hidden = hidesUrl;
+    this.elements.url.required = !hidesUrl;
+    this.elements.modelIdsField.hidden = template === "openai-compatible";
   }
 
   private updateAuthField(): void {
@@ -404,4 +582,49 @@ function setFormBusy(form: HTMLFormElement, busy: boolean): void {
 
 function formatTokenCount(value: number): string {
   return value >= 1000 ? `${Math.round(value / 1000)}k` : String(Math.round(value));
+}
+
+/** Media recipes hosted on this PC (playbook/engine recipes, §5.10): one card
+ *  per recipe with all of its output modalities as route toggles. */
+function hostedMediaViews(recipes: Json[]): MediaModelView[] {
+  return recipes
+    .filter((recipe: Json) => !String(recipe.id).startsWith("consumer-recipe--") && recipe.capabilities?.chatCompletions === false && Array.isArray(recipe.capabilities?.modalities?.output) && recipe.capabilities.modalities.output.length)
+    .map((recipe: Json): MediaModelView => ({
+      recipeId: String(recipe.id),
+      displayName: String(recipe.displayName ?? recipe.modelId ?? recipe.id),
+      modelId: String(recipe.modelId ?? recipe.id),
+      modalities: recipe.capabilities.modalities.output.filter((modality: unknown) => modality === "image" || modality === "video" || modality === "audio"),
+      ...(recipe.capabilities?.modalities?.limits ? { limits: recipe.capabilities.modalities.limits } : {}),
+      ...(recipe.configuration?.experimental === true ? { experimental: true } : {}),
+      template: String(recipe.adapter ?? "openai-compatible"),
+    }));
+}
+
+/** Media models from a saved connection: the host registers one entry per
+ *  (model, modality) but the UI shows one card per model (recipe). */
+function savedMediaViews(connection: ConsumerConnectionSummary): MediaModelView[] {
+  const byRecipe = new Map<string, MediaModelView>();
+  for (const model of connection.mediaModels ?? []) {
+    const view = byRecipe.get(model.recipeId) ?? {
+      recipeId: model.recipeId,
+      displayName: model.id,
+      modelId: model.id,
+      modalities: [],
+      template: model.template,
+    };
+    if (!view.modalities.includes(model.modality)) view.modalities.push(model.modality);
+    byRecipe.set(model.recipeId, view);
+  }
+  return [...byRecipe.values()];
+}
+
+/** Compact limit badges for a media recipe's modality capabilities (§5.10). */
+function mediaLimitBadges(limits: MediaModelView["limits"] | undefined): string[] {
+  if (!limits) return [];
+  const badges: string[] = [];
+  if (typeof limits.maxDurationSeconds === "number") badges.push(`≤${limits.maxDurationSeconds}s`);
+  if (typeof limits.maxResolution === "string") badges.push(`≤${limits.maxResolution}`);
+  if (typeof limits.maxRefs === "number") badges.push(`≤${limits.maxRefs} refs`);
+  if (typeof limits.maxFrames === "number") badges.push(`≤${limits.maxFrames} frames`);
+  return badges;
 }

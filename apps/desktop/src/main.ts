@@ -18,7 +18,7 @@ const hostUrl = validateHostUrl(commandLineValue("host-url") ?? (localHostPort ?
 let deviceToken = process.env.FITZ_DEVICE_TOKEN;
 interface DesktopUpdateStatus { state: "idle" | "checking" | "available" | "downloading" | "current" | "downloaded" | "error" | "development"; percent?: number; version?: string }
 let latestUpdateStatus: DesktopUpdateStatus = { state: app.isPackaged ? "idle" : "development" };
-interface StoredConsumerConnection { id: string; displayName: string; baseUrl: string; authType: "none" | "bearer"; apiKey?: string; models: Array<{ id: string; routeId: string; recipeId: string }>; updatedAt: string }
+interface StoredConsumerConnection { id: string; displayName: string; baseUrl: string; authType: "none" | "bearer"; apiKey?: string; template: string; models: Array<{ id: string; routeId: string; recipeId: string }>; mediaModels: Array<{ id: string; routeId: string; recipeId: string; modality: string; template: string }>; updatedAt: string }
 
 ipcMain.handle("fitz:request", async (_event, input: unknown) => { if (!isRecord(input)) throw new TypeError("Request must be an object"); const path = validateRequestPath(String(input.path ?? "")); const method = typeof input.method === "string" ? input.method.toUpperCase() : "GET"; if (!["GET", "POST", "PUT", "PATCH", "DELETE"].includes(method)) throw new Error("HTTP method is not allowed"); const responseType = input.responseType === "base64" ? "base64" : "text"; const response = await fetch(new URL(path, hostUrl), { method, headers: { accept: responseType === "base64" ? "*/*" : "application/json", ...(input.body !== undefined ? { "content-type": "application/json" } : {}), ...(deviceToken ? { authorization: `Bearer ${deviceToken}` } : {}) }, ...(input.body !== undefined ? { body: JSON.stringify(input.body) } : {}) }); return { status: response.status, body: responseType === "base64" ? Buffer.from(await response.arrayBuffer()).toString("base64") : await response.text() }; });
 ipcMain.handle("fitz:connection-info", () => ({ origin: new URL(hostUrl).origin }));
@@ -28,16 +28,27 @@ ipcMain.handle("fitz:consumer-connection-save", async (_event, input: unknown) =
   const existing = typeof input.id === "string" ? loadConsumerConnections().find((item) => item.id === input.id) : undefined;
   const id = existing?.id ?? randomUUID();
   const displayName = requireBoundedText(input.displayName, "Connection name", 100);
-  const baseUrl = requireConsumerBaseUrl(input.baseUrl);
+  const template = requireConsumerTemplate(input.template);
+  // fal and Replicate hide their base URL (the host applies its own default, §5.7);
+  // openai-compatible and openai-media always require one.
+  const baseUrl = template === "fal" || template === "replicate" ? (input.baseUrl === undefined ? "" : requireConsumerBaseUrl(input.baseUrl)) : requireConsumerBaseUrl(input.baseUrl);
   const authType = input.authType === "none" ? "none" : input.authType === "bearer" ? "bearer" : undefined;
   if (!authType) throw new Error("Authorization must be Bearer token or None");
   const enteredKey = typeof input.apiKey === "string" && input.apiKey.trim() ? input.apiKey.trim() : undefined;
   const apiKey = authType === "bearer" ? enteredKey ?? existing?.apiKey : undefined;
   if (authType === "bearer" && !apiKey) throw new Error("API key is required");
-  const response = await trustedHostRequest(`/api/v1/management/connections/${encodeURIComponent(id)}`, "PUT", { displayName, baseUrl, authType, ...(apiKey ? { apiKey } : {}) });
+  const modelIds = requireModelIds(input.modelIds);
+  const response = await trustedHostRequest(`/api/v1/management/connections/${encodeURIComponent(id)}`, "PUT", {
+    displayName,
+    template,
+    ...(baseUrl ? { baseUrl } : {}),
+    authType,
+    ...(apiKey ? { apiKey } : {}),
+    ...(modelIds.length ? { modelIds } : {}),
+  });
   const parsed = await parseHostResponse(response);
   const data = isRecord(parsed.data) ? parsed.data : {};
-  const connection: StoredConsumerConnection = { id, displayName, baseUrl, authType, ...(apiKey ? { apiKey } : {}), models: parseConsumerModels(data.models), updatedAt: typeof data.updatedAt === "string" ? data.updatedAt : new Date().toISOString() };
+  const connection: StoredConsumerConnection = { id, displayName, baseUrl, authType, template, ...(apiKey ? { apiKey } : {}), models: parseConsumerModels(data.models), mediaModels: parseConsumerMediaModels(data.mediaModels), updatedAt: typeof data.updatedAt === "string" ? data.updatedAt : new Date().toISOString() };
   persistConsumerConnections([...loadConsumerConnections().filter((item) => item.id !== id), connection]);
   return publicConsumerConnection(connection);
 });
@@ -52,9 +63,17 @@ ipcMain.handle("fitz:consumer-connections-sync", async () => {
   const updated: StoredConsumerConnection[] = [];
   for (const connection of loadConsumerConnections()) {
     try {
-      const response = await trustedHostRequest(`/api/v1/management/connections/${encodeURIComponent(connection.id)}`, "PUT", { displayName: connection.displayName, baseUrl: connection.baseUrl, authType: connection.authType, ...(connection.apiKey ? { apiKey: connection.apiKey } : {}) });
+      const baseUrl = connection.template === "fal" || connection.template === "replicate" ? undefined : connection.baseUrl;
+      const response = await trustedHostRequest(`/api/v1/management/connections/${encodeURIComponent(connection.id)}`, "PUT", {
+        displayName: connection.displayName,
+        template: connection.template,
+        ...(baseUrl ? { baseUrl } : {}),
+        authType: connection.authType,
+        ...(connection.apiKey ? { apiKey: connection.apiKey } : {}),
+        ...(connection.mediaModels?.length ? { modelIds: [...new Set(connection.mediaModels.map((model) => model.id))] } : {}),
+      });
       const parsed = await parseHostResponse(response); const data = isRecord(parsed.data) ? parsed.data : {};
-      updated.push({ ...connection, models: parseConsumerModels(data.models), updatedAt: typeof data.updatedAt === "string" ? data.updatedAt : connection.updatedAt });
+      updated.push({ ...connection, models: parseConsumerModels(data.models), mediaModels: parseConsumerMediaModels(data.mediaModels), updatedAt: typeof data.updatedAt === "string" ? data.updatedAt : connection.updatedAt });
       results.push({ id: connection.id, connected: true });
     } catch (error) { updated.push(connection); results.push({ id: connection.id, connected: false, error: error instanceof Error ? error.message : String(error) }); }
   }
@@ -142,9 +161,12 @@ function loadDeviceToken(): string | undefined { try { if (!safeStorage.isEncryp
 function consumerConnectionsPath(): string { const hostId = createHash("sha256").update(new URL(hostUrl).origin).digest("hex").slice(0, 16); return join(app.getPath("userData"), `consumer-connections-${hostId}.bin`); }
 function loadConsumerConnections(): StoredConsumerConnection[] { try { if (!safeStorage.isEncryptionAvailable() || !existsSync(consumerConnectionsPath())) return []; const value = JSON.parse(safeStorage.decryptString(readFileSync(consumerConnectionsPath()))) as unknown; return Array.isArray(value) ? value.filter(isStoredConsumerConnection) : []; } catch { return []; } }
 function persistConsumerConnections(connections: StoredConsumerConnection[]): void { if (!safeStorage.isEncryptionAvailable()) throw new Error("Secure credential storage is unavailable"); mkdirSync(dirname(consumerConnectionsPath()), { recursive: true }); writeFileSync(consumerConnectionsPath(), safeStorage.encryptString(JSON.stringify(connections)), { flag: "w" }); }
-function publicConsumerConnection(connection: StoredConsumerConnection) { return { id: connection.id, displayName: connection.displayName, baseUrl: connection.baseUrl, authType: connection.authType, hasCredential: Boolean(connection.apiKey), models: connection.models, updatedAt: connection.updatedAt }; }
-function isStoredConsumerConnection(value: unknown): value is StoredConsumerConnection { return isRecord(value) && typeof value.id === "string" && typeof value.displayName === "string" && typeof value.baseUrl === "string" && (value.authType === "none" || value.authType === "bearer") && Array.isArray(value.models) && typeof value.updatedAt === "string"; }
+function publicConsumerConnection(connection: StoredConsumerConnection) { return { id: connection.id, displayName: connection.displayName, baseUrl: connection.baseUrl, authType: connection.authType, hasCredential: Boolean(connection.apiKey), template: connection.template ?? "openai-compatible", models: connection.models, mediaModels: connection.mediaModels ?? [], updatedAt: connection.updatedAt }; }
+function isStoredConsumerConnection(value: unknown): value is StoredConsumerConnection { return isRecord(value) && typeof value.id === "string" && typeof value.displayName === "string" && typeof value.baseUrl === "string" && (value.authType === "none" || value.authType === "bearer") && (value.template === undefined || typeof value.template === "string") && Array.isArray(value.models) && (value.mediaModels === undefined || Array.isArray(value.mediaModels)) && typeof value.updatedAt === "string"; }
 function parseConsumerModels(value: unknown): Array<{ id: string; routeId: string; recipeId: string }> { if (!Array.isArray(value)) return []; return value.flatMap((item) => isRecord(item) && typeof item.id === "string" && typeof item.routeId === "string" && typeof item.recipeId === "string" ? [{ id: item.id, routeId: item.routeId, recipeId: item.recipeId }] : []); }
+function parseConsumerMediaModels(value: unknown): Array<{ id: string; routeId: string; recipeId: string; modality: string; template: string }> { if (!Array.isArray(value)) return []; return value.flatMap((item) => isRecord(item) && typeof item.id === "string" && typeof item.routeId === "string" && typeof item.recipeId === "string" && (item.modality === "image" || item.modality === "video" || item.modality === "audio") ? [{ id: item.id, routeId: item.routeId, recipeId: item.recipeId, modality: item.modality, template: typeof item.template === "string" ? item.template : "openai-compatible" }] : []); }
+function requireConsumerTemplate(value: unknown): string { if (value === undefined) return "openai-compatible"; if (typeof value === "string" && (value === "openai-compatible" || value === "openai-media" || value === "fal" || value === "replicate")) return value; throw new Error("Template must be openai-compatible, openai-media, fal, or replicate"); }
+function requireModelIds(value: unknown): string[] { if (value === undefined) return []; if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !item.trim() || item.trim().length > 200)) throw new Error("Model IDs must be an array of strings"); return [...new Set(value.map((item) => (item as string).trim()).filter(Boolean))]; }
 function requireConsumerBaseUrl(value: unknown): string { const text = requireBoundedText(value, "Base URL", 2048); const url = new URL(text); if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Base URL must use HTTP or HTTPS"); if (url.username || url.password || url.search || url.hash) throw new Error("Base URL must not contain credentials, a query, or a fragment"); return url.toString().replace(/\/$/, ""); }
 async function trustedHostRequest(path: string, method: string, body?: unknown): Promise<Response> { return fetch(new URL(validateRequestPath(path), hostUrl), { method, headers: { accept: "application/json", ...(body !== undefined ? { "content-type": "application/json" } : {}), ...(deviceToken ? { authorization: `Bearer ${deviceToken}` } : {}) }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) }); }
 async function parseHostResponse(response: Response): Promise<Record<string, unknown>> { const content = await response.text(); if (!response.ok) throw new Error(hostError(content)); const parsed = content ? JSON.parse(content) as unknown : {}; if (!isRecord(parsed)) throw new Error("The Fitz host returned an invalid response"); return parsed; }

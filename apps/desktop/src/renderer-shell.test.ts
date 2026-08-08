@@ -290,10 +290,10 @@ describe("desktop renderer shell", () => {
 
   it("tests each Playbooks recipe directly and reports the result on its row", () => {
     expect(playbookWorkspace).toContain('testButton.className = "recipe-test-button"');
-    expect(playbookWorkspace).toContain('api(`/api/v1/management/recipes/${encodeURIComponent(recipe.id)}/test`, "POST")');
+    expect(playbookWorkspace).toContain('isMedia ? `/api/v1/management/recipes/${encodeURIComponent(recipe.id)}/media-test` : `/api/v1/management/recipes/${encodeURIComponent(recipe.id)}/test`');
     expect(playbookWorkspace).toContain('state === "passed" ? "✓ Working"');
     expect(playbookWorkspace).toContain('state === "failed" ? "Retry"');
-    expect(playbookWorkspace).toContain('detail: "Sending “Say hi.” to this recipe"');
+    expect(playbookWorkspace).toContain('isMedia ? "Generating a test image…" : "Sending “Say hi.” to this recipe"');
     expect(playbookWorkspace).toContain('modelLabel.className = "recipe-card-label"');
     expect(playbookWorkspace).toContain('contextLabel.className = "recipe-card-label recipe-context-label"');
     expect(playbookWorkspace).not.toContain('detail.textContent = `${recipe.adapter} · ${recipe.modelId}`');

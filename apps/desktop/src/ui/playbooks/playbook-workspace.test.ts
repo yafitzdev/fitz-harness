@@ -171,6 +171,35 @@ describe("PlaybookWorkspaceController", () => {
     expect(failButton.classList.contains("failed")).toBe(true);
   });
 
+  it("tests a media recipe through the media-test endpoint", async () => {
+    const configuration = sampleConfiguration();
+    configuration.recipes = [{
+      id: "h3-video", playbookId: "ninfer", displayName: "H3 Video", adapter: "openai-managed", modelId: "MiniMax-H3", contextTokens: 0,
+      capabilities: { chatCompletions: false, modalities: { output: ["video", "audio"] } }, configuration: {},
+    }];
+    const api = vi.fn(async (path: string) => path.endsWith("/media-test")
+      ? { data: { artifactUrl: "http://127.0.0.1:8787/api/v1/artifacts/abc/content", status: "completed" } }
+      : { data: {} });
+    const { controller, elements } = setup(configuration, api);
+    controller.render();
+
+    const button = elements.list.querySelector<HTMLButtonElement>(".recipe-test-button")!;
+    click(button);
+    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/recipes/h3-video/media-test", "POST"));
+    await vi.waitFor(() => expect(button.textContent).toBe("✓ Working"));
+    expect(button.title).toBe("http://127.0.0.1:8787/api/v1/artifacts/abc/content");
+
+    // Chat recipes keep using the chat test endpoint.
+    const chatConfiguration = sampleConfiguration();
+    const chatApi = vi.fn(async (_path: string, _method?: string, _body?: unknown) => ({ data: { output: "hi" } }));
+    const { controller: chatController, elements: chatElements } = setup(chatConfiguration, chatApi);
+    chatController.render();
+    const chatButton = chatElements.list.querySelector<HTMLButtonElement>(".recipe-test-button")!;
+    click(chatButton);
+    await vi.waitFor(() => expect(chatApi).toHaveBeenCalledWith("/api/v1/management/recipes/ninfer-qwen36/test", "POST"));
+    await vi.waitFor(() => expect(chatButton.textContent).toBe("✓ Working"));
+  });
+
   it("opens the engine editor with the folder applied and saves it", async () => {
     const { controller, elements, api, reloadConfiguration } = setup();
     controller.render();

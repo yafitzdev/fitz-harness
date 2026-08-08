@@ -93,11 +93,12 @@ export class PlaybookWorkspaceController {
   }
 
   async testRecipe(recipe: Json, card: HTMLElement, button: HTMLButtonElement): Promise<void> {
-    this.recipeTestStates.set(recipe.id, { state: "testing", detail: "Sending “Say hi.” to this recipe" });
+    const isMedia = recipe.capabilities?.chatCompletions === false && Array.isArray(recipe.capabilities?.modalities?.output) && recipe.capabilities.modalities.output.length > 0;
+    this.recipeTestStates.set(recipe.id, { state: "testing", detail: isMedia ? "Generating a test image…" : "Sending “Say hi.” to this recipe" });
     this.renderRecipeTestState(recipe.id, card, button);
     try {
-      const response = await this.options.api(`/api/v1/management/recipes/${encodeURIComponent(recipe.id)}/test`, "POST");
-      this.recipeTestStates.set(recipe.id, { state: "passed", detail: String(response.data?.output ?? "Recipe returned a response") });
+      const response = await this.options.api(isMedia ? `/api/v1/management/recipes/${encodeURIComponent(recipe.id)}/media-test` : `/api/v1/management/recipes/${encodeURIComponent(recipe.id)}/test`, "POST");
+      this.recipeTestStates.set(recipe.id, { state: "passed", detail: isMedia ? String(response.data?.artifactUrl ?? "Generated successfully") : String(response.data?.output ?? "Recipe returned a response") });
     } catch (error) {
       this.recipeTestStates.set(recipe.id, { state: "failed", detail: this.options.errorMessage(error) });
     }
@@ -114,7 +115,7 @@ export class PlaybookWorkspaceController {
     card.classList.toggle("recipe-test-passed", state === "passed");
     card.classList.toggle("recipe-test-failed", state === "failed");
     button.textContent = state === "testing" ? "Testing…" : state === "passed" ? "✓ Working" : state === "failed" ? "Retry" : "Test";
-    button.title = result?.detail ?? "Send “Say hi.” directly to this recipe";
+    button.title = result?.detail ?? "Send a test prompt to this recipe";
     button.setAttribute("aria-label", state === "passed" ? "Recipe test passed" : state === "failed" ? `Recipe test failed: ${result?.detail ?? "Unknown error"}. Retry` : state === "testing" ? "Testing recipe" : "Test recipe");
   }
 

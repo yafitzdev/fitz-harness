@@ -23,7 +23,7 @@ function node<T extends HTMLElement>(tag: string): T {
 
 function setup(overrides: Partial<ConnectionWorkspaceBridge> = {}) {
   const mount = node("div");
-  const remote = { id: "remote-1", displayName: "Remote API", baseUrl: "https://remote.test/v1", authType: "bearer" as const, hasCredential: true, models: [{ id: "remote-model", routeId: "", recipeId: "consumer-recipe--remote-model" }], updatedAt: "now" };
+  const remote = { id: "remote-1", displayName: "Remote API", baseUrl: "https://remote.test/v1", authType: "bearer" as const, hasCredential: true, template: "openai-compatible" as const, models: [{ id: "remote-model", routeId: "", recipeId: "consumer-recipe--remote-model" }], mediaModels: [], updatedAt: "now" };
   const bridge: ConnectionWorkspaceBridge = {
     syncConsumerConnections: vi.fn(async () => []),
     listConsumerConnections: vi.fn(async () => [remote]),
@@ -37,7 +37,7 @@ function setup(overrides: Partial<ConnectionWorkspaceBridge> = {}) {
     routes: [] as Array<Record<string, unknown>>,
   };
   const calls = {
-    api: vi.fn(async (path: string) => { if (path.includes("/routes/")) configuration = { ...configuration, routes: [{ id: "fast", recipeId: "consumer-recipe--remote-model" }] }; return { data: {} }; }),
+    api: vi.fn(async (path: string, _method?: string, body?: unknown) => { const match = /\/routes\/([^/]+)$/.exec(path); if (match) configuration = { ...configuration, routes: [{ id: match[1]!, recipeId: String((body as { recipeId?: unknown } | undefined)?.recipeId ?? "") }] }; return { data: {} }; }),
     reloadConfiguration: vi.fn(async () => configuration),
     testRecipe: vi.fn(async () => undefined),
     renderRecipeTestState: vi.fn(),
@@ -90,7 +90,7 @@ describe("ConnectionWorkspaceController", () => {
     expect(elements.apiKey.required).toBe(false);
 
     elements.form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    await vi.waitFor(() => expect(bridge.saveConsumerConnection).toHaveBeenCalledWith({ displayName: "Self hosted", baseUrl: "http://127.0.0.1:8000/v1", authType: "none" }));
+    await vi.waitFor(() => expect(bridge.saveConsumerConnection).toHaveBeenCalledWith({ displayName: "Self hosted", baseUrl: "http://127.0.0.1:8000/v1", authType: "none", template: "openai-compatible" }));
     await vi.waitFor(() => expect(controller.editorOpen).toBe(false));
     expect(bridge.listConsumerConnections).toHaveBeenCalled();
   });
@@ -112,7 +112,7 @@ describe("ConnectionWorkspaceController", () => {
 
   it("removes a connection and its cards from the workspace", async () => {
     const listConsumerConnections = vi.fn()
-      .mockResolvedValueOnce([{ id: "remote-1", displayName: "Remote API", baseUrl: "https://remote.test/v1", authType: "bearer", hasCredential: true, models: [], updatedAt: "now" }])
+      .mockResolvedValueOnce([{ id: "remote-1", displayName: "Remote API", baseUrl: "https://remote.test/v1", authType: "bearer", hasCredential: true, template: "openai-compatible", models: [], mediaModels: [], updatedAt: "now" }])
       .mockResolvedValue([]);
     const { controller, elements, bridge } = setup({ listConsumerConnections });
     await controller.sync(false);
@@ -170,5 +170,109 @@ describe("ConnectionWorkspaceController", () => {
     click(cards[0]!.querySelector<HTMLButtonElement>(".route-fast")!);
     await vi.waitFor(() => expect(calls.api).toHaveBeenCalledWith("/api/v1/management/routes/fast", "PUT", expect.objectContaining({ recipeId: "local-recipe" })));
     expect(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[0]!.classList.contains("collapsed")).toBe(false);
+  });
+
+  it("renders media model cards with modality badges and disabled incompatible toggles", async () => {
+    const mediaRemote = {
+      id: "fal-1", displayName: "Fal", baseUrl: "", authType: "none" as const, hasCredential: false, template: "fal" as const,
+      models: [],
+      mediaModels: [
+        { id: "fal-ai/flux/dev", routeId: "consumer--media--fal-1--img", recipeId: "consumer-recipe--media--fal-1--flux", modality: "image" as const, template: "fal" as const },
+        { id: "fal-ai/minimax-video", routeId: "consumer--media--fal-1--vid", recipeId: "consumer-recipe--media--fal-1--minimax", modality: "video" as const, template: "fal" as const },
+      ],
+      updatedAt: "now",
+    };
+    const { controller, elements } = setup({ listConsumerConnections: vi.fn(async () => [mediaRemote]) });
+    await controller.sync(false);
+
+    const card = [...elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")][1]!;
+    const mediaCards = [...card.querySelectorAll<HTMLElement>(".media-recipe-card")];
+    expect(mediaCards).toHaveLength(2);
+    expect(mediaCards[0]!.querySelector(".recipe-display-name")?.textContent).toBe("fal-ai/flux/dev");
+    expect(mediaCards[0]!.querySelectorAll(".media-modality-badge")).toHaveLength(1);
+    expect(mediaCards[0]!.querySelector(".media-modality-badge")?.textContent).toBe("Image");
+
+    // The image model can only toggle the image route; video and audio are disabled.
+    const imageToggles = mediaCards[0]!.querySelectorAll<HTMLButtonElement>(".route-media");
+    expect(imageToggles[0]!.classList.contains("route-image")).toBe(true);
+    expect(imageToggles[0]!.disabled).toBe(false);
+    expect(imageToggles[1]!.disabled).toBe(true);
+    expect(imageToggles[2]!.disabled).toBe(true);
+    expect(imageToggles[1]!.title).toContain("does not generate video");
+  });
+
+  it("assigns a well-known media route and passes acceptExperimental for experimental recipes", async () => {
+    const mediaRemote = {
+      id: "media-1", displayName: "Media", baseUrl: "https://media.test/v1", authType: "none" as const, hasCredential: false, template: "openai-media" as const,
+      models: [],
+      mediaModels: [
+        { id: "dall-e-3", routeId: "consumer--media--media-1--img", recipeId: "consumer-recipe--media--media-1--dalle", modality: "image" as const, template: "openai-media" as const },
+      ],
+      updatedAt: "now",
+    };
+    const { controller, elements, calls } = setup({ listConsumerConnections: vi.fn(async () => [mediaRemote]) });
+    await controller.sync(false);
+
+    const mediaCard = elements.connections.querySelector<HTMLElement>(".media-recipe-card")!;
+    const imageToggle = mediaCard.querySelector<HTMLButtonElement>(".route-image")!;
+    click(imageToggle);
+    await vi.waitFor(() => expect(calls.api).toHaveBeenCalledWith("/api/v1/management/routes/image", "PUT", expect.objectContaining({ recipeId: "consumer-recipe--media--media-1--dalle", enabled: true })));
+    await vi.waitFor(() => {
+      const fresh = elements.connections.querySelector<HTMLElement>(".media-recipe-card")!.querySelector<HTMLButtonElement>(".route-image")!;
+      expect(fresh.classList.contains("active")).toBe(true);
+    });
+
+    // Hosted experimental media recipe: card hidden by default, shown after the
+    // toggle, and its assignment carries acceptExperimental.
+    let configuration = {
+      hostName: "YanPC",
+      recipes: [{
+        id: "h3-image", displayName: "H3 ComfyUI", modelId: "comfyui-flux", contextTokens: 0,
+        adapter: "comfyui", capabilities: { chatCompletions: false, modalities: { output: ["image"] } },
+        configuration: { experimental: true },
+      }],
+      routes: [] as Array<Record<string, unknown>>,
+    };
+    const calls2 = {
+      api: vi.fn(async (path: string) => { if (path === "/api/v1/management/routes/image") configuration = { ...configuration, routes: [{ id: "image", recipeId: "h3-image" }] }; return { data: {} }; }),
+      reloadConfiguration: vi.fn(async () => configuration),
+      testRecipe: vi.fn(async () => undefined),
+      renderRecipeTestState: vi.fn(),
+      closePopovers: vi.fn(),
+      showToast: vi.fn(),
+      errorMessage: vi.fn((error: unknown) => error instanceof Error ? error.message : String(error)),
+    };
+    const experimental = new ConnectionWorkspaceController({ mount: node("div"), bridge: { syncConsumerConnections: vi.fn(async () => []), listConsumerConnections: vi.fn(async () => []), saveConsumerConnection: vi.fn(), removeConsumerConnection: vi.fn(async () => undefined) }, ...calls2 });
+    experimental.setConfiguration(configuration);
+    experimental.render();
+    const hosted = experimental.elements.connections.querySelector<HTMLElement>(".consumer-playbook-card")!;
+    expect(hosted.querySelectorAll(".media-recipe-card")).toHaveLength(0);
+
+    experimental.elements.experimentalToggle.checked = true;
+    experimental.elements.experimentalToggle.dispatchEvent(new Event("change", { bubbles: true }));
+    const experimentalCard = experimental.elements.connections.querySelector<HTMLElement>(".consumer-playbook-card")!.querySelector<HTMLElement>(".media-recipe-card")!;
+    expect(experimentalCard).toBeTruthy();
+    expect(experimentalCard.querySelector(".media-experimental-badge")?.textContent).toBe("Experimental");
+    click(experimentalCard.querySelector<HTMLButtonElement>(".route-image")!);
+    await vi.waitFor(() => expect(calls2.api).toHaveBeenCalledWith("/api/v1/management/routes/image", "PUT", expect.objectContaining({ recipeId: "h3-image", acceptExperimental: true })));
+  });
+
+  it("hides the base URL for fal/replicate templates and sends model IDs", async () => {
+    const { controller, elements, bridge } = setup();
+    click(elements.newConnection);
+
+    expect(elements.urlField.hidden).toBe(false);
+    elements.template.value = "fal";
+    elements.template.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(elements.urlField.hidden).toBe(true);
+    expect(elements.url.required).toBe(false);
+    expect(elements.modelIdsField.hidden).toBe(false);
+
+    elements.name.value = "Fal";
+    elements.modelIds.value = "fal-ai/flux/dev, fal-ai/minimax-video";
+    elements.auth.value = "none";
+    elements.auth.dispatchEvent(new Event("change", { bubbles: true }));
+    elements.form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(bridge.saveConsumerConnection).toHaveBeenCalledWith({ displayName: "Fal", template: "fal", authType: "none", modelIds: ["fal-ai/flux/dev", "fal-ai/minimax-video"] }));
   });
 });

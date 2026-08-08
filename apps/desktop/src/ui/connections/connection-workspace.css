@@ -10,3 +10,21 @@
 .route-symbol.active .route-icon-outline { display: none; }
 .route-symbol.active .route-icon-filled { display: block; }
 .route-symbol.active .route-icon-cut { fill: none; stroke: var(--grey-300); stroke-width: 1.45; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Media generation (§5.10): experimental filter, media model cards, and the
+ * Image / Video / Audio single-assignment route toggles. All colors are design
+ * tokens; the ramp + semantic roles are the single source of truth. */
+.experimental-filter { display: flex; align-items: center; gap: 8px; margin: 2px 0 10px; color: var(--muted); font-size: 12px; cursor: pointer; user-select: none; }
+.experimental-filter input { accent-color: var(--accent-blue); }
+.media-section-heading { margin: 14px 0 6px; color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+.media-recipe-card { border-left: 2px solid transparent; }
+.media-recipe-card.experimental { border-left-color: var(--orange); }
+.media-modality-badge { background: var(--grey-200); }
+.media-modality-badge.media-image { color: var(--accent-purple); }
+.media-modality-badge.media-video { color: var(--green); }
+.media-modality-badge.media-audio { color: var(--orange); }
+.media-limit-badge { color: var(--subtle); border: 1px dashed var(--grey-400); }
+.media-experimental-badge { color: var(--orange); background: var(--tint-4); }
+.route-symbol.route-media.active { background: var(--grey-300); color: var(--accent-blue); }
+.route-symbol:disabled { opacity: 0.38; cursor: not-allowed; }
+.route-symbol:disabled:hover { background: transparent; color: var(--grey-550); }

@@ -96,6 +96,12 @@ const MEDIA_ROUTE_DISPLAY_NAMES: Record<(typeof MEDIA_ROUTE_IDS)[number], string
   video: "Video generation",
   audio: "Audio generation",
 };
+/** Minimal probe prompts for the management media-test diagnostic (§5.10). */
+const MEDIA_TEST_PROMPTS: Record<MediaModality, string> = {
+  image: "A single red cube on a plain gray background, product-photo style.",
+  video: "A red cube slowly rotating on a plain gray background.",
+  audio: "A short ascending major scale played on a piano.",
+};
 /** Connection templates (§5.7): chat-only, or one of the media provider
  *  templates. `body.template` defaults to `openai-compatible`. */
 const CONSUMER_TEMPLATES = ["openai-compatible", "openai-media", "fal", "replicate"] as const;
@@ -967,6 +973,44 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     },
   );
 
+  app.post(
+    "/api/v1/management/recipes/:recipeId/media-test",
+    { preHandler: adminGuard(options.adminToken, authMode, principals) },
+    async (request, reply) => {
+      const recipeId = (request.params as { recipeId: string }).recipeId;
+      try {
+        const recipe = routes.resolveRecipe(recipeId);
+        const output = recipe.capabilities.modalities?.output ?? [];
+        if (!output.length) throw new TypeError(`Recipe ${recipeId} does not generate media`);
+        const route = resolveMediaTestRoute(routes, recipeId, output);
+        if (!route) throw new TypeError(`Recipe ${recipeId} is not assigned to an enabled media route`);
+        // Admin diagnostic probe: submitted without a principal so it is exempt
+        // from per-user quota (design doc §5.10), exactly like the image gateway.
+        const job = mediaJobs.submit({ routeId: route.id, modality: route.kind as MediaModality, params: { prompt: MEDIA_TEST_PROMPTS[route.kind as MediaModality] } });
+        const terminal = await awaitMediaJob(mediaJobs, job.id, mediaImageTimeoutMs);
+        if (terminal.status !== "completed") {
+          throw new Error(`Media test failed (job ${job.id}): ${terminal.errorCode ?? terminal.status}`);
+        }
+        return {
+          data: {
+            recipeId,
+            modality: terminal.modality,
+            jobId: job.id,
+            status: terminal.status,
+            working: true,
+            unloaded: true,
+            ...(terminal.artifactId
+              ? { artifactId: terminal.artifactId, artifactUrl: `${request.protocol}://${request.hostname}/api/v1/artifacts/${terminal.artifactId}/content` }
+              : {}),
+          },
+        };
+      } catch (error) {
+        const statusCode = error instanceof RecipeNotFoundError ? 404 : error instanceof TypeError ? 400 : error instanceof MediaGenerationTimeoutError ? 504 : 502;
+        return reply.code(statusCode).send({ error: errorMessage(error) });
+      }
+    },
+  );
+
   app.put(
     "/api/v1/management/routes/:routeId",
     { preHandler: adminGuard(options.adminToken, authMode, principals) },
@@ -1605,6 +1649,17 @@ function canAccessOwner(principal: AuthenticatedPrincipal | undefined, ownerUser
 function canAccessMediaJob(principal: AuthenticatedPrincipal | undefined, job: MediaJobRecord): boolean { return !principal || principal.user.role === "administrator" || principal.user.id === job.createdByUserId; }
 function isTerminalMediaStatus(status: string | undefined): boolean { return status === "completed" || status === "failed" || status === "cancelled" || status === "interrupted"; }
 function isTerminalMediaEvent(type: string): boolean { return type === "completed" || type === "failed" || type === "cancelled"; }
+
+/** Pick the enabled route to probe for a recipe's media-test: prefer a
+ *  well-known media route (image/video/audio) so the probe exercises the
+ *  standard single-assignment path, falling back to a consumer media route
+ *  when the recipe is only assigned there (§5.10). */
+function resolveMediaTestRoute(routes: RouteResolver, recipeId: string, output: MediaModality[]): Route | undefined {
+  const candidates = routes.listRoutes(true).filter(
+    (route) => route.enabled && route.recipeId === recipeId && route.kind !== "chat" && output.includes(route.kind as MediaModality),
+  );
+  return candidates.find((route) => (MEDIA_ROUTE_IDS as readonly string[]).includes(route.id)) ?? candidates[0];
+}
 function parseModality(value: unknown): MediaModality { if (value === "image" || value === "video" || value === "audio") return value; throw new TypeError("modality must be image, video, or audio"); }
 function parseMediaStatus(value: string | undefined): MediaJobStatus | undefined { return value === "queued" || value === "started" || value === "progressing" || value === "completed" || value === "failed" || value === "cancelled" || value === "interrupted" ? value : undefined; }
 function parseMediaParams(value: unknown): MediaGenerationParams {

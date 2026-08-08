@@ -201,6 +201,99 @@ describe("Fitz media provider templates", () => {
     }
   });
 
+  it("media-tests a recipe via the management diagnostic endpoint", async () => {
+    const fixture = await startFixture("fake-openai-media-server.mjs", ["--api-key", "test-openai-key"]);
+    const runtime = createHost({});
+    try {
+      const put = await runtime.app.inject({
+        method: "PUT",
+        url: "/api/v1/management/connections/openai-mixed",
+        payload: {
+          displayName: "OpenAI Media",
+          template: "openai-media",
+          baseUrl: fixture.baseUrl,
+          authType: "bearer",
+          apiKey: "test-openai-key",
+        },
+      });
+      expect(put.statusCode, put.body).toBe(200);
+      const saved = put.json().data;
+      const imageModel = saved.mediaModels.find((model: { modality: string }) => model.modality === "image");
+
+      // Assign the well-known "image" route so the probe exercises the standard
+      // single-assignment path (§5.2/§5.10).
+      const assign = await runtime.app.inject({
+        method: "PUT",
+        url: "/api/v1/management/routes/image",
+        payload: { displayName: "Image", recipeId: imageModel.recipeId, enabled: true },
+      });
+      expect(assign.statusCode, assign.body).toBe(200);
+
+      const test = await runtime.app.inject({
+        method: "POST",
+        url: `/api/v1/management/recipes/${imageModel.recipeId}/media-test`,
+      });
+      expect(test.statusCode, test.body).toBe(200);
+      const data = test.json().data;
+      expect(data).toMatchObject({
+        recipeId: imageModel.recipeId,
+        modality: "image",
+        status: "completed",
+        working: true,
+        unloaded: true,
+      });
+      expect(data.jobId).toBeTruthy();
+      expect(data.artifactId).toBeTruthy();
+      expect(data.artifactUrl).toMatch(/\/api\/v1\/artifacts\/.+\/content$/);
+      const artifact = runtime.store.getArtifact(data.artifactId);
+      expect(artifact).toMatchObject({ kind: "image", mimeType: "image/png" });
+      expect([...runtime.store.getArtifactContent(data.artifactId)!]).toEqual([...deterministicMediaBytes("image")]);
+
+      // A chat-only recipe is rejected: 400, not a probe.
+      const chatModel = saved.models[0];
+      const chatTest = await runtime.app.inject({
+        method: "POST",
+        url: `/api/v1/management/recipes/${chatModel.recipeId}/media-test`,
+      });
+      expect(chatTest.statusCode, chatTest.body).toBe(400);
+      expect(chatTest.json().error).toContain("does not generate media");
+
+      // A media recipe with no enabled route is rejected with a readable error.
+      const raw = await runtime.app.inject({
+        method: "PUT",
+        url: "/api/v1/management/recipes/unassigned-media",
+        payload: {
+          playbookId: "test",
+          displayName: "Unassigned",
+          adapter: "openai-media",
+          modelId: "dall-e-3",
+          contextTokens: 131_072,
+          capabilities: {
+            chatCompletions: false,
+            streaming: true,
+            toolCalls: false,
+            responseFormat: false,
+            minP: false,
+            maxConcurrentGenerations: 1,
+            modalities: { input: ["text"], output: ["image"] },
+          },
+          lifecycle: { loadPolicy: "onDemand", evictionPolicy: "immediate", idleTtlSeconds: 0, minimumResidencySeconds: 0 },
+          configuration: { baseUrl: fixture.baseUrl, modelId: "dall-e-3", healthPath: "/health" },
+        },
+      });
+      expect(raw.statusCode, raw.body).toBe(200);
+      const unassigned = await runtime.app.inject({
+        method: "POST",
+        url: "/api/v1/management/recipes/unassigned-media/media-test",
+      });
+      expect(unassigned.statusCode, unassigned.body).toBe(400);
+      expect(unassigned.json().error).toContain("not assigned to an enabled media route");
+    } finally {
+      await runtime.app.close();
+      await fixture.stop();
+    }
+  });
+
   it("cancels provider-side jobs orphaned by a crash on boot", async () => {
     const fixture = await startFixture("fake-fal-server.mjs");
     const store = SqliteStore.memory();
