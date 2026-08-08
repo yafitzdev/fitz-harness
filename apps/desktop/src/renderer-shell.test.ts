@@ -60,7 +60,9 @@ describe("desktop renderer shell", () => {
       "manage-playbooks",
       "new-project",
       "connection-status",
-      "context-toggle",
+      "inspector-new-tab",
+      "inspector-fullscreen",
+      "inspector-artifacts",
       "context-add",
       "add-artifact",
       "update",
@@ -619,7 +621,12 @@ describe("desktop renderer shell", () => {
   });
 
   it("replaces the deferred Environment surface with a resource Inspector", () => {
-    expect(html).toContain('id="context-toggle" class="icon-button" type="button" title="Toggle environment panel" aria-label="Toggle environment panel" aria-expanded="false" hidden');
+    // The header carries the Inspector's browser-style tab actions: + (new
+    // tab), < > (fullscreen placeholder), and H (artifacts repository).
+    expect(html).toContain('id="inspector-new-tab" class="icon-button" type="button" title="New tab" aria-label="New tab"');
+    expect(html).toContain('id="inspector-fullscreen" class="icon-button" type="button" title="Fullscreen" aria-label="Fullscreen"');
+    expect(html).toContain('id="inspector-artifacts" class="icon-button" type="button" title="Artifacts" aria-label="Artifacts"');
+    expect(html).not.toContain('id="context-toggle"');
     expect(html).not.toContain('id="context-panel"');
     expect(html).not.toContain('id="inspector-resizer"');
     // The Inspector heading is gone; the panel is content only, and its tab
@@ -635,7 +642,9 @@ describe("desktop renderer shell", () => {
     expect(renderer).not.toContain('item("Toggle environment"');
     expect(renderer).toContain('window.addEventListener("fitz:open-resource"');
     expect(renderer).toContain("inspectorPanel.inspect(reference)");
-    expect(renderer).toContain("inspectorPanel.toggle()");
+    expect(renderer).toContain("inspectorPanel.newTab()");
+    expect(renderer).toContain("inspectorPanel.toggleRepository()");
+    expect(renderer).not.toContain("inspectorPanel.toggle()");
     expect(inspectorPanel).toContain("new ResourceInspector({");
     expect(resourceInspector).toContain("window.fitz.previewResource({ projectRoot, reference, searchRoots: this.#options.getSearchRoots() })");
     expect(resourceInspector).toContain("this.#resourceError(error, reference)");
@@ -711,14 +720,17 @@ describe("desktop renderer shell", () => {
     expect(preload).toContain('"image" | "pdf" | "audio" | "video"');
   });
 
-  it("turns the Inspector into a tabbed artifact repository with a closable base tab", () => {
-    // The repository is the defacto base: its tab lives in the workspace
-    // header and is closable like any other — closing it closes the panel.
+  it("keeps the artifact repository as a view behind the header Artifacts button", () => {
+    // The repository is a dedicated view, not a tab: it renders once into the
+    // panel and is opened from the header's Artifacts button (which doubles
+    // as the panel's close control while the repository is showing).
     expect(inspectorPanel).toContain('className = "inspector-tabs"');
     expect(inspectorPanel).toContain('setAttribute("role", "tablist")');
     expect(inspectorPanel).toContain('closable: true');
-    expect(inspectorPanel).toContain('"Artifacts"');
     expect(inspectorPanel).toContain('className = "inspector-tab-close"');
+    expect(inspectorPanel).toContain("toggleRepository(): void");
+    expect(inspectorPanel).toContain("newTab(): void");
+    expect(inspectorPanel).toContain("this.#repository.render(repositoryView)");
     expect(inspectorPanel).toContain("setSessionArtifacts(artifacts: Json[]): void");
     expect(inspectorPanel).toContain("resetPreview(): void");
     expect(inspectorPanel).toContain("registerReference(reference: string): void");
@@ -733,7 +745,7 @@ describe("desktop renderer shell", () => {
     expect(artifactRepository).toContain("projectRelativePath");
     // The renderer feeds current-session uploads into the repository.
     expect(renderer).toContain("inspectorPanel.setSessionArtifacts(");
-    // Every opened artifact gets its own closable tab, and the repo is the base.
+    // Every opened artifact gets its own closable tab.
     expect(inspectorPanel).toContain("onFileInspected: (path, name, reference) => this.#onFileInspected(tab.id, path, name, reference)");
     expect(inspectorPanel).toContain("this.#repository.registerFile(path, name, reference)");
     expect(inspectorPanel).toContain('`upload:${String(artifact.id)}`');
@@ -747,8 +759,6 @@ describe("desktop renderer shell", () => {
     expect(inspectorPanel).toContain("auxclick");
     expect(inspectorPanel).toContain("event.button === 1");
     expect(inspectorPanel).toContain("mousedown");
-    // The Artifacts base tab stays clickable so open artifacts can return to it.
-    expect(inspectorPanel).toContain('repositoryButton.button.addEventListener("click", () => this.#activateTab(REPOSITORY_TAB))');
     // Chat references are cleaned of stray delimiters before joining the repo.
     expect(markdown).toContain("export function normalizeResourceReference");
     expect(artifactRepository).toContain("normalizeResourceReference(reference)");

@@ -21,7 +21,7 @@ export interface InspectorPanelOptions {
   onLayoutChange: () => void;
 }
 
-/** One tab in the Inspector: the fixed repository base or a closable resource. */
+/** One tab in the Inspector: a closable file, upload, URL, or pasted preview. */
 type InspectorTab = {
   id: string;
   label: string;
@@ -34,17 +34,16 @@ type InspectorTab = {
   resolvedPath?: string;
 };
 
-const REPOSITORY_TAB = "repository";
-
 /**
  * The Inspector — the right-hand resource panel. It is its own component: it
  * builds its shell (preview surface and resizer), owns the open/close state
  * and the resizable width, and composes the tabbed preview surface. The tab
- * bar lives in the workspace header above the panel; the first tab is the
- * artifact repository (the defacto base, closable like any other — closing it
- * closes the panel), and every file, upload, URL, and pasted preview opens as
- * its own closable tab. The renderer never touches the panel's internals; it
- * only drives this public surface.
+ * bar lives in the workspace header above the panel — browser-style tabs grow
+ * from the left edge of the inspector toward the header actions, and the
+ * artifact repository is a dedicated view opened from the header's Artifacts
+ * button rather than a tab. Closing the last tab closes the panel. The
+ * renderer never touches the panel's internals; it only drives this public
+ * surface.
  */
 export class InspectorPanel {
   readonly #options: InspectorPanelOptions;
@@ -54,9 +53,11 @@ export class InspectorPanel {
   readonly #tabBar: HTMLElement;
   readonly #pane: ResizablePane;
   readonly #repository: ArtifactRepository;
+  readonly #repositoryView: HTMLElement;
   readonly #tabs: InspectorTab[] = [];
   #activeTabId: string | undefined;
   #pastedCounter = 0;
+  #emptyCounter = 0;
   #open = false;
 
   constructor(options: InspectorPanelOptions) {
@@ -82,6 +83,8 @@ export class InspectorPanel {
     tabBar.addEventListener("mousedown", (event) => {
       if (event.button === 1) event.preventDefault();
     });
+    // Mount into the workspace header; CSS anchors the bar to the inspector
+    // panel's left edge, so it stays out of the header's flex flow.
     options.tabMount.append(tabBar);
 
     const resizer = document.createElement("div");
@@ -120,10 +123,13 @@ export class InspectorPanel {
       getProjectRoot: this.#options.getProjectRoot,
     });
 
-    // The repository is the defacto base tab; it is created up front and
-    // re-created whenever the panel reopens after it was closed.
-    this.#ensureRepositoryTab();
-    this.#activateTab(REPOSITORY_TAB);
+    // The repository is a persistent view behind the header's Artifacts
+    // button, not a tab: it renders once and is the panel's home view.
+    const repositoryView = document.createElement("div");
+    repositoryView.className = "inspector-tabpanel";
+    this.#repository.render(repositoryView);
+    content.append(repositoryView);
+    this.#repositoryView = repositoryView;
   }
 
   get element(): HTMLElement { return this.#element; }
@@ -141,8 +147,8 @@ export class InspectorPanel {
     this.#element.hidden = false;
     this.#resizer.hidden = false;
     this.#tabBar.hidden = false;
-    this.#ensureRepositoryTab();
-    if (!this.#tabs.some((candidate) => candidate.id === this.#activeTabId)) this.#activateTab(REPOSITORY_TAB);
+    // Without an active tab the repository is the panel's home view.
+    if (!this.#tabs.some((candidate) => candidate.id === this.#activeTabId)) this.#showRepository();
     this.#options.mount.classList.add("inspector-open");
     // The app shell keeps the sidebar column when the Inspector is docked.
     this.#options.mount.parentElement?.classList.add("context-open");
@@ -164,6 +170,28 @@ export class InspectorPanel {
   toggle(): void {
     if (this.#open) this.close();
     else this.open();
+  }
+
+  /** Opens the panel on the artifact repository view. */
+  showRepository(): void {
+    this.open();
+    this.#showRepository();
+  }
+
+  /**
+   * The header's Artifacts button: opens the panel on the repository view.
+   * Clicking it again while the repository is showing closes the panel, so it
+   * doubles as the panel's close control.
+   */
+  toggleRepository(): void {
+    if (this.#open && this.#activeTabId === undefined) { this.close(); return; }
+    this.showRepository();
+  }
+
+  /** Opens the panel with a fresh empty tab (full tab behavior deferred). */
+  newTab(): void {
+    this.open();
+    this.#addEmptyTab();
   }
 
   /**
@@ -231,8 +259,7 @@ export class InspectorPanel {
   resetPreview(): void {
     if (this.#open) return;
     this.open();
-    this.#ensureRepositoryTab();
-    this.#activateRepositoryTab();
+    this.#showRepository();
   }
 
   #tabButton(label: string, closable: boolean): { button: HTMLElement; closeButton: HTMLButtonElement | undefined } {
@@ -257,46 +284,21 @@ export class InspectorPanel {
     return { button, closeButton };
   }
 
-  /**
-   * The artifact repository base tab, created on startup and re-created after
-   * it was closed. The repository model itself lives for the panel's lifetime
-   * (its files persist to localStorage), so re-rendering restores the list.
-   */
-  #ensureRepositoryTab(): void {
-    if (this.#tabs.some((candidate) => candidate.id === REPOSITORY_TAB)) return;
-    const repositoryContent = document.createElement("div");
-    repositoryContent.className = "inspector-tabpanel";
-    const repositoryButton = this.#tabButton("Artifacts", true);
-    // The base tab stays clickable so an open artifact can always get back to
-    // the repository (mirrors the keyboard handling in #addResourceTab).
-    repositoryButton.button.addEventListener("click", () => this.#activateTab(REPOSITORY_TAB));
-    repositoryButton.button.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        this.#activateTab(REPOSITORY_TAB);
-      }
-    });
-    // Middle-click (the mouse wheel button) closes a tab, like browsers do.
-    repositoryButton.button.addEventListener("auxclick", (event) => {
-      if (event.button === 1) {
-        event.preventDefault();
-        this.#closeTab(REPOSITORY_TAB);
-      }
-    });
-    if (repositoryButton.closeButton) repositoryButton.closeButton.addEventListener("click", (event) => {
-      event.stopPropagation();
-      this.#closeTab(REPOSITORY_TAB);
-    });
-    this.#tabBar.append(repositoryButton.button);
-    this.#content.append(repositoryContent);
-    this.#repository.render(repositoryContent);
-    this.#tabs.unshift({ id: REPOSITORY_TAB, label: "Artifacts", closable: true, button: repositoryButton.button, closeButton: repositoryButton.closeButton, content: repositoryContent, inspector: undefined });
-    // If the repository was the active tab when it was closed, restyle the
-    // fresh button as active (force #activateTab past its id guard).
-    if (this.#activeTabId === REPOSITORY_TAB || this.#tabs.length === 1) {
-      this.#activeTabId = undefined;
-      this.#activateTab(REPOSITORY_TAB);
-    }
+  /** Adds a blank tab (the header's + button): no preview yet. */
+  #addEmptyTab(): void {
+    const id = `empty:${++this.#emptyCounter}`;
+    const label = this.#emptyCounter === 1 ? "New tab" : `New tab ${this.#emptyCounter}`;
+    const { button, closeButton } = this.#tabButton(label, true);
+    const content = document.createElement("div");
+    content.className = "inspector-tabpanel";
+    content.hidden = true;
+    content.append(this.empty("Nothing open yet — open a file from the conversation to preview it here."));
+    const tab: InspectorTab = { id, label, closable: true, button, closeButton, content, inspector: undefined };
+    this.#attachTabHandlers(tab);
+    this.#tabs.push(tab);
+    this.#tabBar.append(button);
+    this.#content.append(content);
+    this.#activateTab(id);
   }
 
   #addResourceTab(id: string, label: string): InspectorTab {
@@ -313,28 +315,33 @@ export class InspectorPanel {
       showToast: this.#options.showToast,
       onFileInspected: (path, name, reference) => this.#onFileInspected(tab.id, path, name, reference),
     });
-    if (closeButton) closeButton.addEventListener("click", (event) => {
-      event.stopPropagation();
-      this.#closeTab(id);
-    });
-    button.addEventListener("click", () => this.#activateTab(id));
-    // Middle-click (the mouse wheel button) closes a tab, like browsers do.
-    button.addEventListener("auxclick", (event) => {
-      if (event.button === 1) {
-        event.preventDefault();
-        this.#closeTab(id);
-      }
-    });
-    button.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        this.#activateTab(id);
-      }
-    });
+    this.#attachTabHandlers(tab);
     this.#tabs.push(tab);
     this.#tabBar.append(button);
     this.#content.append(content);
     return tab;
+  }
+
+  /** Click, keyboard, close-button, and middle-click handling for a tab. */
+  #attachTabHandlers(tab: InspectorTab): void {
+    if (tab.closeButton) tab.closeButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      this.#closeTab(tab.id);
+    });
+    tab.button.addEventListener("click", () => this.#activateTab(tab.id));
+    // Middle-click (the mouse wheel button) closes a tab, like browsers do.
+    tab.button.addEventListener("auxclick", (event) => {
+      if (event.button === 1) {
+        event.preventDefault();
+        this.#closeTab(tab.id);
+      }
+    });
+    tab.button.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        this.#activateTab(tab.id);
+      }
+    });
   }
 
   /** Registers an inspected file in the repository and merges duplicate tabs. */
@@ -364,28 +371,40 @@ export class InspectorPanel {
       candidate.button.setAttribute("aria-selected", String(active));
       candidate.content.hidden = !active;
     }
+    this.#repositoryView.hidden = true;
     this.#activeTabId = id;
     if (tab.inspector) tab.inspector.setActive(true);
   }
 
-  #activateRepositoryTab(): void { this.#activateTab(REPOSITORY_TAB); }
+  /** Switches to the repository view: no tab selected, the repo list shown. */
+  #showRepository(): void {
+    this.#tabs.find((candidate) => candidate.id === this.#activeTabId)?.inspector?.setActive(false);
+    this.#activeTabId = undefined;
+    for (const candidate of this.#tabs) {
+      candidate.button.classList.remove("active");
+      candidate.button.setAttribute("aria-selected", "false");
+      candidate.content.hidden = true;
+    }
+    this.#repositoryView.hidden = false;
+  }
 
   #closeTab(id: string): void {
     const index = this.#tabs.findIndex((tab) => tab.id === id);
     if (index < 0) return;
     const tab = this.#tabs[index];
     if (!tab || !tab.closable) return;
+    const wasActive = this.#activeTabId === id;
     this.#tabs.splice(index, 1);
     tab.button.remove();
     tab.content.remove();
     tab.inspector?.cancelPending();
-    if (id === REPOSITORY_TAB) {
-      // The repository is the base tab: closing it closes the whole panel. A
-      // dedicated reopen button arrives later; for now the header toggle and
-      // opening any resource bring it back.
+    if (!wasActive) return;
+    if (this.#tabs.length > 0) {
+      // Activate the tab that slides into the closed slot (or the new last).
+      this.#activateTab(this.#tabs[Math.min(index, this.#tabs.length - 1)]!.id);
+    } else {
+      // No tabs left: the panel closes; reopening lands on the repository.
       this.close();
-      return;
     }
-    if (this.#activeTabId === id) { this.#ensureRepositoryTab(); this.#activateTab(REPOSITORY_TAB); }
   }
 }

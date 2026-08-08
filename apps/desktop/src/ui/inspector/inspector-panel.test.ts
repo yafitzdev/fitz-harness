@@ -58,15 +58,12 @@ describe("InspectorPanel", () => {
     expect(view.element.querySelector(".inspector-header")).toBeNull();
     expect(view.element.querySelector(".inspector-tabs")).toBeNull();
     expect(view.element.querySelector(".inspector-content")).not.toBeNull();
-    // The tab bar lives in the workspace header, above the panel.
+    // The tab bar lives in the workspace header, above the panel; it starts
+    // hidden with no tabs — the repository is a view, not a tab.
     expect(host.querySelector(".workspace-header .inspector-tabs")).not.toBeNull();
-    // The artifact repository is the base tab: present from the start, active,
-    // and closable like any other (closing it closes the panel).
-    const tabs = view.tabBar.querySelectorAll<HTMLElement>(".inspector-tab");
-    expect(tabs).toHaveLength(1);
-    expect(tabs[0]?.textContent).toBe("Artifacts");
-    expect(tabs[0]?.classList.contains("active")).toBe(true);
-    expect(tabs[0]?.querySelector(".inspector-tab-close")).not.toBeNull();
+    expect(view.tabBar.hidden).toBe(true);
+    expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(0);
+    // The repository view renders once into the panel content.
     expect(view.element.querySelector(".inspector-empty")?.textContent).toContain("land here automatically");
     expect(host.querySelectorAll(".inspector-panel, .inspector-resizer")).toHaveLength(2);
   });
@@ -96,21 +93,43 @@ describe("InspectorPanel", () => {
     expect(onLayoutChange).toHaveBeenCalledTimes(2);
   });
 
-  it("toggles open state and closes from the Artifacts tab close button", () => {
+  it("toggles open state and closes from the repository button", () => {
     const host = mount();
     const view = panel(host);
 
     view.toggle();
     expect(view.isOpen).toBe(true);
+    expect(view.tabBar.hidden).toBe(false);
     view.toggle();
     expect(view.isOpen).toBe(false);
 
-    view.open();
-    const close = view.tabBar.querySelector<HTMLButtonElement>(".inspector-tab-close")!;
-    close.click();
+    // The repository is the home view: opening lands there, and the Artifacts
+    // button closes the panel when the repository is already showing.
+    view.toggleRepository();
+    expect(view.isOpen).toBe(true);
+    expect(view.tabBar.querySelector(".inspector-tab.active")).toBeNull();
+    view.toggleRepository();
     expect(view.isOpen).toBe(false);
     expect(view.element.hidden).toBe(true);
     expect(view.tabBar.hidden).toBe(true);
+  });
+
+  it("opens a new empty tab from the + button", () => {
+    const host = mount();
+    const view = panel(host);
+
+    view.newTab();
+    expect(view.isOpen).toBe(true);
+    expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(1);
+    const active = view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")!;
+    expect(active.textContent).toBe("New tab");
+    expect(active.querySelector(".inspector-tab-close")).not.toBeNull();
+    const tabPanel = view.element.querySelector<HTMLElement>(".inspector-tabpanel:not([hidden])")!;
+    expect(tabPanel.querySelector(".inspector-empty")?.textContent).toContain("Nothing open yet");
+
+    view.newTab();
+    expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(2);
+    expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toBe("New tab 2");
   });
 
   it("restores the persisted width and resizes from the divider keyboard", () => {
@@ -141,14 +160,16 @@ describe("InspectorPanel", () => {
     await view.inspect("notes.txt");
     expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toContain("notes.txt");
 
-    // resetPreview only acts while the panel is closed, and lands on the base tab.
+    // resetPreview only acts while the panel is closed, and lands on the
+    // repository view (no tab selected).
     view.open();
     view.resetPreview();
     expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toContain("notes.txt");
 
     view.close();
     view.resetPreview();
-    expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toBe("Artifacts");
+    expect(view.isOpen).toBe(true);
+    expect(view.tabBar.querySelector(".inspector-tab.active")).toBeNull();
     vi.unstubAllGlobals();
   });
 
@@ -160,7 +181,7 @@ describe("InspectorPanel", () => {
     view.previewImage(dataUrl, "image/png", "Pasted image");
 
     expect(view.isOpen).toBe(true);
-    expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(2);
+    expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(1);
     expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toContain("Pasted image");
     const img = view.element.querySelector<HTMLImageElement>(".inspector-media")!;
     expect(img).not.toBeNull();
@@ -179,7 +200,7 @@ describe("InspectorPanel", () => {
     view.previewPdf(dataUrl, "application/pdf", "manual.pdf");
 
     expect(view.isOpen).toBe(true);
-    expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(2);
+    expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(1);
     const frame = view.element.querySelector<HTMLIFrameElement>(".inspector-frame")!;
     expect(frame).not.toBeNull();
     expect(createObjectURL).toHaveBeenCalledTimes(1);
@@ -193,12 +214,13 @@ describe("InspectorPanel", () => {
     // Closing the panel keeps the tab alive, so its preview survives a reopen.
     view.close();
     expect(revokeObjectURL).not.toHaveBeenCalled();
-    // Closing the tab itself releases the preview's blob URL.
-    const close = view.tabBar.querySelectorAll<HTMLButtonElement>(".inspector-tab-close")[1]!;
+    // Closing the tab itself releases the preview's blob URL; with no tabs
+    // left the panel closes too.
+    const close = view.tabBar.querySelector<HTMLButtonElement>(".inspector-tab-close")!;
     close.click();
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:test-pdf");
-    expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(1);
-    expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toBe("Artifacts");
+    expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(0);
+    expect(view.isOpen).toBe(false);
   });
 
   it("renders an inspected image file inline in the Inspector", async () => {
@@ -246,7 +268,7 @@ describe("InspectorPanel", () => {
     vi.unstubAllGlobals();
   });
 
-  it("grows the artifact repository with inspected files and reopens them from the base tab", async () => {
+  it("grows the artifact repository with inspected files and reopens them from the repository view", async () => {
     const host = mount();
     const view = new InspectorPanel(options(host, {
       getProjectRoot: () => "/project",
@@ -285,34 +307,34 @@ describe("InspectorPanel", () => {
     await vi.waitFor(() => expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toContain("build.log"));
     expect(request).toHaveBeenCalledWith({ path: "/api/v1/artifacts/42/content", responseType: "base64" });
 
-    // Stale uploads from a previous session leave the repository and their tabs close.
+    // Stale uploads from a previous session leave the repository; closing the
+    // only tab closes the panel.
     view.setSessionArtifacts([]);
-    expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(1);
+    expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(0);
+    expect(view.isOpen).toBe(false);
     vi.unstubAllGlobals();
   });
 
-  it("closes every tab, and closing the Artifacts tab closes the panel", () => {
+  it("closes every tab, and closing the last tab closes the panel", () => {
     const host = mount();
     const view = panel(host);
     view.previewImage("data:image/png;base64,AAAA", "image/png", "shot.png");
+    view.previewImage("data:image/png;base64,BBBB", "image/png", "two.png");
 
     const tabs = view.tabBar.querySelectorAll<HTMLElement>(".inspector-tab");
     expect(tabs).toHaveLength(2);
-    const base = tabs[0]!;
-    expect(base.textContent).toBe("Artifacts");
-    expect(base.querySelector(".inspector-tab-close")).not.toBeNull();
+    expect(tabs[0]?.querySelector(".inspector-tab-close")).not.toBeNull();
     expect(view.tabBar.querySelectorAll(".inspector-tab-close")).toHaveLength(2);
 
-    // Closing an artifact tab returns to the repository.
-    const close = view.tabBar.querySelectorAll<HTMLButtonElement>(".inspector-tab-close")[1]!;
+    // Closing a background tab keeps the active one.
+    const close = view.tabBar.querySelectorAll<HTMLButtonElement>(".inspector-tab-close")[0]!;
     close.click();
     expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(1);
-    expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toBe("Artifacts");
+    expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toContain("two.png");
 
-    // Closing the repository tab closes the whole panel.
-    view.open();
-    const baseClose = view.tabBar.querySelector<HTMLButtonElement>(".inspector-tab-close")!;
-    baseClose.click();
+    // Closing the last tab closes the whole panel.
+    const lastClose = view.tabBar.querySelector<HTMLButtonElement>(".inspector-tab-close")!;
+    lastClose.click();
     expect(view.isOpen).toBe(false);
     expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(0);
     expect(view.tabBar.hidden).toBe(true);
@@ -349,7 +371,7 @@ describe("InspectorPanel", () => {
     await view.inspect("two.txt");
 
     const tabs = view.tabBar.querySelectorAll<HTMLElement>(".inspector-tab");
-    tabs[1]!.click();
+    tabs[0]!.click();
     expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toContain("one.txt");
     vi.unstubAllGlobals();
   });
@@ -388,8 +410,8 @@ describe("InspectorPanel", () => {
     const rows = view.element.querySelectorAll<HTMLButtonElement>(".inspector-repository-item");
     expect(rows).toHaveLength(1);
     expect(rows[0]?.textContent).toContain("app.ts");
-    // Registration happens silently: the base tab stays active.
-    expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toBe("Artifacts");
+    // Registration happens silently: no tab opens and none is selected.
+    expect(view.tabBar.querySelector(".inspector-tab.active")).toBeNull();
   });
 
   it("supersedes a chat reference with the resolved path once the file is inspected", async () => {
@@ -420,20 +442,18 @@ describe("InspectorPanel", () => {
     view.previewImage("data:image/png;base64,BBBB", "image/png", "two.png");
 
     const tabs = view.tabBar.querySelectorAll<HTMLElement>(".inspector-tab");
-    expect(tabs).toHaveLength(3);
-    // Middle-clicking a background tab closes it without stealing focus.
+    expect(tabs).toHaveLength(2);
+    // Middle-clicking the active tab closes it; the other tab takes over.
     tabs[1]!.dispatchEvent(new MouseEvent("auxclick", { button: 1, bubbles: true, cancelable: true }));
-    expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(2);
-    expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toContain("two.png");
+    expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(1);
+    expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toContain("shot.png");
 
-    // Middle-clicking the Artifacts base tab closes the whole panel; other
-    // file tabs survive and return when the panel reopens.
-    const base = view.tabBar.querySelector<HTMLElement>(".inspector-tab")!;
-    base.dispatchEvent(new MouseEvent("auxclick", { button: 1, bubbles: true, cancelable: true }));
+    // Middle-clicking the last tab closes the whole panel.
+    const last = view.tabBar.querySelector<HTMLElement>(".inspector-tab")!;
+    last.dispatchEvent(new MouseEvent("auxclick", { button: 1, bubbles: true, cancelable: true }));
+    expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(0);
     expect(view.isOpen).toBe(false);
     expect(view.tabBar.hidden).toBe(true);
-    expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(1);
-    expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab")?.textContent).toBe("two.png");
   });
 
   it("suppresses browser autoscroll for middle-clicks on the tab bar", () => {
@@ -451,7 +471,7 @@ describe("InspectorPanel", () => {
     expect(left.defaultPrevented).toBe(false);
   });
 
-  it("returns to the Artifacts base tab when its tab is clicked", async () => {
+  it("switches between file tabs and the repository view from the header button", async () => {
     const host = mount();
     const view = new InspectorPanel(options(host, {
       getProjectRoot: () => "/project",
@@ -463,14 +483,15 @@ describe("InspectorPanel", () => {
     await view.inspect("one.txt");
     expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toContain("one.txt");
 
+    // The repository button switches to the repository view (no tab selected).
+    view.toggleRepository();
+    expect(view.isOpen).toBe(true);
+    expect(view.tabBar.querySelector(".inspector-tab.active")).toBeNull();
+    expect(view.element.querySelector(".inspector-tabpanel:not([hidden])")).not.toBeNull();
+
+    // Clicking the file tab again restores its preview.
     const tabs = view.tabBar.querySelectorAll<HTMLElement>(".inspector-tab");
-    expect(tabs[0]?.textContent).toBe("Artifacts");
     tabs[0]!.click();
-
-    expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toBe("Artifacts");
-
-    // Switching back to the resource tab keeps its preview alive.
-    tabs[1]!.click();
     expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toContain("one.txt");
     vi.unstubAllGlobals();
   });

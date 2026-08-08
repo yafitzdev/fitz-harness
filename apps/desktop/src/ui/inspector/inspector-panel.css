@@ -18,12 +18,15 @@
 .inspector-tabpanel { height: 100%; min-height: 0; overflow: auto; }
 .inspector-tabpanel[hidden] { display: none; }
 
-/* The tab bar lives in the workspace header, above the panel: flush right
-   (over the panel), full header height, no border/background of its own. */
-.workspace-header .inspector-tabs { height: 100%; align-items: flex-end; max-width: var(--inspector-width); padding: 0 8px; border-bottom: 0; background: transparent; }
+/* The tab bar lives in the workspace header, above the panel: bubble tabs
+   start at the inspector panel's left edge and grow rightward, while the
+   title and header actions stay in normal flex flow. */
+.workspace-header .inspector-tabs { position: absolute; top: 0; bottom: 0; left: calc(100% - var(--inspector-width)); align-items: center; max-width: var(--inspector-width); min-width: 0; gap: 0; padding: 0 0 0 6px; overflow: visible; border-bottom: 0; background: transparent; }
 .workspace-header .inspector-tabs[hidden] { display: none; }
-.workspace-header .inspector-tab { max-width: 180px; }
-.workspace-header .inspector-tab.active { background: var(--codex-gray-800); }
+.workspace-header .inspector-tab { position: relative; height: 24px; max-width: 180px; padding: 0 8px 0 12px; border-radius: 999px; border: 0; background: rgba(255,255,255,.06); color: var(--codex-text-tertiary); }
+.workspace-header .inspector-tab + .inspector-tab { margin-left: 6px; }
+.workspace-header .inspector-tab:hover { background: rgba(255,255,255,.12); color: var(--codex-text-secondary); }
+.workspace-header .inspector-tab.active { background: var(--codex-gray-700); color: #f2f3ef; }
 
 /* The artifact repository list (the base tab). */
 .inspector-repository { display: grid; gap: 4px; padding: 10px; }
