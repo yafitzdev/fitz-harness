@@ -177,6 +177,17 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .markdown-table th:last-child,
 .markdown-table td:last-child { border-right: 0; }
 .message.system { padding: 10px 12px; border-left: 2px solid var(--danger); background: var(--danger-tint); color: var(--danger-soft); }
+.media-job-notice { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 52px; padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: var(--radius-lg); background: var(--tint-2); color: var(--muted); }
+.media-job-notice.failed, .media-job-notice.interrupted { border-color: var(--danger); background: var(--danger-tint); }
+.media-job-icon { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: var(--tint-5); color: var(--subtle); }
+.media-job-icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.media-job-notice.queued .media-job-icon svg, .media-job-notice.started .media-job-icon svg, .media-job-notice.progressing .media-job-icon svg { animation: spin 900ms linear infinite; stroke-dasharray: 30 14; }
+.media-job-copy { min-width: 0; display: grid; gap: 2px; }
+.media-job-copy strong, .media-job-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.media-job-copy strong { color: var(--text); font-size: 13px; font-weight: 550; }
+.media-job-copy small { color: var(--subtle); font-size: 11px; }
+.media-job-open { min-height: 28px; padding: 4px 10px; border: 1px solid var(--border); border-radius: var(--radius-md); color: var(--text); cursor: pointer; }
+.media-job-open:hover { background: var(--tint-5); }
 .message-meta { margin-bottom: 5px; color: var(--subtle); font-size: 11px; text-transform: capitalize; }
 
 .visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0,0,0,0) !important; white-space: nowrap !important; border: 0 !important; }

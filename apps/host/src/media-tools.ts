@@ -45,7 +45,7 @@ const generateImageParameters = Type.Object({
 const generateVideoParameters = Type.Object({
   prompt: Type.String({ description: "The video to generate, described as motion over time" }),
   duration_seconds: Type.Optional(Type.Number({ description: "Target duration in seconds, if the route supports it" })),
-  resolution: Type.Optional(Type.String({ description: 'Output resolution, e.g. "1280x720", "1920x1080"' })),
+  resolution: Type.Optional(Type.String({ description: "Output resolution. Omit it to use the selected route's native default; requests above that route's declared maximum are reduced to its maximum." })),
   fps: Type.Optional(Type.Number({ description: "Frames per second, if the route supports it" })),
   refs: Type.Optional(Type.Array(Type.String({ description: "Reference image URLs or Fitz artifact ids for image-to-video" }))),
   route_id: Type.Optional(Type.String({ description: "A specific granted media route id; defaults to the well-known video route" })),
@@ -99,6 +99,7 @@ export function createMediaTools(options: MediaToolsOptions): (context: { cwd: s
       promptSnippet: "Generate a video",
       promptGuidelines: [
         "Describe motion over time (camera, subject movement, scene changes) rather than a static scene.",
+        "Prefer the route's default resolution. Only request resolution when the user explicitly asks for one.",
         "The job is queued asynchronously; do not claim the video exists until the artifact appears in the session.",
       ],
       parameters: generateVideoParameters,

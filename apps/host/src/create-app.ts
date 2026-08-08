@@ -518,11 +518,12 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   });
   app.get("/api/v1/media/jobs", async (request) => {
     const principal = principals.get(request);
-    const query = request.query as { status?: string; limit?: string };
+    const query = request.query as { sessionId?: string; status?: string; limit?: string };
     const status = parseMediaStatus(query.status);
     return {
       data: mediaJobs.list({
         ...(principal === undefined || principal.user.role === "administrator" ? {} : { ownerUserId: principal.user.id }),
+        ...(typeof query.sessionId === "string" && query.sessionId ? { sessionId: query.sessionId } : {}),
         ...(status ? { status } : {}),
         limit: Math.min(toNonNegativeInteger(query.limit, 100), 1000),
       }),
@@ -543,6 +544,28 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     if (!mediaJobs.cancel(jobId)) return reply.code(409).send({ error: "Media job is no longer active" });
     security?.audit("media-job.cancelled", principals.get(request)?.user.id, "media-job", jobId);
     return reply.code(202).send({ data: { id: jobId, cancellationRequested: true } });
+  });
+  app.post("/api/v1/media/jobs/:jobId/retry", async (request, reply) => {
+    const jobId = (request.params as { jobId: string }).jobId;
+    const original = mediaJobs.get(jobId);
+    if (!original) return reply.code(404).send({ error: "Media job not found" });
+    const principal = principals.get(request);
+    if (!canAccessMediaJob(principal, original)) return reply.code(403).send({ error: "Media job access denied" });
+    if (!isTerminalMediaStatus(original.status)) return reply.code(409).send({ error: "Only terminal media jobs can be retried" });
+    try {
+      const retried = mediaJobs.submit({
+        routeId: original.routeId,
+        modality: original.modality,
+        params: original.params,
+        ...(original.sessionId ? { sessionId: original.sessionId } : {}),
+        ...(!principal && original.createdByUserId ? { userId: original.createdByUserId } : {}),
+      }, principal);
+      security?.audit("media-job.retried", principal?.user.id, "media-job", retried.id, { originalJobId: original.id, routeId: original.routeId, modality: original.modality });
+      return reply.code(202).send({ data: retried });
+    } catch (error) {
+      const statusCode = error instanceof RouteNotFoundError ? 404 : error instanceof SecurityPolicyError ? 429 : 400;
+      return reply.code(statusCode).send({ error: errorMessage(error) });
+    }
   });
   app.get("/api/v1/media/jobs/:jobId/events", async (request, reply) => {
     const jobId = (request.params as { jobId: string }).jobId;

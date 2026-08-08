@@ -460,10 +460,11 @@ export class SqliteStore {
     this.#database.prepare(`UPDATE media_jobs SET ${assignments.join(", ")} WHERE id = ?`).run(...values, id);
   }
 
-  listMediaJobs(options: { ownerUserId?: string; status?: MediaJobStatus; limit?: number } = {}): MediaJobRecord[] {
+  listMediaJobs(options: { ownerUserId?: string; sessionId?: string; status?: MediaJobStatus; limit?: number } = {}): MediaJobRecord[] {
     const conditions: string[] = [];
     const values: SQLInputValue[] = [];
     if (options.ownerUserId !== undefined) { conditions.push("created_by_user_id = ?"); values.push(options.ownerUserId); }
+    if (options.sessionId !== undefined) { conditions.push("session_id = ?"); values.push(options.sessionId); }
     if (options.status !== undefined) { conditions.push("status = ?"); values.push(options.status); }
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     const limit = options.limit ?? 100;

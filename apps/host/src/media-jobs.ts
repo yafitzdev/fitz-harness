@@ -88,9 +88,10 @@ export class MediaJobCoordinator {
       });
     }
 
+    const params = constrainMediaParams(input.params, recipe);
     const scheduled = this.#scheduler.enqueueMedia(route.id, {
       modality: input.modality,
-      params: input.params,
+      params,
       ...(principal ? { userId: principal.user.id } : input.userId ? { userId: input.userId } : {}),
     });
     const id = scheduled.jobId;
@@ -100,7 +101,7 @@ export class MediaJobCoordinator {
       routeId: route.id,
       modality: input.modality,
       status: "queued",
-      params: input.params,
+      params,
       enqueuedAt: now,
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
       ...(principal ? { createdByUserId: principal.user.id } : input.userId ? { createdByUserId: input.userId } : {}),
@@ -118,7 +119,7 @@ export class MediaJobCoordinator {
     return this.#store.getMediaJob(id);
   }
 
-  list(options: { ownerUserId?: string; status?: MediaJobStatus; limit?: number } = {}): MediaJobRecord[] {
+  list(options: { ownerUserId?: string; sessionId?: string; status?: MediaJobStatus; limit?: number } = {}): MediaJobRecord[] {
     return this.#store.listMediaJobs(options);
   }
 
@@ -282,6 +283,35 @@ export class MediaJobCoordinator {
     const envelope = this.#store.appendMediaJobEvent(id, event, new Date().toISOString());
     for (const listener of this.#listeners.get(id) ?? []) listener(envelope);
   }
+}
+
+/** Honor a recipe's advertised generation ceiling at the queue boundary. Agent
+ * tools are intentionally provider-agnostic and may request a generic 1080p
+ * render; the selected local recipe remains the source of truth. */
+function constrainMediaParams(params: MediaGenerationParams, recipe: Recipe): MediaGenerationParams {
+  const limits = recipe.capabilities.modalities?.limits;
+  if (!limits) return params;
+  const next: MediaGenerationParams = { ...params };
+  if (typeof limits.maxDurationSeconds === "number" && typeof next.durationSeconds === "number") {
+    next.durationSeconds = Math.min(next.durationSeconds, limits.maxDurationSeconds);
+  }
+  const requested = parseResolution(next.size);
+  const maximumResolution = limits.maxResolution;
+  const maximum = parseResolution(maximumResolution);
+  if (requested && maximum && (requested.width > maximum.width || requested.height > maximum.height)) {
+    next.size = maximumResolution!;
+  }
+  if (typeof limits.maxRefs === "number" && next.refs && next.refs.length > limits.maxRefs) {
+    next.refs = next.refs.slice(0, limits.maxRefs);
+  }
+  return next;
+}
+
+function parseResolution(value: string | undefined): { width: number; height: number } | undefined {
+  if (!value) return undefined;
+  const match = /^(\d+)[xX](\d+)$/.exec(value.trim());
+  if (!match) return undefined;
+  return { width: Number(match[1]), height: Number(match[2]) };
 }
 
 /** The submit-time credit cost for a recipe's job, from `configuration.costCentsPerJob`

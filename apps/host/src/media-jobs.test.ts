@@ -144,6 +144,52 @@ describe("Fitz host media jobs", () => {
     }
   });
 
+  it("constrains generic video requests to the selected recipe's declared limits", async () => {
+    const mediaFake = new FakeMediaEngineAdapter();
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), mediaFake] });
+    try {
+      const recipe = mediaRecipe("h3-video", ["video"]);
+      recipe.capabilities.modalities!.limits = { maxDurationSeconds: 15, maxResolution: "1344x768", maxRefs: 1 };
+      const registered = await runtime.app.inject({ method: "PUT", url: "/api/v1/management/recipes/h3-video", payload: recipe });
+      expect(registered.statusCode, registered.body).toBe(200);
+      await assignRoute(runtime, "video", "h3-video");
+
+      const submitted = await runtime.app.inject({
+        method: "POST",
+        url: "/api/v1/media/jobs",
+        payload: { routeId: "video", modality: "video", params: { prompt: "robot", size: "1920x1080", durationSeconds: 30 } },
+      });
+      expect(submitted.statusCode, submitted.body).toBe(202);
+      expect(submitted.json().data.params).toEqual(expect.objectContaining({ size: "1344x768", durationSeconds: 15 }));
+      await waitFor(() => mediaFake.submitted.length === 1);
+      expect(mediaFake.submitted[0]?.params).toEqual(expect.objectContaining({ size: "1344x768", durationSeconds: 15 }));
+    } finally {
+      await runtime.app.close();
+    }
+  });
+
+  it("retries a terminal job in the same session through current recipe limits", async () => {
+    const mediaFake = new FakeMediaEngineAdapter({ failWhenPromptIncludes: "first attempt" });
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), mediaFake] });
+    try {
+      const recipe = mediaRecipe("h3-video", ["video"]);
+      recipe.capabilities.modalities!.limits = { maxResolution: "1344x768" };
+      const registered = await runtime.app.inject({ method: "PUT", url: "/api/v1/management/recipes/h3-video", payload: recipe });
+      expect(registered.statusCode, registered.body).toBe(200);
+      await assignRoute(runtime, "video", "h3-video");
+
+      const original = await runtime.app.inject({ method: "POST", url: "/api/v1/media/jobs", payload: { routeId: "video", modality: "video", params: { prompt: "first attempt", size: "1920x1080" } } });
+      const failed = await waitForJobStatus(runtime, original.json().data.id, "failed");
+      const retry = await runtime.app.inject({ method: "POST", url: `/api/v1/media/jobs/${failed.id}/retry` });
+
+      expect(retry.statusCode, retry.body).toBe(202);
+      expect(retry.json().data.id).not.toBe(failed.id);
+      expect(retry.json().data.params).toEqual(expect.objectContaining({ prompt: "first attempt", size: "1344x768" }));
+    } finally {
+      await runtime.app.close();
+    }
+  });
+
   it("rejects assigning a chat recipe to a media route", async () => {
     const runtime = createHost({ adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter()] });
     try {

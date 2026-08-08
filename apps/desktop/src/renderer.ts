@@ -3,6 +3,7 @@ import { estimateTokens, estimateTranscriptContext } from "./context-estimate.js
 import { MessageActions, type ActionableMessageRole } from "./ui/chat/message-actions.js";
 import { ActivityTimeline } from "./ui/chat/activity-timeline.js";
 import { AgentRunController } from "./ui/chat/agent-run-controller.js";
+import { MediaJobTracker, type MediaJobSummary } from "./ui/chat/media-job-tracker.js";
 import { Composer } from "./ui/chat/composer.js";
 import { projectRelativePath } from "./ui/chat/tool-activity.js";
 import { ConnectionWorkspaceController, FIXED_ROUTES, type FixedRouteId } from "./ui/connections/connection-workspace.js";
@@ -37,6 +38,7 @@ let newChatProjectDetached = false;
 // the artifact repository re-scopes to the session, so a chat never inherits
 // another chat's files or previews.
 let inspectorChatId: string | undefined;
+const mediaJobRows = new Map<string, HTMLElement>();
 let navigationIndex = -1;
 let replayingNavigation = false;
 const navigationHistory: AppLocation[] = [];
@@ -225,6 +227,8 @@ const projects = new ProjectsController({
   refreshComposerState,
   rememberLocation: (location) => rememberLocation(location),
   onSessionSelected: async (sessionId) => {
+    mediaJobs.reset();
+    mediaJobRows.clear();
     if (sessionId !== inspectorChatId) { inspectorPanel.reset(); inspectorPanel.setChat(sessionId); inspectorChatId = sessionId; }
     composer.controls.resetContextStatus();
     const selectedSession = projects.currentSessionRecord();
@@ -269,7 +273,8 @@ const projects = new ProjectsController({
       updateContextMeter();
       if (!messages.childElementCount) showLanding(true);
       messages.scrollTop = messages.scrollHeight;
-      await loadArtifacts();
+      const sessionArtifacts = await loadArtifacts();
+      await loadMediaJobs(sessionId, sessionArtifacts);
     } catch (error) {
       messages.replaceChildren();
       appendMessage("system", errorMessage(error));
@@ -279,6 +284,8 @@ const projects = new ProjectsController({
     rememberLocation({ view: "conversation", ...(projects.currentProjectId ? { projectId: projects.currentProjectId } : {}), sessionId });
   },
   onNoSession: async () => {
+    mediaJobs.reset();
+    mediaJobRows.clear();
     inspectorPanel.reset();
     inspectorPanel.setChat(undefined);
     inspectorChatId = undefined;
@@ -298,6 +305,16 @@ const activityTimeline = new ActivityTimeline({
   },
   showToast,
 });
+const mediaJobs = new MediaJobTracker({
+  api,
+  onTerminal: async (job, failure) => {
+    if (job.sessionId && job.sessionId !== projects.currentSessionId) return;
+    const artifactsForSession = job.status === "completed" ? await loadArtifacts() : [];
+    const artifact = job.artifactId ? artifactsForSession.find((item) => item.id === job.artifactId) : undefined;
+    renderMediaJob(job, failure, artifact);
+    if (artifact) await inspectorPanel.previewArtifact(artifact);
+  },
+});
 const agentRuns = new AgentRunController({
   messages,
   activity: activityTimeline,
@@ -316,6 +333,11 @@ const agentRuns = new AgentRunController({
   showToast,
   errorMessage,
   terminalReplayError: (error) => error instanceof HttpError,
+  onMediaJobSubmitted: (jobId, toolName) => {
+    const modality = toolName === "generate_image" ? "image" : toolName === "generate_audio" ? "audio" : "video";
+    renderMediaJob({ id: jobId, modality, status: "queued" });
+    mediaJobs.watch(jobId);
+  },
 });
 const playbookWorkspace = new PlaybookWorkspaceController({
   page: playbookPage,
@@ -902,19 +924,101 @@ async function steerPrompt(content: string): Promise<void> {
   }
 }
 
-async function loadArtifacts(): Promise<void> {
+async function loadArtifacts(): Promise<Json[]> {
   artifacts.replaceChildren();
   composer.clearArtifactChips();
-  if (!projects.currentSessionId) { inspectorPanel.setSessionArtifacts([]); artifacts.append(panelEmpty("Artifacts appear with a task")); return; }
+  if (!projects.currentSessionId) { inspectorPanel.setSessionArtifacts([]); artifacts.append(panelEmpty("Artifacts appear with a task")); return []; }
   const response = await api(`/api/v1/sessions/${projects.currentSessionId}/artifacts`);
-  inspectorPanel.setSessionArtifacts(response.data ?? []);
-  if (!(response.data ?? []).length) artifacts.append(panelEmpty("No artifacts yet"));
-  for (const artifact of response.data ?? []) {
+  const sessionArtifacts = response.data ?? [];
+  inspectorPanel.setSessionArtifacts(sessionArtifacts);
+  if (!sessionArtifacts.length) artifacts.append(panelEmpty("No artifacts yet"));
+  for (const artifact of sessionArtifacts) {
     const value = document.createElement("button"); value.type = "button"; value.className = "artifact-item";
     const name = document.createElement("span"); name.textContent = artifact.name;
     const size = document.createElement("small"); size.textContent = formatBytes(artifact.byteSize);
     value.append(name, size); value.addEventListener("click", () => void inspectorPanel.previewArtifact(artifact, value, artifacts)); artifacts.append(value);
     composer.addArtifactChip(artifact.name, formatBytes(artifact.byteSize), () => void inspectorPanel.previewArtifact(artifact, value, artifacts), () => void removeArtifact(artifact));
+  }
+  return sessionArtifacts;
+}
+
+async function loadMediaJobs(sessionId: string, sessionArtifacts: Json[]): Promise<void> {
+  const response = await api(`/api/v1/media/jobs?sessionId=${encodeURIComponent(sessionId)}&limit=100`);
+  const jobs = Array.isArray(response.data) ? [...response.data].reverse() as MediaJobSummary[] : [];
+  for (const job of jobs) {
+    const artifact = job.artifactId ? sessionArtifacts.find((item) => item.id === job.artifactId) : undefined;
+    if (["queued", "started", "progressing"].includes(job.status)) {
+      renderMediaJob(job, undefined, artifact);
+      mediaJobs.watch(job.id);
+      continue;
+    }
+    const failure = job.status === "completed"
+      ? undefined
+      : await mediaJobs.failureMessage(job.id, job.errorCode ?? `Media generation ${job.status}`);
+    renderMediaJob(job, failure, artifact);
+  }
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function renderMediaJob(job: MediaJobSummary, failure?: string, artifact?: Json): void {
+  if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
+  let row = mediaJobRows.get(job.id);
+  if (!row) {
+    row = document.createElement("article");
+    row.className = "message media-job-notice";
+    row.dataset.mediaJobId = job.id;
+    mediaJobRows.set(job.id, row);
+    messages.append(row);
+  }
+  row.className = `message media-job-notice ${job.status}`;
+  row.replaceChildren();
+  const icon = document.createElement("span");
+  icon.className = "media-job-icon";
+  icon.append(svg(job.status === "completed"
+    ? '<path d="m4 10 4 4 8-9"></path>'
+    : job.status === "failed" || job.status === "interrupted"
+      ? '<path d="m5 5 10 10M15 5 5 15"></path>'
+      : '<circle cx="10" cy="10" r="7"></circle>'));
+  const copy = document.createElement("span");
+  copy.className = "media-job-copy";
+  const title = document.createElement("strong");
+  const label = `${job.modality[0]!.toUpperCase()}${job.modality.slice(1)}`;
+  title.textContent = job.status === "completed" ? `${label} ready`
+    : job.status === "failed" || job.status === "interrupted" ? `${label} generation failed`
+      : job.status === "cancelled" ? `${label} generation cancelled`
+        : `${label} generation in progress`;
+  const detail = document.createElement("small");
+  detail.textContent = failure ?? (artifact?.name ? artifact.name : job.status === "completed" ? "Generated artifact" : "Fitz is following this job in the background.");
+  copy.append(title, detail);
+  row.append(icon, copy);
+  if (artifact) {
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "media-job-open";
+    open.textContent = "Open";
+    open.addEventListener("click", () => void inspectorPanel.previewArtifact(artifact));
+    row.append(open);
+  } else if (["failed", "cancelled", "interrupted"].includes(job.status)) {
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "media-job-open";
+    retry.textContent = "Retry";
+    retry.addEventListener("click", () => void retryMediaJob(job, retry));
+    row.append(retry);
+  }
+  messages.scrollTop = messages.scrollHeight;
+}
+
+async function retryMediaJob(job: MediaJobSummary, button: HTMLButtonElement): Promise<void> {
+  button.disabled = true;
+  try {
+    const response = await api(`/api/v1/media/jobs/${encodeURIComponent(job.id)}/retry`, "POST");
+    const retried = response.data as MediaJobSummary;
+    renderMediaJob(retried);
+    mediaJobs.watch(retried.id);
+  } catch (error) {
+    button.disabled = false;
+    showToast(errorMessage(error));
   }
 }
 

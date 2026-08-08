@@ -152,6 +152,8 @@ describe("SqliteStore", () => {
     store.updateMediaJob("job-1", { status: "started", startedAt: now, providerJobId: "provider-1", progress: 0.25 });
     expect(store.getMediaJob("job-1")).toEqual(expect.objectContaining({ status: "started", startedAt: now, providerJobId: "provider-1", progress: 0.25, sessionId: "session-1" }));
     expect(store.listMediaJobs({ ownerUserId: "user-1" })).toHaveLength(1);
+    expect(store.listMediaJobs({ sessionId: "session-1" })).toHaveLength(1);
+    expect(store.listMediaJobs({ sessionId: "another-session" })).toHaveLength(0);
     expect(store.listMediaJobs({ status: "queued" })).toHaveLength(0);
     expect(store.countNonTerminalMediaJobs("user-1", now)).toBe(1);
     expect(store.recoverInterruptedMediaJobs()).toBe(1);

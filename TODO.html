@@ -91,12 +91,15 @@
             "pass", "The production host registers ComfyUI alongside every chat engine mode, reconciles H3 additively on existing databases, and exposes generate_video in authenticated and explicit local auth-disabled chats.",
             "pass", "Four official Comfy-Org H3 files (39.6 GiB), an isolated CUDA 13 PyTorch runtime, and the upstream ComfyUI checkout are installed under C:\\Users\\yanfi\\.llm.",
             "pass", "A real RTX 5090 run returned a valid 768×432 H.264/AAC MP4 in 34 seconds; the repeatable smoke command is pnpm smoke:h3.",
-            "pass", "The VRAM governor correctly refused a second full-host generation while an unrelated 122B benchmark occupied roughly 24 GiB, rather than overcommitting the GPU."
+            "pass", "The VRAM governor correctly refused a second full-host generation while an unrelated 122B benchmark occupied roughly 24 GiB, rather than overcommitting the GPU.",
+            "pass", "Asynchronous media jobs are now followed by a dedicated desktop lifecycle tracker. Queued, completed, failed, cancelled, and interrupted jobs remain visible after reopening a chat; completed artifacts open in the Inspector and durable provider errors replace misleading queued-only output. Terminal failures expose a Retry action that resubmits the original prompt into the same session.",
+            "pass", "Media requests are constrained at the durable queue boundary to the selected recipe's advertised duration, reference, and resolution limits. A generic 1920×1080 request therefore uses H3's supported 1344×768 ceiling instead of silently exceeding the recipe contract."
           ],
           scope: "Generate media through one durable host pipeline and inspect the resulting Fitz-owned artifact without leaking provider URLs.",
           tests: [
             "Restart Fitz, open Playbooks or Connections, and confirm MiniMax H3 appears under the local ComfyUI host with the Video route assigned unless another valid video provider was already selected.",
             "Ask Pi to generate a short video and approve the media tool; confirm a queued media job appears and the finished MP4 opens from the chat artifact list.",
+            "Reopen a chat whose media job failed and confirm the exact durable failure appears in the conversation.",
             "Run pnpm smoke:h3 with the GPU free and confirm an H.264/AAC MP4 is written to the Fitz cache.",
             "Run the recipe Test control while another model owns too much VRAM and confirm the governor reports a readable refusal.",
             "Play or seek a large audio/video artifact and confirm ranged delivery works.",

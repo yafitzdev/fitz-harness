@@ -1,5 +1,7 @@
 import { reconnectDelay } from "@fitz/connectivity/reconnect";
 
+import { mediaJobIdFromToolResult } from "./media-job-tracker.js";
+
 type Json = Record<string, any>;
 
 export interface AgentRunActivity {
@@ -45,6 +47,8 @@ export interface AgentRunControllerOptions {
   showToast: (message: string) => void;
   errorMessage: (error: unknown) => string;
   terminalReplayError: (error: unknown) => boolean;
+  /** Start following an asynchronous image/audio/video job submitted by an agent tool. */
+  onMediaJobSubmitted?: (jobId: string, toolName: string) => void;
 }
 
 /** Owns agent-run submission, event replay, reconnect, cancellation, and model warmup state. */
@@ -237,6 +241,8 @@ export class AgentRunController {
           const existing = tools.get(toolCallId);
           if (existing) this.#options.activity.completeTool(existing.row, existing.toolName, existing.input, event.data?.result, Boolean(event.data?.isError));
           this.#options.addTokenEstimate(stringifyForEstimate(event.data?.result));
+          const mediaJobId = mediaJobIdFromToolResult(event.data?.result);
+          if (mediaJobId) this.#options.onMediaJobSubmitted?.(mediaJobId, existing?.toolName ?? String(event.data?.toolName ?? "generate_video"));
           // Track file changes from write/edit tools (updated)
           if (existing && (existing.toolName === "write" || existing.toolName === "edit") && !Boolean(event.data?.isError)) {
             const input = existing.input;
