@@ -1,6 +1,6 @@
 .model-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 34px; }
-.model-card { min-width: 0; display: grid; grid-template-columns: 38px minmax(0,1fr) auto; gap: 12px; align-items: center; min-height: 70px; padding: 10px 6px; border-bottom: 1px solid rgba(255,255,255,.035); }
-.model-icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; color: var(--muted); background: rgba(255,255,255,.045); }
+.model-card { min-width: 0; display: grid; grid-template-columns: 38px minmax(0,1fr) auto; gap: 12px; align-items: center; min-height: 70px; padding: 10px 6px; border-bottom: 1px solid var(--tint-1); }
+.model-icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; color: var(--muted); background: var(--tint-2); }
 .model-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.35; }
 .model-copy { min-width: 0; display: grid; gap: 3px; }
 .model-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 590; }
@@ -9,11 +9,11 @@
 .model-card-linked:focus-visible { outline: 1px solid var(--muted); outline-offset: -2px; border-radius: 10px; }
 .model-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
 .model-actions { display: flex; align-items: center; gap: 5px; }
-.model-action { height: 28px; padding: 0 9px; border: 1px solid var(--border-soft); border-radius: 9px; background: rgba(255,255,255,.035); color: var(--text); font-size: 11px; cursor: pointer; }
-.model-action:hover { background: rgba(255,255,255,.08); }
-.model-action.danger { color: #f1766d; }
+.model-action { height: 28px; padding: 0 9px; border: 1px solid var(--border-soft); border-radius: 9px; background: var(--tint-1); color: var(--text); font-size: 11px; cursor: pointer; }
+.model-action:hover { background: var(--tint-5); }
+.model-action.danger { color: var(--danger); }
 .model-progress { min-width: 150px; display: grid; gap: 5px; }
-.model-progress-track { height: 4px; border-radius: 2px; background: rgba(255,255,255,.08); overflow: hidden; }
+.model-progress-track { height: 4px; border-radius: 2px; background: var(--tint-5); overflow: hidden; }
 .model-progress-fill { display: block; height: 100%; background: var(--orange); width: 0; transition: width .2s ease; }
 .model-progress-copy { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: var(--muted); font-size: 10px; white-space: nowrap; }
 .model-progress-cancel { border: none; background: none; padding: 0; color: var(--muted); font-size: 10px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }

@@ -1,12 +1,12 @@
-.connection-form-status { margin: 0; color: var(--codex-text-secondary); font-size: 11px; }
-.connection-form-status.error { color: #e9a09c; }
-.connections-empty { margin: 18px 0; color: var(--codex-text-tertiary); font-size: 12px; text-align: center; }
-.recipe-route-toggle { display: flex; align-items: center; gap: 1px; padding: 2px; border: 0; border-radius: 11px; background: #1c1e1c; }
-.route-symbol { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 9px; background: transparent; color: #777b74; cursor: pointer; transition: background-color 100ms ease, color 100ms ease; }
-.route-symbol:hover { background: #303230; color: #d5d7d2; }
-.route-symbol.active { background: #303230; color: #ebece8; }
+.connection-form-status { margin: 0; color: var(--muted); font-size: 11px; }
+.connection-form-status.error { color: var(--danger-soft); }
+.connections-empty { margin: 18px 0; color: var(--subtle); font-size: 12px; text-align: center; }
+.recipe-route-toggle { display: flex; align-items: center; gap: 1px; padding: 2px; border: 0; border-radius: 11px; background: var(--grey-100); }
+.route-symbol { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--grey-550); cursor: pointer; transition: background-color 100ms ease, color 100ms ease; }
+.route-symbol:hover { background: var(--grey-300); color: var(--grey-850); }
+.route-symbol.active { background: var(--grey-300); color: var(--grey-900); }
 .route-symbol svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.45; stroke-linecap: round; stroke-linejoin: round; }
 .route-symbol .route-icon-filled { display: none; fill: currentColor; stroke: none; }
 .route-symbol.active .route-icon-outline { display: none; }
 .route-symbol.active .route-icon-filled { display: block; }
-.route-symbol.active .route-icon-cut { fill: none; stroke: #303230; stroke-width: 1.45; stroke-linecap: round; stroke-linejoin: round; }
+.route-symbol.active .route-icon-cut { fill: none; stroke: var(--grey-300); stroke-width: 1.45; stroke-linecap: round; stroke-linejoin: round; }

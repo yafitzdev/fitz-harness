@@ -1,45 +1,101 @@
 :root {
   color-scheme: dark;
   font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --codex-gray-0: #fff;
-  --codex-gray-300: #afafaf;
-  --codex-gray-500: #5d5d5d;
-  --codex-gray-700: #303030;
-  --codex-gray-750: #282828;
-  --codex-gray-800: #212121;
-  --codex-gray-900: #181818;
-  --codex-gray-1000: #0d0d0d;
-  --codex-border: rgba(255,255,255,.08);
-  --codex-border-heavy: rgba(255,255,255,.16);
-  --codex-text-secondary: rgba(255,255,255,.70);
-  --codex-text-tertiary: rgba(255,255,255,.50);
-  --codex-control: rgba(51,51,51,.96);
-  --codex-radius-sm: 7.5px;
-  --codex-radius-md: 10px;
-  --codex-radius-lg: 12.5px;
-  --codex-radius-xl: 15px;
-  --codex-radius-2xl: 20px;
-  --codex-radius-3xl: 25px;
-  --codex-elevation-stroke: 0 0 0 .5px var(--codex-border-heavy);
-  --codex-elevation-prominent: var(--codex-elevation-stroke), 0 3px 7.5px rgba(0,0,0,.04), 0 0 20px rgba(0,0,0,.05);
-  --codex-shadow-xl: 0 8px 16px -4px rgba(0,0,0,.12);
-  --codex-control-size: 28px;
-  --codex-scrollbar-size: 10px;
-  --codex-scrollbar-thumb: rgba(255,255,255,.22);
-  --codex-scrollbar-thumb-hover: rgba(255,255,255,.34);
-  --bg: var(--codex-gray-900);
-  --surface: var(--codex-gray-800);
-  --surface-raised: #242424;
-  --surface-hover: #2b2b2b;
-  --sidebar: #1a2225;
-  --border: var(--codex-border-heavy);
-  --border-soft: var(--codex-border);
-  --text: var(--codex-gray-0);
-  --muted: var(--codex-text-secondary);
-  --subtle: var(--codex-text-tertiary);
-  --accent: var(--codex-gray-0);
-  --accent-text: var(--codex-gray-1000);
-  --orange: #ff8549;
-  --green: #40c977;
-  --red: #fa423e;
+
+  /* ---- The app's warm grey ramp -------------------------------------------
+     One scale for every neutral grey: text, borders, and dark surfaces.
+     Higher numbers are brighter; grey-100 is the app background. */
+  --grey-950: #f2f3ef;   /* brightest text: body, active tabs, checkmarks */
+  --grey-900: #e8e9e5;   /* body text on dark surfaces */
+  --grey-850: #d8dad5;   /* soft body text, source text */
+  --grey-800: #c8cbc5;   /* labels, headings, list text */
+  --grey-750: #b9bcb6;   /* secondary labels */
+  --grey-700: #a9ada7;   /* titlebar text, muted labels */
+  --grey-650: #9a9d98;   /* placeholders, icon accents */
+  --grey-600: #8d918b;   /* control accents (checkboxes, progress tracks) */
+  --grey-550: #7d807b;   /* dotted separators, disabled text */
+  --grey-500: #6b6e69;   /* focus rings, strong borders */
+  --grey-450: #5a5e58;   /* input borders, scrollbar rails */
+  --grey-400: #4a4d49;   /* dividers, chip borders, spinner tracks */
+  --grey-300: #303030;   /* control surfaces: menus, search bars */
+  --grey-250: #292b29;   /* hover/active surfaces: composer, active bubble, hovered rows */
+  --grey-200: #212121;   /* raised surfaces: inputs, artifact bubbles */
+  --grey-100: #181818;   /* inputs and the app background */
+  --grey-50: #0d0d0d;    /* deepest background, dark button text */
+  --grey-0: #000;        /* pure black (masks and masks only) */
+
+  /* ---- White overlay tints ------------------------------------------------
+     The translucent "grey tone" used for chips, bubbles, hovers, and active
+     rows on dark surfaces. tint-3 is the bubble grey. */
+  --tint-1: rgba(255,255,255,.04);      /* faint rows */
+  --tint-2: rgba(255,255,255,.05);      /* resting chips, user messages, cards */
+  --tint-3: rgba(255,255,255,.06);      /* quiet toggles, choose buttons */
+  --tint-4: rgba(255,255,255,.07);      /* inline code chips, hovers on subtle rows */
+  --tint-5: rgba(255,255,255,.08);      /* default hover / active rows, buttons */
+  --tint-6: rgba(255,255,255,.10);      /* selected items */
+  --tint-7: rgba(255,255,255,.12);      /* strong hover: buttons, bubble hover */
+  --tint-border: rgba(255,255,255,.22); /* bright hover borders */
+  --tint-accent: rgba(211,214,207,.45); /* divider accent (inspector resizer) */
+
+  /* ---- Semantic roles ------------------------------------------------------
+     What each color IS, mapped onto the scales above so a single knob moves
+     every place that uses a role. */
+  --bg: var(--grey-100);                /* app + workspace background */
+  --sidebar: #1a2225;                   /* teal-tinted rail, no ramp equivalent */
+  --floating-surface: rgba(51,51,51,.96); /* popovers + dialogs (frosted) */
+  --border: rgba(255,255,255,.16);      /* strong hairline (cards, code blocks) */
+  --border-soft: rgba(255,255,255,.08); /* faint hairline (lists, dividers) */
+  --text: var(--grey-950);              /* brightest text */
+  --muted: rgba(255,255,255,.70);       /* secondary text */
+  --subtle: rgba(255,255,255,.50);      /* tertiary text, labels */
+  --accent: var(--grey-950);            /* primary button face */
+  --accent-text: var(--grey-50);        /* primary button label */
+
+  /* ---- Radii, sizing, elevation, scrollbar -------------------------------- */
+  --radius-sm: 7.5px;
+  --radius-md: 10px;
+  --radius-lg: 12.5px;
+  --radius-xl: 15px;
+  --radius-2xl: 20px;
+  --radius-3xl: 25px;
+  --control-size: 28px;
+  --elevation-stroke: 0 0 0 .5px var(--border);
+  --elevation-prominent: var(--elevation-stroke), 0 3px 7.5px rgba(0,0,0,.04), 0 0 20px rgba(0,0,0,.05);
+  --scrollbar-size: 10px;
+  --scrollbar-thumb: rgba(255,255,255,.22);
+  --scrollbar-thumb-hover: rgba(255,255,255,.34);
+
+  /* ---- Link and status colors --------------------------------------------- */
+  --link: #8ab4e5;
+  --link-hover: #acd0f6;
+  --link-underline: rgba(138,180,229,.45);
+  --link-tint: rgba(138,180,229,.15);
+  --accent-blue: #4da3ff;
+  --accent-purple: #b277e8;
+  --danger: #ff6b63;                    /* errors: dots, system messages */
+  --danger-soft: #e3a4a1;
+  --danger-strong: #c42b1c;
+  --danger-tint: rgba(232,124,120,.06);
+  --green: #40c977;                     /* online, success */
+  --green-tint: rgba(104,203,168,.15);
+  --green-glow: rgba(99,197,146,.11);
+  --orange: #ff8549;                    /* active, progress */
+
+  /* ---- Syntax highlighting (One Dark) -------------------------------------- */
+  --syntax-comment: #7f848e;
+  --syntax-keyword: #c678dd;
+  --syntax-title: #61afef;
+  --syntax-string: #98c379;
+  --syntax-number: #d19a66;
+  --syntax-tag: #e06c75;
+  --syntax-builtin: #56b6c2;
+  --syntax-property: #e5c07b;
+
+  /* ---- Overlays and shadows ------------------------------------------------- */
+  --backdrop: rgba(0,0,0,.55);          /* modal backdrop */
+  --backdrop-strong: rgba(24,24,24,.88);/* floating chip over web previews */
+  --shadow-sidebar: 18px 0 40px rgba(0,0,0,.35);
+  --shadow-float: 0 5px 16px rgba(0,0,0,.22);
+  --shadow-panel: -12px 0 30px rgba(0,0,0,.12);
+  --shadow-popover: 0 8px 16px -4px rgba(0,0,0,.12);
 }

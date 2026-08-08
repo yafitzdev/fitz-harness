@@ -1,3 +1,3 @@
-.reasoning-activity .agent-activity-icon, .reasoning-activity .agent-activity-label { color: var(--codex-text-tertiary); }
+.reasoning-activity .agent-activity-icon, .reasoning-activity .agent-activity-label { color: var(--subtle); }
 .reasoning-activity .agent-activity-label { font-style: italic; }
-.reasoning-content { max-height: 300px; margin: 0; padding: 0; overflow: auto; color: rgba(255,255,255,.55); background: transparent; font: 12px/1.55 Consolas, "Cascadia Mono", monospace; white-space: pre-wrap; word-break: break-word; }
+.reasoning-content { max-height: 300px; margin: 0; padding: 0; overflow: auto; color: var(--subtle); background: transparent; font: 12px/1.55 Consolas, "Cascadia Mono", monospace; white-space: pre-wrap; word-break: break-word; }

@@ -1,12 +1,12 @@
 .collapsible-section { padding: 4px 0 18px; border-bottom: 1px solid var(--border-soft); }
 .collapsible-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 10px; }
 .collapsible-toggle { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 2px 4px; margin: -2px -4px; border: 0; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; text-align: left; }
-.collapsible-toggle:hover, .collapsible-toggle:focus-visible { background: rgba(255,255,255,.06); }
+.collapsible-toggle:hover, .collapsible-toggle:focus-visible { background: var(--tint-3); }
 .collapsible-heading h2, .collapsible-heading h3 { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 600; }
 .collapsible-chevron { flex: 0 0 auto; display: grid; place-items: center; color: var(--muted); transition: transform 120ms ease; }
 .collapsible-chevron svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .collapsible-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
-.collapsible-actions .danger { color: #d99a96; }
+.collapsible-actions .danger { color: var(--danger-soft); }
 .collapsible-section.collapsed { padding-bottom: 10px; }
 .collapsible-section.collapsed .collapsible-chevron { transform: rotate(-90deg); }
 .collapsible-section.collapsed .collapsible-body { display: none; }

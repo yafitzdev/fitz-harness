@@ -30,9 +30,10 @@ const resourcePreview = readFileSync(new URL("./resource-preview.ts", import.met
 const projectSidebar = readFileSync(new URL("./ui/sidebar/project-sidebar.ts", import.meta.url), "utf8");
 const projects = readFileSync(new URL("./ui/projects/projects.ts", import.meta.url), "utf8");
 const composerCss = readFileSync(new URL("./ui/chat/composer.css", import.meta.url), "utf8");
+const tokensCss = readFileSync(new URL("./ui/theme/tokens.css", import.meta.url), "utf8");
 const styles = [
   readFileSync(new URL("./renderer/styles.css", import.meta.url), "utf8"),
-  readFileSync(new URL("./ui/theme/tokens.css", import.meta.url), "utf8"),
+  tokensCss,
   readFileSync(new URL("./ui/primitives/scroll-surface.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/message-actions.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/activity-timeline.css", import.meta.url), "utf8"),
@@ -136,9 +137,9 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("--management-content-width: 900px");
     expect(styles).toContain("scrollbar-gutter: stable both-edges");
     expect(styles).toContain("width: min(var(--management-content-width), calc(100% - 48px))");
-    expect(styles).toContain("--codex-scrollbar-size: 10px");
-    expect(styles).toContain("width: var(--codex-scrollbar-size)");
-    expect(styles).toContain("height: var(--codex-scrollbar-size)");
+    expect(styles).toContain("--scrollbar-size: 10px");
+    expect(styles).toContain("width: var(--scrollbar-size)");
+    expect(styles).toContain("height: var(--scrollbar-size)");
     expect(styles).toContain("background-clip: content-box");
     expect(styles).toContain(".management-page-content > p { margin: 5px 0 24px; overflow: hidden; color: var(--muted); font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }");
     expect(styles).not.toContain(".management-page-content { width: min(820px");
@@ -153,7 +154,7 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("height: 42px; display: flex; align-items: center");
     expect(html).toContain('class="section-heading projects-heading"');
     expect(styles).toContain(".projects-heading #new-project { opacity: 0; pointer-events: none;");
-    expect(styles).toContain(".projects-heading > span { color: #c8cbc5; font-weight: 650; }");
+    expect(styles).toContain(".projects-heading > span { color: var(--grey-800); font-weight: 650; }");
     expect(styles).toContain(".task-row { padding: 6px 34px 6px 30px;");
     expect(renderer).toContain('identity.data?.authMode === "disabled" || identity.data?.user?.role === "administrator"');
     expect(html).toContain('d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"');
@@ -466,7 +467,7 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("left: var(--conversation-gutter)");
     expect(styles).toContain("bottom: 12px");
     expect(composerCss).toContain(".composer-dock::before");
-    expect(composerCss).toContain("inset: var(--codex-radius-3xl) 0 -12px");
+    expect(composerCss).toContain("inset: var(--radius-3xl) 0 -12px");
     expect(styles).toContain("--conversation-scrollbar: 0px");
     expect(styles).toContain(".workspace.inspector-open { --conversation-viewport: calc(100% - var(--inspector-width))");
     expect(renderer).toContain("new ConversationLayout({");
@@ -549,22 +550,45 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".context-usage-popover button");
   });
 
-  it("uses the measured Codex desktop design tokens", () => {
-    expect(styles).toContain("--codex-gray-900: #181818");
-    expect(styles).toContain("--codex-gray-800: #212121");
-    expect(styles).toContain("--codex-gray-700: #303030");
-    expect(styles).toContain("--codex-control: rgba(51,51,51,.96)");
+  it("uses the measured desktop design tokens", () => {
+    expect(styles).toContain("--bg: var(--grey-100)");
+    expect(styles).toContain("--text: var(--grey-950)");
+    expect(styles).toContain("--floating-surface: rgba(51,51,51,.96)");
     expect(styles).toContain("--sidebar: #1a2225");
-    expect(styles).toContain("--codex-radius-3xl: 25px");
-    expect(styles).toContain("--codex-control-size: 28px");
+    expect(styles).toContain("--radius-3xl: 25px");
+    expect(styles).toContain("--control-size: 28px");
     expect(styles).toContain("--sidebar-width: 275px");
     expect(styles).toContain("--conversation-width: min(768px, calc(var(--conversation-space) - var(--conversation-inset)))");
     expect(styles).toContain("max-width: 100%");
     expect(styles).toContain("backdrop-filter: blur(16px)");
-    expect(styles).toContain("--codex-elevation-prominent:");
+    expect(styles).toContain("--elevation-prominent:");
     expect(renderer).toContain('storageKey: "fitz-sidebar-width"');
     expect(renderer).toContain("minimum: 240, maximum: 520");
     expect(html).toContain('d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"');
+  });
+
+  it("centralizes every color in the token file and uses tokens everywhere", () => {
+    // The warm grey ramp and the white-overlay tint scale live in tokens.css.
+    expect(styles).toContain("--grey-950: #f2f3ef");
+    expect(styles).toContain("--grey-800: #c8cbc5");
+    expect(styles).toContain("--grey-100: #181818");
+    expect(styles).toContain("--tint-3: rgba(255,255,255,.06)");
+    expect(styles).toContain("--tint-7: rgba(255,255,255,.12)");
+    // The artifact bubble sits on the raised-surface ramp step; its hover
+    // stays the shared strong-hover tint.
+    expect(styles).toContain(".workspace-header .inspector-tab { position: relative; height: 26px; max-width: 180px; padding: 0 8px 0 12px; border-radius: 8px; border: 0; background: var(--grey-200); color: var(--subtle); font-size: 12px; }");
+    expect(styles).toContain(".workspace-header .inspector-tab:hover { background: var(--tint-7);");
+    expect(styles).toContain(".workspace-header .inspector-tab.active { background: var(--grey-250); color: var(--grey-950); }");
+    // The legacy codex-* namespace and its duplicate surface/red tokens are
+    // gone: the ramp and the semantic roles above are the only source of truth.
+    expect(styles).not.toContain("--codex-");
+    expect(styles).not.toContain("--surface-hover");
+    expect(styles).not.toContain("--surface-raised");
+    expect(styles).not.toContain("--red:");
+    // No component CSS may hardcode a color anymore; the token file is the
+    // single source of truth.
+    const componentStyles = styles.replace(tokensCss, "");
+    expect(componentStyles.match(/#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)/g)).toBeNull();
   });
 
   it("drops the hover cards in favor of the centered create-project dialog", () => {
@@ -623,9 +647,10 @@ describe("desktop renderer shell", () => {
   it("replaces the deferred Environment surface with a resource Inspector", () => {
     // The header carries the Inspector's browser-style tab actions: + (new
     // tab), < > (fullscreen placeholder), and H (artifacts repository).
+    expect(html).toContain('id="inspector-render-toggle" class="icon-button" type="button" title="View source" aria-label="View source" aria-pressed="false" hidden');
     expect(html).toContain('id="inspector-new-tab" class="icon-button" type="button" title="New tab" aria-label="New tab"');
     expect(html).toContain('id="inspector-fullscreen" class="icon-button" type="button" title="Fullscreen" aria-label="Fullscreen"');
-    expect(html).toContain('id="inspector-artifacts" class="icon-button" type="button" title="Artifacts" aria-label="Artifacts"');
+    expect(html).toContain('id="inspector-artifacts" class="icon-button" type="button" title="Toggle inspector" aria-label="Toggle inspector"');
     expect(html).not.toContain('id="context-toggle"');
     expect(html).not.toContain('id="context-panel"');
     expect(html).not.toContain('id="inspector-resizer"');
@@ -643,8 +668,13 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('window.addEventListener("fitz:open-resource"');
     expect(renderer).toContain("inspectorPanel.inspect(reference)");
     expect(renderer).toContain("inspectorPanel.newTab()");
-    expect(renderer).toContain("inspectorPanel.toggleRepository()");
-    expect(renderer).not.toContain("inspectorPanel.toggle()");
+    expect(renderer).toContain("inspectorPanel.toggle()");
+    expect(renderer).not.toContain("inspectorPanel.toggleRepository()");
+    // The header's raw↔rendered toggle is handed to the panel, which wires it
+    // to whichever tab is active.
+    expect(renderer).toContain('element("inspector-render-toggle")');
+    expect(renderer).toContain("renderToggle: inspectorRenderToggle");
+    expect(inspectorPanel).toContain("renderToggle: this.#options.renderToggle");
     expect(inspectorPanel).toContain("new ResourceInspector({");
     expect(resourceInspector).toContain("window.fitz.previewResource({ projectRoot, reference, searchRoots: this.#options.getSearchRoots() })");
     expect(resourceInspector).toContain("this.#resourceError(error, reference)");
@@ -657,6 +687,11 @@ describe("desktop renderer shell", () => {
     expect(inspectorPanel).toContain("defaultValue: 400,");
     expect(inspectorPanel).toContain("minimum: 200,");
     expect(inspectorPanel).toContain("Math.max(200, options.mount.getBoundingClientRect().width - 280)");
+    // The panel re-clamps on workspace resize so a shrunken window never
+    // leaves it overspilling the conversation.
+    expect(inspectorPanel).toContain("new ResizeObserver(() => this.clampWidth())");
+    expect(inspectorPanel).toContain("this.#resizeObserver.observe(options.mount)");
+    expect(inspectorPanel).toContain("clampWidth(): void");
     expect(renderer).not.toContain("Math.min(760");
     expect(resizablePane).toContain("restore(): void");
     expect(renderer).toContain('import { InspectorPanel } from "./ui/inspector/inspector-panel.js"');
@@ -669,7 +704,7 @@ describe("desktop renderer shell", () => {
     expect(resourceInspector).toContain("html::-webkit-scrollbar-thumb");
     expect(resourceInspector).toContain('frame.addEventListener("load", () => this.#applyScrollbar(frame))');
     expect(resourceInspector).toContain('frame.setAttribute("sandbox", "allow-same-origin")');
-    expect(styles).toContain("background: var(--codex-gray-900); color-scheme: dark");
+    expect(styles).toContain("background: var(--grey-100); color-scheme: dark");
     expect(styles).toContain(":is(.inspector-source, .markdown-code) .hljs-keyword");
     expect(preload).toContain('ipcRenderer.invoke("fitz:preview-resource", input)');
     expect(main).toContain('ipcMain.handle("fitz:preview-resource"');
@@ -720,15 +755,16 @@ describe("desktop renderer shell", () => {
     expect(preload).toContain('"image" | "pdf" | "audio" | "video"');
   });
 
-  it("keeps the artifact repository as a view behind the header Artifacts button", () => {
+  it("keeps the artifact repository as the panel's home view behind the header sidebar button", () => {
     // The repository is a dedicated view, not a tab: it renders once into the
-    // panel and is opened from the header's Artifacts button (which doubles
-    // as the panel's close control while the repository is showing).
+    // panel and is the home view when nothing is open. The header's sidebar
+    // button toggles the panel open and closed, keeping the open doc.
     expect(inspectorPanel).toContain('className = "inspector-tabs"');
     expect(inspectorPanel).toContain('setAttribute("role", "tablist")');
     expect(inspectorPanel).toContain('closable: true');
     expect(inspectorPanel).toContain('className = "inspector-tab-close"');
-    expect(inspectorPanel).toContain("toggleRepository(): void");
+    expect(inspectorPanel).toContain("toggle(): void");
+    expect(inspectorPanel).not.toContain("toggleRepository(): void");
     expect(inspectorPanel).toContain("newTab(): void");
     expect(inspectorPanel).toContain("this.#repository.render(repositoryView)");
     expect(inspectorPanel).toContain("setSessionArtifacts(artifacts: Json[]): void");

@@ -5,7 +5,7 @@
 .management-page-header { height: 50px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid var(--border-soft); }
 .management-page-tabs { display: flex; gap: 4px; }
 .management-page-tabs button { height: 30px; padding: 0 11px; border: 0; border-radius: 9px; color: var(--muted); background: transparent; cursor: pointer; }
-.management-page-tabs button.active { color: var(--text); background: rgba(255,255,255,.08); }
+.management-page-tabs button.active { color: var(--text); background: var(--tint-5); }
 .management-actions { display: flex; align-items: center; gap: 7px; }
 .compact-button { padding: 7px 14px; border-radius: 9px; }
 /* The content column starts with clear air below the tab bar so the
@@ -20,8 +20,8 @@
    Playbooks/Connections lists — so every sidebar tab shares the same rhythm. */
 .management-page-content > .collapsible-section:first-of-type,
 .management-page-content > .playbook-list { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border-soft); }
-.management-search { height: 40px; display: flex; align-items: center; gap: 9px; margin-bottom: 36px; padding: 0 13px; border: 1px solid #4b4e4a; border-radius: 20px; background: #303230; color: var(--muted); }
-.management-search:focus-within { border-color: #6b6e69; }
+.management-search { height: 40px; display: flex; align-items: center; gap: 9px; margin-bottom: 36px; padding: 0 13px; border: 1px solid var(--grey-400); border-radius: 20px; background: var(--grey-300); color: var(--muted); }
+.management-search:focus-within { border-color: var(--grey-500); }
 .management-search svg { flex: 0 0 auto; }
 .management-search input { width: 100%; border: 0; outline: 0; background: transparent; color: var(--text); }
-.management-search input::placeholder { color: #9b9e98; }
+.management-search input::placeholder { color: var(--grey-650); }
