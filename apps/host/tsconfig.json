@@ -21,6 +21,7 @@
     { "path": "../../packages/engine-ninfer" },
     { "path": "../../packages/engine-openai-compatible" },
     { "path": "../../packages/engine-llama-cpp" },
+    { "path": "../../packages/media-providers" },
     { "path": "../../packages/observability" },
     { "path": "../../packages/storage" }
     ,{ "path": "../../packages/security" }

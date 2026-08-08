@@ -52,10 +52,12 @@ describe("Fitz host media jobs", () => {
       expect(content.headers["content-type"]).toBe("image/png");
       expect([...content.rawPayload]).toEqual([...deterministicMediaBytes("image")]);
 
-      // Durable event stream: progress events then the completed event, ascending sequences.
+      // Durable event stream: started (with the provider job id) then progress
+      // and the completed event, ascending sequences (§5.3).
       const events = runtime.store.mediaJobEventsAfter(jobId, 0);
       expect(events.length).toBeGreaterThan(1);
-      expect(events[0]?.event.type).toBe("progress");
+      expect(events[0]?.event.type).toBe("started");
+      expect((events[0]?.event as { providerJobId: string }).providerJobId).toEqual(expect.any(String));
       expect(events.at(-1)?.event.type).toBe("completed");
       const sequences = events.map((event) => event.sequence);
       expect(sequences).toEqual([...sequences].sort((a, b) => a - b));

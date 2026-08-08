@@ -121,6 +121,10 @@ export class LifecycleManager {
     let job: MediaJobHandle | undefined;
     try {
       job = await adapter.submit(handle, request, signal);
+      // The provider job id is the durable link for restart recovery: the host
+      // coordinator persists it so a follow-up can cancel orphaned cloud jobs
+      // after a crash (design doc §5.3 restart recovery, PR 4).
+      yield { type: "started", providerJobId: job.id };
       for (;;) {
         const poll = await adapter.poll(handle, job, signal);
         if (poll.status === "completed" && poll.result) {

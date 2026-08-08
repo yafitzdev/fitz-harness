@@ -221,7 +221,7 @@ function joinUrl(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
 }
 
-function openAIEndpoint(baseUrl: string, endpoint: string): string {
+export function openAIEndpoint(baseUrl: string, endpoint: string): string {
   const normalized = baseUrl.replace(/\/$/, "");
   return /\/v1$/i.test(normalized)
     ? `${normalized}/${endpoint.replace(/^\//, "")}`

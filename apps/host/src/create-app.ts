@@ -57,17 +57,32 @@ import type { PiPackageService } from "@fitz/agent-pi";
 import { ContextManager } from "@fitz/context";
 import { TailscaleMonitor, TailscaleServeManager, WindowsStartupManager } from "@fitz/connectivity";
 import { classifyArtifact, normalizeMimeType } from "@fitz/media";
-import { OpenAICompatibleClient, OpenAICompatibleEngineAdapter, supportsChatCompletions } from "@fitz/engine-openai-compatible";
+import { OpenAICompatibleClient, OpenAICompatibleEngineAdapter, supportsChatCompletions, type OpenAICompatibleModel } from "@fitz/engine-openai-compatible";
+import {
+  FAL_DEFAULT_BASE_URL,
+  FalProvider,
+  MediaProviderRegistry,
+  OpenAICompatibleMediaProvider,
+  REPLICATE_DEFAULT_BASE_URL,
+  ReplicateProvider,
+  type ProviderModel,
+} from "@fitz/media-providers";
+import { MediaProviderEngineAdapter } from "./media-provider-adapter.js";
 import type { AgentSafetyService } from "./agent-safety/index.js";
 
 interface ConsumerModelRegistration { modelId: string; routeId: string; recipeId: string }
+interface ConsumerMediaModelRegistration { modelId: string; recipeId: string; routeId: string; modality: MediaModality; template: string }
 interface ConsumerConnectionRegistration {
   id: string;
   displayName: string;
   baseUrl: string;
   authType: "none" | "bearer";
   credentialEnv: string;
+  template: string;
   models: ConsumerModelRegistration[];
+  /** Media recipes/routes created for this connection (§5.7): one entry per
+   *  (model, modality), one recipe per model. */
+  mediaModels: ConsumerMediaModelRegistration[];
   updatedAt: string;
 }
 
@@ -80,6 +95,15 @@ const MEDIA_ROUTE_DISPLAY_NAMES: Record<(typeof MEDIA_ROUTE_IDS)[number], string
   image: "Image generation",
   video: "Video generation",
   audio: "Audio generation",
+};
+/** Connection templates (§5.7): chat-only, or one of the media provider
+ *  templates. `body.template` defaults to `openai-compatible`. */
+const CONSUMER_TEMPLATES = ["openai-compatible", "openai-media", "fal", "replicate"] as const;
+const MEDIA_TEMPLATES = ["openai-media", "fal", "replicate"] as const;
+const MEDIA_TEMPLATE_DEFAULT_BASE_URLS: Readonly<Record<string, string | undefined>> = {
+  "openai-media": undefined, // required — the user's own OpenAI-compatible media endpoint
+  fal: FAL_DEFAULT_BASE_URL,
+  replicate: REPLICATE_DEFAULT_BASE_URL,
 };
 
 export interface CreateHostOptions {
@@ -174,8 +198,21 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   ensureMediaRoutes(store, routes);
   const events = new LifecycleEventBus(1_000, store.latestLifecycleSequence());
   const fakeAdapter = options.adapters ? options.fakeAdapter : (options.fakeAdapter ?? new FakeEngineAdapter());
-  const adapterList = options.adapters ?? (fakeAdapter ? [fakeAdapter, new OpenAICompatibleEngineAdapter()] : [new OpenAICompatibleEngineAdapter()]);
+  // Provider templates register a thin MediaProviderEngineAdapter per template
+  // (id = template id), so media recipes resolve in the same adapter registry
+  // as local media engines (§5.7).
+  const mediaProviders = new MediaProviderRegistry([
+    new OpenAICompatibleMediaProvider(),
+    new FalProvider(),
+    new ReplicateProvider(),
+  ]);
+  const providerAdapters = mediaProviders.list().map((provider) => new MediaProviderEngineAdapter(provider));
+  const adapterList = options.adapters ?? (fakeAdapter ? [fakeAdapter, new OpenAICompatibleEngineAdapter(), ...providerAdapters] : [new OpenAICompatibleEngineAdapter(), ...providerAdapters]);
   const adapters = new EngineAdapterRegistry(adapterList);
+  // Startup: cancel provider-side jobs orphaned by a crash (best-effort, async).
+  // Only provider adapters are safe to `start()` at boot — local engine
+  // `start()` would spawn processes (design doc §5.3 restart recovery).
+  cancelOrphanedProviderJobs(store, routes, adapters);
   const resources = new ResourceGovernor(
     options.resourceMonitor ?? new SystemResourceMonitor(),
     options.resourcePolicy,
@@ -646,16 +683,44 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       try {
         const body = requireRecord(request.body);
         const displayName = requireString(body.displayName, "displayName");
-        const baseUrl = normalizeConsumerBaseUrl(body.baseUrl);
+        const template = parseConsumerTemplate(body.template);
+        const baseUrl = normalizeConsumerBaseUrl(body.baseUrl === undefined ? MEDIA_TEMPLATE_DEFAULT_BASE_URLS[template] : body.baseUrl);
         const authType = body.authType === "none" ? "none" : body.authType === "bearer" ? "bearer" : undefined;
         if (!authType) throw new TypeError("authType must be none or bearer");
         const apiKey = authType === "bearer" ? requireString(body.apiKey, "apiKey") : undefined;
         const credentialEnv = consumerCredentialEnvironment(connectionId);
         if (apiKey) process.env[credentialEnv] = apiKey;
         else delete process.env[credentialEnv];
-        const discovered = await new OpenAICompatibleClient({ ...(apiKey ? { apiKey } : {}) }).listModels(baseUrl, AbortSignal.timeout(15_000));
+        const costCentsPerJob = parseCostCentsPerJob(body.costCentsPerJob);
+        const requestedModelIds = body.modelIds === undefined ? undefined : requireStringArray(body.modelIds, "modelIds");
+
+        const client = new OpenAICompatibleClient({ ...(apiKey ? { apiKey } : {}) });
+        let discovered: OpenAICompatibleModel[] = [];
+        let mediaDiscovery: ProviderModel[] = [];
+        if (template === "openai-compatible") {
+          discovered = await client.listModels(baseUrl, AbortSignal.timeout(15_000));
+        } else {
+          // Media templates run BOTH discovery paths and union the recipe sets
+          // (§5.7 mixed connections): chat discovery failure is non-fatal, but
+          // a media discovery with no media-capable models is an error.
+          mediaDiscovery = await mediaProviders.get(template).discover(
+            {
+              id: connectionId,
+              baseUrl,
+              ...(authType === "bearer" ? { apiKeyEnv: credentialEnv } : {}),
+              ...(requestedModelIds ? { modelIds: requestedModelIds } : {}),
+            },
+            AbortSignal.timeout(15_000),
+          );
+          if (!mediaDiscovery.length) throw new Error("The provider returned no media-capable models");
+          try {
+            discovered = await client.listModels(baseUrl, AbortSignal.timeout(15_000));
+          } catch {
+            discovered = [];
+          }
+        }
         const modelIds = [...new Set(discovered.filter(supportsChatCompletions).map((item) => item.id.trim()).filter(Boolean))];
-        if (!modelIds.length) throw new Error("The API returned no chat-completion models");
+        if (template === "openai-compatible" && !modelIds.length) throw new Error("The API returned no chat-completion models");
 
         const registrations = consumerConnections();
         const previous = registrations.find((item) => item.id === connectionId);
@@ -676,9 +741,25 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
           const route: Route = { id: model.routeId, displayName: model.modelId, description: displayName, recipeId: model.recipeId, enabled: true };
           store.upsertRecipe(recipe); routes.upsertRecipe(recipe); store.upsertRoute(route); routes.upsertRoute(route);
         }
-        const connection: ConsumerConnectionRegistration = { id: connectionId, displayName, baseUrl, authType, credentialEnv, models, updatedAt: new Date().toISOString() };
+        const mediaModels = saveMediaRecipes(store, routes, {
+          connectionId,
+          template,
+          displayName,
+          baseUrl,
+          credentialEnv,
+          authType,
+          ...(costCentsPerJob !== undefined ? { costCentsPerJob } : {}),
+          models: mediaDiscovery,
+        });
+        // Re-save revalidation: a well-known media route whose recipe no longer
+        // resolves (the model was removed from the connection) is de-assigned,
+        // never left pointing at a deleted recipe (§5.7).
+        clearStaleMediaRouteAssignments(store, routes);
+        const connection: ConsumerConnectionRegistration = {
+          id: connectionId, displayName, baseUrl, template, authType, credentialEnv, models, mediaModels, updatedAt: new Date().toISOString(),
+        };
         store.setSetting("consumerConnections", [...registrations.filter((item) => item.id !== connectionId), connection]);
-        security?.audit("consumer-connection.saved", principals.get(request)?.user.id, "consumer-connection", connectionId, { displayName, baseUrl, modelCount: models.length });
+        security?.audit("consumer-connection.saved", principals.get(request)?.user.id, "consumer-connection", connectionId, { displayName, baseUrl, modelCount: models.length, mediaModelCount: mediaModels.length });
         return { data: publicConsumerConnection(connection) };
       } catch (error) {
         return reply.code(502).send({ error: errorMessage(error) });
@@ -1135,6 +1216,107 @@ function consumerModelRegistration(connectionId: string, modelId: string): Consu
   return { modelId, routeId: `${CONSUMER_ROUTE_PREFIX}${connectionId}--${suffix}`, recipeId: `consumer-recipe--${connectionId}--${suffix}` };
 }
 
+/** Media registrations are per (model, modality): one recipe per model, one
+ *  `consumer--*` route per modality. Ids are prefixed with `media` so a model
+ *  that is both chat- and media-capable never collides with its chat
+ *  recipe/route (§5.7 mixed connections). */
+function consumerMediaRecipeId(connectionId: string, modelId: string): string {
+  const suffix = createHash("sha256").update(modelId).digest("hex").slice(0, 16);
+  return `consumer-recipe--media--${connectionId}--${suffix}`;
+}
+
+function consumerMediaRouteId(connectionId: string, modelId: string, modality: MediaModality): string {
+  const suffix = createHash("sha256").update(`${modelId}:${modality}`).digest("hex").slice(0, 16);
+  return `${CONSUMER_ROUTE_PREFIX}media--${connectionId}--${suffix}`;
+}
+
+function parseConsumerTemplate(value: unknown): string {
+  if (value === undefined) return "openai-compatible";
+  if (typeof value === "string" && (CONSUMER_TEMPLATES as readonly string[]).includes(value)) return value;
+  throw new TypeError("template must be openai-compatible, openai-media, fal, or replicate");
+}
+
+function parseCostCentsPerJob(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new TypeError("costCentsPerJob must be a non-negative number");
+  }
+  return value;
+}
+
+function mediaConsumerHealthPath(template: string, baseUrl: string): string {
+  return template === "fal" || template === "replicate" ? "/health" : consumerHealthPath(baseUrl);
+}
+
+/** Create the media recipes (one per ProviderModel) and consumer routes (one
+ *  per modality) for a connection, returning the mediaModels registrations.
+ *  Cloud media recipes declare `evictionPolicy: "immediate"` (§5.5). */
+function saveMediaRecipes(
+  store: SqliteStore,
+  routes: RouteResolver,
+  options: {
+    connectionId: string;
+    template: string;
+    displayName: string;
+    baseUrl: string;
+    credentialEnv: string;
+    authType: "none" | "bearer";
+    costCentsPerJob?: number;
+    models: ProviderModel[];
+  },
+): ConsumerMediaModelRegistration[] {
+  const registrations: ConsumerMediaModelRegistration[] = [];
+  for (const model of options.models) {
+    const recipeId = consumerMediaRecipeId(options.connectionId, model.modelId);
+    const recipe: Recipe = {
+      id: recipeId,
+      playbookId: `consumer-${options.connectionId}`,
+      displayName: model.modelId,
+      adapter: options.template,
+      modelId: model.modelId,
+      contextTokens: 131_072,
+      capabilities: {
+        chatCompletions: false,
+        streaming: true,
+        toolCalls: false,
+        responseFormat: false,
+        minP: false,
+        maxConcurrentGenerations: 1,
+        modalities: {
+          input: ["text"],
+          output: model.modalities,
+          ...(model.limits ? { limits: model.limits } : {}),
+        },
+      },
+      lifecycle: { loadPolicy: "onDemand", evictionPolicy: "immediate", idleTtlSeconds: 0, minimumResidencySeconds: 0 },
+      configuration: {
+        baseUrl: options.baseUrl,
+        modelId: model.modelId,
+        healthPath: mediaConsumerHealthPath(options.template, options.baseUrl),
+        ...(options.authType === "bearer" ? { apiKeyEnv: options.credentialEnv } : {}),
+        ...(options.costCentsPerJob !== undefined ? { costCentsPerJob: options.costCentsPerJob } : {}),
+      },
+    };
+    store.upsertRecipe(recipe);
+    routes.upsertRecipe(recipe);
+    for (const modality of model.modalities) {
+      const routeId = consumerMediaRouteId(options.connectionId, model.modelId, modality);
+      const route: Route = {
+        id: routeId,
+        displayName: model.modelId,
+        description: options.displayName,
+        recipeId,
+        enabled: true,
+        kind: modality,
+      };
+      store.upsertRoute(route);
+      routes.upsertRoute(route);
+      registrations.push({ modelId: model.modelId, recipeId, routeId, modality, template: options.template });
+    }
+  }
+  return registrations;
+}
+
 function requirePublicRouteId(value: unknown): "fast" | "default" | "smart" {
   if (value === undefined) return "default";
   if (value !== "fast" && value !== "default" && value !== "smart") throw new TypeError("routeId must be fast, default, or smart");
@@ -1142,14 +1324,31 @@ function requirePublicRouteId(value: unknown): "fast" | "default" | "smart" {
 }
 
 function removeConsumerRegistration(connection: ConsumerConnectionRegistration, store: SqliteStore, routes: RouteResolver, removeAssignments = true): void {
-  const recipeIds = new Set(connection.models.map((model) => model.recipeId));
+  const recipeIds = new Set([
+    ...connection.models.map((model) => model.recipeId),
+    ...(connection.mediaModels ?? []).map((model) => model.recipeId),
+  ]);
+  const consumerRouteIds = new Set([
+    ...connection.models.map((model) => model.routeId),
+    ...(connection.mediaModels ?? []).map((model) => model.routeId),
+  ]);
   if (removeAssignments) {
     for (const route of routes.listRoutes()) {
-      if (!recipeIds.has(route.recipeId)) continue;
-      routes.deleteRoute(route.id); store.deleteRoute(route.id);
+      if (!recipeIds.has(route.recipeId) || consumerRouteIds.has(route.id)) continue;
+      if ((MEDIA_ROUTE_IDS as readonly string[]).includes(route.id)) {
+        // Well-known media routes are de-assigned, never deleted (§5.2/§5.7).
+        const updated: Route = { ...route, recipeId: "", enabled: false };
+        store.upsertRoute(updated); routes.upsertRoute(updated);
+      } else {
+        routes.deleteRoute(route.id); store.deleteRoute(route.id);
+      }
     }
   }
   for (const model of connection.models) {
+    routes.deleteRoute(model.routeId); store.deleteRoute(model.routeId);
+    routes.deleteRecipe(model.recipeId); store.deleteRecipe(model.recipeId);
+  }
+  for (const model of connection.mediaModels ?? []) {
     routes.deleteRoute(model.routeId); store.deleteRoute(model.routeId);
     routes.deleteRecipe(model.recipeId); store.deleteRecipe(model.recipeId);
   }
@@ -1162,9 +1361,53 @@ function publicConsumerConnection(connection: ConsumerConnectionRegistration): R
     baseUrl: connection.baseUrl,
     authType: connection.authType,
     hasCredential: connection.authType === "bearer",
+    template: connection.template ?? "openai-compatible",
     models: connection.models.map((model) => ({ id: model.modelId, routeId: model.routeId, recipeId: model.recipeId })),
+    mediaModels: (connection.mediaModels ?? []).map((model) => ({ id: model.modelId, routeId: model.routeId, recipeId: model.recipeId, modality: model.modality, template: model.template })),
     updatedAt: connection.updatedAt,
   };
+}
+
+/** Re-save revalidation (§5.7): a well-known media route whose recipeId no
+ *  longer resolves (the connection's model set shrank) is de-assigned. Runs
+ *  after every connection save, after the new recipes are written. */
+function clearStaleMediaRouteAssignments(store: SqliteStore, routes: RouteResolver): void {
+  const recipeIds = new Set(routes.listRecipes().map((recipe) => recipe.id));
+  for (const route of routes.listRoutes(true)) {
+    if (!(MEDIA_ROUTE_IDS as readonly string[]).includes(route.id)) continue;
+    if (route.recipeId && !recipeIds.has(route.recipeId)) {
+      const updated: Route = { ...route, recipeId: "", enabled: false };
+      store.upsertRoute(updated);
+      routes.upsertRoute(updated);
+    }
+  }
+}
+
+/** Host-boot follow-up to the restart risk (§5.3/§5.7): interrupted media jobs
+ *  with a persisted providerJobId and a provider-template adapter get a
+ *  provider-side cancel so an orphaned fal/Replicate job stops billing.
+ *  Fire-and-forget and best-effort — never blocks boot or fails recovery. */
+function cancelOrphanedProviderJobs(store: SqliteStore, routes: RouteResolver, adapters: EngineAdapterRegistry): void {
+  for (const job of store.listMediaJobs({ status: "interrupted" })) {
+    const providerJobId = job.providerJobId;
+    if (!providerJobId) continue;
+    void (async () => {
+      try {
+        const route = routes.listRoutes(true).find((entry) => entry.id === job.routeId);
+        if (!route?.recipeId) return;
+        const recipe = routes.listRecipes().find((entry) => entry.id === route.recipeId);
+        if (!recipe) return;
+        const adapter = adapters.get(recipe.adapter);
+        if (!(adapter instanceof MediaProviderEngineAdapter)) return;
+        const spec = await adapter.buildLaunchSpec(recipe, { host: "127.0.0.1", port: 0 });
+        const handle = await adapter.start(recipe, spec, new AbortController().signal);
+        await adapter.cancel(handle, { id: providerJobId, modality: job.modality });
+      } catch {
+        // Best-effort: the job stays `interrupted` and the residual cost risk
+        // is documented; recovery itself already completed above.
+      }
+    })();
+  }
 }
 
 async function collectCompletion(

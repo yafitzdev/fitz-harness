@@ -149,7 +149,18 @@ export class MediaJobCoordinator {
   async #consume(id: string, scheduled: ScheduledMediaJob): Promise<void> {
     try {
       for await (const event of scheduled.events) {
-        if (event.type === "progress") {
+        if (event.type === "started") {
+          // The provider job id is the durable restart link: recoverInterruptedMediaJobs
+          // marks active jobs interrupted, and the host cancels orphaned provider jobs
+          // whose providerJobId survives (design doc §5.3, PR 4).
+          const now = new Date().toISOString();
+          this.#store.updateMediaJob(id, {
+            status: "started",
+            startedAt: now,
+            providerJobId: event.providerJobId,
+          });
+          this.#appendEvent(id, event);
+        } else if (event.type === "progress") {
           const now = new Date().toISOString();
           const current = this.#store.getMediaJob(id);
           this.#store.updateMediaJob(id, {

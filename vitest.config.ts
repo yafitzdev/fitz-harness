@@ -29,6 +29,9 @@ export default defineConfig({
       "@fitz/engine-llama-cpp": fileURLToPath(
         new URL("./packages/engine-llama-cpp/src/index.ts", import.meta.url),
       ),
+      "@fitz/media-providers": fileURLToPath(
+        new URL("./packages/media-providers/src/index.ts", import.meta.url),
+      ),
       "@fitz/storage": fileURLToPath(new URL("./packages/storage/src/index.ts", import.meta.url)),
       "@fitz/security": fileURLToPath(new URL("./packages/security/src/index.ts", import.meta.url)),
       "@fitz/observability": fileURLToPath(

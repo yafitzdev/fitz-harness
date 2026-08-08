@@ -77,6 +77,7 @@ export interface MediaCreditRecord {
  *  mirroring `agent_events` — the event DTOs carry no sequence field. SSE replay
  *  reads rows in sequence order, exactly like agent-run events. */
 export type MediaJobEvent =
+  | { type: "started"; providerJobId: string }
   | { type: "progress"; progress: number }
   | { type: "completed"; result: MediaGenerationResult }
   | { type: "failed"; error: string }

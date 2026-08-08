@@ -82,6 +82,9 @@ importers:
       '@fitz/media':
         specifier: workspace:*
         version: link:../../packages/media
+      '@fitz/media-providers':
+        specifier: workspace:*
+        version: link:../../packages/media-providers
       '@fitz/observability':
         specifier: workspace:*
         version: link:../../packages/observability
@@ -195,6 +198,18 @@ importers:
 
   packages/media:
     dependencies:
+      '@fitz/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+
+  packages/media-providers:
+    dependencies:
+      '@fitz/engine-openai-compatible':
+        specifier: workspace:*
+        version: link:../engine-openai-compatible
+      '@fitz/inference-core':
+        specifier: workspace:*
+        version: link:../inference-core
       '@fitz/protocol':
         specifier: workspace:*
         version: link:../protocol
