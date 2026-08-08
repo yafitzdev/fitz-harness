@@ -18,7 +18,7 @@ export function createToolApprovalRequester(store: SqliteStore, pollIntervalMs =
       requestedAt: new Date().toISOString(),
     };
     store.createToolApproval(approval);
-    return { approvalId: approval.id, decision: waitForDecision(store, approval.id, signal, pollIntervalMs) };
+    return { approvalId: approval.id, decision: waitForDecision(store, approval.id, signal, pollIntervalMs, request) };
   };
 }
 
@@ -45,18 +45,33 @@ function mediaRouteIdFor(toolName: string): string {
   return toolName === "generate_video" ? "video" : toolName === "generate_audio" ? "audio" : "image";
 }
 
-async function waitForDecision(store: SqliteStore, approvalId: string, signal: AbortSignal, pollIntervalMs: number): Promise<"approved" | "denied"> {
+async function waitForDecision(store: SqliteStore, approvalId: string, signal: AbortSignal, pollIntervalMs: number, toolCall: PiToolCall): Promise<"approved" | "denied"> {
   try {
     while (!signal.aborted) {
       const approval = store.getToolApproval(approvalId);
       if (!approval || approval.status === "denied" || approval.status === "cancelled") return "denied";
-      if (approval.status === "approved") return "approved";
+      if (approval.status === "approved") {
+        applyApprovedMediaRequest(toolCall, approval.request);
+        return "approved";
+      }
       await abortableDelay(pollIntervalMs, signal);
     }
     throw abortError();
   } catch (error) {
     if (signal.aborted) store.cancelToolApproval(approvalId, "Agent run cancelled");
     throw error;
+  }
+}
+
+/** Pi executes the same mutable input object after its tool_call hook returns.
+ * Apply the host-validated approval edits there so the approved form—not the
+ * agent's stale draft—is what the media tool receives. */
+function applyApprovedMediaRequest(toolCall: PiToolCall, approved: Readonly<Record<string, unknown>>): void {
+  if (!MEDIA_TOOLS.has(toolCall.toolName) || !toolCall.input || typeof toolCall.input !== "object" || Array.isArray(toolCall.input)) return;
+  const input = toolCall.input as Record<string, unknown>;
+  for (const field of ["prompt", "size", "seed", "negative_prompt", "duration_seconds", "resolution", "fps", "refs"]) delete input[field];
+  for (const [field, value] of Object.entries(approved)) {
+    if (field !== "estimated_credit_cost_cents") input[field] = value;
   }
 }
 

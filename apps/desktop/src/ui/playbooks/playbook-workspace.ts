@@ -85,7 +85,7 @@ export class PlaybookWorkspaceController {
     const query = this.elements.search.value.trim().toLowerCase();
     const matches = (...values: unknown[]) => !query || values.some((value) => String(value ?? "").toLowerCase().includes(query));
     const visibleFolders = folders.filter((folder: Json) => {
-      const engineRecipes = recipes.filter((recipe: Json) => recipe.playbookId === folder.folderName);
+      const engineRecipes = recipes.filter((recipe: Json) => samePlaybook(recipe.playbookId, folder.folderName));
       return matches(folder.folderName, folder.rootPath, folder.engine?.displayName, ...engineRecipes.flatMap((recipe: Json) => [recipe.displayName, recipe.modelId]));
     });
     if (!visibleFolders.length) { this.elements.list.append(emptyState(`No engine folders found in ${configuration.engineRoot ?? "the configured root"}`)); return; }
@@ -185,7 +185,7 @@ export class PlaybookWorkspaceController {
   private renderFolderCard(folder: Json, recipes: Json[]): HTMLElement {
     const engine = folder.engine;
     const playbookId = folder.folderName;
-    const playbookRecipes = recipes.filter((recipe: Json) => recipe.playbookId === playbookId);
+    const playbookRecipes = recipes.filter((recipe: Json) => samePlaybook(recipe.playbookId, playbookId));
     const actions: HTMLButtonElement[] = [];
     const configure = document.createElement("button");
     configure.type = "button";
@@ -338,4 +338,8 @@ function setFormBusy(form: HTMLFormElement, busy: boolean): void {
 
 function formatTokenCount(value: number): string {
   return value >= 1000 ? `${Math.round(value / 1000)}k` : String(Math.round(value));
+}
+
+function samePlaybook(left: unknown, right: unknown): boolean {
+  return String(left ?? "").localeCompare(String(right ?? ""), undefined, { sensitivity: "accent" }) === 0;
 }

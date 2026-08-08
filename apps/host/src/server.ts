@@ -123,6 +123,10 @@ const runtime = createHost({
   } : {}),
 });
 mediaJobs = runtime.mediaJobs;
+// On a fresh database createHost seeds the complete engine-mode recipe set first;
+// reconcile afterward so ComfyUI also gets its Playbooks registration without
+// suppressing the normal chat defaults.
+if (storeInitiallyEmpty) reconcileLocalComfyUIConfiguration(store, runtimePaths);
 
 await runtime.app.listen({ host, port });
 

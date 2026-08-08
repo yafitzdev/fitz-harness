@@ -299,8 +299,8 @@ const projects = new ProjectsController({
 const activityTimeline = new ActivityTimeline({
   messages,
   inspectResource: (reference) => inspectorPanel.inspect(reference),
-  decideApproval: async (approvalId, decision) => {
-    const response = await api(`/api/v1/tool-approvals/${approvalId}/decision`, "POST", { decision });
+  decideApproval: async (approvalId, decision, request) => {
+    const response = await api(`/api/v1/tool-approvals/${approvalId}/decision`, "POST", { decision, ...(request ? { request } : {}) });
     return response.data?.status === "approved" ? "approved" : "denied";
   },
   showToast,

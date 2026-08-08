@@ -39,6 +39,18 @@ describe("tool approval gate", () => {
     store.close();
   });
 
+  it("applies the host-approved media edits to the input Pi executes", async () => {
+    const store = SqliteStore.memory(); const now = new Date(0).toISOString();
+    store.createProject({ id: "project-1", name: "Project", createdAt: now, updatedAt: now });
+    store.createSession({ id: "session-1", projectId: "project-1", title: "Task", status: "active", createdAt: now, updatedAt: now });
+    const input: Record<string, unknown> = { prompt: "agent draft", duration_seconds: 8, route_id: "video" };
+    const handle = createToolApprovalRequester(store, 1)({ sessionId: "session-1", toolCallId: "vid-1", toolName: "generate_video", input }, new AbortController().signal);
+    expect(store.resolveToolApproval(handle.approvalId, "approved", undefined, undefined, { prompt: "user revision", duration_seconds: 4, fps: 24, route_id: "video" })).toBe(true);
+    await expect(handle.decision).resolves.toBe("approved");
+    expect(input).toEqual({ prompt: "user revision", duration_seconds: 4, fps: 24, route_id: "video" });
+    store.close();
+  });
+
   it("leaves non-media approvals and cost-less media requests unchanged", async () => {
     const store = SqliteStore.memory(); const now = new Date(0).toISOString();
     store.createProject({ id: "project-1", name: "Project", createdAt: now, updatedAt: now });

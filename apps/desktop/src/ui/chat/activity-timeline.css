@@ -45,6 +45,16 @@
 .tool-approval-heading { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 550; }
 .tool-approval-heading svg { width: 17px; height: 17px; color: var(--muted); }
 .tool-approval-request { max-height: 180px; margin: 0; overflow: auto; color: var(--muted); font: 12px/1.5 Consolas, "Cascadia Mono", monospace; white-space: pre-wrap; word-break: break-word; }
+.tool-approval-request.media-approval-form { max-height: none; display: grid; gap: 10px; overflow: visible; color: var(--text); font: inherit; }
+.media-approval-field { min-width: 0; display: grid; gap: 5px; color: var(--muted); font-size: 11px; }
+.media-approval-control { min-width: 0; display: flex; align-items: center; gap: 7px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
+.media-approval-control:focus-within { border-color: var(--subtle); }
+.media-approval-control input, .media-approval-control textarea { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: 12px/1.45 var(--font-ui); }
+.media-approval-control input { height: 31px; padding: 0 9px; }
+.media-approval-control textarea { min-height: 92px; resize: vertical; padding: 8px 9px; }
+.media-approval-suffix { flex: none; padding-right: 9px; color: var(--subtle); font-size: 11px; }
+.media-approval-parameters { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+.media-approval-references { margin: 0; color: var(--subtle); font-size: 11px; }
 .tool-approval-actions { display: flex; justify-content: flex-end; gap: 7px; }
 .tool-approval-actions button { min-height: 29px; padding: 5px 10px; border-radius: var(--radius-md); background: var(--tint-4); color: var(--text); cursor: pointer; font-size: 12px; }
 .tool-approval-actions button:hover { background: var(--tint-7); }

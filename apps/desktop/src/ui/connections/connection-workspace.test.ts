@@ -68,6 +68,7 @@ describe("ConnectionWorkspaceController", () => {
     expect(elements.connections.textContent).toContain("YanPC");
     expect(elements.connections.textContent).toContain("Local Model");
     expect(elements.connections.textContent).toContain("Remote API");
+    expect(elements.connections.querySelector(".media-text")?.textContent).toBe("Text");
     expect(calls.showToast).toHaveBeenCalledWith("Remote unavailable");
 
     elements.search.value = "local.gguf";
@@ -186,6 +187,7 @@ describe("ConnectionWorkspaceController", () => {
     await controller.sync(false);
 
     const card = [...elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")][1]!;
+    expect(card.textContent).not.toContain("Media generation");
     const mediaCards = [...card.querySelectorAll<HTMLElement>(".media-recipe-card")];
     expect(mediaCards).toHaveLength(2);
     expect(mediaCards[0]!.querySelector(".recipe-display-name")?.textContent).toBe("fal-ai/flux/dev");

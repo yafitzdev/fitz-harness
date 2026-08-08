@@ -19,8 +19,12 @@ type ActivityBurst = {
 export interface ActivityTimelineOptions {
   messages: HTMLElement;
   inspectResource: (reference: string) => void | Promise<void>;
-  decideApproval: (approvalId: string, decision: "approved" | "denied") => Promise<"approved" | "denied">;
+  decideApproval: (approvalId: string, decision: "approved" | "denied", request?: Json) => Promise<"approved" | "denied">;
   showToast: (message: string) => void;
+}
+
+function isMediaTool(toolName: string | undefined): boolean {
+  return toolName === "generate_image" || toolName === "generate_video" || toolName === "generate_audio";
 }
 
 /** Renders the collapsible agent-work feed, tools, approvals, and compaction events. */
@@ -29,6 +33,7 @@ export class ActivityTimeline {
   readonly #searchRoots = new Set<string>();
   readonly #burstsByTool = new WeakMap<HTMLElement, ActivityBurst>();
   readonly #reasoningByRow = new WeakMap<HTMLElement, ReasoningView>();
+  readonly #approvalRequests = new WeakMap<HTMLElement, Json>();
   #work: WorkSummary | undefined;
   #burst: ActivityBurst | undefined;
 
@@ -187,12 +192,14 @@ export class ActivityTimeline {
     const row = document.createElement("section");
     row.className = "message tool-approval";
     row.dataset.approvalId = String(approval.id ?? "");
+    row.dataset.toolName = String(approval.toolName ?? "tool");
+    this.#approvalRequests.set(row, { ...(approval.request ?? {}) });
     const heading = document.createElement("div");
     heading.className = "tool-approval-heading";
     heading.append(svgIcon(iconPathFor(String(approval.toolName ?? "tool"))), Object.assign(document.createElement("span"), { textContent: `Allow ${String(approval.toolName ?? "tool")}?` }));
-    const request = document.createElement("pre");
-    request.className = "tool-approval-request";
-    request.textContent = this.#formatPayload(approval.request, "No arguments");
+    const request = isMediaTool(row.dataset.toolName)
+      ? this.#mediaApprovalForm(row.dataset.toolName, approval.request ?? {})
+      : Object.assign(document.createElement("pre"), { className: "tool-approval-request", textContent: this.#formatPayload(approval.request, "No arguments") });
     const actions = document.createElement("div");
     actions.className = "tool-approval-actions";
     const deny = this.#button("Deny");
@@ -311,8 +318,75 @@ export class ActivityTimeline {
     for (const button of row.querySelectorAll<HTMLButtonElement>("button")) button.disabled = true;
     const status = row.querySelector<HTMLElement>(".tool-approval-status");
     if (status) status.textContent = decision === "approved" ? "Approving…" : "Denying…";
-    try { this.resolveApproval(row, await this.#options.decideApproval(id, decision)); }
+    const request = decision === "approved" && isMediaTool(row.dataset.toolName) ? this.#readMediaApproval(row) : undefined;
+    try { this.resolveApproval(row, await this.#options.decideApproval(id, decision, request)); }
     catch (error) { for (const button of row.querySelectorAll<HTMLButtonElement>("button")) button.disabled = false; if (status) status.textContent = ""; this.#options.showToast(error instanceof Error ? error.message : String(error)); }
+  }
+
+  #mediaApprovalForm(toolName: string, request: Json): HTMLElement {
+    const form = document.createElement("div");
+    form.className = "tool-approval-request media-approval-form";
+    form.append(this.#approvalField("Prompt", "prompt", request.prompt, { multiline: true, required: true }));
+    const parameters = document.createElement("div");
+    parameters.className = "media-approval-parameters";
+    if (toolName === "generate_image") {
+      parameters.append(
+        this.#approvalField("Size", "size", request.size, { placeholder: "Route default" }),
+        this.#approvalField("Seed", "seed", request.seed, { type: "number", placeholder: "Random" }),
+      );
+      form.append(parameters, this.#approvalField("Negative prompt", "negative_prompt", request.negative_prompt, { multiline: true, placeholder: "Optional" }));
+    } else if (toolName === "generate_video") {
+      parameters.append(
+        this.#approvalField("Duration", "duration_seconds", request.duration_seconds, { type: "number", suffix: "seconds", min: "0.1", step: "0.1", placeholder: "Route default" }),
+        this.#approvalField("Resolution", "resolution", request.resolution, { placeholder: "Route default" }),
+        this.#approvalField("Frame rate", "fps", request.fps, { type: "number", suffix: "fps", min: "1", step: "1", placeholder: "Route default" }),
+      );
+      form.append(parameters);
+    } else {
+      parameters.append(this.#approvalField("Duration", "duration_seconds", request.duration_seconds, { type: "number", suffix: "seconds", min: "0.1", step: "0.1", placeholder: "Route default" }));
+      form.append(parameters);
+    }
+    if (Array.isArray(request.refs) && request.refs.length) {
+      const references = document.createElement("p");
+      references.className = "media-approval-references";
+      references.textContent = `${request.refs.length} reference${request.refs.length === 1 ? "" : "s"} attached`;
+      form.append(references);
+    }
+    return form;
+  }
+
+  #approvalField(labelText: string, name: string, value: unknown, options: { multiline?: boolean; required?: boolean; type?: string; suffix?: string; min?: string; step?: string; placeholder?: string } = {}): HTMLLabelElement {
+    const label = document.createElement("label");
+    label.className = `media-approval-field${options.multiline ? " media-prompt-field" : ""}`;
+    const title = document.createElement("span");
+    title.textContent = labelText;
+    const control = options.multiline ? document.createElement("textarea") : document.createElement("input");
+    control.dataset.approvalField = name;
+    if (control instanceof HTMLInputElement) control.type = options.type ?? "text";
+    control.value = value === undefined || value === null ? "" : String(value);
+    control.required = Boolean(options.required);
+    if (options.placeholder) control.placeholder = options.placeholder;
+    if (control instanceof HTMLInputElement) {
+      if (options.min) control.min = options.min;
+      if (options.step) control.step = options.step;
+    }
+    const shell = document.createElement("span");
+    shell.className = "media-approval-control";
+    shell.append(control);
+    if (options.suffix) shell.append(Object.assign(document.createElement("span"), { className: "media-approval-suffix", textContent: options.suffix }));
+    label.append(title, shell);
+    return label;
+  }
+
+  #readMediaApproval(row: HTMLElement): Json {
+    const request = { ...(this.#approvalRequests.get(row) ?? {}) };
+    for (const control of row.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("[data-approval-field]")) {
+      const name = control.dataset.approvalField!;
+      const value = control.value.trim();
+      if (!value) delete request[name];
+      else request[name] = control instanceof HTMLInputElement && control.type === "number" ? Number(value) : value;
+    }
+    return request;
   }
 
   #renderShell(details: HTMLElement, input: unknown, running: boolean): void {

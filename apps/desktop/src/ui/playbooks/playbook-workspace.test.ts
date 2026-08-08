@@ -123,6 +123,17 @@ describe("PlaybookWorkspaceController", () => {
     expect(elements.title.textContent).toBe("Playbooks");
   });
 
+  it("joins Windows engine folders to canonical playbook ids without case drift", () => {
+    const configuration = sampleConfiguration();
+    configuration.engineFolders = [{ folderName: "ComfyUI", rootPath: "C:\\Users\\me\\.llm\\engines\\ComfyUI", registered: true, engine: { displayName: "comfyui" } }];
+    configuration.recipes = [{ id: "h3-video", playbookId: "comfyui", displayName: "MiniMax H3", modelId: "minimax-h3", contextTokens: 1, configuration: {} }];
+    const { controller, elements } = setup(configuration);
+    controller.render();
+    expect(elements.list.querySelector("h3")?.textContent).toBe("comfyui");
+    expect(elements.list.querySelector(".recipe-display-name")?.textContent).toBe("MiniMax H3");
+    expect(elements.list.textContent).not.toContain("Set up");
+  });
+
   it("filters folders and recipes by the search query", () => {
     const { controller, elements } = setup();
     controller.render();

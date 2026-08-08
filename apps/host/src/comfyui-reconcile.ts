@@ -46,6 +46,24 @@ export function reconcileLocalComfyUIConfiguration(store: SqliteStore, paths: Fi
     executable: local.executable,
     launchArgs: ["--extra-model-paths-config", local.modelConfigPath, "--output-directory", local.outputDir],
   });
+  const now = new Date().toISOString();
+  const existingEngine = store.getEngine(playbook.id);
+  if (!existingEngine) {
+    store.upsertEngine({
+      id: playbook.id,
+      folderName: "ComfyUI",
+      displayName: playbook.displayName,
+      connectionMode: "managed",
+      runtime: "windows",
+      baseUrl: "http://127.0.0.1",
+      healthPath: "/system_stats",
+      launchCommand: local.executable,
+      launchArguments: ["main.py", "--extra-model-paths-config", local.modelConfigPath, "--output-directory", local.outputDir],
+      workingDirectory: ".",
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
   for (const recipe of playbook.recipes) store.upsertRecipe(recipe);
 
   const videoRoute = store.listRoutes().find((route) => route.id === "video");

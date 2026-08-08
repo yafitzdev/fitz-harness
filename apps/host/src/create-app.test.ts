@@ -614,6 +614,17 @@ describe("Fitz host", () => {
     const decided = await runtime.app.inject({ method: "POST", url: `/api/v1/tool-approvals/${pending.json().data.id}/decision`, payload: { decision: "approved" } }); expect(decided.json().data.status).toBe("approved"); await runtime.app.close();
   });
 
+  it("validates editable media approval fields while preserving host-owned routing", async () => {
+    const runtime = createHost();
+    const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Media approvals" } });
+    const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "Video" } });
+    const pending = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${session.json().data.id}/tool-approvals`, payload: { toolCallId: "video-1", toolName: "generate_video", request: { prompt: "draft", duration_seconds: 8, route_id: "video" } } });
+    const decided = await runtime.app.inject({ method: "POST", url: `/api/v1/tool-approvals/${pending.json().data.id}/decision`, payload: { decision: "approved", request: { prompt: "revised", duration_seconds: 4, resolution: "1344x768", fps: 24, route_id: "attacker-route" } } });
+    expect(decided.statusCode).toBe(200);
+    expect(decided.json().data.request).toEqual({ prompt: "revised", duration_seconds: 4, resolution: "1344x768", fps: 24, route_id: "video" });
+    await runtime.app.close();
+  });
+
   it("isolates projects between authenticated users", async () => {
     const store = SqliteStore.memory(); const security = new SecurityService(store, "pepper"); const first = security.createUser("First"); const second = security.createUser("Second"); const firstToken = security.issueDevice(first.id, "One").token; const secondToken = security.issueDevice(second.id, "Two").token; const runtime = createHost({ store, security, authMode: "required" });
     await runtime.app.inject({ method: "POST", url: "/api/v1/projects", headers: { authorization: `Bearer ${firstToken}` }, payload: { name: "Private" } }); const visible = await runtime.app.inject({ method: "GET", url: "/api/v1/projects", headers: { authorization: `Bearer ${secondToken}` } }); expect(visible.json().data).toEqual([]); await runtime.app.close();

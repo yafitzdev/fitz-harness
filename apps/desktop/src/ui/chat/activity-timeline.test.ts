@@ -25,6 +25,22 @@ function commentary(text: string): HTMLElement {
 beforeEach(() => document.body.replaceChildren());
 
 describe("ActivityTimeline", () => {
+  it("renders media approvals as editable typed fields and submits a safe request", async () => {
+    const messages = document.createElement("main");
+    const decideApproval = vi.fn(async () => "approved" as const);
+    const timeline = new ActivityTimeline({ messages, inspectResource: vi.fn(), decideApproval, showToast: vi.fn() });
+    const row = timeline.appendApproval({ id: "approval-video", toolName: "generate_video", request: { prompt: "agent draft", duration_seconds: 8, resolution: "1344x768", fps: 24 }, status: "pending" });
+    expect(row.querySelector("pre.tool-approval-request")).toBeNull();
+    const prompt = row.querySelector<HTMLTextAreaElement>('[data-approval-field="prompt"]')!;
+    const duration = row.querySelector<HTMLInputElement>('[data-approval-field="duration_seconds"]')!;
+    prompt.value = "user revision";
+    duration.value = "4";
+    row.querySelector<HTMLButtonElement>(".approve-tool")!.click();
+    await vi.waitFor(() => expect(decideApproval).toHaveBeenCalledWith("approval-video", "approved", {
+      prompt: "user revision", duration_seconds: 4, resolution: "1344x768", fps: 24,
+    }));
+  });
+
   it("removes hover metadata when a streamed assistant message becomes reasoning", () => {
     const { messages, timeline } = setup();
     const article = document.createElement("article");

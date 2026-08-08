@@ -70,6 +70,8 @@ import {
 import { MediaProviderEngineAdapter } from "./media-provider-adapter.js";
 import type { AgentSafetyService } from "./agent-safety/index.js";
 
+const MEDIA_TOOL_NAMES = new Set(["generate_image", "generate_video", "generate_audio"]);
+
 interface ConsumerModelRegistration { modelId: string; routeId: string; recipeId: string }
 interface ConsumerMediaModelRegistration { modelId: string; recipeId: string; routeId: string; modality: MediaModality; template: string }
 interface ConsumerConnectionRegistration {
@@ -696,7 +698,23 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   app.delete("/api/v1/artifacts/:artifactId", async (request, reply) => { const artifact = store.getArtifact((request.params as { artifactId: string }).artifactId); if (!artifact) return reply.code(404).send({ error: "Artifact not found" }); const session = store.getSession(artifact.sessionId); const principal = principals.get(request); if (!session || !canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Artifact access denied" }); store.deleteArtifact(artifact.id); security?.audit("artifact.deleted", principal?.user.id, "artifact", artifact.id, { sessionId: artifact.sessionId, name: artifact.name }); return reply.code(204).send(); });
   app.post("/api/v1/sessions/:sessionId/tool-approvals", async (request, reply) => { try { const session = store.getSession((request.params as { sessionId: string }).sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); const principal = principals.get(request); if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); const body = requireRecord(request.body); const toolName = requireString(body.toolName, "toolName"); const decision = store.resolveToolPolicy(principal?.user.id, principal?.user.role, toolName); const now = new Date().toISOString(); const approval = { id: randomUUID(), sessionId: session.id, toolCallId: requireString(body.toolCallId, "toolCallId"), toolName, status: decision === "allow" ? "approved" as const : decision === "deny" ? "denied" as const : "pending" as const, request: isRecord(body.request) ? body.request : {}, requestedAt: now, ...(typeof body.runId === "string" ? { runId: body.runId } : {}), ...(decision !== "ask" ? { resolvedAt: now } : {}) }; store.createToolApproval(approval); security?.audit("tool-approval.requested", principal?.user.id, "tool-approval", approval.id, { toolName, decision }); return reply.code(201).send({ data: approval }); } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
   app.get("/api/v1/sessions/:sessionId/tool-approvals", async (request, reply) => { const session = store.getSession((request.params as { sessionId: string }).sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); if (!canAccessOwner(principals.get(request), session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); const query = request.query as { status?: string }; return { data: store.listToolApprovals(session.id, parseApprovalStatus(query.status)) }; });
-  app.post("/api/v1/tool-approvals/:approvalId/decision", async (request, reply) => { try { const approval = store.getToolApproval((request.params as { approvalId: string }).approvalId); if (!approval) return reply.code(404).send({ error: "Approval not found" }); const session = store.getSession(approval.sessionId); if (!session || !canAccessOwner(principals.get(request), session.ownerUserId)) return reply.code(403).send({ error: "Approval access denied" }); const body = requireRecord(request.body); if (body.decision !== "approved" && body.decision !== "denied") throw new TypeError("decision must be approved or denied"); const principal = principals.get(request); if (!store.resolveToolApproval(approval.id, body.decision, principal?.user.id, typeof body.note === "string" ? body.note : undefined)) return reply.code(409).send({ error: "Approval is no longer pending" }); security?.audit("tool-approval.resolved", principal?.user.id, "tool-approval", approval.id, { decision: body.decision }); return { data: store.getToolApproval(approval.id) }; } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
+  app.post("/api/v1/tool-approvals/:approvalId/decision", async (request, reply) => {
+    try {
+      const approval = store.getToolApproval((request.params as { approvalId: string }).approvalId);
+      if (!approval) return reply.code(404).send({ error: "Approval not found" });
+      const session = store.getSession(approval.sessionId);
+      if (!session || !canAccessOwner(principals.get(request), session.ownerUserId)) return reply.code(403).send({ error: "Approval access denied" });
+      const body = requireRecord(request.body);
+      if (body.decision !== "approved" && body.decision !== "denied") throw new TypeError("decision must be approved or denied");
+      const amendedRequest = body.decision === "approved" && MEDIA_TOOL_NAMES.has(approval.toolName) && isRecord(body.request)
+        ? parseMediaApprovalRequest(approval.toolName, approval.request, body.request)
+        : undefined;
+      const principal = principals.get(request);
+      if (!store.resolveToolApproval(approval.id, body.decision, principal?.user.id, typeof body.note === "string" ? body.note : undefined, amendedRequest)) return reply.code(409).send({ error: "Approval is no longer pending" });
+      security?.audit("tool-approval.resolved", principal?.user.id, "tool-approval", approval.id, { decision: body.decision, amended: Boolean(amendedRequest) });
+      return { data: store.getToolApproval(approval.id) };
+    } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
+  });
 
   app.get(
     "/api/v1/management/status",
@@ -1876,6 +1894,42 @@ function isDirectLoopbackRequest(request: FastifyRequest): boolean {
   if (address !== "127.0.0.1" && address !== "::1") return false;
   const proxyHeaders = ["forwarded", "x-forwarded-for", "x-forwarded-host", "tailscale-user-login", "tailscale-user-name", "tailscale-user-profile-pic"];
   return proxyHeaders.every((name) => request.headers[name] === undefined);
+}
+
+/** Accept only the editable, typed portion of a media approval. Routing and
+ * billing metadata remain host-owned even when the user revises the prompt. */
+function parseMediaApprovalRequest(toolName: string, original: Readonly<Record<string, unknown>>, value: Record<string, unknown>): Readonly<Record<string, unknown>> {
+  const prompt = requireString(value.prompt, "prompt");
+  const result: Record<string, unknown> = { prompt };
+  const optionalNumber = (name: string, options: { integer?: boolean; minimum?: number } = {}): void => {
+    const candidate = value[name];
+    if (candidate === undefined || candidate === null || candidate === "") return;
+    if (typeof candidate !== "number" || !Number.isFinite(candidate) || (options.integer && !Number.isInteger(candidate)) || (options.minimum !== undefined && candidate < options.minimum)) throw new TypeError(`${name} is invalid`);
+    result[name] = candidate;
+  };
+  const optionalString = (name: string): void => {
+    const candidate = value[name];
+    if (candidate === undefined || candidate === null || candidate === "") return;
+    if (typeof candidate !== "string") throw new TypeError(`${name} must be a string`);
+    result[name] = candidate;
+  };
+  if (toolName === "generate_image") {
+    optionalString("size");
+    optionalNumber("seed", { integer: true, minimum: 0 });
+    optionalString("negative_prompt");
+  } else if (toolName === "generate_video") {
+    optionalNumber("duration_seconds", { minimum: 0.1 });
+    optionalString("resolution");
+    optionalNumber("fps", { integer: true, minimum: 1 });
+  } else if (toolName === "generate_audio") {
+    optionalNumber("duration_seconds", { minimum: 0.1 });
+  }
+  if (Array.isArray(value.refs)) {
+    if (!value.refs.every((item) => typeof item === "string")) throw new TypeError("refs must contain strings");
+    result.refs = value.refs.slice(0, 32);
+  }
+  for (const protectedField of ["route_id", "estimated_credit_cost_cents"]) if (original[protectedField] !== undefined) result[protectedField] = original[protectedField];
+  return result;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

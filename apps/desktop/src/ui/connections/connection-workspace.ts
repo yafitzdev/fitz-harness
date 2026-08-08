@@ -282,10 +282,6 @@ export class ConnectionWorkspaceController {
       if (!connection.availableModels.length && !mediaModels.length) section.appendBody(emptyState("No models available"));
       for (const model of connection.availableModels) section.appendBody(this.modelCard(model, routes));
       if (mediaModels.length) {
-        const heading = document.createElement("h4");
-        heading.className = "media-section-heading";
-        heading.textContent = "Media generation";
-        section.appendBody(heading);
         for (const model of mediaModels) section.appendBody(this.mediaModelCard(model, routes));
       }
     }
@@ -306,6 +302,11 @@ export class ConnectionWorkspaceController {
     modelLabel.className = "recipe-card-label";
     modelLabel.textContent = model.modelId ?? "API model";
     labels.append(modelLabel);
+    const textLabel = document.createElement("span");
+    textLabel.className = "recipe-card-label media-modality-badge media-text";
+    textLabel.textContent = "Text";
+    textLabel.title = "Generates text";
+    labels.append(textLabel);
     if (model.contextTokens) {
       const contextLabel = document.createElement("span");
       contextLabel.className = "recipe-card-label recipe-context-label";
