@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { FakeEngineAdapter } from "@fitz/engine-fake";
+import { FakeMediaEngineAdapter, deterministicMediaBytes } from "@fitz/engine-media-fake";
 import type { MediaModality, Recipe } from "@fitz/protocol";
 import { DEFAULT_QUOTAS, SecurityService } from "@fitz/security";
 import { SqliteStore } from "@fitz/storage";
 import { createHost, type HostRuntime } from "./create-app.js";
-import { HostMediaFakeEngineAdapter } from "./media-test-double.js";
 
 describe("Fitz OpenAI-shaped media gateway", () => {
   it("serves a completed image synchronously as base64", async () => {
-    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new HostMediaFakeEngineAdapter()] });
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter()] });
     try {
       await registerMediaRecipe(runtime, "h3-img", ["image"]);
       await assignRoute(runtime, "image", "h3-img");
@@ -17,7 +17,7 @@ describe("Fitz OpenAI-shaped media gateway", () => {
       expect(response.statusCode, response.body).toBe(200);
       const body = response.json();
       expect(body.created).toEqual(expect.any(Number));
-      expect([...Buffer.from(body.data[0].b64_json, "base64")]).toEqual([1, 2, 3]);
+      expect([...Buffer.from(body.data[0].b64_json, "base64")]).toEqual([...deterministicMediaBytes("image")]);
 
       // The synchronous gateway still ran a durable media job to completion.
       const latest = runtime.store.listMediaJobs({ limit: 1 })[0];
@@ -29,7 +29,7 @@ describe("Fitz OpenAI-shaped media gateway", () => {
   });
 
   it("serves a completed image synchronously as a Fitz artifact URL", async () => {
-    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new HostMediaFakeEngineAdapter()] });
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter()] });
     try {
       await registerMediaRecipe(runtime, "h3-img", ["image"]);
       await assignRoute(runtime, "image", "h3-img");
@@ -43,14 +43,14 @@ describe("Fitz OpenAI-shaped media gateway", () => {
       const content = await runtime.app.inject({ method: "GET", url: new URL(url).pathname });
       expect(content.statusCode).toBe(200);
       expect(content.headers["content-type"]).toBe("image/png");
-      expect([...content.rawPayload]).toEqual([1, 2, 3]);
+      expect([...content.rawPayload]).toEqual([...deterministicMediaBytes("image")]);
     } finally {
       await runtime.app.close();
     }
   });
 
   it("rejects malformed or unroutable image requests", async () => {
-    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new HostMediaFakeEngineAdapter()] });
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter()] });
     try {
       await registerMediaRecipe(runtime, "h3-img", ["image"]);
       await registerMediaRecipe(runtime, "h3-video", ["video"]);
@@ -77,7 +77,7 @@ describe("Fitz OpenAI-shaped media gateway", () => {
   });
 
   it("returns 504 with the job id when an image exceeds the bounded await", async () => {
-    const mediaFake = new HostMediaFakeEngineAdapter({ progressPerPoll: 0.005 });
+    const mediaFake = new FakeMediaEngineAdapter({ progressPerPoll: 0.005 });
     const runtime = createHost({ adapters: [new FakeEngineAdapter(), mediaFake], mediaImageTimeoutMs: 40 });
     try {
       await registerMediaRecipe(runtime, "h3-img", ["image"]);
@@ -100,7 +100,7 @@ describe("Fitz OpenAI-shaped media gateway", () => {
   });
 
   it("returns 502 when an image job fails", async () => {
-    const mediaFake = new HostMediaFakeEngineAdapter({ failWhenPromptIncludes: "explode" });
+    const mediaFake = new FakeMediaEngineAdapter({ failWhenPromptIncludes: "explode" });
     const runtime = createHost({ adapters: [new FakeEngineAdapter(), mediaFake] });
     try {
       await registerMediaRecipe(runtime, "h3-img", ["image"]);
@@ -117,7 +117,7 @@ describe("Fitz OpenAI-shaped media gateway", () => {
   });
 
   it("starts video generation as a job and reports progress through the native API", async () => {
-    const mediaFake = new HostMediaFakeEngineAdapter();
+    const mediaFake = new FakeMediaEngineAdapter();
     const runtime = createHost({ adapters: [new FakeEngineAdapter(), mediaFake] });
     try {
       await registerMediaRecipe(runtime, "h3-video", ["video"]);
@@ -139,14 +139,14 @@ describe("Fitz OpenAI-shaped media gateway", () => {
       expect(job.artifactId).toEqual(expect.any(String));
       const content = await runtime.app.inject({ method: "GET", url: `/api/v1/artifacts/${job.artifactId}/content` });
       expect(content.headers["content-type"]).toBe("video/mp4");
-      expect([...content.rawPayload]).toEqual([1, 2, 3]);
+      expect([...content.rawPayload]).toEqual([...deterministicMediaBytes("video")]);
     } finally {
       await runtime.app.close();
     }
   });
 
   it("rejects a video request whose route does not generate video", async () => {
-    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new HostMediaFakeEngineAdapter()] });
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter()] });
     try {
       await registerMediaRecipe(runtime, "h3-img", ["image"]);
       await assignRoute(runtime, "image", "h3-img");
@@ -160,7 +160,7 @@ describe("Fitz OpenAI-shaped media gateway", () => {
   });
 
   it("reserves audio generation with 501", async () => {
-    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new HostMediaFakeEngineAdapter()] });
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter()] });
     try {
       const response = await runtime.app.inject({ method: "POST", url: "/v1/audio/generations", payload: { model: "audio", prompt: "a song" } });
       expect(response.statusCode).toBe(501);
@@ -180,7 +180,7 @@ describe("Fitz OpenAI-shaped media gateway", () => {
     security.setRouteGrants(consumer.id, ["image"]); // granted the route, but has no media quota (fail closed)
     const { token: consumerToken } = security.issueDevice(consumer.id, "Browser");
 
-    const runtime = createHost({ store, security, authMode: "required", adapters: [new FakeEngineAdapter(), new HostMediaFakeEngineAdapter()] });
+    const runtime = createHost({ store, security, authMode: "required", adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter()] });
     try {
       const adminHeaders = { authorization: `Bearer ${adminToken}` };
       await registerMediaRecipeAs(runtime, adminHeaders, "h3-img", ["image"]);

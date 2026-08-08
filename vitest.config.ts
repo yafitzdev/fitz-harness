@@ -17,6 +17,9 @@ export default defineConfig({
       "@fitz/engine-fake": fileURLToPath(
         new URL("./packages/engine-fake/src/index.ts", import.meta.url),
       ),
+      "@fitz/engine-media-fake": fileURLToPath(
+        new URL("./packages/engine-media-fake/src/index.ts", import.meta.url),
+      ),
       "@fitz/engine-ninfer": fileURLToPath(
         new URL("./packages/engine-ninfer/src/index.ts", import.meta.url),
       ),

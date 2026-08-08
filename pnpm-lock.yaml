@@ -67,6 +67,9 @@ importers:
       '@fitz/engine-llama-cpp':
         specifier: workspace:*
         version: link:../../packages/engine-llama-cpp
+      '@fitz/engine-media-fake':
+        specifier: workspace:*
+        version: link:../../packages/engine-media-fake
       '@fitz/engine-ninfer':
         specifier: workspace:*
         version: link:../../packages/engine-ninfer
@@ -147,6 +150,18 @@ importers:
       '@fitz/engine-openai-compatible':
         specifier: workspace:*
         version: link:../engine-openai-compatible
+      '@fitz/inference-core':
+        specifier: workspace:*
+        version: link:../inference-core
+      '@fitz/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+
+  packages/engine-media-fake:
+    dependencies:
+      '@fitz/engine-fake':
+        specifier: workspace:*
+        version: link:../engine-fake
       '@fitz/inference-core':
         specifier: workspace:*
         version: link:../inference-core
@@ -238,6 +253,9 @@ packages:
   '@aws-sdk/core@3.977.3':
     resolution: {integrity: sha512-6YZTpF5Zzl0KdSrztM0l6ErKdnXrnnodIDYfayHE9SFfZU8Ubxls7H2XnfWT121jgwiG+WP1z5kyfVDsH5V4qA==}
     engines: {node: '>=20.0.0'}
+    deprecated: |-
+      Deprecated due to Document number parsing bug in JSON, see
+        https://github.com/aws/aws-sdk-js-v3/issues/8246. Newer version available.
 
   '@aws-sdk/credential-provider-env@3.972.64':
     resolution: {integrity: sha512-14kkR5aj1c7D+cYCrEcG2W3xw87wMYAEUeB/tMiQ2j0RVKzzdewd4mJw1+Q0JVLr4IFU1JHGDCyj0WqLrtIixg==}

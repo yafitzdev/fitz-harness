@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { FakeEngineAdapter } from "@fitz/engine-fake";
+import { FakeMediaEngineAdapter, deterministicMediaBytes } from "@fitz/engine-media-fake";
 import type { MediaModality, Recipe, Route } from "@fitz/protocol";
 import { RouteResolver } from "@fitz/inference-core";
 import { SqliteStore } from "@fitz/storage";
 import { createHost, ensureMediaRoutes, type HostRuntime } from "./create-app.js";
-import { HostMediaFakeEngineAdapter } from "./media-test-double.js";
 import { reconcileNInferConfiguration } from "./ninfer-reconcile.js";
 
 describe("Fitz host media jobs", () => {
   it("creates the well-known media routes disabled and preserves assignments", async () => {
-    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new HostMediaFakeEngineAdapter()] });
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter()] });
     try {
       const routes = (await runtime.app.inject({ method: "GET", url: "/api/v1/management/routes" })).json().data as Route[];
       for (const id of ["image", "video", "audio"]) {
@@ -31,7 +31,7 @@ describe("Fitz host media jobs", () => {
   });
 
   it("completes a job, writes the artifact, and persists sequenced events", async () => {
-    const mediaFake = new HostMediaFakeEngineAdapter();
+    const mediaFake = new FakeMediaEngineAdapter();
     const runtime = createHost({ adapters: [new FakeEngineAdapter(), mediaFake] });
     try {
       await registerMediaRecipe(runtime, "h3-img", ["image"]);
@@ -50,7 +50,7 @@ describe("Fitz host media jobs", () => {
       const content = await runtime.app.inject({ method: "GET", url: `/api/v1/artifacts/${job.artifactId}/content` });
       expect(content.statusCode).toBe(200);
       expect(content.headers["content-type"]).toBe("image/png");
-      expect([...content.rawPayload]).toEqual([1, 2, 3]);
+      expect([...content.rawPayload]).toEqual([...deterministicMediaBytes("image")]);
 
       // Durable event stream: progress events then the completed event, ascending sequences.
       const events = runtime.store.mediaJobEventsAfter(jobId, 0);
@@ -69,7 +69,7 @@ describe("Fitz host media jobs", () => {
   });
 
   it("keeps chat persistence working while media jobs stay out of inference_requests", async () => {
-    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new HostMediaFakeEngineAdapter()] });
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter()] });
     try {
       await registerMediaRecipe(runtime, "h3-img", ["image"]);
       await assignRoute(runtime, "image", "h3-img");
@@ -89,7 +89,7 @@ describe("Fitz host media jobs", () => {
   });
 
   it("rejects a job whose modality does not match the route kind", async () => {
-    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new HostMediaFakeEngineAdapter()] });
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter()] });
     try {
       await registerMediaRecipe(runtime, "h3-video", ["video"]);
       await assignRoute(runtime, "video", "h3-video");
@@ -103,7 +103,7 @@ describe("Fitz host media jobs", () => {
   });
 
   it("rejects assigning a chat recipe to a media route", async () => {
-    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new HostMediaFakeEngineAdapter()] });
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter()] });
     try {
       const assigned = await runtime.app.inject({ method: "PUT", url: "/api/v1/management/routes/image", payload: { displayName: "Image generation", recipeId: "fake-best", enabled: true } });
       expect(assigned.statusCode, assigned.body).toBe(400);
@@ -114,7 +114,7 @@ describe("Fitz host media jobs", () => {
   });
 
   it("de-assigns a media route with an empty recipeId and keeps it disabled", async () => {
-    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new HostMediaFakeEngineAdapter()] });
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter()] });
     try {
       await registerMediaRecipe(runtime, "h3-img", ["image"]);
       await assignRoute(runtime, "image", "h3-img");
@@ -134,7 +134,7 @@ describe("Fitz host media jobs", () => {
   });
 
   it("cancels an in-flight job with a best-effort provider cancel", async () => {
-    const mediaFake = new HostMediaFakeEngineAdapter({ progressPerPoll: 0.02 });
+    const mediaFake = new FakeMediaEngineAdapter({ progressPerPoll: 0.02 });
     const runtime = createHost({ adapters: [new FakeEngineAdapter(), mediaFake] });
     try {
       await registerMediaRecipe(runtime, "h3-img", ["image"]);
@@ -161,7 +161,7 @@ describe("Fitz host media jobs", () => {
   });
 
   it("replays job events as SSE and after a sequence", async () => {
-    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new HostMediaFakeEngineAdapter()] });
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter()] });
     try {
       await registerMediaRecipe(runtime, "h3-img", ["image"]);
       await assignRoute(runtime, "image", "h3-img");
