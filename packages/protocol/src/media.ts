@@ -81,3 +81,48 @@ export type MediaJobEvent =
   | { type: "completed"; result: MediaGenerationResult }
   | { type: "failed"; error: string }
   | { type: "cancelled" };
+
+// ---------------------------------------------------------------------------
+// OpenAI-shaped media gateway (§5.8): the request/response shapes the host
+// serves on /v1/.../generations and consumes from openai-media providers.
+// "OpenAI-shaped", not wire-compatible: the video shape and the error envelope
+// are Fitz contracts, and only Fitz's own clients consume the gateway.
+// ---------------------------------------------------------------------------
+
+export interface ImageGenerationRequest {
+  model: string; // route id (the well-known "image" route or a granted media route)
+  prompt: string;
+  n?: number; // only n = 1 is supported in v1
+  size?: string; // "1024x1024", "1280x720", ...
+  response_format?: "url" | "b64_json"; // default "url"
+  user?: string;
+}
+
+/** `data[].url` is always a Fitz artifact URL (provider URLs are fetched
+ *  host-side, §5.11) — never a provider URL. */
+export interface ImageGenerationResponse {
+  created: number; // unix seconds
+  data: Array<{ b64_json?: string; url?: string }>;
+}
+
+export interface VideoGenerationRequest {
+  model: string; // route id (the well-known "video" route or a granted media route)
+  prompt: string;
+  duration?: number; // seconds
+  resolution?: string; // "1280x720", ...
+  user?: string;
+}
+
+/** Job-style response: `id` is the mediaJobId — poll progress via the Fitz-native
+ *  `GET /api/v1/media/jobs/:id`; there is no /v1/videos/generations/{id} poll path
+ *  in v1 (§5.8). */
+export interface VideoGenerationResponse {
+  id: string;
+  object: "video.generation";
+  status: MediaJobStatus;
+  progress?: number;
+  artifactId?: string;
+  error?: string;
+  createdAt: string;
+}
+

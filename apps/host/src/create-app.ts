@@ -28,6 +28,8 @@ import {
   type EngineConnectionMode,
   type EngineRegistration,
   type EngineRuntime,
+  type ImageGenerationRequest,
+  type ImageGenerationResponse,
   type MediaGenerationParams,
   type MediaJobRecord,
   type MediaJobStatus,
@@ -37,6 +39,8 @@ import {
   type Recipe,
   type Route,
   type RouteKind,
+  type VideoGenerationRequest,
+  type VideoGenerationResponse,
   type AgentRunRequest,
   type SessionRecord,
   type ToolPolicyRecord,
@@ -99,6 +103,8 @@ export interface CreateHostOptions {
   startupManager?: WindowsStartupManager;
   localPort?: number;
   engineRoot?: string;
+  /** Bounded await for the synchronous image gateway (default 120 s, §5.8). */
+  mediaImageTimeoutMs?: number;
   piPackages?: PiPackageService;
   modelCatalog?: ModelCatalogService;
   /** The host safety layer (policy engine, snapshots, trash, redaction). Optional so tests can run without it. */
@@ -183,6 +189,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const scheduler = new InferenceScheduler(routes, lifecycle, events);
   const agentRuns = new AgentRunCoordinator(store, scheduler, options.agentRuntime, options.safety ? (runId) => void options.safety!.collect().catch(() => undefined) : undefined);
   const mediaJobs = new MediaJobCoordinator({ store, scheduler, routes, ...(security ? { security } : {}) });
+  const mediaImageTimeoutMs = options.mediaImageTimeoutMs ?? 120_000;
   const context = options.contextManager ?? new ContextManager(store);
   const tailscale = options.tailscaleMonitor ?? new TailscaleMonitor();
   const tailscaleServe = options.tailscaleServeManager ?? new TailscaleServeManager();
@@ -501,6 +508,84 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     const unsubscribe = mediaJobs.subscribe(jobId, (event) => { send(event); if (isTerminalMediaEvent(event.event.type)) { unsubscribe(); reply.raw.end(); } });
     for (const event of mediaJobs.eventsAfter(jobId, after)) send(event);
     if (isTerminalMediaStatus(mediaJobs.get(jobId)?.status)) { unsubscribe(); reply.raw.end(); } else request.raw.once("aborted", unsubscribe);
+  });
+
+  // OpenAI-shaped media gateway (§5.8): consumed by Fitz's own clients only.
+  app.post("/v1/images/generations", async (request, reply) => {
+    try {
+      const body = parseImageGenerationRequest(request.body);
+      const principal = principals.get(request);
+      const job = mediaJobs.submit({
+        routeId: body.model,
+        modality: "image",
+        params: {
+          prompt: body.prompt,
+          ...(body.size ? { size: body.size } : {}),
+        },
+      }, principal);
+      security?.audit("media-job.created", principal?.user.id, "media-job", job.id, { routeId: body.model, modality: "image", gateway: "images" });
+      const terminal = await awaitMediaJob(mediaJobs, job.id, mediaImageTimeoutMs);
+      if (terminal.status === "completed" && terminal.artifactId) {
+        const artifact = store.getArtifact(terminal.artifactId);
+        const bytes = artifact ? store.getArtifactContent(artifact.id) : undefined;
+        if (!artifact || !bytes) throw new Error("Generated artifact is missing");
+        const response: ImageGenerationResponse = {
+          created: Math.floor(Date.now() / 1000),
+          data: body.response_format === "b64_json"
+            ? [{ b64_json: Buffer.from(bytes).toString("base64") }]
+            : [{ url: `${request.protocol}://${request.hostname}/api/v1/artifacts/${artifact.id}/content` }],
+        };
+        security?.audit("media-job.completed", principal?.user.id, "media-job", job.id, { artifactId: artifact.id, gateway: "images" });
+        return response;
+      }
+      if (terminal.status === "failed") {
+        return reply.code(502).send({ error: { message: terminal.errorCode ?? "Image generation failed", type: "media_generation_failed", param: job.id, code: "media_generation_failed" } });
+      }
+      if (terminal.status === "cancelled") {
+        return reply.code(409).send({ error: { message: "Image generation was cancelled", type: "media_generation_cancelled", param: job.id, code: "media_generation_cancelled" } });
+      }
+      return reply.code(502).send({ error: { message: `Image generation ended with status ${terminal.status}`, type: "media_generation_failed", param: job.id, code: "media_generation_failed" } });
+    } catch (error) {
+      if (error instanceof MediaGenerationTimeoutError) {
+        return reply.code(504).send({ error: { message: `Image generation timed out; resume polling GET /api/v1/media/jobs/${error.jobId}`, type: "media_generation_timeout", param: error.jobId, code: "media_generation_timeout" } });
+      }
+      const statusCode = error instanceof RouteNotFoundError ? 404 : error instanceof SecurityPolicyError ? 429 : 400;
+      return reply.code(statusCode).send(openAIError(error, "invalid_request_error"));
+    }
+  });
+  app.post("/v1/videos/generations", async (request, reply) => {
+    try {
+      const body = parseVideoGenerationRequest(request.body);
+      const principal = principals.get(request);
+      const job = mediaJobs.submit({
+        routeId: body.model,
+        modality: "video",
+        params: {
+          prompt: body.prompt,
+          ...(body.duration !== undefined ? { durationSeconds: body.duration } : {}),
+          ...(body.resolution ? { size: body.resolution } : {}),
+        },
+      }, principal);
+      security?.audit("media-job.created", principal?.user.id, "media-job", job.id, { routeId: body.model, modality: "video", gateway: "videos" });
+      const response: VideoGenerationResponse = {
+        id: job.id,
+        object: "video.generation",
+        status: job.status,
+        createdAt: job.enqueuedAt,
+        ...(job.progress !== undefined ? { progress: job.progress } : {}),
+        ...(job.artifactId ? { artifactId: job.artifactId } : {}),
+        ...(job.errorCode ? { error: job.errorCode } : {}),
+      };
+      return reply.code(202).send(response);
+    } catch (error) {
+      const statusCode = error instanceof RouteNotFoundError ? 404 : error instanceof SecurityPolicyError ? 429 : 400;
+      return reply.code(statusCode).send(openAIError(error, "invalid_request_error"));
+    }
+  });
+  app.post("/v1/audio/generations", async (_request, reply) => {
+    // KD-6: audio generation is deferred; the endpoint exists so clients see a
+    // stable shape instead of a route miss (§5.8).
+    return reply.code(501).send({ error: { message: "Audio generation is not available yet", type: "not_implemented" } });
   });
 
   app.get("/api/v1/projects", async (request) => { const principal = principals.get(request); return { data: store.listProjects(principal?.user.role === "administrator" ? undefined : principal?.user.id) }; });
@@ -1295,6 +1380,76 @@ function parseMediaParams(value: unknown): MediaGenerationParams {
     ...(typeof body.sampler === "string" ? { sampler: body.sampler } : {}),
     ...(typeof body.steps === "number" ? { steps: body.steps } : {}),
     ...(typeof body.guidance === "number" ? { guidance: body.guidance } : {}),
+  };
+}
+
+/** Raised when the synchronous image gateway's bounded await expires (§5.8);
+ *  the job keeps running and the 504 envelope carries its id for native polling. */
+class MediaGenerationTimeoutError extends Error {
+  constructor(readonly jobId: string) {
+    super(`Image generation timed out (job ${jobId})`);
+    this.name = "MediaGenerationTimeoutError";
+  }
+}
+
+/** Resolves with the terminal job record, subscribing to the coordinator's event
+ *  stream (falling back to a status read when the job is already terminal) and
+ *  rejecting with `MediaGenerationTimeoutError` after `timeoutMs`. Uses only the
+ *  coordinator's public API — no store or scheduler access. */
+async function awaitMediaJob(coordinator: MediaJobCoordinator, id: string, timeoutMs: number): Promise<MediaJobRecord> {
+  const current = coordinator.get(id);
+  if (current && isTerminalMediaStatus(current.status)) return current;
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    let unsubscribe = () => {};
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      unsubscribe();
+      reject(new MediaGenerationTimeoutError(id));
+    }, timeoutMs);
+    unsubscribe = coordinator.subscribe(id, (event) => {
+      if (!isTerminalMediaEvent(event.event.type) || settled) return;
+      settled = true;
+      clearTimeout(timer);
+      unsubscribe();
+      const job = coordinator.get(id);
+      if (job) resolve(job);
+      else reject(new Error(`Media job ${id} disappeared while awaiting completion`));
+    });
+  });
+}
+
+function parseImageGenerationRequest(value: unknown): ImageGenerationRequest {
+  const body = requireRecord(value);
+  const model = requireString(body.model, "model");
+  const prompt = requireString(body.prompt, "prompt");
+  const n = body.n === undefined ? 1 : body.n;
+  if (typeof n !== "number" || !Number.isInteger(n) || n < 1) throw new TypeError("n must be a positive integer");
+  if (n !== 1) throw new TypeError("n must be 1 in this version");
+  return {
+    model,
+    prompt,
+    ...(body.size !== undefined ? { size: requireString(body.size, "size") } : {}),
+    ...(body.response_format === "url" || body.response_format === "b64_json" ? { response_format: body.response_format } : {}),
+    ...(typeof body.user === "string" && body.user ? { user: body.user } : {}),
+  };
+}
+
+function parseVideoGenerationRequest(value: unknown): VideoGenerationRequest {
+  const body = requireRecord(value);
+  const model = requireString(body.model, "model");
+  const prompt = requireString(body.prompt, "prompt");
+  const duration = body.duration;
+  if (duration !== undefined && (typeof duration !== "number" || !Number.isFinite(duration) || duration <= 0)) {
+    throw new TypeError("duration must be a positive number");
+  }
+  return {
+    model,
+    prompt,
+    ...(duration !== undefined ? { duration } : {}),
+    ...(body.resolution !== undefined ? { resolution: requireString(body.resolution, "resolution") } : {}),
+    ...(typeof body.user === "string" && body.user ? { user: body.user } : {}),
   };
 }
 function parseModalities(value: Record<string, unknown>): ModalityCapabilities {
