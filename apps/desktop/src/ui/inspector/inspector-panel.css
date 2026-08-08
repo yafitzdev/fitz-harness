@@ -1,15 +1,8 @@
 /* The right-hand Inspector panel: shell, resizer, and preview surfaces. */
-.inspector-panel { position: absolute; z-index: 12; top: 50px; right: 0; bottom: 0; width: var(--inspector-width); min-width: 0; display: grid; grid-template-rows: auto auto minmax(0,1fr); overflow: hidden; border-left: 1px solid var(--codex-border-heavy); background: var(--codex-gray-900); box-shadow: -12px 0 30px rgba(0,0,0,.12); }
+.inspector-panel { position: absolute; z-index: 12; top: 50px; right: 0; bottom: 0; width: var(--inspector-width); min-width: 0; display: grid; grid-template-rows: minmax(0, 1fr); overflow: hidden; border-left: 1px solid var(--codex-border-heavy); background: var(--codex-gray-900); box-shadow: -12px 0 30px rgba(0,0,0,.12); }
 .inspector-resizer { position: absolute; z-index: 13; top: 50px; right: calc(var(--inspector-width) - 3px); bottom: 0; width: 6px; cursor: col-resize; touch-action: none; }
 .inspector-resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 2px; border-radius: 2px; background: transparent; transition: background-color 120ms ease; }
 .inspector-resizer:hover::after, .inspector-resizer:focus-visible::after, .inspector-resizer.dragging::after { background: rgba(211,214,207,.45); }
-.inspector-header { min-height: 54px; display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--codex-border); }
-.inspector-icon { width: 28px; height: 28px; flex: 0 0 auto; display: grid; place-items: center; border-radius: var(--codex-radius-md); background: var(--codex-gray-800); color: var(--codex-text-secondary); }
-.inspector-icon svg { width: 16px; height: 16px; }
-.inspector-heading { min-width: 0; flex: 1; display: grid; gap: 1px; }
-.inspector-heading strong, .inspector-heading small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.inspector-heading strong { font-size: 13px; font-weight: 600; }
-.inspector-heading small { color: var(--codex-text-tertiary); font-size: 10px; }
 .inspector-content { min-height: 0; overflow: hidden; background: var(--codex-gray-900); }
 
 /* Tabbed preview surface: the fixed Artifacts base tab plus closable resources. */
@@ -24,6 +17,13 @@
 .inspector-tab-close:hover { background: var(--surface-hover); color: #e8e9e5; }
 .inspector-tabpanel { height: 100%; min-height: 0; overflow: auto; }
 .inspector-tabpanel[hidden] { display: none; }
+
+/* The tab bar lives in the workspace header, above the panel: flush right
+   (over the panel), full header height, no border/background of its own. */
+.workspace-header .inspector-tabs { height: 100%; align-items: flex-end; max-width: var(--inspector-width); padding: 0 8px; border-bottom: 0; background: transparent; }
+.workspace-header .inspector-tabs[hidden] { display: none; }
+.workspace-header .inspector-tab { max-width: 180px; }
+.workspace-header .inspector-tab.active { background: var(--codex-gray-800); }
 
 /* The artifact repository list (the base tab). */
 .inspector-repository { display: grid; gap: 4px; padding: 10px; }
@@ -40,7 +40,7 @@
 .inspector-media { max-width: 100%; display: block; margin: 0 auto; }
 img.inspector-media { padding: 16px 20px 24px; }
 video.inspector-media, audio.inspector-media { width: 100%; }
-.inspector-web-fallback { position: absolute; inset: 54px 0 0; pointer-events: none; display: flex; align-items: flex-end; justify-content: center; padding: 16px; }
+.inspector-web-fallback { position: absolute; inset: 0; pointer-events: none; display: flex; align-items: flex-end; justify-content: center; padding: 16px; }
 .inspector-web-fallback span { padding: 6px 9px; border-radius: var(--codex-radius-md); background: rgba(24,24,24,.88); color: var(--codex-text-secondary); box-shadow: var(--codex-elevation-stroke); font-size: 10px; }
 
 /* Artifact list and preview surfaces. */

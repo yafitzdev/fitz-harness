@@ -1,4 +1,5 @@
 import { projectRelativePath } from "../chat/tool-activity.js";
+import { normalizeResourceReference } from "../../markdown.js";
 import { textBlock } from "../primitives/dom.js";
 
 type Json = Record<string, any>;
@@ -77,6 +78,8 @@ export class ArtifactRepository {
    */
   registerReference(reference: string): void {
     if (!reference || /^(?:https?|file):\/\//i.test(reference)) return;
+    reference = normalizeResourceReference(reference);
+    if (!reference) return;
     const root = this.#options.getProjectRoot?.() ?? "";
     const alreadyPresent = this.#files.some((file) => file.path === reference || (root && projectRelativePath(file.path, root) === reference));
     if (alreadyPresent) return;
@@ -105,14 +108,22 @@ export class ArtifactRepository {
       if (!raw) return;
       const parsed = JSON.parse(raw) as unknown;
       if (!Array.isArray(parsed)) return;
+      // Migration: normalize chat-emitted references that were stored with
+      // stray delimiters (e.g. a streamed `(src/app.t`) and drop duplicates.
+      const seen = new Set<string>();
       this.#files = parsed
         .filter((entry): entry is RepositoryFile => typeof entry === "object" && entry !== null && typeof (entry as RepositoryFile).path === "string")
         .map((entry) => ({
-          path: entry.path,
+          path: normalizeResourceReference(entry.path),
           name: typeof entry.name === "string" ? entry.name : entry.path,
           addedAt: typeof entry.addedAt === "number" ? entry.addedAt : 0,
-        }));
-      this.#files.sort((left, right) => right.addedAt - left.addedAt);
+        }))
+        .sort((left, right) => right.addedAt - left.addedAt)
+        .filter((entry) => {
+          if (!entry.path || seen.has(entry.path)) return false;
+          seen.add(entry.path);
+          return true;
+        });
     } catch {
       this.#files = [];
     }
@@ -140,9 +151,25 @@ export class ArtifactRepository {
     }
     for (const file of this.#files) {
       const root = this.#options.getProjectRoot?.() ?? "";
-      list.append(this.#item(file.name, projectRelativePath(file.path, root), () => this.#options.onOpenFile(file.path)));
+      list.append(this.#item(file.name, this.#displayPath(file.path, root), () => this.#options.onOpenFile(file.path)));
     }
     this.#container.append(list);
+  }
+
+  /**
+   * The path shown under each repository entry: project-relative when the file
+   * lives under the active project root, otherwise the bare file name (the
+   * full path stays in the row's tooltip) so absolute paths and streamed
+   * fragments don't clutter the list.
+   */
+  #displayPath(path: string, root: string): string {
+    if (root) {
+      const relative = projectRelativePath(path, root);
+      if (relative !== path) return relative;
+    }
+    // Already relative (e.g. a chat reference outside the active root): keep.
+    if (!/^(?:[A-Za-z]:[\\/]|[\\/])/.test(path)) return path;
+    return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
   }
 
   #item(name: string, meta: string, open: () => void): HTMLButtonElement {

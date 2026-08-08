@@ -1,20 +1,23 @@
 import { setMarkdown } from "../../markdown.js";
 import type { ResourcePreview } from "../../preload.js";
 import { highlightSource } from "../../syntax-highlighting.js";
-import { projectRelativePath } from "../chat/tool-activity.js";
-import { svgIcon, textBlock } from "../primitives/dom.js";
+import { textBlock } from "../primitives/dom.js";
 
 type Json = Record<string, any>;
 type InspectedResource = { kind: "file"; path: string } | { kind: "url"; url: string };
-type Heading = { title: string; location: string; kind: "file" | "url" | ResourcePreview["kind"] };
 
 export interface ResourceInspectorOptions {
   preview: HTMLElement;
-  title: HTMLElement;
-  location: HTMLElement;
-  icon: HTMLElement;
-  openButton: HTMLButtonElement;
-  renderToggle: HTMLButtonElement;
+  /**
+   * The "open outside" control. Optional: the header that used to host it is
+   * gone, so the button is wired only when a host element is provided.
+   */
+  openButton?: HTMLButtonElement;
+  /**
+   * The raw↔rendered toggle. Optional for now — its button will be placed
+   * again later; the machinery stays so it can be re-wired.
+   */
+  renderToggle?: HTMLButtonElement;
   openPanel: () => void;
   getProjectRoot: () => string;
   getSearchRoots: () => string[];
@@ -37,16 +40,15 @@ export class ResourceInspector {
   #activeObjectUrl: string | undefined;
   /** The chat reference currently being previewed (for repository superseding). */
   #reference: string | undefined;
-  /** Whether this inspector is the visible tab; only it may write the shared header. */
+  /** Whether this inspector is the visible tab; only it may touch the shared controls. */
   #active = true;
-  #heading: Heading | undefined;
   #openButtonHidden = true;
   #renderToggleHidden = true;
 
   constructor(options: ResourceInspectorOptions) {
     this.#options = options;
-    options.openButton.addEventListener("click", () => void this.openExternally());
-    options.renderToggle.addEventListener("click", () => this.toggleSource());
+    options.openButton?.addEventListener("click", () => void this.openExternally());
+    options.renderToggle?.addEventListener("click", () => this.toggleSource());
   }
 
   empty(message: string): HTMLElement { return textBlock("inspector-empty", message); }
@@ -54,8 +56,8 @@ export class ResourceInspector {
 
   /**
    * Marks this inspector as the visible tab. Activating one restores the
-   * shared header (title, location, icon, and toggles) from this inspector's
-   * state, since every tab shares the same header DOM.
+   * shared controls (open-outside and raw↔rendered toggles) from this
+   * inspector's state, since every tab shares the same controls.
    */
   setActive(active: boolean): void {
     this.#active = active;
@@ -69,7 +71,6 @@ export class ResourceInspector {
     this.#preview = undefined;
     this.#setRenderToggle(true);
     this.#setOpenButton(true);
-    this.#setHeading(name, `${mimeType} · ${this.#formatBytes(this.#dataUrlSize(dataUrl))} · Pasted image`, "file");
     this.#options.openPanel();
     this.#options.preview.replaceChildren();
     const img = document.createElement("img");
@@ -85,7 +86,6 @@ export class ResourceInspector {
     this.#preview = undefined;
     this.#setRenderToggle(true);
     this.#setOpenButton(true);
-    this.#setHeading(name, `${mimeType} · ${this.#formatBytes(this.#dataUrlSize(dataUrl))} · Pasted PDF`, "file");
     this.#options.openPanel();
     this.#options.preview.replaceChildren();
     const frame = document.createElement("iframe");
@@ -106,7 +106,6 @@ export class ResourceInspector {
 
   async previewArtifact(artifact: Json): Promise<void> {
     this.#revokeObjectUrl();
-    this.#setHeading(String(artifact.name ?? "Artifact"), `${this.#formatBytes(Number(artifact.byteSize ?? 0))} · Attachment`, "file");
     this.#resource = undefined;
     this.#preview = undefined;
     this.#setOpenButton(true);
@@ -164,7 +163,6 @@ export class ResourceInspector {
       try {
         const url = new URL(reference);
         this.#resource = { kind: "url", url: url.toString() };
-        this.#setHeading(url.hostname, url.toString(), "url");
         this.#setOpenButton(false);
         const frame = document.createElement("iframe");
         frame.className = "inspector-frame";
@@ -180,11 +178,9 @@ export class ResourceInspector {
     }
     const projectRoot = this.#options.getProjectRoot();
     if (!projectRoot) {
-      this.#setHeading("File unavailable", reference, "file");
       this.#options.preview.replaceChildren(this.#error("Select a project before opening a local file."));
       return;
     }
-    this.#setHeading(reference.split(/[\\/]/).pop() ?? reference, reference, "file");
     this.#setOpenButton(true);
     try {
       const preview = await window.fitz.previewResource({ projectRoot, reference, searchRoots: this.#options.getSearchRoots() });
@@ -194,7 +190,6 @@ export class ResourceInspector {
       this.#sourceMode = false;
       this.#syncRenderToggle();
       this.#setRenderToggle(preview.kind !== "markdown" && preview.kind !== "html");
-      this.#setHeading(preview.name, `${projectRelativePath(preview.path, this.#options.getProjectRoot())}${preview.line ? ` · line ${preview.line}` : ""}`, preview.kind);
       this.#setOpenButton(false);
       this.#render(preview);
       this.#options.onFileInspected?.(preview.path, preview.name, this.#reference);
@@ -310,34 +305,23 @@ export class ResourceInspector {
   }
 
   #restoreHeader(): void {
-    if (this.#heading) this.#setHeading(this.#heading.title, this.#heading.location, this.#heading.kind);
-    this.#options.openButton.hidden = this.#openButtonHidden;
-    this.#options.renderToggle.hidden = this.#renderToggleHidden;
+    if (this.#options.openButton) this.#options.openButton.hidden = this.#openButtonHidden;
+    if (this.#options.renderToggle) this.#options.renderToggle.hidden = this.#renderToggleHidden;
     if (this.#preview) this.#syncRenderToggle();
-  }
-
-  #setHeading(title: string, location: string, kind: Heading["kind"]): void {
-    this.#heading = { title, location, kind };
-    if (!this.#active) return;
-    this.#options.title.textContent = title;
-    this.#options.location.textContent = location;
-    this.#options.icon.replaceChildren(kind === "url"
-      ? svgIcon('<circle cx="10" cy="10" r="7"></circle><path d="M3 10h14M10 3a11 11 0 0 1 0 14M10 3a11 11 0 0 0 0 14"></path>')
-      : svgIcon('<path d="M5 2.8h6l4 4v10.4H5z"></path><path d="M11 2.8v4h4"></path>'));
   }
 
   #setOpenButton(hidden: boolean): void {
     this.#openButtonHidden = hidden;
-    if (this.#active) this.#options.openButton.hidden = hidden;
+    if (this.#active && this.#options.openButton) this.#options.openButton.hidden = hidden;
   }
 
   #setRenderToggle(hidden: boolean): void {
     this.#renderToggleHidden = hidden;
-    if (this.#active) this.#options.renderToggle.hidden = hidden;
+    if (this.#active && this.#options.renderToggle) this.#options.renderToggle.hidden = hidden;
   }
 
   #syncRenderToggle(): void {
-    if (!this.#active) return;
+    if (!this.#active || !this.#options.renderToggle) return;
     this.#options.renderToggle.setAttribute("aria-pressed", String(this.#sourceMode));
     this.#options.renderToggle.title = this.#sourceMode ? "View rendered" : "View source";
     this.#options.renderToggle.setAttribute("aria-label", this.#options.renderToggle.title);
@@ -352,7 +336,6 @@ export class ResourceInspector {
   #error(message: string): HTMLElement { return textBlock("inspector-error", message); }
   #errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
   #base64Bytes(value: string): Uint8Array<ArrayBuffer> { const binary = atob(value); const bytes = new Uint8Array(binary.length); for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i); return bytes; }
-  #dataUrlSize(dataUrl: string): number { try { return atob(dataUrl.slice(dataUrl.indexOf(",") + 1)).length; } catch { return 0; } }
   #base64FromDataUrl(dataUrl: string): string { return dataUrl.slice(dataUrl.indexOf(",") + 1); }
   /** Creates (and tracks) a same-process blob URL for inert PDF content. */
   #objectUrl(base64: string, mimeType: string): string {
@@ -364,7 +347,6 @@ export class ResourceInspector {
   #revokeObjectUrl(): void {
     if (this.#activeObjectUrl) { URL.revokeObjectURL(this.#activeObjectUrl); this.#activeObjectUrl = undefined; }
   }
-  #formatBytes(value: number): string { return value < 1024 ? `${value} B` : `${(value / 1024).toFixed(1)} KB`; }
 }
 
 const PREVIEW_SCROLLBAR_CSS = 'html{color-scheme:dark!important}html,body,*{scrollbar-width:thin!important;scrollbar-color:rgba(255,255,255,.22) transparent!important}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-webkit-scrollbar{width:10px!important;height:10px!important}html::-webkit-scrollbar-track,body::-webkit-scrollbar-track,*::-webkit-scrollbar-track,html::-webkit-scrollbar-corner,body::-webkit-scrollbar-corner,*::-webkit-scrollbar-corner{background:transparent!important}html::-webkit-scrollbar-thumb,body::-webkit-scrollbar-thumb,*::-webkit-scrollbar-thumb{min-height:30px!important;border:2px solid transparent!important;border-radius:999px!important;background:rgba(255,255,255,.22)!important;background-clip:content-box!important}html::-webkit-scrollbar-thumb:hover,body::-webkit-scrollbar-thumb:hover,*::-webkit-scrollbar-thumb:hover{background-color:rgba(255,255,255,.34)!important}';

@@ -138,6 +138,7 @@ const sidebarPane = new ResizablePane({
 });
 const inspectorPanel = new InspectorPanel({
   mount: workspace,
+  tabMount: workspaceHeader,
   getProjectRoot: () => String(projects?.activeProject()?.rootPath ?? ""),
   getSearchRoots: () => activityTimeline.searchRoots(),
   showToast,

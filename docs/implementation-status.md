@@ -61,13 +61,15 @@
   MIME type (10 MB cap) instead of rejecting NUL bytes, and the Inspector renders images inline, PDFs in
   a blob-URL frame for Chromium's viewer (intentionally unsandboxed because the sandbox attribute
   disables the PDF viewer plugin and blanks the preview), and audio/video with inline controls.
-- Tabbed Inspector with a persistent artifact repository as the defacto base: the first tab is a fixed,
-  non-closable Artifacts repository that grows with every file the agent produces (registered the moment
-  a file appears in the conversation, no click needed — streaming partials are superseded by the complete
-  path, and chat references are replaced by their resolved absolute path once inspected) plus the current
-  session's uploads, and every file, upload, URL, and pasted image/PDF opens as its own closable tab
-  (middle-click closes a tab) with per-tab preview state and headings restored on switch. Repository rows
-  and the Inspector's location line always show project-relative paths.
+- Tabbed Inspector with a persistent artifact repository as the defacto base: the Inspector itself is
+  content only — its tab bar lives in the workspace header, above the panel, and its Artifacts tab is
+  closable like any other (closing it closes the panel; reopening restores the repository). The
+  repository grows with every file the agent produces (registered the moment a file appears in the
+  conversation, no click needed — streaming partials are superseded by the complete path, and chat
+  references are replaced by their resolved absolute path once inspected) plus the current session's
+  uploads, and every file, upload, URL, and pasted image/PDF opens as its own closable tab (middle-click
+  closes a tab) with per-tab preview state restored on switch. Repository rows and each tab's tooltip
+  always show project-relative paths.
 - Windows NSIS desktop packaging, packaged-main smoke mode, GitHub release update checks/downloads,
   portable host zip with bundled Node runtime, optional user-logon scheduled task scripts, and a
   Windows CI packaging/smoke workflow.

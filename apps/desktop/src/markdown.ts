@@ -143,14 +143,44 @@ function resourceTarget(value: string): string | undefined {
   return /[\\/]/.test(value) || /\.[A-Za-z0-9]{1,12}(?:(?::\d+)|(?:#L\d+))?$/i.test(value) ? value : undefined;
 }
 
+/**
+ * Cleans a path reference extracted from the rendered conversation. Streaming
+ * fragments can arrive wrapped in stray delimiters (e.g. `(src/app.t` while
+ * the agent is mid-sentence): matching outer brackets/quotes are stripped,
+ * and a lone leading opener is dropped when the remainder still looks like a
+ * path. Returns the input unchanged when nothing needs cleaning.
+ */
+export function normalizeResourceReference(reference: string): string {
+  let candidate = reference.trim();
+  const openers: Record<string, string> = { "(": ")", "[": "]", "{": "}", '"': '"', "'": "'", "`": "`" };
+  for (;;) {
+    const opener = candidate[0];
+    const closer = opener ? openers[opener] : undefined;
+    if (!closer) break;
+    if (candidate.length > 2 && candidate.endsWith(closer)) {
+      candidate = candidate.slice(1, -1).trim();
+      continue;
+    }
+    // A lone opener with no closer is a mid-stream fragment; drop it when the
+    // remainder still looks like a path (has a directory separator).
+    if (/[\\/]/.test(candidate.slice(1))) {
+      candidate = candidate.slice(1).trim();
+      continue;
+    }
+    break;
+  }
+  return candidate;
+}
+
 function resourceLink(label: string, reference: string): HTMLAnchorElement {
-  const link = document.createElement("a"); link.href = "#"; link.className = "resource-link"; link.textContent = label; link.dataset.resource = reference;
-  link.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); window.dispatchEvent(new CustomEvent("fitz:open-resource", { detail: { reference } })); });
+  const cleaned = normalizeResourceReference(reference);
+  const link = document.createElement("a"); link.href = "#"; link.className = "resource-link"; link.textContent = label; link.dataset.resource = cleaned;
+  link.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); window.dispatchEvent(new CustomEvent("fitz:open-resource", { detail: { reference: cleaned } })); });
   // Files register in the artifact repository as soon as they render, so the
   // repo grows with every artifact the agent produces — no click required.
   // Remote URLs are left out; only local artifacts belong in the repository.
-  if (!/^(?:https?|file):\/\//i.test(reference)) {
-    window.dispatchEvent(new CustomEvent("fitz:resource-appeared", { detail: { reference } }));
+  if (!/^(?:https?|file):\/\//i.test(cleaned)) {
+    window.dispatchEvent(new CustomEvent("fitz:resource-appeared", { detail: { reference: cleaned } }));
   }
   return link;
 }

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from "vitest";
-import { setMarkdown } from "./markdown.js";
+import { normalizeResourceReference, setMarkdown } from "./markdown.js";
 
 describe("Markdown lists", () => {
   it("keeps blank-separated ordered items in one list so numbering advances", () => {
@@ -68,5 +68,28 @@ describe("Resource links in rendered output", () => {
     } finally {
       window.removeEventListener("fitz:resource-appeared", listener);
     }
+  });
+
+  it("strips stray delimiters from streamed path fragments", () => {
+    const target = document.createElement("div");
+    const listener = vi.fn();
+    window.addEventListener("fitz:resource-appeared", listener);
+    try {
+      // Mid-stream the agent wrote `(llama.cpp/...cpp` with no closing paren yet.
+      setMarkdown(target, "See (llama.cpp/tests/test-unified-mixed-replay.cpp) next.");
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(listener).toHaveBeenCalledWith(expect.objectContaining({ detail: { reference: "llama.cpp/tests/test-unified-mixed-replay.cpp" } }));
+    } finally {
+      window.removeEventListener("fitz:resource-appeared", listener);
+    }
+  });
+
+  it("normalizes wrapped, backticked, and already-clean references", () => {
+    expect(normalizeResourceReference("(llama.cpp/tests/test-unified-mixed-replay.cpp")).toBe("llama.cpp/tests/test-unified-mixed-replay.cpp");
+    expect(normalizeResourceReference("(docs/guide.md)")).toBe("docs/guide.md");
+    expect(normalizeResourceReference("`src/app.ts`")).toBe("src/app.ts");
+    expect(normalizeResourceReference("src/app.ts")).toBe("src/app.ts");
+    // Parens that are genuinely part of the name are left alone.
+    expect(normalizeResourceReference("(draft) notes.md")).toBe("(draft) notes.md");
   });
 });
