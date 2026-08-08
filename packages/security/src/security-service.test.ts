@@ -67,6 +67,16 @@ describe("SecurityService", () => {
     store.close();
   });
 
+  it("lets the local administrator use media tools by default while non-administrators remain fail-closed", () => {
+    const store = SqliteStore.memory();
+    const security = new SecurityService(store, "pepper");
+    const administrator = security.createUser("Administrator", "administrator");
+    const agent = security.createUser("Agent", "agent");
+
+    expect(() => security.enforceMediaQuota(security.principalForUser(administrator.id), { modality: "video" })).not.toThrow();
+    expect(() => security.enforceMediaQuota(security.principalForUser(agent.id), { modality: "video" })).toThrow("Media quota is not configured");
+  });
+
   it("enforces media job, concurrency, and credit-budget quotas", () => {
     const store = SqliteStore.memory(); const security = new SecurityService(store, "pepper");
     const user = security.createUser("Creator", "agent");

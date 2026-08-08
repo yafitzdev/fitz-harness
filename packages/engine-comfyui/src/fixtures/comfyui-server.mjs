@@ -103,6 +103,9 @@ function stop() {
 
 function modalityOf(graph) {
   const classTypes = Object.values(graph).map((node) => String(node?.class_type ?? ""));
+  // Video workflows commonly contain audio decode/mux nodes. Classify by the
+  // final output container before considering intermediate modality nodes.
+  if (classTypes.some((name) => name.toLowerCase().includes("video"))) return "video";
   if (classTypes.some((name) => name.toLowerCase().includes("audio"))) return "audio";
   if (classTypes.some((name) => name.toLowerCase().includes("image"))) return "image";
   return "video";

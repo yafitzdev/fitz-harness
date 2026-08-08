@@ -75,7 +75,7 @@ The single biggest hidden cost is that **cloud media APIs are not OpenAI-compati
 | # | Decision | Rationale |
 | --- | --- | --- |
 | KD-1 | First local engine: **MiniMax H3** (Hailuo 3.0), text→video / first-last-frame→video / multimodal-reference→video, native stereo audio output. | Open weights, current, officially outputs video + audio only. |
-| KD-2 | H3 **does not serve the `image` route officially**; community ComfyUI-node text→image is gated behind `experimental: true` on the recipe. The `image` route gets its own engine. | H3 has no official text→still-image task; we do not let an experimental abuse block a real image engine. |
+| KD-2 | H3 **does not serve the `image` route**. Fitz registers only the official H3 video recipe; the `image` route gets its own engine. | H3 has no official text→still-image task, so the control plane does not invent one. |
 | KD-3 | Cloud provider order: 1) generic **OpenAI-compatible media** (`/v1/images/generations`, `/v1/videos/generations`), 2) **fal**, 3) **Replicate**. Both fal and Replicate host H3 — the natural cloud path for 2K video. | Reuses the existing auth/transport pattern first; first-class adapters for the H3 hosts. |
 | KD-4 | **Hardware**: 32 GB VRAM host. H3 runs locally at 768p/1K-class; 2K/15s is cloud territory. Recipes declare VRAM estimates; the existing `ResourceGovernor` (2048 MiB reserve) refuses load as the safety net. | Unverified 2K VRAM until a real run; governor + estimates are the safety net. |
 | KD-5 | **Single-assignment per route** for v1 (`Route.recipeId`, matching today's schema). Priority/fallback lists later. | Matches existing schema and UI; no new routing policy machinery. |
@@ -86,7 +86,7 @@ The single biggest hidden cost is that **cloud media APIs are not OpenAI-compati
 | KD-10 | **Separate `MediaEngineAdapter` interface** rather than adding generation methods to `EngineAdapter`. | `streamChat` and `submit/poll/cancel` have different shapes, lifetimes, and error semantics; one interface per job kind keeps the registry and lifecycle type-safe. |
 | KD-11 | **Provider templates** (`packages/media-providers`), not a chat-shaped adapter, for cloud media. | Cloud media APIs are not OpenAI-compatible chat — this is the biggest hidden cost; templates are the containment boundary (same argument as engine adapters). |
 | KD-12 | Media tool calls **never block the agent turn on job completion**. The tool submits and returns a `mediaJobId`; completion lands in the artifact repo and event stream. | The agent's own chat *is* a scheduler queue job; blocking on a queued media job behind it would deadlock the turn. |
-| KD-13 | **H3 weight placement (v1): engine-folder manual placement.** Weights live in the ComfyUI model directories (managed or external engine folder, like the read-only engine repositories in `docs/engine-adapters.md`); `ModelCatalogService` is not extended in v1. | Resolves OQ-1 so PR 7 has no hidden critical path; manual placement matches how engines are provisioned today. Catalog pipeline tags (`text-to-video`, `image-generation`) are a follow-up. |
+| KD-13 | **H3 weight placement:** the upstream ComfyUI checkout stays clean under `.llm/engines/ComfyUI`; weights live under `.llm/models/comfyui`, the isolated Python environment under `.llm/runtimes/comfyui`, and Fitz points ComfyUI at them with an external YAML config. | Preserves the single `.llm` source of truth without polluting an engine Git checkout. See `docs/h3-local-video.md`. |
 
 ---
 
@@ -131,8 +131,7 @@ Capability matrix for the v1 lineup:
 | Recipe | input | output | limits | Assignable routes |
 | --- | --- | --- | --- | --- |
 | Chat models (local/cloud) | text | — (no `modalities`) | — | `fast` / `default` / `smart` |
-| H3 local (ComfyUI) | text, image, video, audio | video, audio | ≤ 15 s, ≤ 1280x720 local, ≤ 12 refs | `video` (audio later) |
-| H3-as-image (ComfyUI, `experimental: true`) | text, image | image | — | `image` (hidden from default assignment) |
+| H3 FL2VA local (ComfyUI) | text (first/last-frame conditioning follows) | video with stereo audio | ≤ 15 s, ≤ 1344x768 local | `video` |
 | Dedicated image engine (e.g. SD-class local or provider) | text, image | image | — | `image` |
 | DALL·E-class provider model | text | image | — | `image` |
 
@@ -493,7 +492,7 @@ export interface UserQuota {
 
 - The connection editor (`CONNECTION_EDITOR_TEMPLATE`) gains a **provider template** dropdown: `openai-compatible` (default; current behavior), `openai-media` (same base-URL + bearer form), `fal`, `replicate` (key + optional model ids). Template-specific fields show/hide per selection (fal/replicate hide the base URL).
 - **Keep** the chat Fast/Default/Smart toggle row exactly as-is (`FIXED_ROUTES` + `assignRoute`, lines 268–283, 338–358).
-- **Add** a visually distinct **Media routes** section per connection: Image / Video / Audio single-assignment toggles writing the same `PUT /api/v1/management/routes/:id`. A recipe is only assignable to routes matching its `modalities.output`; incompatible buttons are disabled with a tooltip (e.g. "This model does not generate video"). `experimental` recipes (H3-as-image) are hidden unless the admin toggles "Show experimental" or explicitly assigns them.
+- **Add** a visually distinct **Media routes** section per connection: Image / Video / Audio single-assignment toggles writing the same `PUT /api/v1/management/routes/:id`. A recipe is only assignable to routes matching its `modalities.output`; incompatible buttons are disabled with a tooltip (e.g. "This model does not generate video").
 - Model cards for media models show modality + limit badges ("Video · Audio · 2K · 15s", "Experimental") instead of the context-token label (lines 240–268).
 
 `apps/desktop/src/ui/playbooks/playbook-workspace.ts`: media recipes are edited like any recipe (the recipe editor already edits `configuration` JSON); the Test button gains a media variant (`POST /api/v1/management/recipes/:recipeId/media-test` → submit a probe job with a fixed prompt and small size, then render the artifact) alongside the chat test (create-app.ts lines 660–704).
@@ -710,7 +709,7 @@ Notes:
 
 - **Feature flag**: `FITZ_MEDIA_ENABLED` (default **true** once PR 2b lands). The feature is otherwise inert by construction: media routes exist but are disabled with empty `recipeId` until an admin connects a provider or saves a media recipe, so no separate kill switch is required for the data plane. `FITZ_MEDIA_ENABLED=false` additionally hides the media tools and the Connections media section during rollout.
 - **Staged rollout**: PRs 1–8 (§PR Plan; PR 2 is split into 2a/2b/2c) land independently. Each lands behind additive protocol changes; existing chat tests must stay green (the monorepo runs unit + integration + packaged smoke via `vitest` and CI).
-- **First real deployment**: fake engine end-to-end (PR 3) → OpenAI-compatible media provider (PR 4) → H3 local via ComfyUI (PR 7). H3 stays experimental-gated; 2K video is cloud-only.
+- **First real deployment**: fake engine end-to-end (PR 3) → OpenAI-compatible media provider (PR 4) → H3 local via ComfyUI (PR 7). H3 is registered when the complete official runtime is detected; 2K video is cloud-only.
 - **Rollback**: media routes are de-assigned explicitly via `PUT /api/v1/management/routes/:id` with an empty `recipeId` (media routes only → persists `enabled: false`; the route stays visible in the `includeDisabled` listing and can be re-assigned; the handler skips its recipe-exists guard for an empty `recipeId`, §5.2), media tools are unregistered by the flag, and jobs are cancellable mid-flight. A de-assignment is never lost to a restart: the ninfer boot reconcile exempts the well-known media route ids and `ensureMediaRoutes()` preserves assignment state (§5.2). Provider connection removal (`DELETE /api/v1/management/connections/:id`) cleans recipes + routes exactly as today (`removeConsumerRegistration`), now including media recipes via the connection's `mediaModels` registration, and de-assigns (never deletes) any well-known media route that referenced a removed media recipe (§5.7).
 - **Migration**: v9 is additive (`ALTER TABLE ... ADD COLUMN`, new tables); downgrade = stop using media + optionally drop `media_jobs`/`media_quota_ledger` and the `kind` column (no data loss for chat).
 
@@ -725,14 +724,13 @@ Notes:
 | **Large video through base64 IPC** (memory + latency) | Medium | Kind-aware caps; raised video/audio preview caps; Range support on the content endpoint; blob-URL playback of whole files is acceptable for v1. |
 | **SQLite BLOB growth** (tens-of-MB videos in `artifacts.content`) | Medium | Kind-aware size caps; documented content-directory migration path (DESIGN.md §16.1); v1 caps keep worst-case DB growth bounded. |
 | **Orphaned cloud jobs after host restart** (job keeps running on fal/Replicate, still bills) | Medium | `providerJobId` persisted; follow-up issues provider cancels on startup; v1 marks jobs `interrupted` and documents the residual cost risk. |
-| **H3-as-image is experimental** | Low | `experimental: true` hides it from default assignment; never blocks the dedicated image engine. |
 | **Credit accounting drift** (provider pricing changes) | Low | Manual `costCentsPerJob` per recipe; audit ledger; admin-adjustable. |
 
 ---
 
 ## Open Questions
 
-- **OQ-1 — RESOLVED (v1, KD-13)**: Where do H3 weights live? **Engine-folder manual placement** (ComfyUI model dirs, like the read-only engine repositories in `docs/engine-adapters.md`). `ModelCatalogService` stays GGUF/text-generation-only for now (`.gguf` filename guard, `pipeline_tag "text-generation"`); catalog pipeline tags (`text-to-video`, `image-generation`) are a follow-up. PR 7 is not blocked.
+- **OQ-1 — RESOLVED (v1, KD-13)**: H3 weights live under `.llm/models/comfyui`; the upstream checkout remains clean under `.llm/engines/ComfyUI`, its venv is `.llm/runtimes/comfyui`, and an external YAML points ComfyUI at the model registry. `ModelCatalogService` remains GGUF/text-generation-only for now.
 - **OQ-2**: Content moderation policy for local-engine output. Cloud providers have terms; local H3 is unmoderated. Options: none (admin owns it), post-generation classifier hook, or provider-side moderation flags. Not required for v1.
 - **OQ-3**: Cloud jobs in the GPU-free side lane. v1 routes all media through the shared FIFO (KD-9); a follow-up could run provider jobs off-queue (they never acquire the lifecycle lease) while keeping queue-position reporting. This is also the *primary* mitigation for the recipe-switch eviction side effect (§5.5) — deprioritizing it would leave chat cold-reloading after every cloud media job. Decide after real usage data.
 - **OQ-4**: Content-addressed artifact file store (DESIGN.md §16.1) vs. SQLite BLOB. v1 keeps BLOB with caps; the file store lands as an additive storage change when video usage grows.
@@ -802,9 +800,9 @@ Each PR is independently reviewable and mergeable; the sequence reflects the mil
 - **Description**: `generate_image` / `generate_video` / `generate_audio` resolve configured media routes and submit non-blocking jobs (KD-12 — no agent-turn deadlock); gating and per-user job-count/credit quotas enforce cost control.
 
 ### PR 7 — `engine-comfyui` for H3 (local media engine)
-- **Files/components**: new `packages/engine-comfyui/` (managed/external ComfyUI lifecycle like `engine-llama-cpp`; `/prompt` → `/history/{id}` submit/poll with websocket or `/progress` progress; cancel; workflow JSON pinning; `validateRecipe` checks `comfyuiWorkflow`), H3 recipes (768p/1K, VRAM estimate, experimental image recipe), Playbooks workspace integration (recipe editor already edits configuration), weight placement per **OQ-1 (resolved: manual engine-folder placement, KD-13)**.
+- **Files/components**: `packages/engine-comfyui/` (managed/external ComfyUI lifecycle like `engine-llama-cpp`; `/prompt` → `/history/{id}` submit/poll with `/progress`; cancel; pinned official workflow; validation), the official H3 video/audio recipe (768p/1K, VRAM estimate), startup reconciliation, and external weight placement per KD-13.
 - **Dependencies**: PR 2a (interface), PR 2b (service), PR 3 (test pattern).
-- **Description**: first real local media engine — on-demand load, leases across multi-minute generations, governor refusal on VRAM shortfall; H3-as-image stays behind `experimental: true`.
+- **Description**: first real local media engine — on-demand load, leases across multi-minute generations, governor refusal on VRAM shortfall, and no fabricated H3 image capability.
 
 ### PR 8 — Large-media artifact handling
 - **Files/components**: `apps/desktop/src/resource-preview.ts` (video/audio cap raise to ~150–250 MiB via shared helper), `packages/media/src/registry.ts` (or new `sizes.ts`: `maxPreviewBytes(mimeType)`), `apps/host/src/create-app.ts` (`Range` support on `GET /api/v1/artifacts/:artifactId/content`), `apps/host/src/media-jobs.ts` (kind-aware artifact size caps: image 25 MiB / audio 200 MiB / video 1 GiB, configurable via `mediaArtifactLimits`), storage content-directory note.

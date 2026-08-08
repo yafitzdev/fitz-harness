@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { FakeEngineAdapter } from "@fitz/engine-fake";
 import { ComfyUIEngineAdapter } from "@fitz/engine-comfyui";
-import type { Recipe } from "@fitz/protocol";
 import { createHost, type HostRuntime } from "./create-app.js";
 import { createComfyUIPlaybook } from "./comfyui-playbook.js";
 
@@ -20,23 +19,22 @@ afterEach(() => {
 });
 
 describe("MiniMax H3 via ComfyUI (PR 7)", () => {
-  it("seeds the H3 playbook: video route assigned, experimental image recipe unassigned", async () => {
+  it("seeds the official H3 video route without inventing an image recipe", async () => {
     const playbook = createComfyUIPlaybook({ engineDir: "/engines/comfyui", executable: "python", expectedVramMiB: 24_576 });
     const adapter = new ComfyUIEngineAdapter({ validatePaths: false });
 
     const h3Video = playbook.recipes.find((recipe) => recipe.id === "h3-video");
-    const h3Image = playbook.recipes.find((recipe) => recipe.id === "h3-image");
     expect(h3Video).toMatchObject({
       adapter: "comfyui",
-      capabilities: { modalities: { output: ["video", "audio"], limits: { maxDurationSeconds: 15, maxResolution: "1280x720", maxRefs: 12 } } },
+      capabilities: { modalities: { input: ["text"], output: ["video", "audio"], limits: { maxDurationSeconds: 15, maxResolution: "1344x768" } } },
       configuration: { executable: "python", cwd: "/engines/comfyui", expectedVramMiB: 24_576 },
     });
-    expect(h3Image).toMatchObject({ configuration: { experimental: true } });
+    expect(playbook.recipes.map((recipe) => recipe.id)).toEqual(["h3-video"]);
     for (const recipe of playbook.recipes) {
       await expect(adapter.validateRecipe(recipe)).resolves.toEqual({ valid: true, issues: [] });
     }
     expect(playbook.routes).toContainEqual(expect.objectContaining({ id: "video", recipeId: "h3-video", kind: "video", enabled: true }));
-    // The image route is not assigned by default (KD-2 — experimental recipe stays hidden).
+    // H3 is a video model; no fake text-to-image route is exposed.
     expect(playbook.routes).not.toContainEqual(expect.objectContaining({ id: "image" }));
   });
 
@@ -47,7 +45,22 @@ describe("MiniMax H3 via ComfyUI (PR 7)", () => {
     await waitForHttp(fixturePort);
 
     const comfyui = new ComfyUIEngineAdapter({ validatePaths: false, pollIntervalMs: 10, defaultPollIntervalMs: 1, readinessTimeoutMs: 5_000 });
-    const runtime = createHost({ adapters: [new FakeEngineAdapter(), comfyui] });
+    const runtime = createHost({
+      adapters: [new FakeEngineAdapter(), comfyui],
+      // This is a fixture-server integration test, so its result must not
+      // depend on how much VRAM an unrelated process is using on the host.
+      resourceMonitor: {
+        snapshot: async () => ({
+          capturedAt: new Date(0).toISOString(),
+          totalRamMiB: 64_000,
+          freeRamMiB: 48_000,
+          totalVramMiB: 32_000,
+          usedVramMiB: 0,
+          freeVramMiB: 32_000,
+          gpuTelemetryAvailable: true,
+        }),
+      },
+    });
     try {
       await registerRecipe(runtime, h3VideoRecipe(`http://127.0.0.1:${fixturePort}`));
       const assigned = await runtime.app.inject({
@@ -78,43 +91,8 @@ describe("MiniMax H3 via ComfyUI (PR 7)", () => {
   });
 });
 
-function h3VideoRecipe(baseUrl: string): Recipe {
-  return {
-    id: "h3-video",
-    playbookId: "comfyui",
-    displayName: "MiniMax H3 · Video & Audio (ComfyUI)",
-    adapter: "comfyui",
-    modelId: "h3",
-    contextTokens: 1, // unused for media recipes; must be a positive integer for the recipe parser
-    capabilities: {
-      chatCompletions: false,
-      streaming: false,
-      toolCalls: false,
-      responseFormat: false,
-      minP: false,
-      maxConcurrentGenerations: 1,
-      modalities: {
-        input: ["text", "image", "video", "audio"],
-        output: ["video", "audio"],
-        limits: { maxDurationSeconds: 15, maxResolution: "1280x720", maxRefs: 12 },
-      },
-    },
-    lifecycle: { loadPolicy: "onDemand", evictionPolicy: "idle-ttl", idleTtlSeconds: 600, minimumResidencySeconds: 0 },
-    configuration: {
-      baseUrl,
-      expectedVramMiB: 24_576,
-      readinessTimeoutMs: 30_000,
-      comfyuiWorkflow: {
-        "1": {
-          class_type: "HailuoVideoGenerate",
-          inputs: { prompt: "{{prompt}}", seed: "{{seed}}", width: "{{width}}", height: "{{height}}" },
-        },
-        "2": { class_type: "SaveVideo", inputs: { filename_prefix: "fitz-h3" } },
-      },
-      outputFormats: ["mp4"],
-      defaults: { resolution: "1280x720", fps: 30 },
-    },
-  };
+function h3VideoRecipe(baseUrl: string) {
+  return createComfyUIPlaybook({ engineDir: ".", baseUrl }).recipes[0]!;
 }
 
 async function registerRecipe(runtime: HostRuntime, recipe: Recipe): Promise<void> {

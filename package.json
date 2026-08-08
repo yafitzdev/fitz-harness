@@ -15,6 +15,7 @@
     "dev:fake": "node scripts/dev.mjs --fake",
     "start": "pnpm --filter @fitz/host start",
     "smoke": "pnpm build && node scripts/smoke-host.mjs",
+    "smoke:h3": "tsx scripts/smoke-h3.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -b --pretty false",

@@ -68,6 +68,26 @@ describe("agent media tools (§5.9)", () => {
     }
   });
 
+  it("maps the video tool's resolution field to the protocol size parameter", async () => {
+    const harness = await makeHarness();
+    try {
+      harness.security.setRouteGrants(harness.user.id, ["video"]);
+      harness.security.setQuota(harness.user.id, MEDIA_QUOTA);
+      createRun(harness.store, harness.user.id);
+      const result = await mediaTools(harness).generateVideo.execute("call-video", {
+        prompt: "a camera circles a red cube",
+        resolution: "1344x768",
+        duration_seconds: 2,
+        fps: 24,
+      });
+      const job = harness.store.getMediaJob((result.details as { mediaJobId: string }).mediaJobId);
+      expect(job?.params).toMatchObject({ prompt: "a camera circles a red cube", size: "1344x768", durationSeconds: 2, fps: 24 });
+      expect(job?.params).not.toHaveProperty("resolution");
+    } finally {
+      await harness.runtime.app.close();
+    }
+  });
+
   it("fails closed when the run owner has no media quota, even with a route grant", async () => {
     const harness = await makeHarness();
     try {
@@ -123,6 +143,21 @@ describe("agent media tools (§5.9)", () => {
       const result = await mediaTools(harness).generateImage.execute("call-1", { prompt: "a cat" });
       expect(result.details).toMatchObject({ status: "queued" });
       expect(harness.store.getMediaJob((result.details as { mediaJobId: string }).mediaJobId)?.createdByUserId).toBeUndefined();
+    } finally {
+      await harness.runtime.app.close();
+    }
+  });
+
+  it("registers and submits media tools in explicit local auth-disabled mode", async () => {
+    const harness = await makeHarness();
+    try {
+      createRun(harness.store, undefined);
+      const tools = createMediaTools({ mediaJobs: harness.runtime.mediaJobs, store: harness.store })({ cwd: "C:/project", runId: "run-1" });
+      const result = await tools.find((tool) => tool.name === "generate_video")!.execute("call-local-video", { prompt: "a red cube rotates" });
+      expect(result.details).toMatchObject({ status: "queued" });
+      const job = harness.store.getMediaJob((result.details as { mediaJobId: string }).mediaJobId);
+      expect(job).toMatchObject({ modality: "video" });
+      expect(job?.createdByUserId).toBeUndefined();
     } finally {
       await harness.runtime.app.close();
     }

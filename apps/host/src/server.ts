@@ -25,6 +25,8 @@ import { contextTokensForRoute } from "./route-context.js";
 import { WindowsStartupManager } from "@fitz/connectivity";
 import { resolveRuntimePaths } from "./runtime-paths.js";
 import { AgentSafetyService } from "./agent-safety/index.js";
+import { localComfyUIPaths, localH3RuntimeInstalled, reconcileLocalComfyUIConfiguration } from "./comfyui-reconcile.js";
+import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const runtimePaths = resolveRuntimePaths();
@@ -47,11 +49,16 @@ mkdirSync(dirname(databasePath), { recursive: true });
 for (const directory of [runtimePaths.piAgentDir, runtimePaths.logsDir, runtimePaths.cacheDir, runtimePaths.engineRoot, runtimePaths.modelRoot, runtimePaths.snapshotsDir]) mkdirSync(directory, { recursive: true });
 const engineOptions = engineModeOptions(engineMode);
 const store = new SqliteStore(databasePath);
+const storeInitiallyEmpty = store.listRecipes().length === 0;
 const authPepper = authMode === "required" ? resolveAuthPepper(store) : undefined;
 // One SecurityService shared by HTTP auth, the media coordinator, and the agent media
 // tools: in-process submits build device-less principals via `principalForUser` (§5.9).
 const security = authPepper ? new SecurityService(store, authPepper) : undefined;
 if (engineMode === "ninfer") reconcileNInferConfiguration(store);
+// A fresh store is seeded atomically by createHost from engineOptions. Existing
+// stores need an additive reconcile because seedDefaults is intentionally
+// create-only and must not reset user route assignments.
+if (!storeInitiallyEmpty) reconcileLocalComfyUIConfiguration(store, runtimePaths);
 extendLocalModelResidency(store);
 // Safety layer: deterministic policy engine (trash-everything deletes, zone blocking),
 // per-run workspace snapshots, run trash, and secret redaction. Machine guarantees only.
@@ -105,9 +112,10 @@ const runtime = createHost({
       redactToolResult: safety.createResultRedactor(),
       customTools: (context) => [
         ...safety.createCustomTools()(context),
-        // Media tools are paid work (§5.9): registered only when a security service
-        // exists, so quota and route-grant enforcement never silently disappear.
-        ...(mediaJobs && security ? createMediaTools({ mediaJobs, store, security })(context) : []),
+        // Authenticated runs enforce the owner's media quota and route grants.
+        // Explicit local auth-disabled mode has no user and follows the existing
+        // administrator-diagnostic path used by the management media test.
+        ...(mediaJobs ? createMediaTools({ mediaJobs, store, ...(security ? { security } : {}) })(context) : []),
       ],
       agentDir: runtimePaths.piAgentDir,
       llmRoot: runtimePaths.llmRoot,
@@ -146,9 +154,24 @@ function resolveAuthPepper(store: SqliteStore): string {
 
 function ninferOptions() {
   const playbook = createNInferPlaybook();
+  const mediaPlaybook = installedLocalComfyUIPlaybook();
   const wslDistribution = process.env.FITZ_NINFER_WSL_DISTRIBUTION ?? (process.platform === "win32" ? "Ubuntu" : undefined);
   const adapter = new NInferEngineAdapter({ ...(wslDistribution ? { wslDistribution, wslUser: process.env.FITZ_NINFER_WSL_USER ?? "root" } : {}) });
-  return { adapters: [adapter, new ManagedOpenAIEngineAdapter(), new OpenAICompatibleEngineAdapter()], initialRecipes: playbook.recipes, initialRoutes: playbook.routes };
+  return {
+    adapters: [adapter, new ComfyUIEngineAdapter(), new ManagedOpenAIEngineAdapter(), new OpenAICompatibleEngineAdapter()],
+    initialRecipes: [...playbook.recipes, ...(mediaPlaybook?.recipes ?? [])],
+    initialRoutes: [...playbook.routes, ...(mediaPlaybook?.routes ?? [])],
+  };
+}
+
+function installedLocalComfyUIPlaybook() {
+  const local = localComfyUIPaths(runtimePaths);
+  if (!localH3RuntimeInstalled(runtimePaths, local)) return undefined;
+  return createComfyUIPlaybook({
+    engineDir: local.engineDir,
+    executable: local.executable,
+    launchArgs: ["--extra-model-paths-config", local.modelConfigPath, "--output-directory", local.outputDir],
+  });
 }
 
 function extendLocalModelResidency(store: SqliteStore): void {
@@ -164,12 +187,12 @@ function engineModeOptions(mode: string) {
       loadDelayMs: parseNonNegativeInteger(process.env.FITZ_FAKE_LOAD_DELAY_MS ?? "0", "FITZ_FAKE_LOAD_DELAY_MS"),
       tokenDelayMs: parseNonNegativeInteger(process.env.FITZ_FAKE_TOKEN_DELAY_MS ?? "0", "FITZ_FAKE_TOKEN_DELAY_MS"),
     });
+    const mediaPlaybook = installedLocalComfyUIPlaybook();
     return {
       fakeAdapter,
-      // Fake mode is also the GPU-free packaged media smoke mode. The media
-      // recipe is registered explicitly by the smoke client, keeping normal
-      // development defaults unchanged while exercising the real server wire.
-      adapters: [fakeAdapter, new FakeMediaEngineAdapter(), new ManagedOpenAIEngineAdapter(), new OpenAICompatibleEngineAdapter()],
+      adapters: [fakeAdapter, new FakeMediaEngineAdapter(), new ComfyUIEngineAdapter(), new ManagedOpenAIEngineAdapter(), new OpenAICompatibleEngineAdapter()],
+      initialRecipes: [...DEFAULT_RECIPES, ...(mediaPlaybook?.recipes ?? [])],
+      initialRoutes: [...DEFAULT_ROUTES, ...(mediaPlaybook?.routes ?? [])],
     };
   }
   if (mode === "ninfer") return ninferOptions();
@@ -179,7 +202,7 @@ function engineModeOptions(mode: string) {
       ...(process.env.FITZ_OPENAI_API_KEY_ENV ? { apiKeyEnv: process.env.FITZ_OPENAI_API_KEY_ENV } : {}),
       ...(process.env.FITZ_OPENAI_ALLOW_INSECURE_REMOTE === "true" ? { allowInsecureRemote: true } : {}),
     });
-    return singleEngineOptions([new OpenAICompatibleEngineAdapter(), new ManagedOpenAIEngineAdapter()], recipe);
+    return singleEngineOptions([new OpenAICompatibleEngineAdapter(), new ManagedOpenAIEngineAdapter(), new ComfyUIEngineAdapter()], recipe);
   }
   if (mode === "llama-cpp") {
     const recipe = engineRecipe("llama-cpp", {
@@ -188,23 +211,30 @@ function engineModeOptions(mode: string) {
       contextTokens: parsePositiveInteger(process.env.FITZ_MODEL_CONTEXT_TOKENS ?? "32768", "FITZ_MODEL_CONTEXT_TOKENS"),
       ...(process.env.FITZ_LLAMA_CPP_GPU_LAYERS ? { gpuLayers: parseNonNegativeInteger(process.env.FITZ_LLAMA_CPP_GPU_LAYERS, "FITZ_LLAMA_CPP_GPU_LAYERS") } : {}),
     });
-    return singleEngineOptions([new LlamaCppEngineAdapter(), new ManagedOpenAIEngineAdapter(), new OpenAICompatibleEngineAdapter()], recipe);
+    return singleEngineOptions([new LlamaCppEngineAdapter(), new ManagedOpenAIEngineAdapter(), new OpenAICompatibleEngineAdapter(), new ComfyUIEngineAdapter()], recipe);
   }
   if (mode === "comfyui") return comfyuiOptions();
   throw new Error(`Unsupported FITZ_ENGINE_MODE: ${mode}`);
 }
 
-/** MiniMax H3 via ComfyUI (PR 7, KD-1): seeds the local media playbook — the
- *  h3-video recipe assigned to the well-known `video` route, plus the
- *  experimental h3-image recipe (KD-2, not assigned by default). The engine
- *  folder is admin-provisioned; weights and pinned workflows live there
- *  (KD-13 manual placement). */
+/** Explicit ComfyUI mode uses the same official local H3 playbook as the
+ * composed chat-engine modes, with environment overrides for remote/admin
+ * deployments. */
 function comfyuiOptions() {
+  const local = localComfyUIPaths(runtimePaths);
   const playbook = createComfyUIPlaybook({
-    engineDir: requiredEnvironment("FITZ_COMFYUI_DIR"),
-    ...(process.env.FITZ_COMFYUI_EXECUTABLE ? { executable: process.env.FITZ_COMFYUI_EXECUTABLE } : {}),
+    engineDir: process.env.FITZ_COMFYUI_DIR ?? local.engineDir,
+    executable: process.env.FITZ_COMFYUI_EXECUTABLE ?? local.executable,
     ...(process.env.FITZ_COMFYUI_ENTRYPOINT ? { entrypoint: process.env.FITZ_COMFYUI_ENTRYPOINT } : {}),
     ...(process.env.FITZ_COMFYUI_BASE_URL ? { baseUrl: process.env.FITZ_COMFYUI_BASE_URL } : {}),
+    ...(!process.env.FITZ_COMFYUI_BASE_URL ? {
+      launchArgs: [
+        "--extra-model-paths-config",
+        process.env.FITZ_COMFYUI_MODEL_CONFIG ?? local.modelConfigPath,
+        "--output-directory",
+        process.env.FITZ_COMFYUI_OUTPUT_DIR ?? local.outputDir,
+      ],
+    } : {}),
     ...(process.env.FITZ_COMFYUI_EXPECTED_VRAM_MIB
       ? { expectedVramMiB: parseNonNegativeInteger(process.env.FITZ_COMFYUI_EXPECTED_VRAM_MIB, "FITZ_COMFYUI_EXPECTED_VRAM_MIB") }
       : {}),
@@ -227,9 +257,14 @@ function engineRecipe(adapter: "openai-compatible" | "llama-cpp", configuration:
   };
 }
 
-function singleEngineOptions(adapters: Array<NInferEngineAdapter | OpenAICompatibleEngineAdapter | ManagedOpenAIEngineAdapter | LlamaCppEngineAdapter>, recipe: Recipe) {
+function singleEngineOptions(adapters: Array<NInferEngineAdapter | OpenAICompatibleEngineAdapter | ManagedOpenAIEngineAdapter | LlamaCppEngineAdapter | ComfyUIEngineAdapter>, recipe: Recipe) {
   const route: Route = { id: "default", displayName: "Default", recipeId: recipe.id, enabled: true, isDefault: true };
-  return { adapters, initialRecipes: [recipe], initialRoutes: [route] };
+  const mediaPlaybook = installedLocalComfyUIPlaybook();
+  return {
+    adapters,
+    initialRecipes: [recipe, ...(mediaPlaybook?.recipes ?? [])],
+    initialRoutes: [route, ...(mediaPlaybook?.routes ?? [])],
+  };
 }
 
 function parsePositiveInteger(value: string, name: string): number {

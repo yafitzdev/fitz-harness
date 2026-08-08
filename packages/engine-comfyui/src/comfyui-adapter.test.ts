@@ -94,7 +94,7 @@ describe("substituteWorkflow", () => {
     expect(graph).toEqual({
       "1": {
         class_type: "HailuoVideoGenerate",
-        inputs: { prompt: "a red cube", seed: "7", fps: "30", width: "1280", height: "720" },
+        inputs: { prompt: "a red cube", seed: 7, fps: 30, width: 1280, height: 720 },
       },
       "2": { class_type: "SaveVideo", inputs: { filename_prefix: "h3" } },
     });

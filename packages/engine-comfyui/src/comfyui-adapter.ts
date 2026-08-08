@@ -1,5 +1,5 @@
 import { access, readFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Readable } from "node:stream";
 import { isAbsolute, join } from "node:path";
@@ -243,7 +243,8 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
     if (signal.aborted) throw abortError();
     const graph = await this.#loadWorkflow(instance, signal);
     const overrides = instance.config.comfyuiOverrides;
-    const substituted = substituteWorkflow(graph, request.params, overrides);
+    const params = applyGenerationDefaults(request.params, instance.config.defaults);
+    const substituted = substituteWorkflow(graph, params, overrides);
     const promptId = await instance.client.submitPrompt(instance.baseUrl, substituted, randomUUID(), signal);
     return { id: promptId, modality: request.modality };
   }
@@ -392,7 +393,8 @@ export function validateComfyUIConfiguration(recipe: Recipe): ValidationIssue[] 
  *  overrides first, then `{{placeholder}}` substitution across every string
  *  input value (`{{prompt}}`, `{{negative_prompt}}`, `{{seed}}`, `{{width}}`,
  *  `{{height}}`, `{{fps}}`, `{{duration_seconds}}`, `{{steps}}`, `{{guidance}}`,
- *  `{{sampler}}`). Undefined params leave their placeholder untouched. */
+ *  `{{sampler}}`). A value that consists solely of a numeric placeholder is
+ *  emitted as a number, which is required by ComfyUI's API validator. */
 export function substituteWorkflow(
   graph: Readonly<Record<string, unknown>>,
   params: MediaGenerationParams,
@@ -433,7 +435,9 @@ function substitutePlaceholders(
   value: string,
   params: MediaGenerationParams,
   size: { width: number; height: number } | undefined,
-): string {
+): unknown {
+  const exact = exactPlaceholderValue(value, params, size);
+  if (exact !== undefined) return exact;
   let result = value;
   result = result.replaceAll("{{prompt}}", params.prompt);
   if (params.negativePrompt !== undefined) result = result.replaceAll("{{negative_prompt}}", params.negativePrompt);
@@ -448,6 +452,58 @@ function substitutePlaceholders(
   if (params.guidance !== undefined) result = result.replaceAll("{{guidance}}", String(params.guidance));
   if (params.sampler !== undefined) result = result.replaceAll("{{sampler}}", String(params.sampler));
   return result;
+}
+
+function exactPlaceholderValue(
+  value: string,
+  params: MediaGenerationParams,
+  size: { width: number; height: number } | undefined,
+): string | number | undefined {
+  switch (value) {
+    case "{{prompt}}": return params.prompt;
+    case "{{negative_prompt}}": return params.negativePrompt;
+    case "{{seed}}": return params.seed;
+    case "{{width}}": return size?.width;
+    case "{{height}}": return size?.height;
+    case "{{fps}}": return params.fps;
+    case "{{duration_seconds}}": return params.durationSeconds;
+    case "{{steps}}": return params.steps;
+    case "{{guidance}}": return params.guidance;
+    case "{{sampler}}": return params.sampler;
+    default: return undefined;
+  }
+}
+
+function applyGenerationDefaults(
+  params: MediaGenerationParams,
+  defaults: Readonly<Record<string, unknown>> | undefined,
+): MediaGenerationParams {
+  const size = params.size ?? stringDefault(defaults, "resolution");
+  const durationSeconds = params.durationSeconds ?? numberDefault(defaults, "durationSeconds");
+  const fps = params.fps ?? numberDefault(defaults, "fps");
+  const sampler = params.sampler ?? stringDefault(defaults, "sampler");
+  const steps = params.steps ?? numberDefault(defaults, "steps");
+  const guidance = params.guidance ?? numberDefault(defaults, "guidance");
+  return {
+    ...params,
+    ...(size !== undefined ? { size } : {}),
+    ...(durationSeconds !== undefined ? { durationSeconds } : {}),
+    ...(fps !== undefined ? { fps } : {}),
+    ...(sampler !== undefined ? { sampler } : {}),
+    ...(steps !== undefined ? { steps } : {}),
+    ...(guidance !== undefined ? { guidance } : {}),
+    seed: params.seed ?? randomBytes(6).readUIntBE(0, 6),
+  };
+}
+
+function stringDefault(defaults: Readonly<Record<string, unknown>> | undefined, key: string): string | undefined {
+  const value = defaults?.[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function numberDefault(defaults: Readonly<Record<string, unknown>> | undefined, key: string): number | undefined {
+  const value = defaults?.[key];
+  return typeof value === "number" ? value : undefined;
 }
 
 // ---------------------------------------------------------------------------

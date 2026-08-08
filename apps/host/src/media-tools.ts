@@ -25,7 +25,9 @@ import type { MediaJobCoordinator } from "./media-jobs.js";
 export interface MediaToolsOptions {
   mediaJobs: MediaJobCoordinator;
   store: SqliteStore;
-  security: SecurityService;
+  /** Undefined in explicit local/dev auth-disabled mode. Those ownerless runs
+   * use the same administrator-diagnostic path as the management media test. */
+  security?: SecurityService;
 }
 
 /** UUID-shaped reference: a Fitz artifact id (resolved by the coordinator to its bytes). */
@@ -58,8 +60,8 @@ const generateAudioParameters = Type.Object({
 /**
  * Composes the three media tools for one agent run. `runId` resolves the run's owner
  * and session so quota/grants apply to the human and artifacts land in the run's
- * session. Registered only when the host has a security service: with auth disabled
- * there are no users to bill, so the paid-generation path stays closed.
+ * session. In explicit auth-disabled local mode there is no user principal; the
+ * submit uses the same unbilled administrator-diagnostic path as `media-test`.
  */
 export function createMediaTools(options: MediaToolsOptions): (context: { cwd: string; runId?: string }) => ToolDefinition[] {
   return (context) => [
@@ -105,7 +107,7 @@ export function createMediaTools(options: MediaToolsOptions): (context: { cwd: s
           const job = submitMedia(options, context, "video", {
             prompt: params.prompt,
             ...(params.duration_seconds !== undefined ? { durationSeconds: params.duration_seconds } : {}),
-            ...(params.resolution !== undefined ? { resolution: params.resolution } : {}),
+            ...(params.resolution !== undefined ? { size: params.resolution } : {}),
             ...(params.fps !== undefined ? { fps: params.fps } : {}),
             ...(params.refs !== undefined ? { refs: mapRefs(params.refs) } : {}),
           }, params.route_id);
@@ -160,8 +162,8 @@ function submitMedia(
 }
 
 /** Device-less principal for the in-process submit (§5.9): grants and quotas apply to the human. */
-function resolvePrincipal(security: SecurityService, ownerUserId: string | undefined): AuthenticatedPrincipal | undefined {
-  if (!ownerUserId) return undefined;
+function resolvePrincipal(security: SecurityService | undefined, ownerUserId: string | undefined): AuthenticatedPrincipal | undefined {
+  if (!security || !ownerUserId) return undefined;
   try {
     return security.principalForUser(ownerUserId);
   } catch {
