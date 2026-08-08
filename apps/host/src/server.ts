@@ -11,7 +11,8 @@ import { SqliteStore } from "@fitz/storage";
 import { createHost } from "./create-app.js";
 import { ModelCatalogService } from "./model-catalog.js";
 import { PiAgentRuntime, PiPackageService } from "@fitz/agent-pi";
-import { createNInferPlaybook, NINFER_PLAYBOOK_ID } from "./ninfer-playbook.js";
+import { createNInferPlaybook } from "./ninfer-playbook.js";
+import { reconcileNInferConfiguration } from "./ninfer-reconcile.js";
 import { createToolApprovalRequester } from "./tool-approval-gate.js";
 import { createSessionReader } from "./session-reader.js";
 import { contextTokensForRoute } from "./route-context.js";
@@ -129,47 +130,6 @@ function ninferOptions() {
   const wslDistribution = process.env.FITZ_NINFER_WSL_DISTRIBUTION ?? (process.platform === "win32" ? "Ubuntu" : undefined);
   const adapter = new NInferEngineAdapter({ ...(wslDistribution ? { wslDistribution, wslUser: process.env.FITZ_NINFER_WSL_USER ?? "root" } : {}) });
   return { adapters: [adapter, new ManagedOpenAIEngineAdapter(), new OpenAICompatibleEngineAdapter()], initialRecipes: playbook.recipes, initialRoutes: playbook.routes };
-}
-
-function reconcileNInferConfiguration(store: SqliteStore): void {
-  const playbook = createNInferPlaybook();
-  const templatesById = new Map(playbook.recipes.map((recipe) => [recipe.id, recipe]));
-  for (const recipe of store.listRecipes()) {
-    const template = templatesById.get(recipe.id);
-    const migratedPlaybookId = recipe.playbookId === "ninfer-qwen36" ? NINFER_PLAYBOOK_ID : recipe.playbookId;
-    const migratedLifecycle = template && recipe.lifecycle.evictionPolicy === "idle-ttl" && recipe.lifecycle.idleTtlSeconds === 60
-      ? { ...recipe.lifecycle, idleTtlSeconds: template.lifecycle.idleTtlSeconds }
-      : recipe.lifecycle;
-    const migratedCapabilities = template && !recipe.capabilities.toolCalls
-      ? { ...recipe.capabilities, toolCalls: true }
-      : recipe.capabilities;
-    const migratedConfiguration = template && recipe.adapter === "ninfer"
-      ? {
-          ...recipe.configuration,
-          executable: template.configuration.executable,
-          artifact: template.configuration.artifact,
-        }
-      : recipe.configuration;
-    const configurationChanged = migratedConfiguration !== recipe.configuration
-      && (migratedConfiguration.executable !== recipe.configuration.executable
-        || migratedConfiguration.artifact !== recipe.configuration.artifact);
-    if (migratedPlaybookId !== recipe.playbookId || migratedLifecycle !== recipe.lifecycle || migratedCapabilities !== recipe.capabilities || configurationChanged) {
-      store.upsertRecipe({ ...recipe, playbookId: migratedPlaybookId, lifecycle: migratedLifecycle, capabilities: migratedCapabilities, configuration: migratedConfiguration });
-    }
-  }
-  const templates = playbook.routes;
-  const existingRoutes = store.listRoutes();
-  const existingById = new Map(existingRoutes.map((route) => [route.id, route]));
-  const legacyDefault = existingById.get("default-agent");
-  const recipeIds = new Set([...store.listRecipes(), ...playbook.recipes].map((recipe) => recipe.id));
-  for (const route of existingRoutes) {
-    if (!route.id.startsWith("consumer--") && !templates.some((template) => template.id === route.id)) store.deleteRoute(route.id);
-  }
-  for (const template of templates) {
-    const existing = existingById.get(template.id) ?? (template.id === "default" ? legacyDefault : undefined);
-    const recipeId = existing && recipeIds.has(existing.recipeId) ? existing.recipeId : template.recipeId;
-    store.upsertRoute({ ...template, recipeId });
-  }
 }
 
 function extendLocalModelResidency(store: SqliteStore): void {

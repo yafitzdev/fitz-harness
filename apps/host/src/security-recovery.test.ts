@@ -56,7 +56,7 @@ describe("host security and recovery boundaries", () => {
     store.createProject({ id: "project-1", name: "Project", createdAt: now, updatedAt: now }); store.createSession({ id: "session-1", projectId: "project-1", title: "Task", status: "active", createdAt: now, updatedAt: now }); store.createToolApproval({ id: "approval-in-flight", sessionId: "session-1", toolCallId: "bash-1", toolName: "bash", status: "pending", request: {}, requestedAt: now });
     const runtime = createHost({ store });
     const health = await runtime.app.inject({ method: "GET", url: "/health" });
-    expect(health.json().recovery).toEqual({ interruptedRequests: 1, interruptedAgentRuns: 1, interruptedToolApprovals: 1 });
+    expect(health.json().recovery).toEqual({ interruptedRequests: 1, interruptedAgentRuns: 1, interruptedToolApprovals: 1, interruptedMediaJobs: 0 });
     expect(store.listInferenceRequests()).toEqual([expect.objectContaining({ id: "inference-in-flight", status: "interrupted", errorCode: "host_restarted" })]);
     expect(store.getAgentRun("agent-in-flight")).toEqual(expect.objectContaining({ status: "interrupted", error: "host_restarted" }));
     expect(store.getToolApproval("approval-in-flight")).toEqual(expect.objectContaining({ status: "cancelled", note: "host_restarted" }));

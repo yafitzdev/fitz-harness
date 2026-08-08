@@ -6,6 +6,7 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { FakeEngineAdapter } from "@fitz/engine-fake";
 import {
   type EngineAdapter,
+  type MediaEngineAdapter,
   EngineAdapterRegistry,
   InferenceScheduler,
   LifecycleEventBus,
@@ -27,18 +28,26 @@ import {
   type EngineConnectionMode,
   type EngineRegistration,
   type EngineRuntime,
+  type MediaGenerationParams,
+  type MediaJobRecord,
+  type MediaJobStatus,
+  type MediaModality,
+  type ModalityCapabilities,
+  type ModalityInput,
   type Recipe,
   type Route,
+  type RouteKind,
   type AgentRunRequest,
   type SessionRecord,
   type ToolPolicyRecord,
 } from "@fitz/protocol";
 import { MetricsRegistry, redactSecrets } from "@fitz/observability";
 import { DEFAULT_QUOTAS, SecurityPolicyError, SecurityService, type AuthenticatedPrincipal } from "@fitz/security";
-import { SqliteStore } from "@fitz/storage";
+import { SqliteStore, type MediaJobEventEnvelope } from "@fitz/storage";
 import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
 import { DownloadNotFoundError, type ModelCatalogService } from "./model-catalog.js";
 import { AgentRunCoordinator } from "./agent-runs.js";
+import { MediaJobCoordinator } from "./media-jobs.js";
 import type { AgentRuntime } from "@fitz/agent-core";
 import type { PiPackageService } from "@fitz/agent-pi";
 import { ContextManager } from "@fitz/context";
@@ -61,11 +70,18 @@ interface ConsumerConnectionRegistration {
 const CONSUMER_ROUTE_PREFIX = "consumer--";
 const PUBLIC_ROUTE_IDS = new Set(["fast", "default", "smart"]);
 const LOCAL_CONNECTION_ID = "hosted--local";
+/** Exactly three well-known media route ids (§5.2); created disabled + unassigned. */
+const MEDIA_ROUTE_IDS = ["image", "video", "audio"] as const;
+const MEDIA_ROUTE_DISPLAY_NAMES: Record<(typeof MEDIA_ROUTE_IDS)[number], string> = {
+  image: "Image generation",
+  video: "Video generation",
+  audio: "Audio generation",
+};
 
 export interface CreateHostOptions {
   store?: SqliteStore;
   fakeAdapter?: FakeEngineAdapter;
-  adapters?: EngineAdapter[];
+  adapters?: Array<EngineAdapter | MediaEngineAdapter>;
   initialRecipes?: Recipe[];
   initialRoutes?: Route[];
   resourceMonitor?: ResourceMonitor;
@@ -97,6 +113,7 @@ export interface HostRuntime {
   lifecycle: LifecycleManager;
   scheduler: InferenceScheduler;
   agentRuns: AgentRunCoordinator;
+  mediaJobs: MediaJobCoordinator;
   context: ContextManager;
   metrics: MetricsRegistry;
   security?: SecurityService;
@@ -129,6 +146,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const recoveredInterruptedRequests = store.recoverInterruptedRequests();
   const recoveredAgentRuns = store.recoverInterruptedAgentRuns();
   const recoveredToolApprovals = store.recoverInterruptedToolApprovals();
+  const recoveredMediaJobs = store.recoverInterruptedMediaJobs();
   seedDefaults(
     store,
     options.initialRecipes ?? DEFAULT_RECIPES,
@@ -147,6 +165,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   store.setSetting("engineRoot", configuredEngineRoot);
   migrateLegacyEngineRegistry(store);
   const routes = new RouteResolver(store.listRoutes(), store.listRecipes());
+  ensureMediaRoutes(store, routes);
   const events = new LifecycleEventBus(1_000, store.latestLifecycleSequence());
   const fakeAdapter = options.adapters ? options.fakeAdapter : (options.fakeAdapter ?? new FakeEngineAdapter());
   const adapterList = options.adapters ?? (fakeAdapter ? [fakeAdapter, new OpenAICompatibleEngineAdapter()] : [new OpenAICompatibleEngineAdapter()]);
@@ -163,6 +182,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   void Promise.allSettled(localRecipes.map((recipe) => lifecycle.prepare(recipe)));
   const scheduler = new InferenceScheduler(routes, lifecycle, events);
   const agentRuns = new AgentRunCoordinator(store, scheduler, options.agentRuntime, options.safety ? (runId) => void options.safety!.collect().catch(() => undefined) : undefined);
+  const mediaJobs = new MediaJobCoordinator({ store, scheduler, routes, ...(security ? { security } : {}) });
   const context = options.contextManager ?? new ContextManager(store);
   const tailscale = options.tailscaleMonitor ?? new TailscaleMonitor();
   const tailscaleServe = options.tailscaleServeManager ?? new TailscaleServeManager();
@@ -173,7 +193,9 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const metrics = new MetricsRegistry();
   const unsubscribePersistence = events.subscribe((event) => {
     store.appendLifecycleEvent(event);
-    if (event.type === "queue.updated") store.recordQueueEvent(event);
+    // Media jobs never persist to `inference_requests` — they have their own
+    // `media_jobs` records and event stream (§5.5).
+    if (event.type === "queue.updated" && event.data.kind !== "media") store.recordQueueEvent(event);
   });
   const unsubscribeMetrics = events.subscribe((event) => metrics.observeLifecycleEvent(event));
   const requestStarts = new WeakMap<object, number>();
@@ -221,7 +243,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       engine: lifecycle.snapshot(),
       queueDepth: scheduler.queueDepth,
       resources: { ...resourceSnapshot, policy: resources.policy },
-      recovery: { interruptedRequests: recoveredInterruptedRequests, interruptedAgentRuns: recoveredAgentRuns, interruptedToolApprovals: recoveredToolApprovals },
+      recovery: { interruptedRequests: recoveredInterruptedRequests, interruptedAgentRuns: recoveredAgentRuns, interruptedToolApprovals: recoveredToolApprovals, interruptedMediaJobs: recoveredMediaJobs },
     };
   });
   app.get("/api/v1/me", async (request) => { const principal = principals.get(request); return { data: principal ? { authMode: "required", user: principal.user, device: principal.device, routeIds: principal.routeGrants, quota: principal.quota } : { authMode: "disabled" } }; });
@@ -413,6 +435,74 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     if (isTerminalRun(agentRuns.get(runId)?.status)) { unsubscribe(); reply.raw.end(); } else request.raw.once("aborted", unsubscribe);
   });
 
+  app.post("/api/v1/media/jobs", async (request, reply) => {
+    try {
+      const body = requireRecord(request.body);
+      const routeId = typeof body.routeId === "string" ? body.routeId : typeof body.model === "string" ? body.model : undefined;
+      if (!routeId) throw new TypeError("routeId is required");
+      const modality = parseModality(body.modality);
+      const principal = principals.get(request);
+      const job = mediaJobs.submit({
+        routeId,
+        modality,
+        params: parseMediaParams(body.params),
+        ...(typeof body.sessionId === "string" && body.sessionId ? { sessionId: body.sessionId } : {}),
+      }, principal);
+      security?.audit("media-job.created", principal?.user.id, "media-job", job.id, { routeId, modality, status: job.status });
+      return reply.code(202).send({ data: job });
+    } catch (error) {
+      const statusCode = error instanceof RouteNotFoundError ? 404 : error instanceof SecurityPolicyError ? 429 : 400;
+      return reply.code(statusCode).send({ error: errorMessage(error) });
+    }
+  });
+  app.get("/api/v1/media/jobs", async (request) => {
+    const principal = principals.get(request);
+    const query = request.query as { status?: string; limit?: string };
+    const status = parseMediaStatus(query.status);
+    return {
+      data: mediaJobs.list({
+        ...(principal === undefined || principal.user.role === "administrator" ? {} : { ownerUserId: principal.user.id }),
+        ...(status ? { status } : {}),
+        limit: Math.min(toNonNegativeInteger(query.limit, 100), 1000),
+      }),
+    };
+  });
+  app.get("/api/v1/media/jobs/:jobId", async (request, reply) => {
+    const jobId = (request.params as { jobId: string }).jobId;
+    const job = mediaJobs.get(jobId);
+    if (!job) return reply.code(404).send({ error: "Media job not found" });
+    if (!canAccessMediaJob(principals.get(request), job)) return reply.code(403).send({ error: "Media job access denied" });
+    return { data: job };
+  });
+  app.post("/api/v1/media/jobs/:jobId/cancel", async (request, reply) => {
+    const jobId = (request.params as { jobId: string }).jobId;
+    const job = mediaJobs.get(jobId);
+    if (!job) return reply.code(404).send({ error: "Media job not found" });
+    if (!canAccessMediaJob(principals.get(request), job)) return reply.code(403).send({ error: "Media job access denied" });
+    if (!mediaJobs.cancel(jobId)) return reply.code(409).send({ error: "Media job is no longer active" });
+    security?.audit("media-job.cancelled", principals.get(request)?.user.id, "media-job", jobId);
+    return reply.code(202).send({ data: { id: jobId, cancellationRequested: true } });
+  });
+  app.get("/api/v1/media/jobs/:jobId/events", async (request, reply) => {
+    const jobId = (request.params as { jobId: string }).jobId;
+    const job = mediaJobs.get(jobId);
+    if (!job) return reply.code(404).send({ error: "Media job not found" });
+    if (!canAccessMediaJob(principals.get(request), job)) return reply.code(403).send({ error: "Media job access denied" });
+    const query = request.query as { after?: string; stream?: string };
+    const headerAfter = typeof request.headers["last-event-id"] === "string" ? request.headers["last-event-id"] : undefined;
+    const after = toNonNegativeInteger(query.after ?? headerAfter, 0);
+    if (query.stream !== "true" && !String(request.headers.accept ?? "").includes("text/event-stream")) {
+      return { data: mediaJobs.eventsAfter(jobId, after) };
+    }
+    reply.hijack();
+    reply.raw.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache, no-transform", connection: "keep-alive" });
+    let last = after;
+    const send = (event: MediaJobEventEnvelope) => { if (event.sequence <= last) return; last = event.sequence; reply.raw.write(`id: ${event.sequence}\nevent: ${event.event.type}\ndata: ${JSON.stringify(event)}\n\n`); };
+    const unsubscribe = mediaJobs.subscribe(jobId, (event) => { send(event); if (isTerminalMediaEvent(event.event.type)) { unsubscribe(); reply.raw.end(); } });
+    for (const event of mediaJobs.eventsAfter(jobId, after)) send(event);
+    if (isTerminalMediaStatus(mediaJobs.get(jobId)?.status)) { unsubscribe(); reply.raw.end(); } else request.raw.once("aborted", unsubscribe);
+  });
+
   app.get("/api/v1/projects", async (request) => { const principal = principals.get(request); return { data: store.listProjects(principal?.user.role === "administrator" ? undefined : principal?.user.id) }; });
   app.post("/api/v1/projects", async (request, reply) => { try { const body = requireRecord(request.body); const principal = principals.get(request); const now = new Date().toISOString(); const project = { id: randomUUID(), name: requireString(body.name, "name"), createdAt: now, updatedAt: now, ...(principal ? { ownerUserId: principal.user.id } : {}), ...(typeof body.rootPath === "string" ? { rootPath: body.rootPath } : {}) }; store.createProject(project); security?.audit("project.created", principal?.user.id, "project", project.id); return reply.code(201).send({ data: project }); } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
   app.get("/api/v1/projects/:projectId", async (request, reply) => { const project = store.getProject((request.params as { projectId: string }).projectId); if (!project) return reply.code(404).send({ error: "Project not found" }); if (!canAccessOwner(principals.get(request), project.ownerUserId)) return reply.code(403).send({ error: "Project access denied" }); return { data: project }; });
@@ -443,7 +533,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         engine: lifecycle.snapshot(),
         queueDepth: scheduler.queueDepth,
         resources: { ...resourceSnapshot, policy: resources.policy },
-        routes: routes.listRoutes(),
+        routes: routes.listRoutes(true),
         recipes: routes.listRecipes(),
         engines: store.listEngines(),
         hostName: hostname(),
@@ -452,6 +542,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         recoveredInterruptedRequests,
         recoveredAgentRuns,
         recoveredToolApprovals,
+        recoveredMediaJobs,
       };
     },
   );
@@ -574,7 +665,9 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   app.get(
     "/api/v1/management/routes",
     { preHandler: adminGuard(options.adminToken, authMode, principals) },
-    async () => ({ data: routes.listRoutes() }),
+    // includeDisabled: de-assigned media routes stay visible so they can be
+    // re-assigned from the UI (§5.2).
+    async () => ({ data: routes.listRoutes(true) }),
   );
 
   app.put(
@@ -649,6 +742,9 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         const recipe = parseRecipe(request.body, recipeId);
         store.upsertRecipe(recipe);
         routes.upsertRecipe(recipe);
+        // A media-capable recipe makes the well-known media routes assignable;
+        // create the (disabled, unassigned) slots if they do not exist yet (§5.2).
+        ensureMediaRoutes(store, routes);
         return { data: recipe };
       } catch (error) {
         return reply.code(400).send({ error: errorMessage(error) });
@@ -712,8 +808,21 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       const routeId = (request.params as { routeId: string }).routeId;
       try {
         const route = parseRoute(request.body, routeId);
-        const recipeExists = routes.listRecipes().some((recipe) => recipe.id === route.recipeId);
-        if (!recipeExists) throw new RecipeNotFoundError(route.recipeId);
+        if (route.recipeId !== "") {
+          // De-assignment (recipeId: "") deliberately references no recipe, so the
+          // recipe-exists guard is skipped for it (§5.2).
+          const recipe = routes.listRecipes().find((item) => item.id === route.recipeId);
+          if (!recipe) throw new RecipeNotFoundError(route.recipeId);
+          const kind = route.kind ?? "chat";
+          if (kind !== "chat") {
+            if (!recipe.capabilities.modalities?.output.includes(kind)) {
+              throw new TypeError(`Recipe ${recipe.id} does not generate ${kind}; cannot assign it to the ${route.id} route`);
+            }
+            if (recipe.configuration.experimental === true && !(isRecord(request.body) && request.body.acceptExperimental === true)) {
+              throw new TypeError(`Recipe ${recipe.id} is experimental; pass acceptExperimental: true to assign it explicitly`);
+            }
+          }
+        }
         store.upsertRoute(route);
         routes.upsertRoute(route);
         return { data: route };
@@ -821,6 +930,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     lifecycle,
     scheduler,
     agentRuns,
+    mediaJobs,
     context,
     metrics,
     ...(security ? { security } : {}),
@@ -835,6 +945,18 @@ function seedDefaults(store: SqliteStore, recipes: Recipe[], routes: Route[]): v
   }
   if (store.listRoutes().length === 0) {
     for (const route of routes) store.upsertRoute(route);
+  }
+}
+
+/** Idempotent, create-only: creates the well-known media routes disabled with an
+ *  empty recipeId. Existing media routes are never reset — their recipeId/enabled
+ *  state is preserved on every boot, so an assignment survives restarts (§5.2). */
+export function ensureMediaRoutes(store: SqliteStore, routes: RouteResolver): void {
+  for (const id of MEDIA_ROUTE_IDS) {
+    if (routes.listRoutes(true).some((route) => route.id === id)) continue;
+    const route: Route = { id, displayName: MEDIA_ROUTE_DISPLAY_NAMES[id], recipeId: "", enabled: false, kind: id };
+    store.upsertRoute(route);
+    routes.upsertRoute(route);
   }
 }
 
@@ -1084,7 +1206,15 @@ function parseRoute(value: unknown, routeId: string): Route {
   if (typeof value.displayName !== "string" || value.displayName.length === 0) {
     throw new TypeError("displayName must be a non-empty string");
   }
-  if (typeof value.recipeId !== "string" || value.recipeId.length === 0) {
+  if (typeof value.recipeId !== "string") {
+    throw new TypeError("recipeId must be a string");
+  }
+  const kind = parseRouteKind(value.kind, routeId);
+  // De-assignment: an empty recipeId on a media route persists the route as
+  // disabled (it stays visible, never deleted). Chat routes keep the current
+  // non-empty-recipeId requirement (§5.2).
+  const deassigned = kind !== undefined && kind !== "chat" && value.recipeId.length === 0;
+  if ((kind === "chat" || kind === undefined) && value.recipeId.length === 0) {
     throw new TypeError("recipeId must be a non-empty string");
   }
   if (typeof value.enabled !== "boolean") throw new TypeError("enabled must be a boolean");
@@ -1092,10 +1222,17 @@ function parseRoute(value: unknown, routeId: string): Route {
     id: routeId,
     displayName: value.displayName,
     recipeId: value.recipeId,
-    enabled: value.enabled,
+    enabled: deassigned ? false : value.enabled,
+    ...(kind ? { kind } : {}),
     ...(typeof value.description === "string" ? { description: value.description } : {}),
     ...(typeof value.isDefault === "boolean" ? { isDefault: value.isDefault } : {}),
   };
+}
+
+function parseRouteKind(value: unknown, routeId: string): RouteKind | undefined {
+  if (value === "chat" || value === "image" || value === "video" || value === "audio") return value;
+  if (value === undefined) return (MEDIA_ROUTE_IDS as readonly string[]).includes(routeId) ? (routeId as RouteKind) : undefined;
+  throw new TypeError("kind must be chat, image, video, or audio");
 }
 
 function parseRecipe(value: unknown, recipeId: string): Recipe {
@@ -1122,6 +1259,7 @@ function parseRecipe(value: unknown, recipeId: string): Recipe {
     capabilities: {
       chatCompletions: booleanCapability("chatCompletions"), streaming: booleanCapability("streaming"), toolCalls: booleanCapability("toolCalls"),
       responseFormat: booleanCapability("responseFormat"), minP: booleanCapability("minP"), maxConcurrentGenerations: requireInteger(capabilities.maxConcurrentGenerations),
+      ...(isRecord(capabilities.modalities) ? { modalities: parseModalities(capabilities.modalities) } : {}),
     },
     lifecycle: {
       loadPolicy, evictionPolicy, idleTtlSeconds: nonNegativeInteger(lifecycle.idleTtlSeconds, "lifecycle.idleTtlSeconds"), minimumResidencySeconds: nonNegativeInteger(lifecycle.minimumResidencySeconds, "lifecycle.minimumResidencySeconds"),
@@ -1136,6 +1274,44 @@ function contentTextLength(content: string | Array<{ type: string; text?: string
 function parseAgentRunRequest(value: unknown): AgentRunRequest { const parsed = parseChatCompletionRequest(value); const source = requireRecord(value); const accessMode = source.accessMode === "ask" || source.accessMode === "read-only" ? source.accessMode : "full"; return { model: parsed.model, messages: parsed.messages, ...(parsed.max_tokens !== undefined ? { maxTokens: parsed.max_tokens } : {}), ...(parsed.temperature !== undefined ? { temperature: parsed.temperature } : {}), ...(typeof source.sessionId === "string" ? { sessionId: source.sessionId } : {}), accessMode }; }
 function canAccessRun(principal: AuthenticatedPrincipal | undefined, ownerUserId: string | undefined): boolean { return !principal || principal.user.role === "administrator" || principal.user.id === ownerUserId; }
 function canAccessOwner(principal: AuthenticatedPrincipal | undefined, ownerUserId: string | undefined): boolean { return !principal || principal.user.role === "administrator" || principal.user.id === ownerUserId; }
+function canAccessMediaJob(principal: AuthenticatedPrincipal | undefined, job: MediaJobRecord): boolean { return !principal || principal.user.role === "administrator" || principal.user.id === job.createdByUserId; }
+function isTerminalMediaStatus(status: string | undefined): boolean { return status === "completed" || status === "failed" || status === "cancelled" || status === "interrupted"; }
+function isTerminalMediaEvent(type: string): boolean { return type === "completed" || type === "failed" || type === "cancelled"; }
+function parseModality(value: unknown): MediaModality { if (value === "image" || value === "video" || value === "audio") return value; throw new TypeError("modality must be image, video, or audio"); }
+function parseMediaStatus(value: string | undefined): MediaJobStatus | undefined { return value === "queued" || value === "started" || value === "progressing" || value === "completed" || value === "failed" || value === "cancelled" || value === "interrupted" ? value : undefined; }
+function parseMediaParams(value: unknown): MediaGenerationParams {
+  const body = requireRecord(value);
+  const prompt = requireString(body.prompt, "prompt");
+  return {
+    prompt,
+    ...(typeof body.negativePrompt === "string" ? { negativePrompt: body.negativePrompt } : {}),
+    ...(Array.isArray(body.refs)
+      ? { refs: body.refs.map((ref) => { if (!isRecord(ref)) throw new TypeError("params.refs entries must be objects"); if (typeof ref.artifactId === "string" && ref.artifactId) return { artifactId: ref.artifactId }; if (typeof ref.url === "string" && ref.url) return { url: ref.url }; throw new TypeError("params.refs entries must have artifactId or url"); }) }
+      : {}),
+    ...(typeof body.size === "string" ? { size: body.size } : {}),
+    ...(typeof body.durationSeconds === "number" ? { durationSeconds: body.durationSeconds } : {}),
+    ...(typeof body.fps === "number" ? { fps: body.fps } : {}),
+    ...(typeof body.seed === "number" ? { seed: body.seed } : {}),
+    ...(typeof body.sampler === "string" ? { sampler: body.sampler } : {}),
+    ...(typeof body.steps === "number" ? { steps: body.steps } : {}),
+    ...(typeof body.guidance === "number" ? { guidance: body.guidance } : {}),
+  };
+}
+function parseModalities(value: Record<string, unknown>): ModalityCapabilities {
+  const input = value.input;
+  const output = value.output;
+  if (!Array.isArray(input) || !input.every((item) => item === "text" || item === "image" || item === "video" || item === "audio")) throw new TypeError("capabilities.modalities.input is invalid");
+  if (!Array.isArray(output) || !output.every((item) => item === "image" || item === "video" || item === "audio")) throw new TypeError("capabilities.modalities.output is invalid");
+  const limits = isRecord(value.limits)
+    ? {
+        ...(typeof value.limits.maxDurationSeconds === "number" ? { maxDurationSeconds: value.limits.maxDurationSeconds } : {}),
+        ...(typeof value.limits.maxResolution === "string" ? { maxResolution: value.limits.maxResolution } : {}),
+        ...(typeof value.limits.maxRefs === "number" ? { maxRefs: value.limits.maxRefs } : {}),
+        ...(typeof value.limits.maxFrames === "number" ? { maxFrames: value.limits.maxFrames } : {}),
+      }
+    : undefined;
+  return { input: input as ModalityInput[], output: output as MediaModality[], ...(limits ? { limits } : {}) };
+}
 function isTerminalRun(status: string | undefined): boolean { return status === "completed" || status === "failed" || status === "cancelled" || status === "interrupted"; }
 function isTerminalAgentEvent(type: string): boolean { return type === "run.completed" || type === "run.failed" || type === "run.cancelled" || type === "run.interrupted"; }
 function parseApprovalStatus(value: string | undefined): "pending" | "approved" | "denied" | "cancelled" | undefined { return value === "pending" || value === "approved" || value === "denied" || value === "cancelled" ? value : undefined; }

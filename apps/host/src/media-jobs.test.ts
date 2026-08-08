@@ -1,0 +1,401 @@
+import { describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
+import { FakeEngineAdapter, type FakeInstanceHandle } from "@fitz/engine-fake";
+import type {
+  LaunchSpec,
+  MediaGenerationRequest,
+  MediaGenerationResult,
+  MediaModality,
+  Recipe,
+  ResourceEstimate,
+  Route,
+  ValidationReport,
+} from "@fitz/protocol";
+import type {
+  InstanceInspection,
+  MediaEngineAdapter,
+  MediaJobHandle,
+  MediaJobPoll,
+  PortAllocation,
+  ReadyInfo,
+  StopMode,
+  StopReport,
+} from "@fitz/inference-core";
+import { RouteResolver } from "@fitz/inference-core";
+import { SqliteStore } from "@fitz/storage";
+import { createHost, ensureMediaRoutes, type HostRuntime } from "./create-app.js";
+import { reconcileNInferConfiguration } from "./ninfer-reconcile.js";
+
+interface HostMediaFakeOptions {
+  progressPerPoll?: number;
+  failWhenPromptIncludes?: string;
+}
+
+/** Deterministic MediaEngineAdapter test double, mirroring the inference-core one
+ *  but hosted in this file so the integration tests own their fixture. */
+class HostMediaFakeEngineAdapter implements MediaEngineAdapter<FakeInstanceHandle> {
+  readonly id = "media-fake";
+  readonly modalities: MediaModality[] = ["image", "video", "audio"];
+  readonly defaultPollIntervalMs = 1;
+  readonly starts: FakeInstanceHandle[] = [];
+  readonly submitted: MediaGenerationRequest[] = [];
+  readonly cancelled: Array<{ instanceId: string; jobId: string }> = [];
+  readonly #progressPerPoll: number;
+  readonly #failWhenPromptIncludes: string | undefined;
+  readonly #jobs = new Map<string, { request: MediaGenerationRequest; progress: number }>();
+
+  constructor(options: HostMediaFakeOptions = {}) {
+    this.#progressPerPoll = options.progressPerPoll ?? 0.25;
+    this.#failWhenPromptIncludes = options.failWhenPromptIncludes;
+  }
+
+  async prepare(_recipe: Recipe, _signal: AbortSignal): Promise<void> {}
+
+  async validateRecipe(recipe: Recipe): Promise<ValidationReport> {
+    return recipe.adapter === this.id
+      ? { valid: true, issues: [] }
+      : { valid: false, issues: [{ level: "error", code: "adapter_mismatch", message: `Recipe adapter must be ${this.id}` }] };
+  }
+
+  async estimateResources(_recipe: Recipe): Promise<ResourceEstimate> {
+    return { vramMiB: 0, ramMiB: 16 };
+  }
+
+  async buildLaunchSpec(recipe: Recipe, allocation: PortAllocation): Promise<LaunchSpec> {
+    return {
+      executable: "fitz-fake-media-engine",
+      args: ["--model", recipe.modelId, "--port", String(allocation.port)],
+      env: {},
+      internalHost: allocation.host,
+      internalPort: allocation.port,
+    };
+  }
+
+  async start(recipe: Recipe, spec: LaunchSpec, signal: AbortSignal): Promise<FakeInstanceHandle> {
+    if (signal.aborted) throw abortError();
+    const handle: FakeInstanceHandle = {
+      id: randomUUID(),
+      recipeId: recipe.id,
+      modelId: recipe.modelId,
+      baseUrl: `http://${spec.internalHost}:${spec.internalPort}`,
+      startedAt: new Date(),
+      stopped: false,
+    };
+    this.starts.push(handle);
+    return handle;
+  }
+
+  async waitUntilReady(instance: FakeInstanceHandle, _signal: AbortSignal): Promise<ReadyInfo> {
+    return { modelId: instance.modelId, baseUrl: instance.baseUrl };
+  }
+
+  async submit(_instance: FakeInstanceHandle, request: MediaGenerationRequest, signal: AbortSignal): Promise<MediaJobHandle> {
+    if (signal.aborted) throw abortError();
+    this.submitted.push(structuredClone(request));
+    const jobId = `provider-${this.submitted.length}`;
+    this.#jobs.set(jobId, { request, progress: 0 });
+    return { id: jobId, modality: request.modality };
+  }
+
+  async poll(_instance: FakeInstanceHandle, job: MediaJobHandle, signal: AbortSignal): Promise<MediaJobPoll> {
+    if (signal.aborted) throw abortError();
+    const record = this.#jobs.get(job.id);
+    if (!record) return { status: "cancelled" };
+    if (this.#failWhenPromptIncludes && record.request.params.prompt.includes(this.#failWhenPromptIncludes)) {
+      this.#jobs.delete(job.id);
+      return { status: "failed", error: "Fake media engine configured request failure" };
+    }
+    record.progress = Math.min(1, record.progress + this.#progressPerPoll);
+    if (record.progress >= 1) {
+      this.#jobs.delete(job.id);
+      return { status: "completed", progress: 1, result: hostMediaResult(record.request.modality) };
+    }
+    return { status: "progressing", progress: record.progress };
+  }
+
+  async cancel(instance: FakeInstanceHandle, job: MediaJobHandle): Promise<void> {
+    this.cancelled.push({ instanceId: instance.id, jobId: job.id });
+    this.#jobs.delete(job.id);
+  }
+
+  async stop(instance: FakeInstanceHandle, _mode: StopMode): Promise<StopReport> {
+    instance.stopped = true;
+    return { stopped: true };
+  }
+
+  async inspect(instance: FakeInstanceHandle): Promise<InstanceInspection> {
+    return {
+      healthy: !instance.stopped,
+      modelId: instance.modelId,
+      ...(instance.stopped ? { detail: "stopped" } : {}),
+    };
+  }
+}
+
+describe("Fitz host media jobs", () => {
+  it("creates the well-known media routes disabled and preserves assignments", async () => {
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new HostMediaFakeEngineAdapter()] });
+    try {
+      const routes = (await runtime.app.inject({ method: "GET", url: "/api/v1/management/routes" })).json().data as Route[];
+      for (const id of ["image", "video", "audio"]) {
+        expect(routes).toContainEqual(expect.objectContaining({ id, recipeId: "", enabled: false, kind: id }));
+      }
+
+      await registerMediaRecipe(runtime, "h3-img", ["image"]);
+      const assigned = await runtime.app.inject({ method: "PUT", url: "/api/v1/management/routes/image", payload: { displayName: "Image generation", recipeId: "h3-img", enabled: true } });
+      expect(assigned.statusCode, assigned.body).toBe(200);
+      expect(assigned.json().data).toEqual(expect.objectContaining({ recipeId: "h3-img", enabled: true, kind: "image" }));
+
+      // Re-invocation (boot, recipe upsert) is create-only: the assignment survives.
+      ensureMediaRoutes(runtime.store, runtime.routes);
+      const image = runtime.routes.listRoutes(true).find((route) => route.id === "image");
+      expect(image).toMatchObject({ recipeId: "h3-img", enabled: true, kind: "image" });
+    } finally {
+      await runtime.app.close();
+    }
+  });
+
+  it("completes a job, writes the artifact, and persists sequenced events", async () => {
+    const mediaFake = new HostMediaFakeEngineAdapter();
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), mediaFake] });
+    try {
+      await registerMediaRecipe(runtime, "h3-img", ["image"]);
+      await assignRoute(runtime, "image", "h3-img");
+
+      const submitted = await runtime.app.inject({ method: "POST", url: "/api/v1/media/jobs", payload: { routeId: "image", modality: "image", params: { prompt: "a cat" } } });
+      expect(submitted.statusCode, submitted.body).toBe(202);
+      const jobId = submitted.json().data.id as string;
+      expect(submitted.json().data).toEqual(expect.objectContaining({ routeId: "image", modality: "image", status: "queued" }));
+
+      const job = await waitForJobStatus(runtime, jobId, "completed");
+      expect(job.artifactId).toEqual(expect.any(String));
+      expect(job).toEqual(expect.objectContaining({ progress: 1, status: "completed" }));
+
+      // Artifact content matches the fake's bytes, served from the synthetic session.
+      const content = await runtime.app.inject({ method: "GET", url: `/api/v1/artifacts/${job.artifactId}/content` });
+      expect(content.statusCode).toBe(200);
+      expect(content.headers["content-type"]).toBe("image/png");
+      expect([...content.rawPayload]).toEqual([1, 2, 3]);
+
+      // Durable event stream: progress events then the completed event, ascending sequences.
+      const events = runtime.store.mediaJobEventsAfter(jobId, 0);
+      expect(events.length).toBeGreaterThan(1);
+      expect(events[0]?.event.type).toBe("progress");
+      expect(events.at(-1)?.event.type).toBe("completed");
+      const sequences = events.map((event) => event.sequence);
+      expect(sequences).toEqual([...sequences].sort((a, b) => a - b));
+
+      // Media jobs never create inference_request rows (kind guard in the persistence subscriber).
+      const inferenceRequestIds = runtime.store.listInferenceRequests(100).map((request) => request.id);
+      expect(inferenceRequestIds).not.toContain(jobId);
+    } finally {
+      await runtime.app.close();
+    }
+  });
+
+  it("keeps chat persistence working while media jobs stay out of inference_requests", async () => {
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new HostMediaFakeEngineAdapter()] });
+    try {
+      await registerMediaRecipe(runtime, "h3-img", ["image"]);
+      await assignRoute(runtime, "image", "h3-img");
+
+      const before = runtime.store.listInferenceRequests(100).length;
+      const chat = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "default", stream: false, messages: [{ role: "user", content: "hello" }] } });
+      expect(chat.statusCode, chat.body).toBe(200);
+      expect(runtime.store.listInferenceRequests(100).length).toBe(before + 1);
+
+      const submitted = await runtime.app.inject({ method: "POST", url: "/api/v1/media/jobs", payload: { routeId: "image", modality: "image", params: { prompt: "still a cat" } } });
+      const jobId = submitted.json().data.id as string;
+      await waitForJobStatus(runtime, jobId, "completed");
+      expect(runtime.store.listInferenceRequests(100).length).toBe(before + 1);
+    } finally {
+      await runtime.app.close();
+    }
+  });
+
+  it("rejects a job whose modality does not match the route kind", async () => {
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new HostMediaFakeEngineAdapter()] });
+    try {
+      await registerMediaRecipe(runtime, "h3-video", ["video"]);
+      await assignRoute(runtime, "video", "h3-video");
+
+      const submitted = await runtime.app.inject({ method: "POST", url: "/api/v1/media/jobs", payload: { routeId: "video", modality: "image", params: { prompt: "wrong modality" } } });
+      expect(submitted.statusCode).toBe(400);
+      expect(String(submitted.json().error)).toContain("cannot generate image");
+    } finally {
+      await runtime.app.close();
+    }
+  });
+
+  it("rejects assigning a chat recipe to a media route", async () => {
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new HostMediaFakeEngineAdapter()] });
+    try {
+      const assigned = await runtime.app.inject({ method: "PUT", url: "/api/v1/management/routes/image", payload: { displayName: "Image generation", recipeId: "fake-best", enabled: true } });
+      expect(assigned.statusCode, assigned.body).toBe(400);
+      expect(String(assigned.json().error)).toContain("does not generate image");
+    } finally {
+      await runtime.app.close();
+    }
+  });
+
+  it("de-assigns a media route with an empty recipeId and keeps it disabled", async () => {
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new HostMediaFakeEngineAdapter()] });
+    try {
+      await registerMediaRecipe(runtime, "h3-img", ["image"]);
+      await assignRoute(runtime, "image", "h3-img");
+
+      const deassigned = await runtime.app.inject({ method: "PUT", url: "/api/v1/management/routes/image", payload: { displayName: "Image generation", recipeId: "", enabled: false } });
+      expect(deassigned.statusCode, deassigned.body).toBe(200);
+      expect(deassigned.json().data).toEqual(expect.objectContaining({ recipeId: "", enabled: false, kind: "image" }));
+
+      // Still listed (visible for re-assignment), but resolve() treats it as missing.
+      const routes = (await runtime.app.inject({ method: "GET", url: "/api/v1/management/routes" })).json().data as Route[];
+      expect(routes).toContainEqual(expect.objectContaining({ id: "image", recipeId: "", enabled: false }));
+      const submitted = await runtime.app.inject({ method: "POST", url: "/api/v1/media/jobs", payload: { routeId: "image", modality: "image", params: { prompt: "nope" } } });
+      expect(submitted.statusCode).toBe(404);
+    } finally {
+      await runtime.app.close();
+    }
+  });
+
+  it("cancels an in-flight job with a best-effort provider cancel", async () => {
+    const mediaFake = new HostMediaFakeEngineAdapter({ progressPerPoll: 0.02 });
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), mediaFake] });
+    try {
+      await registerMediaRecipe(runtime, "h3-img", ["image"]);
+      await assignRoute(runtime, "image", "h3-img");
+
+      const submitted = await runtime.app.inject({ method: "POST", url: "/api/v1/media/jobs", payload: { routeId: "image", modality: "image", params: { prompt: "long render" } } });
+      const jobId = submitted.json().data.id as string;
+      await waitFor(() => mediaFake.submitted.length === 1);
+
+      const cancelled = await runtime.app.inject({ method: "POST", url: `/api/v1/media/jobs/${jobId}/cancel` });
+      expect(cancelled.statusCode, cancelled.body).toBe(202);
+      expect(cancelled.json().data).toEqual({ id: jobId, cancellationRequested: true });
+
+      const job = await waitForJobStatus(runtime, jobId, "cancelled");
+      expect(job.cancelledAt).toEqual(expect.any(String));
+      await waitFor(() => mediaFake.cancelled.length === 1);
+      expect(mediaFake.cancelled).toEqual([{ instanceId: expect.any(String), jobId: "provider-1" }]);
+
+      const events = runtime.store.mediaJobEventsAfter(jobId, 0);
+      expect(events.at(-1)?.event.type).toBe("cancelled");
+    } finally {
+      await runtime.app.close();
+    }
+  });
+
+  it("replays job events as SSE and after a sequence", async () => {
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new HostMediaFakeEngineAdapter()] });
+    try {
+      await registerMediaRecipe(runtime, "h3-img", ["image"]);
+      await assignRoute(runtime, "image", "h3-img");
+
+      const submitted = await runtime.app.inject({ method: "POST", url: "/api/v1/media/jobs", payload: { routeId: "image", modality: "image", params: { prompt: "stream me" } } });
+      const jobId = submitted.json().data.id as string;
+      await waitForJobStatus(runtime, jobId, "completed");
+
+      const replay = await runtime.app.inject({ method: "GET", url: `/api/v1/media/jobs/${jobId}/events?after=0` });
+      expect(replay.statusCode).toBe(200);
+      const events = replay.json().data as Array<{ sequence: number; event: { type: string } }>;
+      expect(events.length).toBeGreaterThan(1);
+      expect(events.every((event, index) => index === 0 || event.sequence > events[index - 1]!.sequence)).toBe(true);
+
+      const sse = await runtime.app.inject({ method: "GET", url: `/api/v1/media/jobs/${jobId}/events`, headers: { accept: "text/event-stream", "last-event-id": "0" } });
+      expect(sse.statusCode).toBe(200);
+      expect(sse.headers["content-type"]).toContain("text/event-stream");
+      expect(sse.body).toContain("event: completed");
+      expect(sse.body).toContain("id: 1\n");
+    } finally {
+      await runtime.app.close();
+    }
+  });
+
+  it("keeps an assigned media route across a ninfer-mode reconcile", async () => {
+    const store = SqliteStore.memory();
+    store.upsertRecipe(mediaRecipe("h3-img", ["image"]));
+    const routes = new RouteResolver(store.listRoutes(), store.listRecipes());
+    ensureMediaRoutes(store, routes);
+    store.upsertRoute({ id: "image", displayName: "Image generation", recipeId: "h3-img", enabled: true, kind: "image" });
+
+    reconcileNInferConfiguration(store);
+
+    const image = store.listRoutes().find((route) => route.id === "image");
+    expect(image).toMatchObject({ recipeId: "h3-img", enabled: true, kind: "image" });
+    // The other media slots still exist too.
+    expect(store.listRoutes().filter((route) => route.id === "video" || route.id === "audio")).toHaveLength(2);
+  });
+});
+
+async function registerMediaRecipe(runtime: HostRuntime, recipeId: string, modalities: MediaModality[]): Promise<void> {
+  const response = await runtime.app.inject({
+    method: "PUT",
+    url: `/api/v1/management/recipes/${recipeId}`,
+    payload: mediaRecipe(recipeId, modalities),
+  });
+  expect(response.statusCode, response.body).toBe(200);
+}
+
+async function assignRoute(runtime: HostRuntime, routeId: string, recipeId: string): Promise<void> {
+  const response = await runtime.app.inject({ method: "PUT", url: `/api/v1/management/routes/${routeId}`, payload: { displayName: routeId, recipeId, enabled: true } });
+  expect(response.statusCode, response.body).toBe(200);
+}
+
+async function waitForJobStatus(runtime: HostRuntime, jobId: string, status: string, timeoutMs = 5_000): Promise<Record<string, any>> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const response = await runtime.app.inject({ method: "GET", url: `/api/v1/media/jobs/${jobId}` });
+    if (response.statusCode !== 200) throw new Error(`GET media job failed: ${response.body}`);
+    const data = response.json().data;
+    if (data.status === status) return data;
+    if (Date.now() > deadline) throw new Error(`Timed out waiting for media job ${jobId} to reach ${status}; last status: ${data.status}`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+function mediaRecipe(id: string, modalities: MediaModality[], costCentsPerJob?: number): Recipe {
+  return {
+    id,
+    playbookId: "test",
+    displayName: id,
+    adapter: "media-fake",
+    modelId: `${id}-model`,
+    contextTokens: 100_000,
+    capabilities: {
+      chatCompletions: false,
+      streaming: true,
+      toolCalls: false,
+      responseFormat: false,
+      minP: false,
+      maxConcurrentGenerations: 1,
+      modalities: { input: ["text"], output: modalities },
+    },
+    lifecycle: {
+      loadPolicy: "onDemand",
+      evictionPolicy: "idle-ttl",
+      idleTtlSeconds: 60,
+      minimumResidencySeconds: 0,
+    },
+    configuration: costCentsPerJob === undefined ? {} : { costCentsPerJob },
+  };
+}
+
+function hostMediaResult(modality: MediaModality): MediaGenerationResult {
+  const data = new Uint8Array([1, 2, 3]);
+  const mimeType = modality === "image" ? "image/png" : modality === "video" ? "video/mp4" : "audio/wav";
+  return { data, mimeType, byteSize: data.byteLength };
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error("Timed out waiting for test condition");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+function abortError(): Error {
+  const error = new Error("Operation aborted");
+  error.name = "AbortError";
+  return error;
+}
