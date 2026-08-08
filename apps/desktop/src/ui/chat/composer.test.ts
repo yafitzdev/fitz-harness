@@ -318,6 +318,15 @@ describe("Composer", () => {
     expect(context.hidden).toBe(true);
   });
 
+  it("keeps the new-chat context strip hidden for standalone chats", () => {
+    const { composer } = setup();
+    const context = composer.root.querySelector<HTMLElement>("#new-chat-context")!;
+    composer.enterNewChat(undefined);
+    expect(context.hidden).toBe(true);
+    expect(composer.root.querySelector<HTMLElement>("#new-chat-project-control")!.hidden).toBe(true);
+    expect(composer.root.querySelector<HTMLElement>("#new-chat-environment-control")!.hidden).toBe(false);
+  });
+
   it("clears prompt, attachments, and history when entering a new chat", async () => {
     const { composer } = setup();
     type(promptOf(composer), "leftover");

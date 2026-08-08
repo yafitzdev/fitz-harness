@@ -33,9 +33,14 @@ function setup(storage = memoryStorage()) {
     if (value === "8192") option.selected = true;
     effort.add(option);
   }
+  const modelSummary = node<HTMLElement>("span");
+  const modelRoute = document.createElement("span");
+  const modelName = document.createElement("span");
+  const modelEffort = document.createElement("span");
+  modelSummary.append(modelRoute, modelName, modelEffort);
   const elements: ComposerControlsElements = {
     model: node("select"), effort,
-    modelToggle: node("button"), modelMenu: node("div"), modelSummary: node("span"), modelValue: node("span"), effortValue: node("span"),
+    modelToggle: node("button"), modelMenu: node("div"), modelSummary, modelRoute, modelName, modelEffort, modelValue: node("span"), effortValue: node("span"),
     settingsSubmenu: node("div"), settingRows: [modelRow, effortRow], advancedSettings: node("button"), advancedSettingsPanel: node("div"),
     temperature: node("input"), temperatureValue: node("output"), contextMeter: node("button"), contextUsagePopover: node("div"),
     contextPercent: node("strong"), contextTokens: node("b"), contextCompactButton: node("button"), contextCompactStatus: node("small"),
@@ -77,6 +82,30 @@ describe("ComposerControls", () => {
     expect(elements.modelSummary.textContent).toBe("Default · Medium");
     expect(calls.onRouteChange).toHaveBeenCalledWith("default");
     expect(calls.closeAllPopovers).toHaveBeenCalled();
+  });
+
+  it("splits the summary into route, model name, and effort for the squeezed composer", () => {
+    const { controls, elements } = setup();
+    controls.setRoutes([
+      { id: "smart", label: "Smart · ninfer-1.5b", displayName: "Smart", group: "Routes" },
+    ], "smart");
+
+    // Full label: "Smart · ninfer-1.5b · Medium", with the model name its
+    // own span (carrying its leading separator) so CSS can hide just it.
+    expect(elements.modelSummary.textContent).toBe("Smart · ninfer-1.5b · Medium");
+    expect(elements.modelRoute.textContent).toBe("Smart");
+    expect(elements.modelName.textContent).toBe(" · ninfer-1.5b");
+    expect(elements.modelName.hidden).toBe(false);
+    expect(elements.modelEffort.textContent).toBe(" · Medium");
+    // The settings menu still shows the full label.
+    expect(elements.modelValue.textContent).toBe("Smart · ninfer-1.5b");
+
+    // A route without a model name collapses the name span entirely.
+    controls.setRoutes([{ id: "default", label: "Default", displayName: "Default" }], "default");
+    expect(elements.modelSummary.textContent).toBe("Default · Medium");
+    expect(elements.modelRoute.textContent).toBe("Default");
+    expect(elements.modelName.hidden).toBe(true);
+    expect(elements.modelName.textContent).toBe("");
   });
 
   it("restores and persists temperature and access mode", () => {

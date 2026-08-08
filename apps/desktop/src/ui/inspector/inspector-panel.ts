@@ -278,6 +278,18 @@ export class InspectorPanel {
   }
 
   /**
+   * Scopes the artifact repository to a single chat: files registered while
+   * viewing a session persist under that session's key, so another chat (or
+   * project) never inherits them. Passing no session — the landing, or a
+   * brand-new chat that hasn't created one yet — switches to a fresh,
+   * empty repository. The panel's open state and tabs are untouched; call
+   * reset() alongside when the chat itself changes.
+   */
+  setChat(sessionId: string | undefined): void {
+    this.#repository.useStorage(sessionId ? `fitz-inspector-repository:${sessionId}` : "fitz-inspector-repository:draft");
+  }
+
+  /**
    * Closes the panel and drops every resource tab so the Inspector never
    * leaks state across chats: reopening lands on the artifact repository
    * home view, which the renderer reloads for the current session.

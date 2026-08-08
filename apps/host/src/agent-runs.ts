@@ -29,7 +29,7 @@ export class AgentRunCoordinator {
   queue(ownerUserId?: string): AgentQueueItem[] {
     const jobs = [...(this.#current ? [this.#current] : []), ...this.#queue]; const depth = jobs.length;
     return jobs.map((job, index) => {
-      const run = this.store.getAgentRun(job.id)!; const session = run.sessionId ? this.store.getSession(run.sessionId) : undefined; const project = session ? this.store.getProject(session.projectId) : undefined;
+      const run = this.store.getAgentRun(job.id)!; const session = run.sessionId ? this.store.getSession(run.sessionId) : undefined; const project = session?.projectId ? this.store.getProject(session.projectId) : undefined;
       const status: AgentQueueItem["status"] = job === this.#current ? "running" : "queued";
       return { runId: job.id, routeId: run.routeId, status, position: job === this.#current ? 0 : index, depth, createdAt: run.createdAt, ...(run.ownerUserId ? { ownerUserId: run.ownerUserId } : {}), ...(run.sessionId ? { sessionId: run.sessionId } : {}), ...(session ? { sessionTitle: session.title } : {}), ...(project ? { projectName: project.name } : {}) };
     }).filter((item) => !ownerUserId || item.ownerUserId === ownerUserId);

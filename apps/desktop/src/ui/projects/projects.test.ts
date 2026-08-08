@@ -6,10 +6,11 @@ import { ProjectsController, type ProjectsOptions } from "./projects.js";
 type Json = Record<string, any>;
 
 /** A small in-memory host: mutates on POST/PATCH/DELETE so reloads observe changes. */
-function fakeApi(initial: { projects: Json[]; sessions: Record<string, Json[]> }) {
+function fakeApi(initial: { projects: Json[]; sessions: Record<string, Json[]>; chats?: Json[] }) {
   const state = {
     projects: initial.projects.map((project) => ({ ...project })),
     sessions: Object.fromEntries(Object.entries(initial.sessions).map(([projectId, sessions]) => [projectId, sessions.map((session) => ({ ...session }))])),
+    chats: (initial.chats ?? []).map((chat) => ({ ...chat })),
   };
   const api = vi.fn(async (path: string, method = "GET", body?: unknown) => {
     const sessionsPath = path.match(/^\/api\/v1\/projects\/([^/]+)\/sessions$/);
@@ -23,12 +24,19 @@ function fakeApi(initial: { projects: Json[]; sessions: Record<string, Json[]> }
       (state.sessions[sessionsPath[1]!] ??= []).unshift(record);
       return { data: record };
     }
+    if (method === "POST" && path === "/api/v1/chats") {
+      const record = { id: "chat-new", ...(body as Json) };
+      state.chats.unshift(record);
+      return { data: record };
+    }
     if (method === "PATCH" && path.startsWith("/api/v1/sessions/")) {
       const sessionId = path.split("/").at(-1)!;
       for (const list of Object.values(state.sessions)) {
         const session = list.find((item) => item.id === sessionId);
         if (session) Object.assign(session, body);
       }
+      const chat = state.chats.find((item) => item.id === sessionId);
+      if (chat) Object.assign(chat, body);
       return { data: body };
     }
     if (method === "PATCH" && path.startsWith("/api/v1/projects/")) {
@@ -45,12 +53,13 @@ function fakeApi(initial: { projects: Json[]; sessions: Record<string, Json[]> }
     }
     if (path === "/api/v1/projects") return { data: state.projects };
     if (sessionsPath) return { data: (state.sessions[sessionsPath[1]!] ?? []).filter((session: Json) => session.status !== "archived") };
+    if (path === "/api/v1/chats") return { data: state.chats.filter((chat: Json) => chat.status !== "archived") };
     return { data: {} };
   });
   return api;
 }
 
-function setup(initial?: { projects: Json[]; sessions: Record<string, Json[]> }) {
+function setup(initial?: { projects: Json[]; sessions: Record<string, Json[]>; chats?: Json[] }) {
   const api = fakeApi(initial ?? { projects: [], sessions: {} });
   const bridge = { openPath: vi.fn(async () => {}) };
   const calls = {
@@ -244,5 +253,104 @@ describe("ProjectsController", () => {
     await controller.openProjectPath("/home/user/project");
 
     expect(bridge.openPath).toHaveBeenCalledWith("/home/user/project");
+  });
+
+  it("loads standalone chats alongside projects, preferring a project for the initial selection", async () => {
+    const { controller } = setup({
+      projects: [{ id: "project-a", name: "Alpha" }],
+      sessions: { "project-a": [] },
+      chats: [{ id: "chat-1", title: "Standalone" }],
+    });
+
+    await controller.load();
+
+    expect(controller.chats).toHaveLength(1);
+    expect(controller.chats[0]!.title).toBe("Standalone");
+    expect(controller.currentProjectId).toBe("project-a");
+  });
+
+  it("selects the first standalone chat when no projects exist", async () => {
+    const { controller, calls } = setup({
+      projects: [],
+      sessions: {},
+      chats: [{ id: "chat-1", title: "Standalone" }],
+    });
+
+    await controller.load();
+
+    expect(controller.currentProjectId).toBeUndefined();
+    expect(controller.currentSessionId).toBe("chat-1");
+    expect(calls.onSessionSelected).toHaveBeenCalledWith("chat-1");
+  });
+
+  it("selecting a standalone chat clears the current project", async () => {
+    const { controller, calls } = setup({
+      projects: [{ id: "project-a", name: "Alpha" }],
+      sessions: { "project-a": [{ id: "session-a1", title: "First" }] },
+      chats: [{ id: "chat-1", title: "Standalone" }],
+    });
+    await controller.load();
+
+    await controller.selectSession("chat-1", true);
+
+    expect(controller.currentProjectId).toBeUndefined();
+    expect(controller.currentSessionId).toBe("chat-1");
+    expect(calls.onSessionSelected).toHaveBeenCalledWith("chat-1");
+  });
+
+  it("registers a composer-created standalone chat", async () => {
+    const { controller, calls } = setup();
+
+    controller.startChat({ id: "chat-new", title: "New chat" });
+
+    expect(controller.chats[0]?.id).toBe("chat-new");
+    expect(controller.currentProjectId).toBeUndefined();
+    expect(controller.currentSessionId).toBe("chat-new");
+    expect(calls.renderTree).toHaveBeenCalled();
+  });
+
+  it("archives the current standalone chat and lands on the next chat", async () => {
+    const { controller, api, calls } = setup({
+      projects: [],
+      sessions: {},
+      chats: [{ id: "chat-1", title: "Standalone" }, { id: "chat-2", title: "Second" }],
+    });
+    await controller.load();
+
+    await controller.archiveCurrentTask();
+
+    expect(api).toHaveBeenCalledWith("/api/v1/sessions/chat-1", "PATCH", { status: "archived" });
+    expect(controller.currentSessionId).toBe("chat-2");
+    expect(calls.showToast).toHaveBeenCalledWith("Archived Standalone");
+  });
+
+  it("creates a continuation standalone chat when no project is attached", async () => {
+    const { controller, api, calls } = setup({
+      projects: [],
+      sessions: {},
+      chats: [{ id: "chat-1", title: "Standalone" }],
+    });
+    await controller.load();
+
+    await controller.continueInNewChat({ id: "chat-1", title: "Standalone" });
+
+    expect(api).toHaveBeenCalledWith("/api/v1/chats", "POST", { title: "Continue: Standalone" });
+    expect(controller.currentSessionId).toBe("chat-new");
+    expect(calls.showToast).toHaveBeenCalledWith("Created continuation chat");
+  });
+
+  it("renames a standalone chat and reloads it into the Chats tree", async () => {
+    const { controller, api } = setup({
+      projects: [],
+      sessions: {},
+      chats: [{ id: "chat-1", title: "Old title" }],
+    });
+    await controller.load();
+
+    await controller.renameSession("chat-1", undefined, "Renamed title");
+
+    expect(api).toHaveBeenCalledWith("/api/v1/sessions/chat-1", "PATCH", { title: "Renamed title" });
+    expect(controller.currentSessionId).toBe("chat-1");
+    expect(controller.currentSessionRecord()?.title).toBe("Renamed title");
   });
 });

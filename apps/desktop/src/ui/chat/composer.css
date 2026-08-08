@@ -1,4 +1,4 @@
-.composer-dock { position: absolute; z-index: 4; left: var(--conversation-gutter); bottom: 12px; width: var(--conversation-width); isolation: isolate; transition: width 180ms cubic-bezier(.23,1,.32,1), left 180ms cubic-bezier(.23,1,.32,1); }
+.composer-dock { position: absolute; z-index: 4; left: var(--conversation-gutter); bottom: 12px; width: var(--conversation-width); isolation: isolate; container-type: inline-size; container-name: composer; transition: width 180ms cubic-bezier(.23,1,.32,1), left 180ms cubic-bezier(.23,1,.32,1); }
 .composer-dock::before { content: ""; position: absolute; z-index: -1; inset: var(--radius-3xl) 0 -12px; background: var(--bg); }
 .scroll-to-bottom { position: absolute; z-index: 2; left: 50%; bottom: calc(100% + 12px); width: 40px; height: 40px; display: grid; place-items: center; padding: 0; transform: translateX(-50%); border: 1px solid var(--border); border-radius: 50%; background: var(--bg); color: var(--text); box-shadow: var(--shadow-float); cursor: pointer; }
 .scroll-to-bottom[hidden] { display: none; }
@@ -67,3 +67,21 @@
 .send-button .stop-icon { display: none; fill: currentColor; stroke: none; }
 .send-button.running .send-icon { display: none; }
 .send-button.running .stop-icon { display: block; }
+
+/* ---- Squeeze behavior ------------------------------------------------------
+   The composer docks into the conversation column, so its width follows the
+   chat window (and the Inspector stealing space). Width container queries let
+   the toolbar shed text before it starts mangling: first the access label
+   goes icon-only, then the model name hides leaving "Smart · Medium". The
+   model name carries its leading " · " so hiding it collapses cleanly, and
+   the summary ellipsizes as a safety net for very long model names. */
+#model-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@container composer (max-width: 480px) {
+  #access-mode-label { display: none; }
+}
+
+@container composer (max-width: 380px) {
+  .model-toggle { min-width: 0; }
+  #model-name { display: none; }
+}

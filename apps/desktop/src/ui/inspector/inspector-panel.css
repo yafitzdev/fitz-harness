@@ -32,8 +32,9 @@
 
 /* The artifact repository list (the base tab). */
 .inspector-repository { display: grid; gap: 4px; padding: 10px; }
-.inspector-repository-item { width: 100%; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; padding: 8px; border-radius: 7px; background: transparent; color: var(--grey-800); text-align: left; cursor: pointer; }
+.inspector-repository-item { width: 100%; display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 8px; align-items: center; padding: 8px; border-radius: 7px; background: transparent; color: var(--grey-800); text-align: left; cursor: pointer; }
 .inspector-repository-item:hover { background: var(--grey-250); }
+.inspector-repository-item svg { color: var(--subtle); }
 .inspector-repository-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inspector-repository-item small { color: var(--subtle); }
 .inspector-empty, .inspector-error { min-height: 220px; display: grid; place-items: center; padding: 24px; color: var(--subtle); text-align: center; font-size: 12px; }

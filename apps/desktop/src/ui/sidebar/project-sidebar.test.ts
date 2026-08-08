@@ -18,13 +18,14 @@ function setup() {
   // document must mirror the static markup in renderer/index.html. The
   // create-project dialog is appended to document.body by the controller.
   const tree = element<HTMLElement>("nav", "projects");
+  const chatsTree = element<HTMLElement>("nav", "chats");
   const menuElement = element<HTMLElement>("div", "sidebar-context-menu");
   menuElement.hidden = true;
   const calls = {
     selectProject: vi.fn(), selectSession: vi.fn(), newChat: vi.fn(), openProjectPath: vi.fn(), createWorktree: vi.fn(), archiveProjectChats: vi.fn(), removeProject: vi.fn(), renameSession: vi.fn(), renameProject: vi.fn(), createProject: vi.fn(), chooseFolder: vi.fn(async () => undefined), archiveSession: vi.fn(), copyValue: vi.fn(), continueSession: vi.fn(), closePopovers: vi.fn(),
   };
-  const controller = new ProjectSidebarController({ mount: tree, ...calls });
-  return { controller, tree, menuElement, calls };
+  const controller = new ProjectSidebarController({ mount: tree, chatsMount: chatsTree, ...calls });
+  return { controller, tree, chatsTree, menuElement, calls };
 }
 
 function state(): ProjectSidebarState {
@@ -34,6 +35,7 @@ function state(): ProjectSidebarState {
       ["alpha", [{ id: "a1", title: "First chat", createdAt: "2026-08-03T00:00:00.000Z" }, { id: "a2", title: "Second chat" }]],
       ["beta", [{ id: "b1", title: "Beta chat" }]],
     ]),
+    chats: [{ id: "c1", title: "Standalone chat", createdAt: "2026-08-05T00:00:00.000Z" }, { id: "c2", title: "Another chat" }],
     currentProjectId: "alpha",
     currentSessionId: "a1",
     newChat: false,
@@ -336,8 +338,98 @@ describe("ProjectSidebarController", () => {
     const tree = element<HTMLElement>("nav", "projects");
     const options: ProjectSidebarOptions = {
       mount: tree,
+      chatsMount: element<HTMLElement>("nav", "chats"),
       selectProject: vi.fn(), selectSession: vi.fn(), newChat: vi.fn(), openProjectPath: vi.fn(), createWorktree: vi.fn(), archiveProjectChats: vi.fn(), removeProject: vi.fn(), renameSession: vi.fn(), renameProject: vi.fn(), createProject: vi.fn(), chooseFolder: vi.fn(async () => undefined), archiveSession: vi.fn(), copyValue: vi.fn(), continueSession: vi.fn(), closePopovers: vi.fn(),
     };
     expect(() => new ProjectSidebarController(options)).toThrow("Missing #sidebar-context-menu");
+  });
+
+  it("renders standalone chats in the Chats tree and selects them with no project", () => {
+    const { controller, chatsTree, calls } = setup();
+    controller.render(state());
+
+    const rows = chatsTree.querySelectorAll<HTMLElement>(".chat-row");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.textContent).toContain("Standalone chat");
+    expect(rows[1]!.textContent).toContain("Another chat");
+
+    click(rows[0]!);
+    expect(calls.selectSession).toHaveBeenCalledWith("c1", undefined);
+  });
+
+  it("shows an empty message in the Chats tree when there are no chats", () => {
+    const { controller, chatsTree } = setup();
+    controller.render({ ...state(), chats: [] });
+    expect(chatsTree.textContent).toContain("No chats yet");
+  });
+
+  it("marks a standalone chat as active only when no project is selected", () => {
+    const { controller, chatsTree } = setup();
+    controller.render({ ...state(), currentProjectId: undefined, currentSessionId: "c1" });
+
+    const rows = chatsTree.querySelectorAll<HTMLElement>(".chat-row");
+    expect(rows[0]!.classList.contains("active")).toBe(true);
+    expect(rows[1]!.classList.contains("active")).toBe(false);
+  });
+
+  it("sorts pinned chats first and shows their pin indicator", () => {
+    const { controller, chatsTree, menuElement } = setup();
+    controller.render(state());
+    const chatItems = [...chatsTree.querySelectorAll<HTMLElement>(".chat-row")].map((row) => row.closest(".tree-item")!);
+    click(chatItems[1]!.querySelector(".tree-menu-toggle")!);
+    click(menuButton(menuElement, "Pin chat"));
+
+    const rows = chatsTree.querySelectorAll<HTMLElement>(".chat-row");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.textContent).toContain("Another chat");
+    expect(rows[0]!.querySelector(".pin-indicator")).not.toBeNull();
+    expect(rows[1]!.querySelector(".pin-indicator")).toBeNull();
+  });
+
+  it("renames a standalone chat inline, committing with an undefined project", async () => {
+    const { controller, chatsTree, menuElement, calls } = setup();
+    controller.render(state());
+    const chatItem = chatsTree.querySelector(".chat-row")!.closest(".tree-item")!;
+    click(chatItem.querySelector(".tree-menu-toggle")!);
+    click(menuButton(menuElement, "Rename chat"));
+
+    const input = chatsTree.querySelector<HTMLInputElement>(".tree-rename-input")!;
+    expect(input.value).toBe("Standalone chat");
+    input.value = "Renamed chat";
+    keydown(input, "Enter");
+    await flush();
+
+    expect(calls.renameSession).toHaveBeenCalledWith("c1", undefined, "Renamed chat");
+    expect(chatsTree.querySelector(".tree-rename-input")).toBeNull();
+  });
+
+  it("archives a standalone chat with no project attached", () => {
+    const { controller, chatsTree, menuElement, calls } = setup();
+    controller.render(state());
+    const chatItem = chatsTree.querySelector(".chat-row")!.closest(".tree-item")!;
+    click(chatItem.querySelector(".tree-menu-toggle")!);
+    click(menuButton(menuElement, "Archive chat"));
+
+    expect(calls.archiveSession).toHaveBeenCalledWith("c1", undefined);
+  });
+
+  it("continues a standalone chat in a new chat", () => {
+    const { controller, chatsTree, menuElement, calls } = setup();
+    controller.render(state());
+    const chatItem = chatsTree.querySelector(".chat-row")!.closest(".tree-item")!;
+    click(chatItem.querySelector(".tree-menu-toggle")!);
+    click(menuButton(menuElement, "Continue in new chat"));
+
+    expect(calls.continueSession).toHaveBeenCalledWith(expect.objectContaining({ id: "c1", title: "Standalone chat" }), undefined);
+  });
+
+  it("begins renaming a standalone chat via the public API", () => {
+    const { controller, chatsTree } = setup();
+    controller.render({ ...state(), currentProjectId: undefined, currentSessionId: "c1" });
+
+    controller.beginRenameCurrentSession();
+
+    const input = chatsTree.querySelector<HTMLInputElement>(".tree-rename-input")!;
+    expect(input.value).toBe("Standalone chat");
   });
 });

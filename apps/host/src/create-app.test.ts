@@ -590,6 +590,21 @@ describe("Fitz host", () => {
     const transcript = await runtime.app.inject({ method: "GET", url: `/api/v1/sessions/${sessionId}/transcript` }); expect(transcript.json().data).toEqual([expect.objectContaining({ sequence: 1, role: "user", content: expect.objectContaining({ text: "persist this turn" }) }), expect.objectContaining({ sequence: 2, role: "assistant", content: expect.objectContaining({ runId }) })]); await runtime.app.close();
   });
 
+  it("creates and lists standalone chats with no project attached", async () => {
+    const runtime = createHost();
+    const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Wrapped" } }); const projectId = project.json().data.id;
+    await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${projectId}/sessions`, payload: { title: "Wrapped chat" } });
+    const created = await runtime.app.inject({ method: "POST", url: "/api/v1/chats", payload: { title: "Standalone" } });
+    expect(created.statusCode).toBe(201);
+    expect(created.json().data).toEqual(expect.objectContaining({ title: "Standalone", status: "active", routeId: "default" }));
+    expect(created.json().data.projectId).toBeUndefined();
+    const listed = await runtime.app.inject({ method: "GET", url: "/api/v1/chats" });
+    expect(listed.json().data).toEqual([expect.objectContaining({ id: created.json().data.id, title: "Standalone" })]);
+    const projectSessions = await runtime.app.inject({ method: "GET", url: `/api/v1/projects/${projectId}/sessions` });
+    expect(projectSessions.json().data).toEqual([expect.objectContaining({ title: "Wrapped chat" })]);
+    await runtime.app.close();
+  });
+
   it("removes a project without touching its source folder", async () => { const runtime = createHost(); const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Disposable", rootPath: "C:\\work\\disposable" } }); const projectId = project.json().data.id; await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${projectId}/sessions`, payload: { title: "Temporary" } }); const removed = await runtime.app.inject({ method: "DELETE", url: `/api/v1/projects/${projectId}` }); expect(removed.statusCode).toBe(204); expect((await runtime.app.inject({ method: "GET", url: `/api/v1/projects/${projectId}` })).statusCode).toBe(404); await runtime.app.close(); });
 
   it("applies tool policy before creating a durable approval decision", async () => {

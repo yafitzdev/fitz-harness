@@ -240,6 +240,44 @@ describe("InspectorPanel", () => {
     vi.unstubAllGlobals();
   });
 
+  it("scopes the artifact repository to the chat it was opened in", async () => {
+    const host = mount();
+    const view = new InspectorPanel(options(host, {
+      getProjectRoot: () => "/project",
+    }));
+    vi.stubGlobal("fitz", {
+      previewResource: vi.fn(async (input: { reference: string }) => ({ kind: "text", name: input.reference.split(/[\\/]/).pop() ?? "file", path: `/project/${input.reference}`, content: "x", size: 1 })),
+    });
+
+    // Chat A: a streamed reference and an inspected file land in A's repo.
+    view.setChat("chat-a");
+    view.registerReference("a.txt");
+    await view.inspect("b.txt");
+    const storedA = JSON.parse(localStorage.getItem("fitz-inspector-repository:chat-a")!) as Array<{ path: string }>;
+    expect(storedA.map((entry) => entry.path)).toEqual(["/project/b.txt", "a.txt"]);
+    expect(view.element.querySelectorAll(".inspector-repository-item")).toHaveLength(2);
+
+    // Switching chats re-scopes: chat B starts with a fresh, empty repo.
+    view.reset();
+    view.setChat("chat-b");
+    expect(view.element.querySelectorAll(".inspector-repository-item")).toHaveLength(0);
+    expect(view.element.querySelector(".inspector-empty")?.textContent).toContain("land here automatically");
+
+    // B's own files persist under B's key, and A's come back on reopen.
+    view.registerReference("c.txt");
+    const storedB = JSON.parse(localStorage.getItem("fitz-inspector-repository:chat-b")!) as Array<{ path: string }>;
+    expect(storedB.map((entry) => entry.path)).toEqual(["c.txt"]);
+    expect(localStorage.getItem("fitz-inspector-repository:chat-a")).not.toBeNull();
+    view.setChat("chat-a");
+    expect(view.element.querySelectorAll(".inspector-repository-item")).toHaveLength(2);
+
+    // Leaving the conversation (no session yet) scopes to a fresh draft repo.
+    view.setChat(undefined);
+    expect(view.element.querySelectorAll(".inspector-repository-item")).toHaveLength(0);
+    expect(view.element.querySelector(".inspector-empty")?.textContent).toContain("land here automatically");
+    vi.unstubAllGlobals();
+  });
+
   it("previews a pasted image from its data URL in its own tab", () => {
     const host = mount();
     const view = panel(host);
@@ -590,6 +628,44 @@ describe("InspectorPanel", () => {
     const rows = view.element.querySelectorAll<HTMLButtonElement>(".inspector-repository-item");
     const metas = [...rows].map((row) => row.querySelector("small")?.textContent);
     expect(metas).toEqual(["src/app.ts", "notes.txt", "llama.cpp/tests/test-unified-mixed-replay.cpp"]);
+  });
+
+  it("shows a file-type icon before each repository row", () => {
+    const host = mount();
+    const view = new InspectorPanel(options(host, {
+      getProjectRoot: () => "/project",
+    }));
+
+    // Newest first: each registered reference tops the list.
+    view.registerReference("manual.pdf");
+    view.registerReference("photo.png");
+    view.registerReference("src/app.ts");
+    view.registerReference("README.md");
+    view.registerReference("data.csv");
+    view.registerReference("notes");
+
+    const rows = view.element.querySelectorAll<HTMLButtonElement>(".inspector-repository-item");
+    const types = [...rows].map((row) => row.querySelector("svg")?.getAttribute("data-file-type"));
+    expect(types).toEqual(["file", "database", "file", "code", "image", "pdf"]);
+    // The icon is decorative and never leaks into the row's label text.
+    expect(rows[0]?.querySelector("span")?.textContent).toBe("notes");
+    expect(rows[5]?.querySelector("span")?.textContent).toBe("manual.pdf");
+  });
+
+  it("falls back to the artifact kind for uploads whose names carry no extension", () => {
+    const host = mount();
+    const view = panel(host);
+
+    view.setSessionArtifacts([
+      { id: "1", name: "report", byteSize: 5, kind: "pdf" },
+      { id: "2", name: "shot.png", byteSize: 5, kind: "image" },
+      { id: "3", name: "recording", byteSize: 5, kind: "audio" },
+      { id: "4", name: "thing", byteSize: 5, kind: "binary" },
+    ]);
+
+    const rows = view.element.querySelectorAll<HTMLButtonElement>(".inspector-repository-item");
+    const types = [...rows].map((row) => row.querySelector("svg")?.getAttribute("data-file-type"));
+    expect(types).toEqual(["pdf", "image", "audio", "file"]);
   });
 
   it("migrates and dedupes legacy repository entries on load", () => {

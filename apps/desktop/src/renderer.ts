@@ -33,8 +33,9 @@ let managementConfiguration: Json | undefined;
 let newChatMode = false;
 let newChatProjectDetached = false;
 // The Inspector is contained to the chat it was opened in: switching chats
-// (or projects, or starting a new chat) closes it and drops its tabs, so a
-// chat never inherits another chat's previews.
+// (or projects, or starting a new chat) closes it and drops its tabs, and
+// the artifact repository re-scopes to the session, so a chat never inherits
+// another chat's files or previews.
 let inspectorChatId: string | undefined;
 let navigationIndex = -1;
 let replayingNavigation = false;
@@ -190,6 +191,7 @@ conversationLayout = new ConversationLayout({ workspace, messages, composer: com
 const customSelects = new CustomSelectController(selectPopover, closePopovers);
 const projectSidebar = new ProjectSidebarController({
   mount: element("projects"),
+  chatsMount: element("chats"),
   closePopovers,
   selectProject: (projectId) => void projects.selectProject(projectId),
   selectSession: (sessionId, projectId) => void projects.selectSession(sessionId, true, projectId),
@@ -200,7 +202,7 @@ const projectSidebar = new ProjectSidebarController({
   removeProject: (projectId) => void projects.removeProject(projectId),
   renameSession: (sessionId, projectId, title) => void projects.renameSession(sessionId, projectId, title),
   renameProject: (projectId, name) => void projects.renameProject(projectId, name),
-  createProject: (name, rootPath) => { void projects.createProject(name, rootPath).then((created) => { if (created) openNewChat(); }); },
+  createProject: (name, rootPath) => { void projects.createProject(name, rootPath).then((created) => { if (created && projects.currentProjectId) openNewChatForProject(projects.currentProjectId); }); },
   chooseFolder: () => window.fitz.chooseFolder(),
   archiveSession: (sessionId, projectId) => { projects.setCurrentProject(projectId); projects.setCurrentSession(sessionId); void projects.archiveCurrentTask(); },
   copyValue: (value, message) => void copyValue(value, message),
@@ -223,7 +225,7 @@ const projects = new ProjectsController({
   refreshComposerState,
   rememberLocation: (location) => rememberLocation(location),
   onSessionSelected: async (sessionId) => {
-    if (sessionId !== inspectorChatId) { inspectorPanel.reset(); inspectorChatId = sessionId; }
+    if (sessionId !== inspectorChatId) { inspectorPanel.reset(); inspectorPanel.setChat(sessionId); inspectorChatId = sessionId; }
     composer.controls.resetContextStatus();
     const selectedSession = projects.currentSessionRecord();
     if (selectedSession?.routeId) composer.controls.setRoute(selectedSession.routeId);
@@ -278,10 +280,11 @@ const projects = new ProjectsController({
   },
   onNoSession: async () => {
     inspectorPanel.reset();
+    inspectorPanel.setChat(undefined);
     inspectorChatId = undefined;
     sessionTokenEstimate = 0;
     updateContextMeter();
-    if (projects.currentProjectId) openNewChat();
+    if (projects.currentProjectId) openNewChatForProject(projects.currentProjectId);
     else showLanding();
     await loadArtifacts();
   },
@@ -553,21 +556,50 @@ function rebuildRouteLabels(preferredRoute?: string): void {
     const route = (managementConfiguration?.routes ?? []).find((item: Json) => item.id === card.id);
     const recipe = (managementConfiguration?.recipes ?? []).find((item: Json) => item.id === route?.recipeId);
     const modelName = recipe?.displayName ?? recipe?.modelId;
-    return { id: card.id, label: modelName ? `${card.display_name ?? card.id} · ${modelName}` : (card.display_name ?? card.id), group: "Routes" };
+    const routeName = card.display_name ?? card.id;
+    return { id: card.id, label: modelName ? `${routeName} · ${modelName}` : routeName, displayName: routeName, group: "Routes" };
   }), preferredRoute);
   routeState.textContent = composer.controls.routeLabel;
   syncComposerContext();
 }
 
 function renderTree(): void {
-  projectSidebar.render({ projects: projects.projects, sessionsByProject: projects.sessionsByProject, currentProjectId: projects.currentProjectId, currentSessionId: projects.currentSessionId, newChat: newChatMode });
+  projectSidebar.render({ projects: projects.projects, sessionsByProject: projects.sessionsByProject, chats: projects.chats, currentProjectId: projects.currentProjectId, currentSessionId: projects.currentSessionId, newChat: newChatMode });
   updateTitles();
 }
 
+/** Starts a standalone chat with no project attached (top "new chat" icon, Ctrl+N, File > New chat). */
 function openNewChat(): void {
   if (agentRuns.active) { showToast("Stop the current response before starting a new chat"); return; }
   showConversationWorkspace();
   inspectorPanel.reset();
+  inspectorPanel.setChat(undefined);
+  inspectorChatId = undefined;
+  projects.setCurrentProject(undefined);
+  projects.beginNewChat();
+  newChatMode = true;
+  newChatProjectDetached = false;
+  sessionTokenEstimate = 0;
+  composer.controls.resetContextStatus();
+  workspace.classList.add("new-chat-open");
+  connectionWorkspace.setConfiguration(managementConfiguration);
+  composer.enterNewChat(undefined);
+  agentRuns.resetWarmup();
+  renderTree();
+  showNewChatLanding();
+  void composer.refreshBranches();
+  updateContextMeter();
+  refreshComposerState();
+  composer.focus();
+  rememberLocation({ view: "conversation", newChat: true });
+}
+
+/** Starts a new chat bound to the current project (per-project "+" quick action, project flows). */
+function openProjectNewChat(): void {
+  if (agentRuns.active) { showToast("Stop the current response before starting a new chat"); return; }
+  showConversationWorkspace();
+  inspectorPanel.reset();
+  inspectorPanel.setChat(undefined);
   inspectorChatId = undefined;
   if (projects.projects.length === 0) { projectSidebar.beginCreateProject(); return; }
   projects.setCurrentProject(projects.currentProjectId ?? projects.projects[0]!.id);
@@ -591,7 +623,7 @@ function openNewChat(): void {
   rememberLocation({ view: "conversation", projectId: projects.currentProjectId, newChat: true });
 }
 
-function openNewChatForProject(id: string): void { projects.setCurrentProject(id); projectSidebar.ensureExpanded(id); openNewChat(); }
+function openNewChatForProject(id: string): void { projects.setCurrentProject(id); projectSidebar.ensureExpanded(id); openProjectNewChat(); }
 
 function showNewChatLanding(): void {
   messages.replaceChildren();
@@ -600,7 +632,7 @@ function showNewChatLanding(): void {
   const landing = document.createElement("div"); landing.className = "new-chat-landing";
   const mark = document.createElement("div"); mark.className = "landing-mark"; mark.append(terminalCloudIcon());
   const heading = document.createElement("h1");
-  if (newChatProjectDetached) heading.textContent = "What should we build?";
+  if (newChatProjectDetached || !projects.currentProjectId) heading.textContent = "What should we build?";
   else { heading.append("What should we build in "); const projectName = document.createElement("span"); projectName.className = "landing-project-name"; projectName.textContent = project?.name ?? "this project"; heading.append(projectName, "?"); }
   const suggestions = [
     ["Explore and understand code", '<path d="m4.2 7.4 8.7-4.1 2 4.1-8.8 4.2z"></path><path d="m11.1 4.2 2 4.1M8 10.7l2.5 5.8M6.2 11.6l-1.7 4.1M7.2 14h4.5"></path>'],
@@ -662,7 +694,8 @@ async function navigateHistory(offset: -1 | 1): Promise<void> {
     else if (location.view === "models") await openModelsPage();
     else if (location.view === "administration") await openAdministrationPage();
     else if (location.view === "conversation") {
-      if (location.newChat && location.projectId) { projects.setCurrentProject(location.projectId); openNewChat(); }
+      if (location.newChat && location.projectId) openNewChatForProject(location.projectId);
+      else if (location.newChat) openNewChat();
       else if (location.sessionId) await projects.selectSession(location.sessionId, true, location.projectId);
       else if (location.projectId) await projects.selectProject(location.projectId);
     }
@@ -791,14 +824,21 @@ async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLE
   const content = (submittedContent ?? composer.value).trim();
   const attachments = composer.consumePastedAttachments();
   if (!content && attachments.length === 0) return;
-  if (!projects.currentSessionId && newChatMode && projects.currentProjectId) {
+  if (!projects.currentSessionId && newChatMode) {
     try {
       const title = content.split(/\r?\n/, 1)[0]!.trim().slice(0, 80) || "New chat";
-      const response = await api(`/api/v1/projects/${projects.currentProjectId}/sessions`, "POST", { title, routeId: composer.controls.routeId as FixedRouteId });
+      const response = projects.currentProjectId
+        ? await api(`/api/v1/projects/${projects.currentProjectId}/sessions`, "POST", { title, routeId: composer.controls.routeId as FixedRouteId })
+        : await api("/api/v1/chats", "POST", { title, routeId: composer.controls.routeId as FixedRouteId });
       newChatMode = false;
       workspace.classList.remove("new-chat-open");
       composer.exitNewChat();
-      projects.startSessionInProject(projects.currentProjectId, response.data);
+      if (projects.currentProjectId) projects.startSessionInProject(projects.currentProjectId, response.data);
+      else projects.startChat(response.data);
+      // Point the artifact repository at the session before any files stream
+      // into the conversation, so the first message's files land in this chat.
+      inspectorPanel.setChat(response.data.id);
+      inspectorChatId = response.data.id;
     } catch (error) { showToast(errorMessage(error)); return; }
   }
   if (!projects.currentSessionId) { openNewChat(); return; }
@@ -913,7 +953,7 @@ async function removeArtifact(artifact: Json): Promise<void> {
 }
 
 function chooseArtifact(): void {
-  if (!projects.currentSessionId && !(newChatMode && projects.currentProjectId)) { showToast("Create or select a task before attaching a file"); return; }
+  if (!projects.currentSessionId && !newChatMode) { showToast("Create or select a task before attaching a file"); return; }
   artifactFile.click();
 }
 
@@ -930,7 +970,7 @@ async function uploadArtifact(): Promise<void> {
     return;
   }
   // No session yet (new chat): stage the file as a chip and upload it with the first message.
-  if (newChatMode && projects.currentProjectId) { composer.attachFile(file); return; }
+  if (newChatMode) { composer.attachFile(file); return; }
   showToast("Create or select a task before attaching a file");
 }
 
@@ -1007,10 +1047,10 @@ function appendChangeSummary(files: Array<{ path: string; action: "edited" | "cr
 }
 
 function refreshComposerState(): void {
-  const ready = Boolean((projects.currentSessionId || (newChatMode && projects.currentProjectId)) && composer.controls.routeId);
+  const ready = Boolean((projects.currentSessionId || newChatMode) && composer.controls.routeId);
   addArtifactButton.disabled = !projects.currentSessionId;
   // The attach button also unlocks in a new chat so files can be staged for the first message.
-  composer.setState({ ready, running: agentRuns.active, hasSession: Boolean(projects.currentSessionId || (newChatMode && projects.currentProjectId)) });
+  composer.setState({ ready, running: agentRuns.active, hasSession: Boolean(projects.currentSessionId || newChatMode) });
 }
 
 function updateTitles(): void {

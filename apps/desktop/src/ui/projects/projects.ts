@@ -52,6 +52,7 @@ export class ProjectsController {
   private readonly options: ProjectsOptions;
   private records: ProjectRecord[] = [];
   private readonly sessions = new Map<string, SessionRecord[]>();
+  private chatRecords: SessionRecord[] = [];
   private currentProjectIdValue: string | undefined;
   private currentSessionIdValue: string | undefined;
 
@@ -61,6 +62,7 @@ export class ProjectsController {
 
   get projects(): ProjectRecord[] { return this.records; }
   get sessionsByProject(): Map<string, SessionRecord[]> { return this.sessions; }
+  get chats(): SessionRecord[] { return this.chatRecords; }
   get currentProjectId(): string | undefined { return this.currentProjectIdValue; }
   get currentSessionId(): string | undefined { return this.currentSessionIdValue; }
 
@@ -69,7 +71,7 @@ export class ProjectsController {
   }
 
   currentSessionRecord(): SessionRecord | undefined {
-    if (!this.currentProjectIdValue) return undefined;
+    if (!this.currentProjectIdValue) return this.chatRecords.find((chat) => chat.id === this.currentSessionIdValue);
     return (this.sessions.get(this.currentProjectIdValue) ?? []).find((session) => session.id === this.currentSessionIdValue);
   }
 
@@ -86,13 +88,22 @@ export class ProjectsController {
       const sessions = await this.options.api(`/api/v1/projects/${project.id}/sessions`);
       this.sessions.set(project.id, (sessions.data ?? []).filter((session: Json) => session.status !== "archived"));
     }));
+    const chatsResponse = await this.options.api("/api/v1/chats");
+    this.chatRecords = (chatsResponse.data ?? []).filter((session: Json) => session.status !== "archived");
 
     if (preferredProject && this.records.some((project) => project.id === preferredProject)) this.currentProjectIdValue = preferredProject;
-    else if (!this.currentProjectIdValue || !this.records.some((project) => project.id === this.currentProjectIdValue)) this.currentProjectIdValue = this.records[0]?.id;
+    else if (this.currentProjectIdValue === undefined) {
+      // No project selected. Keep a valid standalone-chat selection (e.g. while
+      // renaming or archiving a chat); otherwise prefer the first project, and
+      // fall back to standalone chats only when no projects exist.
+      if (!(this.currentSessionIdValue && this.chatRecords.some((chat) => chat.id === this.currentSessionIdValue))) this.currentProjectIdValue = this.records[0]?.id;
+    } else if (!this.records.some((project) => project.id === this.currentProjectIdValue)) {
+      this.currentProjectIdValue = this.records[0]?.id;
+    }
     if (this.currentProjectIdValue && !this.options.sidebar.hasExpandedProjects()) this.options.sidebar.ensureExpanded(this.currentProjectIdValue);
 
     if (preferredSession) this.currentSessionIdValue = preferredSession;
-    const selectedSessions = this.currentProjectIdValue ? this.sessions.get(this.currentProjectIdValue) ?? [] : [];
+    const selectedSessions = this.currentProjectIdValue ? (this.sessions.get(this.currentProjectIdValue) ?? []) : this.chatRecords;
     if (!this.currentSessionIdValue || !selectedSessions.some((session) => session.id === this.currentSessionIdValue)) this.currentSessionIdValue = selectedSessions[0]?.id;
 
     this.options.renderTree();
@@ -122,6 +133,7 @@ export class ProjectsController {
     this.options.leaveNewChat();
     this.options.showConversationWorkspace();
     if (projectId) this.currentProjectIdValue = projectId;
+    else if (this.chatRecords.some((chat) => chat.id === id)) this.currentProjectIdValue = undefined;
     if (this.currentProjectIdValue) this.options.sidebar.ensureExpanded(this.currentProjectIdValue);
     this.currentSessionIdValue = id;
     if (rerender) this.options.renderTree();
@@ -133,6 +145,14 @@ export class ProjectsController {
     const sessions = this.sessions.get(projectId) ?? [];
     sessions.unshift(session);
     this.sessions.set(projectId, sessions);
+    this.currentSessionIdValue = session.id;
+    this.options.renderTree();
+  }
+
+  /** Registers a freshly created standalone chat (no project attached). */
+  startChat(session: SessionRecord): void {
+    this.chatRecords.unshift(session);
+    this.currentProjectIdValue = undefined;
     this.currentSessionIdValue = session.id;
     this.options.renderTree();
   }
@@ -152,7 +172,7 @@ export class ProjectsController {
   }
 
   /** Renames a session and reloads it into the tree. */
-  async renameSession(id: string, projectId: string, title: string): Promise<void> {
+  async renameSession(id: string, projectId: string | undefined, title: string): Promise<void> {
     try {
       await this.options.api(`/api/v1/sessions/${id}`, "PATCH", { title });
       await this.load(projectId, id);
@@ -190,7 +210,7 @@ export class ProjectsController {
   async archiveCurrentTask(): Promise<void> {
     this.options.closePopovers();
     const session = this.currentSessionRecord();
-    if (!session || !this.currentProjectIdValue) return;
+    if (!session) return;
     try {
       await this.options.api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" });
       this.currentSessionIdValue = undefined;
@@ -215,9 +235,10 @@ export class ProjectsController {
 
   async continueInNewChat(session: ProjectSidebarSession, projectId?: string): Promise<void> {
     if (projectId) this.currentProjectIdValue = projectId;
-    if (!this.currentProjectIdValue) return;
     try {
-      const response = await this.options.api(`/api/v1/projects/${this.currentProjectIdValue}/sessions`, "POST", { title: `Continue: ${session.title}` });
+      const response = this.currentProjectIdValue
+        ? await this.options.api(`/api/v1/projects/${this.currentProjectIdValue}/sessions`, "POST", { title: `Continue: ${session.title}` })
+        : await this.options.api("/api/v1/chats", "POST", { title: `Continue: ${session.title}` });
       await this.load(this.currentProjectIdValue, response.data.id);
       this.options.showToast("Created continuation chat");
     } catch (error) { this.options.showToast(this.options.errorMessage(error)); }

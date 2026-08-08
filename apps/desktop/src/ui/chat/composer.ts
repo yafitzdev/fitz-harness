@@ -86,7 +86,7 @@ const COMPOSER_TEMPLATE = `
           </div>
         </div>
         <div class="model-picker">
-          <button id="model-toggle" class="model-toggle" type="button" aria-label="Model settings" aria-expanded="false" disabled><span id="model-summary">Model</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"></path></svg></button>
+          <button id="model-toggle" class="model-toggle" type="button" aria-label="Model settings" aria-expanded="false" disabled><span id="model-summary"><span id="model-route">Model</span><span id="model-name" hidden></span><span id="model-effort"> · Medium</span></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"></path></svg></button>
           <div id="model-menu" class="popover model-menu" hidden>
             <button class="setting-row" type="button" data-setting="model"><span>Model</span><span><span id="model-value">Model</span><svg viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"></path></svg></span></button>
             <button class="setting-row" type="button" data-setting="effort"><span>Effort</span><span><span id="effort-value">Medium</span><svg viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"></path></svg></span></button>
@@ -234,10 +234,10 @@ export class Composer {
     this.promptDraft = "";
   }
 
-  enterNewChat(projectName: string): void {
-    this.newChatContext.hidden = false;
-    this.newChatProject.textContent = projectName;
-    this.newChatProjectControl.hidden = false;
+  enterNewChat(projectName: string | undefined): void {
+    this.newChatContext.hidden = projectName === undefined;
+    this.newChatProject.textContent = projectName ?? "";
+    this.newChatProjectControl.hidden = projectName === undefined;
     this.prompt.value = "";
     this.resize();
     this.resetHistory();
@@ -328,6 +328,9 @@ export class Composer {
       modelToggle: this.el<HTMLButtonElement>("#model-toggle"),
       modelMenu: this.el<HTMLElement>("#model-menu"),
       modelSummary: this.el<HTMLElement>("#model-summary"),
+      modelRoute: this.el<HTMLElement>("#model-route"),
+      modelName: this.el<HTMLElement>("#model-name"),
+      modelEffort: this.el<HTMLElement>("#model-effort"),
       modelValue: this.el<HTMLElement>("#model-value"),
       effortValue: this.el<HTMLElement>("#effort-value"),
       settingsSubmenu: this.el<HTMLElement>("#settings-submenu"),

@@ -78,6 +78,29 @@ describe("desktop renderer shell", () => {
     }
   });
 
+  it("sheds composer text when the chat window is squeezed instead of mangling", () => {
+    // The composer docks into the conversation column, so its width tracks the
+    // chat window (and the Inspector stealing space). Width container queries
+    // drop text in two stages: the access label goes icon-only first, then the
+    // model name hides leaving the route and effort ("Smart · Medium").
+    expect(composerCss).toContain("container-type: inline-size");
+    expect(composerCss).toContain("container-name: composer");
+    expect(composerCss).toContain("@container composer (max-width: 480px)");
+    expect(composerCss).toContain("#access-mode-label { display: none; }");
+    expect(composerCss).toContain("@container composer (max-width: 380px)");
+    expect(composerCss).toContain("#model-name { display: none; }");
+    // The summary is split into route / model name / effort spans, so only the
+    // model name span hides; the access button keeps a tooltip when icon-only.
+    expect(composer).toContain('id="model-route"');
+    expect(composer).toContain('id="model-name"');
+    expect(composer).toContain('id="model-effort"');
+    expect(composerControls).toContain("displayName?: string");
+    expect(composerControls).toContain("this.elements.modelName.hidden = !modelName");
+    expect(composerControls).toContain("accessModeToggle.title = value.label");
+    // The renderer passes the short route name alongside the "route · model" label.
+    expect(renderer).toContain("displayName: routeName");
+  });
+
   it("keeps chat actions in the sidebar menu and keyboard shortcuts, not the header", () => {
     expect(html).not.toContain('id="task-menu-toggle"');
     expect(html).not.toContain('id="task-menu"');
@@ -605,8 +628,8 @@ describe("desktop renderer shell", () => {
 
   it("lands every empty project on the same new-chat page the sidebar quick action opens", () => {
     expect(renderer).not.toContain("createProjectThenNewChat");
-    expect(renderer).toContain("if (created) openNewChat()");
-    expect(renderer).toContain("if (projects.currentProjectId) openNewChat()");
+    expect(renderer).toContain("if (created && projects.currentProjectId) openNewChatForProject(projects.currentProjectId)");
+    expect(renderer).toContain("if (projects.currentProjectId) openNewChatForProject(projects.currentProjectId)");
     expect(renderer).toContain('action.textContent = "Create project"');
     expect(renderer).not.toContain('textContent = projects.currentProjectId ? "New task"');
     expect(projects).toContain('rememberLocation({ view: "conversation", projectId: id, newChat: true })');
@@ -620,6 +643,24 @@ describe("desktop renderer shell", () => {
       expect(projectSidebar).toContain(`"${label}"`);
     }
     expect(projects).toContain('this.options.api(`/api/v1/projects/${id}`, "DELETE")');
+  });
+
+  it("keeps standalone chats in their own sidebar section, sibling to projects", () => {
+    // The sidebar carries a Chats section below Projects, rendered into #chats.
+    expect(html).toContain('id="chats" class="project-tree" aria-label="Chats"');
+    expect(html).toContain('class="section-heading chats-heading"');
+    expect(renderer).toContain("chatsMount: element(\"chats\")");
+    expect(projectSidebar).toContain("chatsMount: HTMLElement");
+    expect(projectSidebar).toContain("chats: readonly ProjectSidebarSession[]");
+    expect(projectSidebar).toContain('chatsTree.append(this.#empty("No chats yet"))');
+    expect(projectSidebar).toContain('#chatItem(chat: ProjectSidebarSession): HTMLElement');
+    expect(projectSidebar).toContain('"chat-row"');
+    expect(renderer).toContain("chats: projects.chats");
+    expect(projects).toContain('api("/api/v1/chats")');
+    expect(projects).toContain("startChat(session: SessionRecord): void");
+    expect(projects).toContain('else if (this.chatRecords.some((chat) => chat.id === id)) this.currentProjectIdValue = undefined');
+    expect(styles).toContain(".chat-row { padding: 6px 34px 6px 9px; font-size: 13.5px; }");
+    expect(styles).toContain(".chats-heading > span { color: var(--grey-800); font-weight: 650; }");
   });
 
   it("clears the starter screen and reports unobtrusive work progress before output arrives", () => {
@@ -769,9 +810,11 @@ describe("desktop renderer shell", () => {
     expect(inspectorPanel).toContain("this.#repository.render(repositoryView)");
     expect(inspectorPanel).toContain("setSessionArtifacts(artifacts: Json[]): void");
     expect(inspectorPanel).toContain("reset(): void");
+    expect(inspectorPanel).toContain("setChat(sessionId: string | undefined): void");
     expect(inspectorPanel).toContain("registerReference(reference: string): void");
     // Files open from chat links and tool rows grow the persisted repository.
     expect(artifactRepository).toContain('fitz-inspector-repository');
+    expect(artifactRepository).toContain("useStorage(storageKey: string): void");
     expect(artifactRepository).toContain("registerFile(path: string, name: string, reference?: string): void");
     expect(artifactRepository).toContain("registerReference(reference: string): void");
     expect(artifactRepository).toContain("setSessionArtifacts(artifacts: Json[]): void");
@@ -782,10 +825,15 @@ describe("desktop renderer shell", () => {
     // The renderer feeds current-session uploads into the repository.
     expect(renderer).toContain("inspectorPanel.setSessionArtifacts(");
     // The Inspector is contained to the chat it was opened in: switching
-    // chats or projects closes it and drops its tabs, and the repository
-    // reloads for the new session without forcing the panel open.
+    // chats or projects closes it and drops its tabs, and the artifact
+    // repository re-scopes to the new session (per-chat storage key) without
+    // forcing the panel open.
     expect(renderer).toContain("let inspectorChatId: string | undefined;");
-    expect(renderer).toContain("if (sessionId !== inspectorChatId) { inspectorPanel.reset(); inspectorChatId = sessionId; }");
+    expect(renderer).toContain("if (sessionId !== inspectorChatId) { inspectorPanel.reset(); inspectorPanel.setChat(sessionId); inspectorChatId = sessionId; }");
+    expect(inspectorPanel).toContain("fitz-inspector-repository:${sessionId}");
+    // A brand-new chat's first message points the repository at its session
+    // before any files stream in, so the first files land in the right chat.
+    expect(renderer).toContain("inspectorPanel.setChat(response.data.id)");
     expect(renderer).not.toContain("inspectorPanel.resetPreview()");
     // Every opened artifact gets its own closable tab.
     expect(inspectorPanel).toContain("onFileInspected: (path, name, reference) => this.#onFileInspected(tab.id, path, name, reference)");
@@ -825,9 +873,9 @@ describe("desktop renderer shell", () => {
 
   it("stages picker files as chips in a new chat and uploads them with the first message", () => {
     // The attach button unlocks in new chat mode so "+" works before a session exists.
-    expect(renderer).toContain('hasSession: Boolean(projects.currentSessionId || (newChatMode && projects.currentProjectId))');
-    expect(renderer).toContain('if (!projects.currentSessionId && !(newChatMode && projects.currentProjectId)) { showToast("Create or select a task before attaching a file"); return; }');
-    expect(renderer).toContain('if (newChatMode && projects.currentProjectId) { composer.attachFile(file); return; }');
+    expect(renderer).toContain('hasSession: Boolean(projects.currentSessionId || newChatMode)');
+    expect(renderer).toContain('if (!projects.currentSessionId && !newChatMode) { showToast("Create or select a task before attaching a file"); return; }');
+    expect(renderer).toContain('if (newChatMode) { composer.attachFile(file); return; }');
     expect(composer).toContain("attachFile(file: File): void");
     expect(composer).toContain('const kind = file.type.startsWith("image/") ? "image" : file.type === "application/pdf" ? "pdf" : "file";');
     expect(composer).toContain('this.options.onError("Attached file is too large (max 5 MB)");');

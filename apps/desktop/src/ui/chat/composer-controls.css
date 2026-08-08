@@ -22,7 +22,7 @@
 .context-usage-popover button:hover:not(:disabled) { background: var(--tint-7); }
 .context-usage-popover button:disabled { opacity: .45; cursor: default; }
 .context-usage-popover small { color: var(--subtle); font-size: 10px; }
-.model-picker { position: relative; }
+.model-picker { position: relative; min-width: 0; }
 .model-toggle { min-width: 142px; display: flex; align-items: center; justify-content: flex-end; gap: 7px; padding: 6px 9px; border-radius: 9px; background: transparent; color: var(--grey-850); cursor: pointer; font-size: 12px; }
 .model-toggle svg { width: 14px; height: 14px; color: var(--muted); }
 .model-toggle:hover:not(:disabled) { background: var(--grey-250); }

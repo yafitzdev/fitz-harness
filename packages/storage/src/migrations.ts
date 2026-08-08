@@ -1,6 +1,8 @@
 export interface Migration {
   version: number;
   sql: string;
+  /** Rebuild migrations drop/recreate a table and must run with foreign keys disabled. */
+  rebuild?: boolean;
 }
 
 export const MIGRATIONS: readonly Migration[] = [
@@ -242,6 +244,36 @@ export const MIGRATIONS: readonly Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_tool_action_log_run ON tool_action_log(run_id, sequence);
       CREATE INDEX IF NOT EXISTS idx_trash_entries_workspace ON trash_entries(workspace_root, created_at DESC);
+    `,
+  },
+  {
+    version: 8,
+    // Rebuild `sessions` so project_id is nullable, enabling standalone chats
+    // (sessions with no project attached). SQLite cannot drop a NOT NULL
+    // constraint in place, so we recreate the table. `rebuild: true` makes
+    // SqliteStore.migrate() run this with PRAGMA foreign_keys = OFF so the
+    // DROP TABLE does not cascade into transcript_entries / tool_approvals,
+    // and agent_runs.session_id does not block it.
+    rebuild: true,
+    sql: `
+      CREATE TABLE sessions_v8 (
+        id TEXT PRIMARY KEY,
+        project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+        owner_user_id TEXT,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('active', 'archived')),
+        connection_id TEXT NOT NULL DEFAULT 'hosted--local',
+        route_id TEXT NOT NULL DEFAULT 'default' CHECK (route_id IN ('fast', 'default', 'smart')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO sessions_v8 (id, project_id, owner_user_id, title, status, connection_id, route_id, created_at, updated_at)
+        SELECT id, project_id, owner_user_id, title, status, connection_id, route_id, created_at, updated_at FROM sessions;
+      DROP TABLE sessions;
+      ALTER TABLE sessions_v8 RENAME TO sessions;
+      CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_sessions_connection ON sessions(connection_id, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_sessions_standalone ON sessions(updated_at DESC) WHERE project_id IS NULL;
     `,
   },
 ] as const;

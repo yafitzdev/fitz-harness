@@ -17,6 +17,8 @@ export interface ProjectSidebarSession {
 export interface ProjectSidebarState {
   projects: readonly ProjectSidebarProject[];
   sessionsByProject: ReadonlyMap<string, readonly ProjectSidebarSession[]>;
+  /** Standalone chats with no project attached (the Chats section). */
+  chats: readonly ProjectSidebarSession[];
   currentProjectId: string | undefined;
   currentSessionId: string | undefined;
   newChat: boolean;
@@ -24,26 +26,29 @@ export interface ProjectSidebarState {
 
 export interface ProjectSidebarElements {
   tree: HTMLElement;
+  chatsTree: HTMLElement;
 }
 
 export interface ProjectSidebarOptions {
   /** The sidebar tree the controller renders projects and sessions into. */
   mount: HTMLElement;
+  /** The sidebar tree the controller renders standalone chats into. */
+  chatsMount: HTMLElement;
   closePopovers: () => void;
   selectProject: (projectId: string) => void;
-  selectSession: (sessionId: string, projectId: string) => void;
+  selectSession: (sessionId: string, projectId?: string) => void;
   newChat: (projectId: string) => void;
   openProjectPath: (path: string) => void;
   createWorktree: (projectId: string) => void;
   archiveProjectChats: (projectId: string) => void;
   removeProject: (projectId: string) => Promise<void> | void;
-  renameSession: (sessionId: string, projectId: string, title: string) => Promise<void> | void;
+  renameSession: (sessionId: string, projectId: string | undefined, title: string) => Promise<void> | void;
   renameProject: (projectId: string, name: string) => Promise<void> | void;
   createProject: (name: string, rootPath: string | undefined) => Promise<void> | void;
   chooseFolder: () => Promise<string | undefined>;
-  archiveSession: (sessionId: string, projectId: string) => void;
+  archiveSession: (sessionId: string, projectId: string | undefined) => void;
   copyValue: (value: string, message: string) => void;
-  continueSession: (session: ProjectSidebarSession, projectId: string) => void;
+  continueSession: (session: ProjectSidebarSession, projectId?: string) => void;
 }
 
 interface SidebarEdit {
@@ -71,7 +76,7 @@ export class ProjectSidebarController {
   readonly #pinnedProjects = this.#storedSet("fitz-pinned-projects");
   readonly #pinnedSessions = this.#storedSet("fitz-pinned-sessions");
   readonly #expandedProjects = this.#storedSet("fitz-expanded-projects");
-  #state: ProjectSidebarState = { projects: [], sessionsByProject: new Map(), currentProjectId: undefined, currentSessionId: undefined, newChat: false };
+  #state: ProjectSidebarState = { projects: [], sessionsByProject: new Map(), chats: [], currentProjectId: undefined, currentSessionId: undefined, newChat: false };
   #editing: SidebarEdit | undefined;
   #creatingProject: { rootPath?: string } | undefined;
   #confirmingRemoval: { projectId: string; name: string } | undefined;
@@ -80,7 +85,7 @@ export class ProjectSidebarController {
     this.#options = options;
     // The context menu lives at shell level, so its lookup is global rather
     // than scoped to the tree.
-    const elements: ProjectSidebarElements = { tree: options.mount };
+    const elements: ProjectSidebarElements = { tree: options.mount, chatsTree: options.chatsMount };
     this.#elements = elements;
     this.#menuElement = requiredElement("sidebar-context-menu");
     this.#menu = new ContextMenu(this.#menuElement, options.closePopovers);
@@ -91,6 +96,15 @@ export class ProjectSidebarController {
 
   render(state: ProjectSidebarState): void {
     this.#state = state;
+    const chatsTree = this.#elements.chatsTree;
+    chatsTree.replaceChildren();
+    if (state.chats.length === 0) {
+      chatsTree.append(this.#empty("No chats yet"));
+    } else {
+      const chats = [...state.chats].sort((left, right) => Number(this.#pinnedSessions.has(right.id)) - Number(this.#pinnedSessions.has(left.id)));
+      for (const chat of chats) chatsTree.append(this.#chatItem(chat));
+    }
+
     const tree = this.#elements.tree;
     tree.replaceChildren();
     if (state.projects.length === 0) {
@@ -120,8 +134,10 @@ export class ProjectSidebarController {
   beginRenameCurrentSession(): void {
     const projectId = this.#state.currentProjectId;
     const sessionId = this.#state.currentSessionId;
-    if (!projectId || !sessionId) return;
-    const session = (this.#state.sessionsByProject.get(projectId) ?? []).find((item) => item.id === sessionId);
+    if (!sessionId) return;
+    const session = projectId
+      ? (this.#state.sessionsByProject.get(projectId) ?? []).find((item) => item.id === sessionId)
+      : this.#state.chats.find((item) => item.id === sessionId);
     if (session) this.#beginEdit("session", session.id, projectId);
   }
 
@@ -144,6 +160,7 @@ export class ProjectSidebarController {
 
   resetMenuToggles(): void {
     for (const toggle of this.#elements.tree.querySelectorAll(".tree-menu-toggle")) toggle.setAttribute("aria-expanded", "false");
+    for (const toggle of this.#elements.chatsTree.querySelectorAll(".tree-menu-toggle")) toggle.setAttribute("aria-expanded", "false");
   }
 
   #projectGroup(project: ProjectSidebarProject): HTMLElement {
@@ -193,6 +210,23 @@ export class ProjectSidebarController {
     return item;
   }
 
+  #chatItem(chat: ProjectSidebarSession): HTMLElement {
+    if (this.#editing?.kind === "session" && this.#editing.id === chat.id) {
+      return this.#editingRow("chat-row", chat.title, 120, (value) => this.#commitEdit(value));
+    }
+    const item = this.#treeItem(chat.title, "chat-row", undefined, () => this.#options.selectSession(chat.id, undefined), (toggle, event) => this.#openMenu("chat", chat.id, undefined, toggle, event));
+    const button = item.querySelector<HTMLButtonElement>(".chat-row")!;
+    button.classList.toggle("active", chat.id === this.#state.currentSessionId && !this.#state.currentProjectId);
+    if (this.#pinnedSessions.has(chat.id)) {
+      const pin = svgIcon('<path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path>');
+      pin.classList.add("pin-indicator");
+      pin.setAttribute("role", "img");
+      pin.setAttribute("aria-label", "Pinned");
+      button.append(pin);
+    }
+    return item;
+  }
+
   #treeItem(label: string, className: string, icon: SVGElement | undefined, action: () => void, menu: (toggle: HTMLButtonElement, event: MouseEvent) => void, quickAction?: () => void): HTMLElement {
     const item = document.createElement("div"); item.className = "tree-item";
     const value = document.createElement("button"); value.type = "button"; value.className = className;
@@ -221,13 +255,13 @@ export class ProjectSidebarController {
     group.querySelector<HTMLButtonElement>(".project-row")?.setAttribute("aria-expanded", String(expanded));
   }
 
-  #openMenu(kind: "project" | "task", id: string, projectId: string | undefined, toggle: HTMLButtonElement, event: MouseEvent): void {
+  #openMenu(kind: "project" | "task" | "chat", id: string, projectId: string | undefined, toggle: HTMLButtonElement, event: MouseEvent): void {
     event.preventDefault();
     event.stopPropagation();
     this.#options.closePopovers();
     this.#menu.reset();
     if (kind === "project") this.#buildProjectMenu(id);
-    else if (projectId) this.#buildSessionMenu(id, projectId);
+    else this.#buildSessionMenu(id, projectId);
     this.#menu.openBeside(toggle);
     toggle.setAttribute("aria-expanded", "true");
   }
@@ -246,9 +280,11 @@ export class ProjectSidebarController {
     menu.add({ label: "Remove", action: () => this.#beginRemove(projectId), icon: '<path d="m5 5 10 10M15 5 5 15"></path>' });
   }
 
-  #buildSessionMenu(sessionId: string, projectId: string): void {
-    const session = this.#state.sessionsByProject.get(projectId)?.find((item) => item.id === sessionId);
-    const project = this.#project(projectId);
+  #buildSessionMenu(sessionId: string, projectId: string | undefined): void {
+    const session = projectId
+      ? (this.#state.sessionsByProject.get(projectId) ?? []).find((item) => item.id === sessionId)
+      : this.#state.chats.find((item) => item.id === sessionId);
+    const project = projectId ? this.#project(projectId) : undefined;
     if (!session) return;
     const menu = this.#menu;
     menu.add({ label: this.#pinnedSessions.has(sessionId) ? "Unpin chat" : "Pin chat", action: () => this.#toggleStored(this.#pinnedSessions, sessionId, "fitz-pinned-sessions"), icon: '<path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path>' });
@@ -271,7 +307,7 @@ export class ProjectSidebarController {
     this.#editing = { kind, id, projectId };
     this.#options.closePopovers();
     this.render(this.#state);
-    const input = this.#elements.tree.querySelector<HTMLInputElement>(".tree-rename-input");
+    const input = this.#elements.tree.querySelector<HTMLInputElement>(".tree-rename-input") ?? this.#elements.chatsTree.querySelector<HTMLInputElement>(".tree-rename-input");
     input?.focus();
     input?.select();
   }
@@ -299,7 +335,7 @@ export class ProjectSidebarController {
     const editing = this.#editing;
     if (!editing) return;
     if (!value) { this.#cancelTransient(); return; }
-    const action = editing.kind === "session" && editing.projectId
+    const action = editing.kind === "session"
       ? this.#options.renameSession(editing.id, editing.projectId, value)
       : editing.kind === "project"
         ? this.#options.renameProject(editing.id, value)

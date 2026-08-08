@@ -6,6 +6,8 @@ export type ComposerSetting = "model" | "effort";
 export interface ComposerRouteOption {
   id: string;
   label: string;
+  /** Short route name (e.g. "Smart"); the full label may append the model name. */
+  displayName?: string;
   group?: string;
 }
 
@@ -15,6 +17,9 @@ export interface ComposerControlsElements {
   modelToggle: HTMLButtonElement;
   modelMenu: HTMLElement;
   modelSummary: HTMLElement;
+  modelRoute: HTMLElement;
+  modelName: HTMLElement;
+  modelEffort: HTMLElement;
   modelValue: HTMLElement;
   effortValue: HTMLElement;
   settingsSubmenu: HTMLElement;
@@ -86,6 +91,7 @@ export class ComposerControls {
       option.textContent = route.label;
       option.value = route.id;
       if (route.group) option.dataset.group = route.group;
+      if (route.displayName) option.dataset.displayName = route.displayName;
       this.elements.model.add(option);
     }
     if (previous && routes.some((route) => route.id === previous)) this.elements.model.value = previous;
@@ -100,10 +106,19 @@ export class ComposerControls {
   }
 
   refreshLabels(): void {
-    const routeLabel = [...this.elements.model.options].find((option) => option.value === this.routeId)?.textContent ?? "Model";
-    const effortLabel = [...this.elements.effort.options].find((option) => option.value === this.elements.effort.value)?.textContent ?? "Medium";
-    this.elements.modelSummary.textContent = `${routeLabel} · ${effortLabel}`;
-    this.elements.modelValue.textContent = routeLabel;
+    const option = [...this.elements.model.options].find((candidate) => candidate.value === this.routeId);
+    const fullLabel = option?.textContent ?? "Model";
+    // The full label may be "Smart · ninfer-1.5b" (route name + model name)
+    // or just "Smart". The route name alone stays visible when the composer
+    // is squeezed; the model name hides so only "Smart · Medium" remains.
+    const routeName = option?.dataset.displayName || fullLabel;
+    const modelName = fullLabel === routeName ? "" : fullLabel.slice(`${routeName} · `.length);
+    const effortLabel = [...this.elements.effort.options].find((candidate) => candidate.value === this.elements.effort.value)?.textContent ?? "Medium";
+    this.elements.modelRoute.textContent = routeName;
+    this.elements.modelName.textContent = modelName ? ` · ${modelName}` : "";
+    this.elements.modelName.hidden = !modelName;
+    this.elements.modelEffort.textContent = ` · ${effortLabel}`;
+    this.elements.modelValue.textContent = fullLabel;
     this.elements.effortValue.textContent = effortLabel;
   }
 
@@ -265,6 +280,9 @@ export class ComposerControls {
     this.elements.accessModeLabel.textContent = value.label;
     this.elements.accessModeIcon.innerHTML = value.icon;
     this.elements.accessModeToggle.dataset.mode = this.mode;
+    // The label hides when the composer is squeezed; the tooltip keeps the
+    // mode discoverable on the icon-only button.
+    this.elements.accessModeToggle.title = value.label;
     for (const choice of this.elements.accessModeChoices) choice.classList.toggle("selected", choice.dataset.accessMode === this.mode);
   }
 }

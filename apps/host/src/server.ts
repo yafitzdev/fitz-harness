@@ -82,7 +82,7 @@ const runtime = createHost({
       cwd: (request) => {
         if (process.env.FITZ_AGENT_CWD) return process.env.FITZ_AGENT_CWD;
         const session = request.sessionId ? store.getSession(request.sessionId) : undefined;
-        const project = session ? store.getProject(session.projectId) : undefined;
+        const project = session?.projectId ? store.getProject(session.projectId) : undefined;
         return project?.rootPath ?? process.cwd();
       },
       requestToolApproval: createToolApprovalRequester(store),
