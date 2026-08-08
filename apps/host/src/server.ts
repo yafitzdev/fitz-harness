@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NInferEngineAdapter } from "@fitz/engine-ninfer";
 import { FakeEngineAdapter } from "@fitz/engine-fake";
+import { FakeMediaEngineAdapter } from "@fitz/engine-media-fake";
 import { ManagedOpenAIEngineAdapter, OpenAICompatibleEngineAdapter } from "@fitz/engine-openai-compatible";
 import { LlamaCppEngineAdapter } from "@fitz/engine-llama-cpp";
 import { ComfyUIEngineAdapter } from "@fitz/engine-comfyui";
@@ -165,7 +166,10 @@ function engineModeOptions(mode: string) {
     });
     return {
       fakeAdapter,
-      adapters: [fakeAdapter, new ManagedOpenAIEngineAdapter(), new OpenAICompatibleEngineAdapter()],
+      // Fake mode is also the GPU-free packaged media smoke mode. The media
+      // recipe is registered explicitly by the smoke client, keeping normal
+      // development defaults unchanged while exercising the real server wire.
+      adapters: [fakeAdapter, new FakeMediaEngineAdapter(), new ManagedOpenAIEngineAdapter(), new OpenAICompatibleEngineAdapter()],
     };
   }
   if (mode === "ninfer") return ninferOptions();

@@ -34,10 +34,15 @@ describe("Fitz OpenAI-shaped media gateway", () => {
       await registerMediaRecipe(runtime, "h3-img", ["image"]);
       await assignRoute(runtime, "image", "h3-img");
 
-      const response = await runtime.app.inject({ method: "POST", url: "/v1/images/generations", payload: { model: "image", prompt: "a dog" } });
+      const response = await runtime.app.inject({
+        method: "POST",
+        url: "/v1/images/generations",
+        headers: { host: "127.0.0.1:4567" },
+        payload: { model: "image", prompt: "a dog" },
+      });
       expect(response.statusCode, response.body).toBe(200);
       const url = response.json().data[0].url as string;
-      expect(url).toMatch(/\/api\/v1\/artifacts\/[^/]+\/content$/);
+      expect(url).toMatch(/^http:\/\/127\.0\.0\.1:4567\/api\/v1\/artifacts\/[^/]+\/content$/);
 
       // Provider URLs are never handed out: the URL is a Fitz artifact content URL.
       const content = await runtime.app.inject({ method: "GET", url: new URL(url).pathname });

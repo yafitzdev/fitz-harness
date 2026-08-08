@@ -213,7 +213,18 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     new ReplicateProvider(),
   ]);
   const providerAdapters = mediaProviders.list().map((provider) => new MediaProviderEngineAdapter(provider));
-  const adapterList = options.adapters ?? (fakeAdapter ? [fakeAdapter, new OpenAICompatibleEngineAdapter(), ...providerAdapters] : [new OpenAICompatibleEngineAdapter(), ...providerAdapters]);
+  // Engine-mode adapters are additive. Every real server mode supplies an
+  // explicit local/chat adapter list, but connection-backed media recipes still
+  // need the three provider-template adapters. Treating `options.adapters` as a
+  // replacement made fal/Replicate/openai-media configurable in the UI while
+  // leaving the packaged host unable to execute them.
+  const configuredAdapters = options.adapters
+    ?? (fakeAdapter ? [fakeAdapter, new OpenAICompatibleEngineAdapter()] : [new OpenAICompatibleEngineAdapter()]);
+  const configuredAdapterIds = new Set(configuredAdapters.map((adapter) => adapter.id));
+  const adapterList = [
+    ...configuredAdapters,
+    ...providerAdapters.filter((adapter) => !configuredAdapterIds.has(adapter.id)),
+  ];
   const adapters = new EngineAdapterRegistry(adapterList);
   // Startup: cancel provider-side jobs orphaned by a crash (best-effort, async).
   // Only provider adapters are safe to `start()` at boot — local engine
@@ -576,7 +587,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
           created: Math.floor(Date.now() / 1000),
           data: body.response_format === "b64_json"
             ? [{ b64_json: Buffer.from(bytes).toString("base64") }]
-            : [{ url: `${request.protocol}://${request.hostname}/api/v1/artifacts/${artifact.id}/content` }],
+            : [{ url: `${requestOrigin(request)}/api/v1/artifacts/${artifact.id}/content` }],
         };
         security?.audit("media-job.completed", principal?.user.id, "media-job", job.id, { artifactId: artifact.id, gateway: "images" });
         return response;
@@ -1012,7 +1023,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
             working: true,
             unloaded: true,
             ...(terminal.artifactId
-              ? { artifactId: terminal.artifactId, artifactUrl: `${request.protocol}://${request.hostname}/api/v1/artifacts/${terminal.artifactId}/content` }
+              ? { artifactId: terminal.artifactId, artifactUrl: `${requestOrigin(request)}/api/v1/artifacts/${terminal.artifactId}/content` }
               : {}),
           },
         };
@@ -1659,6 +1670,22 @@ function parseAgentRunRequest(value: unknown): AgentRunRequest { const parsed = 
 function canAccessRun(principal: AuthenticatedPrincipal | undefined, ownerUserId: string | undefined): boolean { return !principal || principal.user.role === "administrator" || principal.user.id === ownerUserId; }
 function canAccessOwner(principal: AuthenticatedPrincipal | undefined, ownerUserId: string | undefined): boolean { return !principal || principal.user.role === "administrator" || principal.user.id === ownerUserId; }
 function canAccessMediaJob(principal: AuthenticatedPrincipal | undefined, job: MediaJobRecord): boolean { return !principal || principal.user.role === "administrator" || principal.user.id === job.createdByUserId; }
+
+/** Absolute URLs returned by media APIs must retain a non-default host port.
+ *  Fastify's `request.hostname` intentionally strips it, while the HTTP Host
+ *  header preserves the authority the client can actually reach. Invalid or
+ *  absent Host headers fall back to Fastify's normalized hostname. */
+function requestOrigin(request: FastifyRequest): string {
+  const authority = request.headers.host?.trim();
+  if (authority) {
+    try {
+      return new URL(`${request.protocol}://${authority}`).origin;
+    } catch {
+      // Fall through to the normalized hostname for malformed Host headers.
+    }
+  }
+  return `${request.protocol}://${request.hostname}`;
+}
 function isTerminalMediaStatus(status: string | undefined): boolean { return status === "completed" || status === "failed" || status === "cancelled" || status === "interrupted"; }
 function isTerminalMediaEvent(type: string): boolean { return type === "completed" || type === "failed" || type === "cancelled"; }
 /** Human-readable failure text for a terminal media job: the failed event's

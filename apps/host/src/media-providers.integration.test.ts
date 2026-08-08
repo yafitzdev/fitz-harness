@@ -19,7 +19,9 @@ const fixturePath = (name: string): string =>
 describe("Fitz media provider templates", () => {
   it("saves an openai-media connection, discovers media models, and generates image + video", async () => {
     const fixture = await startFixture("fake-openai-media-server.mjs", ["--api-key", "test-openai-key"]);
-    const runtime = createHost({});
+    // Production server modes always supply explicit engine adapters. Provider
+    // templates must be composed with (not replaced by) that local adapter set.
+    const runtime = createHost({ adapters: [new FakeEngineAdapter()] });
     try {
       const put = await runtime.app.inject({
         method: "PUT",

@@ -56,6 +56,22 @@
 - Owner-scoped artifact metadata and content storage with SHA-256 integrity metadata and size bounds,
   strict MIME classification, defensive content headers, and a desktop artifact panel with inert text,
   allowlisted media, sandboxed PDF preview, upload, and binary fallback.
+- Generalized image, video, and audio generation pipeline with capability-aware recipes and routes,
+  durable submit/poll/cancel jobs, sequenced replayable events, queue/lifecycle leases, crash recovery,
+  cancellation, progress, and per-kind artifact size limits.
+- OpenAI-shaped image and video gateways plus connection templates for OpenAI-compatible media, fal,
+  and Replicate. Provider jobs run through the same scheduler as local engines, provider URLs are
+  downloaded into Fitz-owned artifacts, and orphaned paid jobs are cancelled best-effort on restart.
+- Local media engines include a deterministic GPU-free fake adapter and a ComfyUI adapter/playbook for
+  manually provisioned MiniMax H3 video generation (with experimental image generation). Agent media
+  tools enforce route grants, Ask-first approval, and job/credit quotas without waiting inside the
+  serialized agent slot.
+- Large media artifacts support MIME-safe Inspector previews and RFC 7233 single-byte-range delivery
+  with `206`/`416`, `Accept-Ranges`, and kind-aware image/audio/video caps.
+- The portable Windows host smoke now boots the bundled server from a clean data root, registers a fake
+  image recipe, runs route → queue → media adapter → artifact persistence, validates the returned PNG,
+  and verifies a ranged artifact response. This guards schema and media wiring in the shipped bundle,
+  not only source-level tests.
 - Desktop Inspector binary previews: chat file links and agent tool rows now open images, PDFs, audio,
   and video in place — the main process resolves known binary extensions to base64 payloads with their
   MIME type (10 MB cap) instead of rejecting NUL bytes, and the Inspector renders images inline, PDFs in
@@ -100,6 +116,8 @@
 - Persistent/distributed rate windows.
 - Model-assisted summary quality (the summarizer is an injectable interface; the shipped default is deterministic).
 - Tailscale installation/onboarding on the target machine and live tailnet validation.
+- Live paid-provider media validation with a user-owned fal or Replicate credential, and a real local
+  MiniMax H3/ComfyUI generation after the engine, weights, and required custom nodes are provisioned.
 - Desktop UX refinement, richer event rendering, and accessibility polish.
 - OS-backed secret storage.
 - Backpressure limits and retained stream replay for active completions.
