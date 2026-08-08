@@ -61,6 +61,9 @@ importers:
       '@fitz/context':
         specifier: workspace:*
         version: link:../../packages/context
+      '@fitz/engine-comfyui':
+        specifier: workspace:*
+        version: link:../../packages/engine-comfyui
       '@fitz/engine-fake':
         specifier: workspace:*
         version: link:../../packages/engine-fake
@@ -141,6 +144,15 @@ importers:
       '@fitz/storage':
         specifier: workspace:*
         version: link:../storage
+
+  packages/engine-comfyui:
+    dependencies:
+      '@fitz/inference-core':
+        specifier: workspace:*
+        version: link:../inference-core
+      '@fitz/protocol':
+        specifier: workspace:*
+        version: link:../protocol
 
   packages/engine-fake:
     dependencies:

@@ -29,6 +29,9 @@ export default defineConfig({
       "@fitz/engine-llama-cpp": fileURLToPath(
         new URL("./packages/engine-llama-cpp/src/index.ts", import.meta.url),
       ),
+      "@fitz/engine-comfyui": fileURLToPath(
+        new URL("./packages/engine-comfyui/src/index.ts", import.meta.url),
+      ),
       "@fitz/media-providers": fileURLToPath(
         new URL("./packages/media-providers/src/index.ts", import.meta.url),
       ),

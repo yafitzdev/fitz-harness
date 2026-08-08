@@ -6,6 +6,7 @@ import { NInferEngineAdapter } from "@fitz/engine-ninfer";
 import { FakeEngineAdapter } from "@fitz/engine-fake";
 import { ManagedOpenAIEngineAdapter, OpenAICompatibleEngineAdapter } from "@fitz/engine-openai-compatible";
 import { LlamaCppEngineAdapter } from "@fitz/engine-llama-cpp";
+import { ComfyUIEngineAdapter } from "@fitz/engine-comfyui";
 import type { Recipe, Route } from "@fitz/protocol";
 import { SqliteStore } from "@fitz/storage";
 import { SecurityService } from "@fitz/security";
@@ -15,6 +16,7 @@ import type { MediaJobCoordinator } from "./media-jobs.js";
 import { ModelCatalogService } from "./model-catalog.js";
 import { PiAgentRuntime, PiPackageService } from "@fitz/agent-pi";
 import { createNInferPlaybook } from "./ninfer-playbook.js";
+import { createComfyUIPlaybook } from "./comfyui-playbook.js";
 import { reconcileNInferConfiguration } from "./ninfer-reconcile.js";
 import { createToolApprovalRequester } from "./tool-approval-gate.js";
 import { createSessionReader } from "./session-reader.js";
@@ -184,7 +186,30 @@ function engineModeOptions(mode: string) {
     });
     return singleEngineOptions([new LlamaCppEngineAdapter(), new ManagedOpenAIEngineAdapter(), new OpenAICompatibleEngineAdapter()], recipe);
   }
+  if (mode === "comfyui") return comfyuiOptions();
   throw new Error(`Unsupported FITZ_ENGINE_MODE: ${mode}`);
+}
+
+/** MiniMax H3 via ComfyUI (PR 7, KD-1): seeds the local media playbook — the
+ *  h3-video recipe assigned to the well-known `video` route, plus the
+ *  experimental h3-image recipe (KD-2, not assigned by default). The engine
+ *  folder is admin-provisioned; weights and pinned workflows live there
+ *  (KD-13 manual placement). */
+function comfyuiOptions() {
+  const playbook = createComfyUIPlaybook({
+    engineDir: requiredEnvironment("FITZ_COMFYUI_DIR"),
+    ...(process.env.FITZ_COMFYUI_EXECUTABLE ? { executable: process.env.FITZ_COMFYUI_EXECUTABLE } : {}),
+    ...(process.env.FITZ_COMFYUI_ENTRYPOINT ? { entrypoint: process.env.FITZ_COMFYUI_ENTRYPOINT } : {}),
+    ...(process.env.FITZ_COMFYUI_BASE_URL ? { baseUrl: process.env.FITZ_COMFYUI_BASE_URL } : {}),
+    ...(process.env.FITZ_COMFYUI_EXPECTED_VRAM_MIB
+      ? { expectedVramMiB: parseNonNegativeInteger(process.env.FITZ_COMFYUI_EXPECTED_VRAM_MIB, "FITZ_COMFYUI_EXPECTED_VRAM_MIB") }
+      : {}),
+  });
+  return {
+    adapters: [new ComfyUIEngineAdapter(), new ManagedOpenAIEngineAdapter(), new OpenAICompatibleEngineAdapter()],
+    initialRecipes: playbook.recipes,
+    initialRoutes: playbook.routes,
+  };
 }
 
 function engineRecipe(adapter: "openai-compatible" | "llama-cpp", configuration: Record<string, unknown>): Recipe {
