@@ -154,4 +154,25 @@ describe("ActivityTimeline", () => {
     expect(messages.querySelector(".work-summary-label")?.textContent).toBe("Worked for 5s");
     expect(messages.querySelector<HTMLElement>(".work-summary-details")?.hidden).toBe(true);
   });
+
+  it("formats sessions of an hour or more as hours and minutes without seconds", () => {
+    const { messages, timeline } = setup();
+    timeline.appendTool("bash", { command: "pnpm test" }, "tool-1", true, "2026-08-03T08:00:00.000Z");
+    timeline.finishWork("2026-08-03T09:53:42.000Z");
+    expect(messages.querySelector(".work-summary-label")?.textContent).toBe("Worked for 1h 53m");
+  });
+
+  it("switches to hours at the 60-minute boundary", () => {
+    const { messages, timeline } = setup();
+    timeline.appendTool("bash", { command: "pnpm test" }, "tool-1", true, "2026-08-03T08:00:00.000Z");
+    timeline.finishWork("2026-08-03T09:00:00.000Z");
+    expect(messages.querySelector(".work-summary-label")?.textContent).toBe("Worked for 1h 0m");
+  });
+
+  it("keeps minutes and seconds for sub-hour sessions", () => {
+    const { messages, timeline } = setup();
+    timeline.appendTool("bash", { command: "pnpm test" }, "tool-1", true, "2026-08-03T08:00:00.000Z");
+    timeline.finishWork("2026-08-03T08:59:59.000Z");
+    expect(messages.querySelector(".work-summary-label")?.textContent).toBe("Worked for 59m 59s");
+  });
 });

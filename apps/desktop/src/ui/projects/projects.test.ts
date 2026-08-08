@@ -126,7 +126,7 @@ describe("ProjectsController", () => {
 
     expect(calls.leaveNewChat).toHaveBeenCalled();
     expect(calls.showConversationWorkspace).toHaveBeenCalled();
-    expect(calls.rememberLocation).toHaveBeenCalledWith({ view: "conversation", projectId: "project-a" });
+    expect(calls.rememberLocation).toHaveBeenCalledWith({ view: "conversation", projectId: "project-a", newChat: true });
     expect(calls.onNoSession).toHaveBeenCalledTimes(2);
   });
 

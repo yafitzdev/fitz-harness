@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { setMarkdown } from "./markdown.js";
 
 describe("Markdown lists", () => {
@@ -40,5 +40,33 @@ describe("Post-generation rules at render time", () => {
     expect(target.textContent).toContain("echo `date`; # **not bold**");
     expect(target.textContent).not.toContain("`app.ts`");
     expect(target.textContent).toContain("app.ts");
+  });
+});
+
+describe("Resource links in rendered output", () => {
+  it("announces local resources as they render so they can join the artifact repository", () => {
+    const target = document.createElement("div");
+    const listener = vi.fn();
+    window.addEventListener("fitz:resource-appeared", listener);
+    try {
+      // Backtick file references register; remote URLs are left out.
+      setMarkdown(target, "See `src/app.ts` and https://example.com/x.");
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(listener).toHaveBeenCalledWith(expect.objectContaining({ detail: { reference: "src/app.ts" } }));
+    } finally {
+      window.removeEventListener("fitz:resource-appeared", listener);
+    }
+  });
+
+  it("announces plain-text file paths as they stream into the conversation", () => {
+    const target = document.createElement("div");
+    const listener = vi.fn();
+    window.addEventListener("fitz:resource-appeared", listener);
+    try {
+      setMarkdown(target, "Wrote docs/guide.md with the full walkthrough.");
+      expect(listener).toHaveBeenCalledWith(expect.objectContaining({ detail: { reference: "docs/guide.md" } }));
+    } finally {
+      window.removeEventListener("fitz:resource-appeared", listener);
+    }
   });
 });

@@ -14,6 +14,7 @@ import { PiAgentRuntime, PiPackageService } from "@fitz/agent-pi";
 import { createNInferPlaybook, NINFER_PLAYBOOK_ID } from "./ninfer-playbook.js";
 import { createToolApprovalRequester } from "./tool-approval-gate.js";
 import { createSessionReader } from "./session-reader.js";
+import { contextTokensForRoute } from "./route-context.js";
 import { WindowsStartupManager } from "@fitz/connectivity";
 import { resolveRuntimePaths } from "./runtime-paths.js";
 import { AgentSafetyService } from "./agent-safety/index.js";
@@ -75,6 +76,9 @@ const runtime = createHost({
     agentRuntime: new PiAgentRuntime({
       baseUrl: agentBaseUrl,
       apiKey: process.env.FITZ_AGENT_API_KEY ?? internalAgentToken ?? "fitz-local",
+      // The pi session's context window must match the recipe the route resolves to
+      // (e.g. 131072 for consumer/DeepSeek routes, 100000 for ninfer), not a fixed default.
+      contextWindow: (request) => contextTokensForRoute(store, request.model),
       cwd: (request) => {
         if (process.env.FITZ_AGENT_CWD) return process.env.FITZ_AGENT_CWD;
         const session = request.sessionId ? store.getSession(request.sessionId) : undefined;

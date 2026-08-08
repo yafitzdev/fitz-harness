@@ -1,8 +1,10 @@
 import { appendMarkdown, setMarkdown } from "./markdown.js";
+import { estimateTokens, estimateTranscriptContext } from "./context-estimate.js";
 import { MessageActions, type ActionableMessageRole } from "./ui/chat/message-actions.js";
 import { ActivityTimeline } from "./ui/chat/activity-timeline.js";
 import { AgentRunController } from "./ui/chat/agent-run-controller.js";
 import { Composer } from "./ui/chat/composer.js";
+import { projectRelativePath } from "./ui/chat/tool-activity.js";
 import { ConnectionWorkspaceController, FIXED_ROUTES, type FixedRouteId } from "./ui/connections/connection-workspace.js";
 import { InspectorPanel } from "./ui/inspector/inspector-panel.js";
 import { ConversationLayout } from "./ui/layout/conversation-layout.js";
@@ -34,7 +36,6 @@ let navigationIndex = -1;
 let replayingNavigation = false;
 const navigationHistory: AppLocation[] = [];
 let routeCards: Json[] = [];
-let createProjectThenNewChat = false;
 
 const shell = query(".app-shell");
 const workspaceHeader = query(".workspace-header");
@@ -137,14 +138,14 @@ const sidebarPane = new ResizablePane({
 });
 const inspectorPanel = new InspectorPanel({
   mount: workspace,
-  getProjectRoot: () => String(projects.activeProject()?.rootPath ?? ""),
+  getProjectRoot: () => String(projects?.activeProject()?.rootPath ?? ""),
   getSearchRoots: () => activityTimeline.searchRoots(),
   showToast,
   onLayoutChange: () => conversationLayout?.sync(),
 });
 const composer = new Composer({
   mount: workspace,
-  getProjectRoot: () => String(projects.activeProject()?.rootPath ?? "") || undefined,
+  getProjectRoot: () => String(projects?.activeProject()?.rootPath ?? "") || undefined,
   bridge: window.fitz,
   closeAllPopovers: closePopovers,
   onRouteChange: () => handleRouteChange(),
@@ -190,7 +191,7 @@ const projectSidebar = new ProjectSidebarController({
   removeProject: (projectId) => void projects.removeProject(projectId),
   renameSession: (sessionId, projectId, title) => void projects.renameSession(sessionId, projectId, title),
   renameProject: (projectId, name) => void projects.renameProject(projectId, name),
-  createProject: (name, rootPath) => { void projects.createProject(name, rootPath).then((created) => { if (created && createProjectThenNewChat) { createProjectThenNewChat = false; openNewChat(); } }); },
+  createProject: (name, rootPath) => { void projects.createProject(name, rootPath).then((created) => { if (created) openNewChat(); }); },
   chooseFolder: () => window.fitz.chooseFolder(),
   archiveSession: (sessionId, projectId) => { projects.setCurrentProject(projectId); projects.setCurrentSession(sessionId); void projects.archiveCurrentTask(); },
   copyValue: (value, message) => void copyValue(value, message),
@@ -213,7 +214,6 @@ const projects = new ProjectsController({
   refreshComposerState,
   rememberLocation: (location) => rememberLocation(location),
   onSessionSelected: async (sessionId) => {
-    projectSidebar.hideChatHover();
     composer.controls.resetContextStatus();
     const selectedSession = projects.currentSessionRecord();
     if (selectedSession?.routeId) composer.controls.setRoute(selectedSession.routeId);
@@ -269,7 +269,8 @@ const projects = new ProjectsController({
   onNoSession: async () => {
     sessionTokenEstimate = 0;
     updateContextMeter();
-    showLanding();
+    if (projects.currentProjectId) openNewChat();
+    else showLanding();
     await loadArtifacts();
   },
 });
@@ -291,6 +292,7 @@ const agentRuns = new AgentRunController({
   appendSystem: (message) => { appendMessage("system", message); },
   appendChangeSummary: (files) => appendChangeSummary(files),
   addTokenEstimate: (text) => { sessionTokenEstimate += estimateTokens(text); updateContextMeter(); },
+  recalibrateEstimate: (tokens) => { sessionTokenEstimate = tokens; updateContextMeter(); },
   setStatus,
   setEngineState: (state) => { engineState.textContent = state; },
   refreshControls: refreshComposerState,
@@ -483,6 +485,10 @@ window.addEventListener("fitz:open-resource", (event) => {
   const reference = (event as CustomEvent<{ reference?: string }>).detail?.reference;
   if (reference) void inspectorPanel.inspect(reference);
 });
+window.addEventListener("fitz:resource-appeared", (event) => {
+  const reference = (event as CustomEvent<{ reference?: string }>).detail?.reference;
+  if (reference) inspectorPanel.registerReference(reference);
+});
 element("context-add").addEventListener("click", chooseArtifact);
 addArtifactButton.addEventListener("click", chooseArtifact);
 artifactFile.addEventListener("change", () => void uploadArtifact());
@@ -548,7 +554,7 @@ function openNewChat(): void {
   if (agentRuns.active) { showToast("Stop the current response before starting a new chat"); return; }
   showConversationWorkspace();
   inspectorPanel.close();
-  if (projects.projects.length === 0) { createProjectThenNewChat = true; projectSidebar.beginCreateProject(); return; }
+  if (projects.projects.length === 0) { projectSidebar.beginCreateProject(); return; }
   projects.setCurrentProject(projects.currentProjectId ?? projects.projects[0]!.id);
   if (!projects.currentProjectId) return;
   projects.beginNewChat();
@@ -762,7 +768,6 @@ function closePopovers(): void {
   appMenuPopover.hidden = true;
   composer.closePopovers();
   projectSidebar.hideMenu();
-  projectSidebar.hideOverlays();
   projectSidebar.resetMenuToggles();
   for (const toggle of document.querySelectorAll("[data-app-menu]")) toggle.setAttribute("aria-expanded", "false");
 }
@@ -846,8 +851,9 @@ async function loadArtifacts(): Promise<void> {
   artifacts.replaceChildren();
   composer.clearArtifactChips();
   inspectorPanel.resetPreview();
-  if (!projects.currentSessionId) { artifacts.append(panelEmpty("Artifacts appear with a task")); return; }
+  if (!projects.currentSessionId) { inspectorPanel.setSessionArtifacts([]); artifacts.append(panelEmpty("Artifacts appear with a task")); return; }
   const response = await api(`/api/v1/sessions/${projects.currentSessionId}/artifacts`);
+  inspectorPanel.setSessionArtifacts(response.data ?? []);
   if (!(response.data ?? []).length) artifacts.append(panelEmpty("No artifacts yet"));
   for (const artifact of response.data ?? []) {
     const value = document.createElement("button"); value.type = "button"; value.className = "artifact-item";
@@ -919,16 +925,12 @@ function showLanding(hasTask = false): void {
   activityTimeline.clear();
   const landing = document.createElement("div"); landing.className = "landing";
   const mark = document.createElement("div"); mark.className = "landing-mark"; mark.append(sparkIcon());
-  const heading = document.createElement("h1"); heading.textContent = hasTask ? "What should we work on?" : projects.currentProjectId ? "Start a task" : "Bring your code. Build with Fitz.";
-  const detail = document.createElement("p"); detail.textContent = hasTask ? "Describe a change, ask a question, or attach a file. Fitz keeps the work and transcript together." : projects.currentProjectId ? "Create a task inside this project to begin a durable conversation." : "Create a project, start a task, and work with local or remote inference from one focused desktop.";
+  const heading = document.createElement("h1"); heading.textContent = hasTask ? "What should we work on?" : "Bring your code. Build with Fitz.";
+  const detail = document.createElement("p"); detail.textContent = hasTask ? "Describe a change, ask a question, or attach a file. Fitz keeps the work and transcript together." : "Create a project, start a task, and work with local or remote inference from one focused desktop.";
   landing.append(mark, heading, detail);
   if (!hasTask) {
-    const action = document.createElement("button"); action.type = "button"; action.className = "primary-button"; action.textContent = projects.currentProjectId ? "New task" : "Create project";
-    action.addEventListener("click", () => {
-      if (projects.currentProjectId) { openNewChat(); return; }
-      createProjectThenNewChat = true;
-      projectSidebar.beginCreateProject();
-    }); landing.append(action);
+    const action = document.createElement("button"); action.type = "button"; action.className = "primary-button"; action.textContent = "Create project";
+    action.addEventListener("click", () => projectSidebar.beginCreateProject()); landing.append(action);
   }
   messages.append(landing);
   updateTitles();
@@ -980,7 +982,7 @@ function appendChangeSummary(files: Array<{ path: string; action: "edited" | "cr
     const icon = document.createElement("span"); icon.className = "change-summary-icon";
     icon.textContent = file.action === "created" ? "+" : "~";
     const filePath = document.createElement("span"); filePath.className = "change-summary-path";
-    filePath.textContent = file.path;
+    filePath.textContent = projectRelativePath(file.path, projects.activeProject()?.rootPath ?? "");
     row.append(icon, filePath);
     fileList.append(row);
   }
@@ -1040,12 +1042,5 @@ function errorMessage(error: unknown): string { return error instanceof Error ? 
 function bytesToBase64(bytes: Uint8Array): string { let binary = ""; for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000)); return btoa(binary); }
 function formatBytes(value: number): string { return value < 1024 ? `${value} B` : `${(value / 1024).toFixed(1)} KB`; }
 
-function estimateTokens(value: string): number { return value ? Math.max(1, Math.ceil(value.length / 4)) : 0; }
-function estimateTranscriptContext(entries: Json[]): number {
-  const checkpoint = [...entries].reverse().find((entry) => entry.kind === "compaction" && entry.content?.manual === true && typeof entry.content?.summary === "string" && Number.isFinite(Number(entry.content?.throughSequence)));
-  const throughSequence = checkpoint ? Number(checkpoint.content.throughSequence) : -1; let total = checkpoint ? estimateTokens(`Conversation summary:\n${checkpoint.content.summary}`) : 0;
-  for (const entry of entries) if (entry.kind === "message" && typeof entry.content?.text === "string" && Number(entry.sequence) > throughSequence) total += estimateTokens(entry.content.text);
-  return total;
-}
 function formatTokenCount(value: number): string { return value >= 1000 ? `${Math.round(value / 1000)}k` : String(Math.round(value)); }
 class HttpError extends Error { constructor(message: string, readonly status: number) { super(message); } }

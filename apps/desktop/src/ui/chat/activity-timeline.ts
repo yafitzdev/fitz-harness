@@ -349,7 +349,12 @@ export class ActivityTimeline {
   #safeStringify(value: unknown): string { try { return JSON.stringify(value, null, 2) ?? String(value); } catch { return String(value); } }
   #button(label: string, className?: string): HTMLButtonElement { const button = document.createElement("button"); button.type = "button"; if (className) button.className = className; button.textContent = label; return button; }
   #timestamp(value?: string): number { if (value) { const timestamp = Date.parse(value); if (Number.isFinite(timestamp)) return timestamp; } return Date.now(); }
-  #formatElapsed(value: number): string { const seconds = Math.max(0, Math.floor(value / 1_000)); const minutes = Math.floor(seconds / 60); return minutes > 0 ? `${minutes}m ${String(seconds % 60).padStart(2, "0")}s` : `${seconds}s`; }
+  #formatElapsed(value: number): string {
+    const seconds = Math.max(0, Math.floor(value / 1_000));
+    const minutes = Math.floor(seconds / 60);
+    if (minutes >= 60) return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+    return minutes > 0 ? `${minutes}m ${String(seconds % 60).padStart(2, "0")}s` : `${seconds}s`;
+  }
   #removeLanding(): void { if (this.#options.messages.querySelector(".landing, .new-chat-landing")) this.#options.messages.replaceChildren(); }
   #scroll(): void { this.#options.messages.scrollTop = this.#options.messages.scrollHeight; }
 }

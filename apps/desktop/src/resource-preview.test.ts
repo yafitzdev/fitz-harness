@@ -10,11 +10,16 @@ describe("desktop resource previews", () => {
     expect(parseFileReference("C:\\work\\app.ts#L19")).toEqual({ path: "C:\\work\\app.ts", line: 19 });
   });
 
-  it("classifies rendered and source files", () => {
+  it("classifies rendered, source, and binary files", () => {
     expect(previewKind("README.md")).toBe("markdown");
     expect(previewKind("site.HTML")).toBe("html");
     expect(previewKind("app.ts")).toBe("code");
     expect(previewKind("notes.txt")).toBe("text");
+    expect(previewKind("photo.PNG")).toBe("image");
+    expect(previewKind("logo.svg")).toBe("image");
+    expect(previewKind("manual.pdf")).toBe("pdf");
+    expect(previewKind("song.mp3")).toBe("audio");
+    expect(previewKind("clip.mp4")).toBe("video");
   });
 
   it("reads project-relative and explicitly referenced absolute files while blocking relative traversal", async () => {
@@ -37,5 +42,52 @@ describe("desktop resource previews", () => {
     await writeFile(join(listedDirectory, "tic-tac-toe.ts"), "export const game = true;\n");
     await expect(readProjectResource(root, "tic-tac-toe.ts", [listedDirectory])).resolves.toMatchObject({ kind: "code", name: "tic-tac-toe.ts" });
     await expect(readProjectResource(root, "missing.ts", [listedDirectory])).rejects.toThrow("File not found: missing.ts");
+  });
+
+  it("previews images as base64 with their MIME type instead of failing on NUL bytes", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "fitz-preview-image-"));
+    const root = join(parent, "project");
+    await mkdir(root);
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]);
+    await writeFile(join(root, "photo.png"), png);
+    const preview = await readProjectResource(root, "photo.png");
+    expect(preview.kind).toBe("image");
+    expect(preview.mimeType).toBe("image/png");
+    expect(preview.base64).toBe(png.toString("base64"));
+    expect(preview.content).toBe("");
+    expect(preview.size).toBe(png.length);
+  });
+
+  it("previews PDFs as base64 with the PDF MIME type", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "fitz-preview-pdf-"));
+    const root = join(parent, "project");
+    await mkdir(root);
+    const pdf = Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n");
+    await writeFile(join(root, "manual.pdf"), pdf);
+    const preview = await readProjectResource(root, "manual.pdf");
+    expect(preview.kind).toBe("pdf");
+    expect(preview.mimeType).toBe("application/pdf");
+    expect(preview.base64).toBe(pdf.toString("base64"));
+  });
+
+  it("allows binary previews above the 2 MB text cap and rejects oversized binaries", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "fitz-preview-bin-"));
+    const root = join(parent, "project");
+    await mkdir(root);
+    // A 3 MB image would previously fail the shared 2 MB cap; binary previews get a 10 MB cap.
+    await writeFile(join(root, "large.png"), Buffer.alloc(3 * 1024 * 1024, 7));
+    await expect(readProjectResource(root, "large.png")).resolves.toMatchObject({ kind: "image", mimeType: "image/png" });
+    await writeFile(join(root, "huge.png"), Buffer.alloc(10 * 1024 * 1024 + 1, 7));
+    await expect(readProjectResource(root, "huge.png")).rejects.toThrow("10 MB maximum");
+  });
+
+  it("still rejects unknown binary files and oversized text files gracefully", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "fitz-preview-unknown-"));
+    const root = join(parent, "project");
+    await mkdir(root);
+    await writeFile(join(root, "blob.bin"), Buffer.from([0x00, 0x01, 0x02, 0xff]));
+    await expect(readProjectResource(root, "blob.bin")).rejects.toThrow("Binary preview is not available yet");
+    await writeFile(join(root, "big.txt"), Buffer.alloc(2 * 1024 * 1024 + 1, 65));
+    await expect(readProjectResource(root, "big.txt")).rejects.toThrow("2 MB maximum");
   });
 });

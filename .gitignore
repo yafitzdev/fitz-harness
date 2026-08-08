@@ -14,3 +14,4 @@ tmp/
 Thumbs.db
 .idea
 scripts/.overview-tests.json
+.fitz-trash/

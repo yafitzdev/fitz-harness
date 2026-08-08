@@ -112,7 +112,7 @@ export class ProjectsController {
     if (this.currentSessionIdValue) await this.selectSession(this.currentSessionIdValue, false);
     else {
       await this.options.onNoSession();
-      this.options.rememberLocation({ view: "conversation", projectId: id });
+      this.options.rememberLocation({ view: "conversation", projectId: id, newChat: true });
     }
     this.options.refreshComposerState();
   }

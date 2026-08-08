@@ -1,0 +1,11 @@
+Sample plain text file
+======================
+
+This file exists to verify that the inspector sidebar handles plain
+text files without syntax highlighting.
+
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod
+tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim
+veniam, quis nostrud exercitation ullamco laboris.
+
+Line count: should be a nice, small number.

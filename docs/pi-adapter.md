@@ -11,7 +11,7 @@ All Fitz-owned Pi code lives in `packages/agent-pi` and is exported from its ind
 
 - `PiAgentRuntime` (`pi-agent-runtime.ts`) — the `@fitz/agent-core` runtime adapter. It builds the
   SDK session (restricted tool allowlist, Fitz system instructions, extension loading, tool approval
-  gating, the `fitz.session` lookup tool), translates Pi events into the Fitz run protocol, forwards
+  gating, the `fitz_session` lookup tool), translates Pi events into the Fitz run protocol, forwards
   steering messages, and propagates cancellation and failures.
 - `PiPackageService` (`pi-packages.ts`) — the registry-backed extension manager. Fitz owns the
   extension layout: `{agentDir}/extensions/registry.json` plus one directory per enabled package.
@@ -36,7 +36,7 @@ events return through the native run protocol. Cancellation propagates to `Agent
 and the session is disposed after completion or failure.
 
 The current session's history is injected automatically by the context manager. For earlier
-conversations, the agent gets the read-only `fitz.session` tool, backed by the host's
+conversations, the agent gets the read-only `fitz_session` tool, backed by the host's
 `createSessionReader(store)` adapter (`apps/host/src/session-reader.ts`). The reader maps canonical
 transcript entries into a compact, truncation-safe text transcript; the tool formats it for the
 agent and turns store failures into a readable message instead of a crashed tool call. The tool is

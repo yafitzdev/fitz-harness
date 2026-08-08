@@ -4,7 +4,7 @@
 .scroll-to-bottom[hidden] { display: none; }
 .scroll-to-bottom:hover { background: var(--codex-gray-800); }
 .scroll-to-bottom svg { width: 22px; height: 22px; stroke-width: 1.6; }
-.composer-card { position: relative; overflow: visible; border: 0; border-radius: var(--codex-radius-3xl); background: var(--codex-gray-700); box-shadow: var(--codex-elevation-prominent); transition: box-shadow 150ms cubic-bezier(.23,1,.32,1); }
+.composer-card { position: relative; overflow: visible; border: 0; border-radius: var(--codex-radius-lg); background: var(--codex-gray-700); box-shadow: var(--codex-elevation-prominent); transition: box-shadow 150ms cubic-bezier(.23,1,.32,1); }
 .composer-card:focus-within { box-shadow: var(--codex-elevation-prominent); }
 .composer-attachments { display: flex; gap: 9px; padding: 12px 13px 0; overflow-x: auto; }
 .new-chat-context { position: absolute; z-index: 0; left: 20px; right: 20px; bottom: 100%; height: 42px; display: flex; align-items: center; gap: 5px; padding: 4px 11px; border: .5px solid var(--codex-border); border-bottom: 0; border-radius: var(--codex-radius-3xl) var(--codex-radius-3xl) 0 0; background: var(--codex-gray-800); color: var(--text); font-size: 14px; }

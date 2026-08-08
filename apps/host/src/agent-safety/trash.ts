@@ -2,7 +2,7 @@
  * Agent trash: deletes become moves into `<workspace>/.fitz-trash/<runId>/`.
  *
  * The policy engine rewrites `rm` commands into `mv` commands that land here, and the
- * `fitz.trash` tool routes through the same service, so a hard delete is impossible:
+ * `fitz_trash` tool routes through the same service, so a hard delete is impossible:
  * the worst case is "moved to trash", which the management API can restore.
  *
  * The trash dir lives inside the workspace (same filesystem → atomic renames) but is

@@ -146,6 +146,12 @@ function resourceTarget(value: string): string | undefined {
 function resourceLink(label: string, reference: string): HTMLAnchorElement {
   const link = document.createElement("a"); link.href = "#"; link.className = "resource-link"; link.textContent = label; link.dataset.resource = reference;
   link.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); window.dispatchEvent(new CustomEvent("fitz:open-resource", { detail: { reference } })); });
+  // Files register in the artifact repository as soon as they render, so the
+  // repo grows with every artifact the agent produces — no click required.
+  // Remote URLs are left out; only local artifacts belong in the repository.
+  if (!/^(?:https?|file):\/\//i.test(reference)) {
+    window.dispatchEvent(new CustomEvent("fitz:resource-appeared", { detail: { reference } }));
+  }
   return link;
 }
 

@@ -152,6 +152,22 @@ function toolTarget(input: unknown): string {
   return String(value.command ?? value.cmd ?? value.pattern ?? value.query ?? "").trim();
 }
 
+/**
+ * Project-relative form of a tool path for display: strips the project root
+ * prefix (either separator style) so summaries show `src/app.ts` instead of the
+ * whole absolute path. Paths that are already relative, live outside the root,
+ * or have no root to compare against are returned unchanged.
+ */
+export function projectRelativePath(path: string, root: string): string {
+  if (!path || !root) return path;
+  const normalize = (value: string) => value.replaceAll("\\", "/").replace(/\/+$/, "");
+  const candidate = normalize(path);
+  const normalizedRoot = normalize(root);
+  if (candidate.toLowerCase() === normalizedRoot.toLowerCase()) return path;
+  if (candidate.toLowerCase().startsWith(`${normalizedRoot.toLowerCase()}/`)) return candidate.slice(normalizedRoot.length + 1);
+  return path;
+}
+
 function toolMeta(toolName: string): ToolMeta {
   return BUILT_IN_TOOLS[toolName] ?? DEFAULT_TOOL;
 }

@@ -24,17 +24,6 @@ export interface ProjectSidebarState {
 
 export interface ProjectSidebarElements {
   tree: HTMLElement;
-  chatHoverCard: HTMLElement;
-  chatHoverTitle: HTMLElement;
-  chatHoverAge: HTMLElement;
-  chatHoverProject: HTMLElement;
-  projectHoverCard: HTMLElement;
-  projectHoverTitle: HTMLElement;
-  projectHoverTaskCount: HTMLElement;
-  projectHoverPath: HTMLButtonElement;
-  projectHoverPathLabel: HTMLElement;
-  projectHoverPin: HTMLButtonElement;
-  projectHoverEdit: HTMLButtonElement;
 }
 
 export interface ProjectSidebarOptions {
@@ -63,64 +52,47 @@ interface SidebarEdit {
   projectId: string | undefined;
 }
 
-/** Owns the project/session tree, its persistent presentation state, menus, and hover cards. */
+interface CreateProjectDialog {
+  backdrop: HTMLElement;
+  name: HTMLInputElement;
+  folderRow: HTMLElement;
+  folderButton: HTMLButtonElement;
+  folderLabel: HTMLElement;
+  create: HTMLButtonElement;
+}
+
+/** Owns the project/session tree, its persistent presentation state, menus, and the create-project dialog. */
 export class ProjectSidebarController {
   readonly #options: ProjectSidebarOptions;
   readonly #elements: ProjectSidebarElements;
   readonly #menu: ContextMenu;
   readonly #menuElement: HTMLElement;
+  readonly #createDialog: CreateProjectDialog;
   readonly #pinnedProjects = this.#storedSet("fitz-pinned-projects");
   readonly #pinnedSessions = this.#storedSet("fitz-pinned-sessions");
   readonly #expandedProjects = this.#storedSet("fitz-expanded-projects");
   #state: ProjectSidebarState = { projects: [], sessionsByProject: new Map(), currentProjectId: undefined, currentSessionId: undefined, newChat: false };
-  #hoveredProjectId: string | undefined;
-  #projectHoverHideTimer: ReturnType<typeof setTimeout> | undefined;
   #editing: SidebarEdit | undefined;
   #creatingProject: { rootPath?: string } | undefined;
   #confirmingRemoval: { projectId: string; name: string } | undefined;
 
   constructor(options: ProjectSidebarOptions) {
     this.#options = options;
-    // The hover cards and context menu live at shell level, so their lookup is
-    // global rather than scoped to the tree.
-    const elements: ProjectSidebarElements = {
-      tree: options.mount,
-      chatHoverCard: requiredElement("chat-hover-card"),
-      chatHoverTitle: requiredElement("hover-chat-title"),
-      chatHoverAge: requiredElement("hover-chat-age"),
-      chatHoverProject: requiredElement("hover-project-name"),
-      projectHoverCard: requiredElement("project-hover-card"),
-      projectHoverTitle: requiredElement("hover-project-title"),
-      projectHoverTaskCount: requiredElement("hover-project-task-count"),
-      projectHoverPath: requiredElement("hover-project-path") as HTMLButtonElement,
-      projectHoverPathLabel: requiredElement("hover-project-path-label"),
-      projectHoverPin: requiredElement("hover-project-pin") as HTMLButtonElement,
-      projectHoverEdit: requiredElement("hover-project-edit") as HTMLButtonElement,
-    };
+    // The context menu lives at shell level, so its lookup is global rather
+    // than scoped to the tree.
+    const elements: ProjectSidebarElements = { tree: options.mount };
     this.#elements = elements;
     this.#menuElement = requiredElement("sidebar-context-menu");
     this.#menu = new ContextMenu(this.#menuElement, options.closePopovers);
     this.#menuElement.addEventListener("click", (event) => event.stopPropagation());
-    elements.projectHoverCard.addEventListener("mouseenter", () => this.cancelProjectHoverHide());
-    elements.projectHoverCard.addEventListener("mouseleave", () => this.scheduleProjectHoverHide());
-    elements.projectHoverCard.addEventListener("click", (event) => event.stopPropagation());
-    elements.projectHoverPin.addEventListener("click", () => {
-      if (this.#hoveredProjectId) this.#toggleStored(this.#pinnedProjects, this.#hoveredProjectId, "fitz-pinned-projects");
-    });
-    elements.projectHoverPath.addEventListener("click", () => {
-      const path = this.#project(this.#hoveredProjectId)?.rootPath;
-      if (path) options.openProjectPath(path);
-    });
-    elements.projectHoverEdit.addEventListener("click", () => {
-      if (this.#hoveredProjectId) this.#beginEdit("project", this.#hoveredProjectId);
-    });
+    this.#createDialog = this.#buildCreateDialog();
+    document.body.append(this.#createDialog.backdrop);
   }
 
   render(state: ProjectSidebarState): void {
     this.#state = state;
     const tree = this.#elements.tree;
     tree.replaceChildren();
-    if (this.#creatingProject) tree.append(this.#createProjectForm());
     if (state.projects.length === 0) {
       tree.append(this.#empty("No projects yet"));
       return;
@@ -133,15 +105,15 @@ export class ProjectSidebarController {
     }
   }
 
-  /** Starts the inline create-project form at the top of the tree (toggles it off when already open). */
+  /** Opens the centered create-project dialog (closes it again when already open). */
   beginCreateProject(): void {
-    if (this.#creatingProject) { this.#creatingProject = undefined; this.render(this.#state); return; }
+    if (this.#creatingProject) { this.#cancelCreate(); return; }
     this.#editing = undefined;
     this.#confirmingRemoval = undefined;
     this.#creatingProject = {};
     this.#options.closePopovers();
+    this.#openCreateDialog();
     this.render(this.#state);
-    this.#elements.tree.querySelector<HTMLInputElement>(".tree-create-name")?.focus();
   }
 
   /** Begins inline rename of the currently selected chat (used by the header menu and shortcut). */
@@ -168,30 +140,10 @@ export class ProjectSidebarController {
     this.#saveSet("fitz-expanded-projects", this.#expandedProjects);
   }
 
-  hideChatHover(): void { this.#elements.chatHoverCard.hidden = true; }
-
-  hideProjectHover(): void {
-    this.cancelProjectHoverHide();
-    this.#elements.projectHoverCard.hidden = true;
-    this.#hoveredProjectId = undefined;
-  }
-
-  hideOverlays(): void { this.hideProjectHover(); this.hideChatHover(); }
-
   hideMenu(): void { this.#menuElement.hidden = true; }
 
   resetMenuToggles(): void {
     for (const toggle of this.#elements.tree.querySelectorAll(".tree-menu-toggle")) toggle.setAttribute("aria-expanded", "false");
-  }
-
-  cancelProjectHoverHide(): void {
-    if (this.#projectHoverHideTimer) clearTimeout(this.#projectHoverHideTimer);
-    this.#projectHoverHideTimer = undefined;
-  }
-
-  scheduleProjectHoverHide(): void {
-    this.cancelProjectHoverHide();
-    this.#projectHoverHideTimer = setTimeout(() => this.hideProjectHover(), 120);
   }
 
   #projectGroup(project: ProjectSidebarProject): HTMLElement {
@@ -210,10 +162,6 @@ export class ProjectSidebarController {
     const projectButton = projectItem.querySelector<HTMLButtonElement>(".project-row")!;
     projectButton.classList.toggle("active", project.id === this.#state.currentProjectId && !this.#state.currentSessionId && !this.#state.newChat);
     projectButton.setAttribute("aria-expanded", String(expanded));
-    projectItem.addEventListener("mouseenter", () => this.#showProjectHover(project, projectItem));
-    projectItem.addEventListener("mouseleave", () => this.scheduleProjectHoverHide());
-    projectButton.addEventListener("focus", () => this.#showProjectHover(project, projectItem));
-    projectButton.addEventListener("blur", () => this.scheduleProjectHoverHide());
     group.append(projectItem);
 
     const children = document.createElement("div");
@@ -242,10 +190,6 @@ export class ProjectSidebarController {
       pin.setAttribute("aria-label", "Pinned");
       button.append(pin);
     }
-    item.addEventListener("mouseenter", () => this.#showChatHover(session, project, item));
-    item.addEventListener("mouseleave", () => this.hideChatHover());
-    button.addEventListener("focus", () => this.#showChatHover(session, project, item));
-    button.addEventListener("blur", () => this.hideChatHover());
     return item;
   }
 
@@ -321,49 +265,11 @@ export class ProjectSidebarController {
     menu.add({ label: "Continue in new chat", action: () => this.#options.continueSession(session, projectId), icon: '<path d="M4 5h7a4 4 0 0 1 4 4v6"></path><path d="m12 12 3 3 3-3"></path>' });
   }
 
-  #showChatHover(session: ProjectSidebarSession, project: ProjectSidebarProject, anchor: HTMLElement): void {
-    this.hideProjectHover();
-    const updated = new Date(session.updatedAt ?? session.createdAt ?? Date.now()).getTime();
-    const age = Math.max(0, Date.now() - updated);
-    const days = Math.floor(age / 86_400_000);
-    const hours = Math.floor(age / 3_600_000);
-    const elements = this.#elements;
-    elements.chatHoverTitle.textContent = session.title;
-    elements.chatHoverAge.textContent = days ? `${days}d` : hours ? `${hours}h` : "now";
-    elements.chatHoverProject.textContent = project.name;
-    const bounds = anchor.getBoundingClientRect();
-    elements.chatHoverCard.style.left = `${Math.min(window.innerWidth - 318, bounds.right + 10)}px`;
-    elements.chatHoverCard.style.top = `${Math.max(52, Math.min(window.innerHeight - 145, bounds.top - 4))}px`;
-    elements.chatHoverCard.hidden = false;
-  }
-
-  #showProjectHover(project: ProjectSidebarProject, anchor: HTMLElement): void {
-    this.cancelProjectHoverHide();
-    this.hideChatHover();
-    this.#hoveredProjectId = project.id;
-    const elements = this.#elements;
-    const taskCount = (this.#state.sessionsByProject.get(project.id) ?? []).length;
-    elements.projectHoverTitle.textContent = project.name;
-    elements.projectHoverTaskCount.textContent = `${taskCount} ${taskCount === 1 ? "task" : "tasks"}`;
-    elements.projectHoverPathLabel.textContent = project.rootPath || "No source folder";
-    elements.projectHoverPath.disabled = !project.rootPath;
-    const pinned = this.#pinnedProjects.has(project.id);
-    elements.projectHoverPin.setAttribute("aria-pressed", String(pinned));
-    elements.projectHoverPin.setAttribute("aria-label", pinned ? "Unpin project" : "Pin project");
-    elements.projectHoverPin.title = pinned ? "Unpin project" : "Pin project";
-    const bounds = anchor.getBoundingClientRect();
-    elements.projectHoverCard.hidden = false;
-    const cardBounds = elements.projectHoverCard.getBoundingClientRect();
-    elements.projectHoverCard.style.left = `${Math.max(8, Math.min(window.innerWidth - cardBounds.width - 8, bounds.right + 10))}px`;
-    elements.projectHoverCard.style.top = `${Math.max(52, Math.min(window.innerHeight - cardBounds.height - 8, bounds.top))}px`;
-  }
-
   #beginEdit(kind: "session" | "project", id: string, projectId?: string): void {
-    this.#creatingProject = undefined;
+    this.#cancelCreate();
     this.#confirmingRemoval = undefined;
     this.#editing = { kind, id, projectId };
     this.#options.closePopovers();
-    this.hideProjectHover();
     this.render(this.#state);
     const input = this.#elements.tree.querySelector<HTMLInputElement>(".tree-rename-input");
     input?.focus();
@@ -374,7 +280,7 @@ export class ProjectSidebarController {
     const project = this.#project(projectId);
     if (!project) return;
     this.#editing = undefined;
-    this.#creatingProject = undefined;
+    this.#cancelCreate();
     this.#confirmingRemoval = { projectId, name: project.name };
     this.#options.closePopovers();
     this.render(this.#state);
@@ -384,8 +290,8 @@ export class ProjectSidebarController {
   #cancelTransient(): void {
     if (!this.#editing && !this.#creatingProject && !this.#confirmingRemoval) return;
     this.#editing = undefined;
-    this.#creatingProject = undefined;
     this.#confirmingRemoval = undefined;
+    this.#cancelCreate();
     this.render(this.#state);
   }
 
@@ -415,11 +321,11 @@ export class ProjectSidebarController {
   #commitCreate(name: string): void {
     const creating = this.#creatingProject;
     if (!creating) return;
-    if (!name) { this.#cancelTransient(); return; }
-    const action = this.#options.createProject(name, creating.rootPath);
-    void Promise.resolve(action).then(
-      () => { if (this.#creatingProject === creating) { this.#creatingProject = undefined; this.render(this.#state); } },
-      () => { if (this.#creatingProject === creating) { this.#creatingProject = undefined; this.render(this.#state); } },
+    if (!name) { this.#createDialog.name.focus(); return; }
+    this.#cancelCreate();
+    void Promise.resolve(this.#options.createProject(name, creating.rootPath)).then(
+      () => undefined,
+      () => undefined,
     );
   }
 
@@ -459,40 +365,74 @@ export class ProjectSidebarController {
     return input;
   }
 
-  #createProjectForm(): HTMLElement {
-    const form = document.createElement("div"); form.className = "tree-create-form";
+  #buildCreateDialog(): CreateProjectDialog {
+    const backdrop = document.createElement("div"); backdrop.className = "create-project-backdrop"; backdrop.hidden = true;
+    const dialog = document.createElement("div"); dialog.className = "create-project-dialog";
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    dialog.setAttribute("aria-labelledby", "create-project-title");
+
+    const title = document.createElement("h2"); title.id = "create-project-title"; title.textContent = "Create project";
+    const hint = document.createElement("p"); hint.className = "create-project-hint"; hint.textContent = "Name the project and choose its source folder.";
+
+    const nameLabel = document.createElement("label"); nameLabel.className = "create-project-field"; nameLabel.textContent = "Project name";
     const name = document.createElement("input");
     name.type = "text";
-    name.className = "tree-create-name";
-    name.placeholder = "Project name";
+    name.className = "create-project-name";
+    name.placeholder = "e.g. my-app";
     name.maxLength = 80;
     name.spellcheck = false;
     name.setAttribute("aria-label", "Project name");
-    const folder = document.createElement("button"); folder.type = "button"; folder.className = "tree-create-folder";
-    const folderLabel = document.createElement("span"); folderLabel.textContent = "Add folder";
-    folder.append(folderLabel);
-    folder.addEventListener("click", async () => {
+    nameLabel.append(name);
+
+    const folderRow = document.createElement("div"); folderRow.className = "create-project-folder";
+    const folderLabel = document.createElement("span"); folderLabel.className = "create-project-folder-label"; folderLabel.textContent = "No folder selected";
+    const folderButton = document.createElement("button"); folderButton.type = "button"; folderButton.className = "create-project-choose"; folderButton.textContent = "Choose folder…";
+    folderButton.addEventListener("click", async () => {
       const path = await this.#options.chooseFolder();
       if (!path || !this.#creatingProject) return;
       this.#creatingProject.rootPath = path;
       folderLabel.textContent = path;
-      folder.classList.add("has-folder");
-      folder.title = path;
+      folderLabel.title = path;
+      folderRow.classList.add("has-folder");
       if (!name.value.trim()) name.value = path.split(/[\\/]/).filter(Boolean).at(-1) ?? "Project";
     });
-    const actions = document.createElement("div"); actions.className = "tree-form-actions";
+    folderRow.append(folderLabel, folderButton);
+
+    const actions = document.createElement("div"); actions.className = "tree-form-actions create-project-actions";
     const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "tree-form-cancel"; cancel.textContent = "Cancel";
     const create = document.createElement("button"); create.type = "button"; create.className = "tree-form-submit"; create.textContent = "Create";
-    cancel.addEventListener("click", () => this.#cancelTransient());
+    cancel.addEventListener("click", () => this.#cancelCreate());
     create.addEventListener("click", () => this.#commitCreate(name.value.trim()));
-    name.addEventListener("keydown", (event) => {
-      event.stopPropagation();
-      if (event.key === "Enter") { event.preventDefault(); this.#commitCreate(name.value.trim()); }
-      else if (event.key === "Escape") { event.preventDefault(); this.#cancelTransient(); }
-    });
     actions.append(cancel, create);
-    form.append(name, folder, actions);
-    return form;
+
+    dialog.append(title, hint, nameLabel, folderRow, actions);
+    dialog.addEventListener("click", (event) => event.stopPropagation());
+    dialog.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      if (event.key === "Escape") { event.preventDefault(); this.#cancelCreate(); }
+      else if (event.key === "Enter" && !(event.target instanceof HTMLButtonElement)) { event.preventDefault(); this.#commitCreate(name.value.trim()); }
+    });
+    backdrop.addEventListener("click", (event) => { if (event.target === backdrop) this.#cancelCreate(); });
+    backdrop.append(dialog);
+
+    return { backdrop, name, folderRow, folderButton, folderLabel, create };
+  }
+
+  #openCreateDialog(): void {
+    const dialog = this.#createDialog;
+    dialog.name.value = "";
+    dialog.folderLabel.textContent = "No folder selected";
+    dialog.folderLabel.title = "";
+    dialog.folderRow.classList.remove("has-folder");
+    dialog.backdrop.hidden = false;
+    dialog.name.focus();
+  }
+
+  #cancelCreate(): void {
+    if (!this.#creatingProject) return;
+    this.#creatingProject = undefined;
+    this.#createDialog.backdrop.hidden = true;
   }
 
   #confirmRemoveRow(project: ProjectSidebarProject): HTMLElement {

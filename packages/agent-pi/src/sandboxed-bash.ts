@@ -95,7 +95,7 @@ export function createSandboxedBashTool(executor: SandboxedBashExecutor): ToolDe
     promptSnippet: "Execute bash commands (ls, grep, find, etc.)",
     promptGuidelines: [
       "Prefer relative paths and commands that operate inside the project workspace.",
-      "Everything outside the workspace, the Fitz runtime dirs, and the temp dirs is read-only inside the sandbox: do not attempt to delete or modify files there, and prefer fitz.trash for anything inside the workspace the user might want back.",
+      "Everything outside the workspace, the Fitz runtime dirs, and the temp dirs is read-only inside the sandbox: do not attempt to delete or modify files there, and prefer fitz_trash for anything inside the workspace the user might want back.",
       "Do not attempt to bypass the sandbox or the safety policy.",
     ],
     parameters,

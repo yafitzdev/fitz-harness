@@ -1,15 +1,32 @@
 import { readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, relative, resolve } from "node:path";
 
-const MAX_PREVIEW_BYTES = 2 * 1024 * 1024;
+const MAX_TEXT_PREVIEW_BYTES = 2 * 1024 * 1024;
+const MAX_BINARY_PREVIEW_BYTES = 10 * 1024 * 1024;
 const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown", ".mdx"]);
 const HTML_EXTENSIONS = new Set([".html", ".htm"]);
 const CODE_EXTENSIONS = new Set([
   ".c", ".cc", ".cpp", ".cs", ".css", ".go", ".h", ".hpp", ".java", ".js", ".jsx", ".json", ".mjs", ".py", ".rb", ".rs", ".sh", ".sql", ".toml", ".ts", ".tsx", ".xml", ".yaml", ".yml",
 ]);
+const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".bmp", ".avif"]);
+const PDF_EXTENSIONS = new Set([".pdf"]);
+const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".ogg", ".oga", ".m4a", ".aac", ".flac", ".opus"]);
+const VIDEO_EXTENSIONS = new Set([".mp4", ".webm", ".mov", ".m4v", ".mkv", ".ogv"]);
 
-export type PreviewKind = "markdown" | "html" | "code" | "text";
-export interface ResourcePreview { kind: PreviewKind; name: string; path: string; content: string; size: number; line?: number }
+export type PreviewKind = "markdown" | "html" | "code" | "text" | "image" | "pdf" | "audio" | "video";
+export interface ResourcePreview {
+  kind: PreviewKind;
+  name: string;
+  path: string;
+  /** UTF-8 text for text-like kinds; empty for binary kinds (see `base64`). */
+  content: string;
+  size: number;
+  line?: number;
+  /** MIME type for binary previews (image/pdf/audio/video). */
+  mimeType?: string;
+  /** Base64 payload for binary previews. */
+  base64?: string;
+}
 
 export async function readProjectResource(projectRoot: string, reference: string, searchRoots: string[] = []): Promise<ResourcePreview> {
   if (!isAbsolute(projectRoot)) throw new Error("A valid absolute project path is required");
@@ -22,11 +39,18 @@ export async function readProjectResource(projectRoot: string, reference: string
     : await resolveRelativeReference(root, parsed.path, searchRoots);
   const metadata = await stat(filePath);
   if (!metadata.isFile()) throw new Error("Only regular files can be previewed");
-  if (metadata.size > MAX_PREVIEW_BYTES) throw new Error("This file is too large to preview (2 MB maximum)");
+  const kind = previewKind(filePath);
+  const binaryKind = kind === "image" || kind === "pdf" || kind === "audio" || kind === "video";
+  if (binaryKind) {
+    if (metadata.size > MAX_BINARY_PREVIEW_BYTES) throw new Error("This file is too large to preview (10 MB maximum)");
+    const bytes = await readFile(filePath);
+    return { kind, name: basename(filePath), path: filePath, content: "", size: metadata.size, mimeType: mimeTypeFor(filePath), base64: bytes.toString("base64") };
+  }
+  if (metadata.size > MAX_TEXT_PREVIEW_BYTES) throw new Error("This file is too large to preview (2 MB maximum)");
   const bytes = await readFile(filePath);
   if (bytes.includes(0)) throw new Error("Binary preview is not available yet");
   const content = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-  return { kind: previewKind(filePath), name: basename(filePath), path: filePath, content, size: metadata.size, ...(parsed.line ? { line: parsed.line } : {}) };
+  return { kind, name: basename(filePath), path: filePath, content, size: metadata.size, ...(parsed.line ? { line: parsed.line } : {}) };
 }
 
 async function resolveRelativeReference(projectRoot: string, reference: string, searchRoots: string[]): Promise<string> {
@@ -70,8 +94,43 @@ export function previewKind(path: string): PreviewKind {
   const extension = extname(path).toLowerCase();
   if (MARKDOWN_EXTENSIONS.has(extension)) return "markdown";
   if (HTML_EXTENSIONS.has(extension)) return "html";
+  if (IMAGE_EXTENSIONS.has(extension)) return "image";
+  if (PDF_EXTENSIONS.has(extension)) return "pdf";
+  if (AUDIO_EXTENSIONS.has(extension)) return "audio";
+  if (VIDEO_EXTENSIONS.has(extension)) return "video";
   if (CODE_EXTENSIONS.has(extension)) return "code";
   return "text";
+}
+
+const MIME_TYPES: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".bmp": "image/bmp",
+  ".avif": "image/avif",
+  ".pdf": "application/pdf",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".ogg": "audio/ogg",
+  ".oga": "audio/ogg",
+  ".m4a": "audio/mp4",
+  ".aac": "audio/aac",
+  ".flac": "audio/flac",
+  ".opus": "audio/ogg",
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+  ".mov": "video/quicktime",
+  ".m4v": "video/mp4",
+  ".mkv": "video/x-matroska",
+  ".ogv": "video/ogg",
+};
+
+function mimeTypeFor(path: string): string {
+  return MIME_TYPES[extname(path).toLowerCase()] ?? "application/octet-stream";
 }
 
 function decodePath(value: string): string {

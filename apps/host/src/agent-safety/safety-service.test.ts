@@ -87,11 +87,11 @@ describe("AgentSafetyService", () => {
     expect(store.listToolActions("run-1").some((action) => action.effect === "rewrite")).toBe(true);
   });
 
-  it("registers the fitz.trash tool and the sandboxed bash tool for the run", async () => {
+  it("registers the fitz_trash tool and the sandboxed bash tool for the run", async () => {
     const { workspace, safety } = await makeService();
     await writeFile(join(workspace, "notes.md"), "keep");
     const tools = safety.createCustomTools()({ cwd: workspace, runId: "run-1" });
-    expect(tools.map((tool) => tool.name)).toEqual(["fitz.trash", "bash"]);
+    expect(tools.map((tool) => tool.name)).toEqual(["fitz_trash", "bash"]);
     const trashTool = tools[0]!;
     const result = await trashTool.execute("call-1", { paths: [join(workspace, "notes.md")] });
     expect(result.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("Moved 1 path") });

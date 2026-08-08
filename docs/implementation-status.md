@@ -32,7 +32,7 @@
   the host wires it with runtime paths, the approval gate, and the session reader and contains no Pi
   logic of its own.
 - Cross-session conversation lookup for the agent: the host's `createSessionReader` serves canonical
-  transcripts from the SQLite store to the read-only `fitz.session` tool, registered only when a
+  transcripts from the SQLite store to the read-only `fitz_session` tool, registered only when a
   reader is supplied, with truncation-safe formatting and reader-failure handling.
 - Unified dev data root: `FITZ_DATA_ROOT` derives database, pi packages, logs, and cache from one
   root (repo-contained `data/` in dev); the legacy `data/fitz-ninfer.db` store was migrated into
@@ -56,6 +56,18 @@
 - Owner-scoped artifact metadata and content storage with SHA-256 integrity metadata and size bounds,
   strict MIME classification, defensive content headers, and a desktop artifact panel with inert text,
   allowlisted media, sandboxed PDF preview, upload, and binary fallback.
+- Desktop Inspector binary previews: chat file links and agent tool rows now open images, PDFs, audio,
+  and video in place — the main process resolves known binary extensions to base64 payloads with their
+  MIME type (10 MB cap) instead of rejecting NUL bytes, and the Inspector renders images inline, PDFs in
+  a blob-URL frame for Chromium's viewer (intentionally unsandboxed because the sandbox attribute
+  disables the PDF viewer plugin and blanks the preview), and audio/video with inline controls.
+- Tabbed Inspector with a persistent artifact repository as the defacto base: the first tab is a fixed,
+  non-closable Artifacts repository that grows with every file the agent produces (registered the moment
+  a file appears in the conversation, no click needed — streaming partials are superseded by the complete
+  path, and chat references are replaced by their resolved absolute path once inspected) plus the current
+  session's uploads, and every file, upload, URL, and pasted image/PDF opens as its own closable tab
+  (middle-click closes a tab) with per-tab preview state and headings restored on switch. Repository rows
+  and the Inspector's location line always show project-relative paths.
 - Windows NSIS desktop packaging, packaged-main smoke mode, GitHub release update checks/downloads,
   portable host zip with bundled Node runtime, optional user-logon scheduled task scripts, and a
   Windows CI packaging/smoke workflow.

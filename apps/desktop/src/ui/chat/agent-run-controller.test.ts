@@ -39,6 +39,7 @@ function setup(api: AgentRunControllerOptions["api"]) {
     appendAssistantDelta: vi.fn(),
     appendSystem: vi.fn(),
     addTokenEstimate: vi.fn(),
+    recalibrateEstimate: vi.fn(),
     setStatus: vi.fn(),
     setEngineState: vi.fn(),
     refreshControls: vi.fn(),
@@ -228,5 +229,54 @@ describe("AgentRunController", () => {
     await controller.start(request());
 
     expect(activity.timeline.completeReasoning).toHaveBeenCalledWith(activity.reasoning);
+  });
+
+  it("counts reasoning, tool input, and tool results toward the context estimate", async () => {
+    const api = vi.fn(async (path: string) => path === "/api/v1/agent/runs"
+      ? { data: { id: "run-tokens" } }
+      : { events: [
+        { sequence: 1, type: "run.started", data: {} },
+        { sequence: 2, type: "reasoning.delta", data: { text: "plan" } },
+        { sequence: 3, type: "tool.started", data: { toolName: "read", toolCallId: "tool-1", input: { path: "a.txt" } } },
+        { sequence: 4, type: "tool.completed", data: { toolCallId: "tool-1", result: "file contents here", isError: false } },
+        { sequence: 5, type: "assistant.delta", data: { text: "done" } },
+        { sequence: 6, type: "run.completed", data: {} },
+      ] });
+    const { controller, calls } = setup(api);
+
+    await controller.start(request());
+
+    expect(calls.addTokenEstimate).toHaveBeenCalledWith("plan");
+    expect(calls.addTokenEstimate).toHaveBeenCalledWith('{"path":"a.txt"}');
+    expect(calls.addTokenEstimate).toHaveBeenCalledWith("file contents here");
+    expect(calls.addTokenEstimate).toHaveBeenCalledWith("done");
+  });
+
+  it("recalibrates the context estimate when the run starts compacted", async () => {
+    const api = vi.fn(async (path: string) => path === "/api/v1/agent/runs"
+      ? { data: { id: "run-compacted" }, context: { compacted: true, estimatedContextTokens: 512 } }
+      : { events: [
+        { sequence: 1, type: "run.started", data: {} },
+        { sequence: 2, type: "run.completed", data: {} },
+      ] });
+    const { controller, calls } = setup(api);
+
+    await controller.start(request());
+
+    expect(calls.recalibrateEstimate).toHaveBeenCalledWith(512);
+  });
+
+  it("does not recalibrate when a run starts without a compaction", async () => {
+    const api = vi.fn(async (path: string) => path === "/api/v1/agent/runs"
+      ? { data: { id: "run-plain" }, context: { compacted: false } }
+      : { events: [
+        { sequence: 1, type: "run.started", data: {} },
+        { sequence: 2, type: "run.completed", data: {} },
+      ] });
+    const { controller, calls } = setup(api);
+
+    await controller.start(request());
+
+    expect(calls.recalibrateEstimate).not.toHaveBeenCalled();
   });
 });

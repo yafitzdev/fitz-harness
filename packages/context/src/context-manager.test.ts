@@ -5,7 +5,7 @@ import { ContextManager } from "./context-manager.js";
 describe("ContextManager", () => {
   it("passes through within budget and compacts over-budget history", async () => {
     const store = SqliteStore.memory(); const manager = new ContextManager(store, undefined, { reserveOutputTokens: 64, compactionThreshold: 0.8, recentTokenFraction: 0.5 });
-    const small = await manager.prepare({ model: "fast", messages: [{ role: "user", content: "hello" }] }, 1000); expect(small.compacted).toBe(false);
+    const small = await manager.prepare({ model: "fast", messages: [{ role: "user", content: "hello" }] }, 1000); expect(small.compacted).toBe(false); expect(small.estimatedContextTokens).toBe(small.estimatedInputTokens);
     const large = await manager.prepare({ model: "fast", messages: Array.from({ length: 10 }, (_, index) => ({ role: index % 2 ? "assistant" as const : "user" as const, content: `${index}:${"x".repeat(300)}` })) }, 400); expect(large.compacted).toBe(true); expect(large.request.messages[0]?.content).toContain("Conversation summary"); expect(manager.estimate(large.request.messages)).toBeLessThanOrEqual(large.budgetTokens + 16); store.close();
   });
 
@@ -37,5 +37,40 @@ describe("ContextManager", () => {
     const store = SqliteStore.memory(); const now = new Date(0).toISOString(); store.createProject({ id: "p", name: "P", createdAt: now, updatedAt: now }); store.createSession({ id: "s", projectId: "p", title: "S", status: "active", createdAt: now, updatedAt: now });
     for (let index = 0; index < 1_001; index += 1) store.appendTranscriptEntry({ id: `e-${index}`, sessionId: "s", kind: "message", role: "user", content: { text: String(index) }, createdAt: now });
     const result = await new ContextManager(store).compactSession("s", 10_000); expect(result.originalMessageCount).toBe(1_001); expect(result.entry.content.throughSequence).toBe(1_001); store.close();
+  });
+
+  it("auto-compacts when tool activity pushes the session estimate over budget", async () => {
+    const store = SqliteStore.memory(); const now = new Date(0).toISOString(); store.createProject({ id: "p", name: "P", createdAt: now, updatedAt: now }); store.createSession({ id: "s", projectId: "p", title: "S", status: "active", createdAt: now, updatedAt: now });
+    store.appendTranscriptEntry({ id: "u", sessionId: "s", kind: "message", role: "user", content: { text: "inspect the project" }, createdAt: now });
+    for (let index = 0; index < 30; index += 1) {
+      store.appendTranscriptEntry({ id: `tc-${index}`, sessionId: "s", kind: "tool-call", role: "tool", content: { toolName: "bash", input: { command: `ls ${index}` } }, createdAt: now });
+      store.appendTranscriptEntry({ id: `tr-${index}`, sessionId: "s", kind: "tool-result", role: "tool", content: { toolName: "bash", result: "x".repeat(3_000) }, createdAt: now });
+    }
+    const manager = new ContextManager(store, undefined, { reserveOutputTokens: 64, compactionThreshold: 0.8, recentTokenFraction: 0.5 });
+    const prepared = await manager.prepare({ model: "fast", sessionId: "s", messages: [{ role: "user", content: "what now" }] }, 2_000);
+    expect(prepared.compacted).toBe(true);
+    expect(prepared.estimatedContextTokens).toBeLessThan(prepared.estimatedInputTokens);
+    const checkpoint = store.transcriptAfter("s", 0).filter((entry) => entry.kind === "compaction").at(-1);
+    expect(checkpoint?.content).toEqual(expect.objectContaining({ manual: false }));
+    // 61 transcript entries: 1 user message + 30 tool-call/tool-result pairs, all checkpointed.
+    expect(Number(checkpoint?.content.throughSequence)).toBe(61);
+    // The compacted request re-sends summary + recent messages, never the raw tool dumps.
+    expect(prepared.request.messages[0]?.content).toContain("Conversation summary");
+    expect(prepared.request.messages.map((message) => message.content)).not.toContain("x".repeat(3_000));
+    store.close();
+  });
+
+  it("keeps automatic compaction durable so the next run does not re-compact", async () => {
+    const store = SqliteStore.memory(); const now = new Date(0).toISOString(); store.createProject({ id: "p", name: "P", createdAt: now, updatedAt: now }); store.createSession({ id: "s", projectId: "p", title: "S", status: "active", createdAt: now, updatedAt: now });
+    store.appendTranscriptEntry({ id: "u", sessionId: "s", kind: "message", role: "user", content: { text: "old turn" }, createdAt: now });
+    store.appendTranscriptEntry({ id: "tc", sessionId: "s", kind: "tool-call", role: "tool", content: { toolName: "bash", input: { command: "ls" } }, createdAt: now });
+    store.appendTranscriptEntry({ id: "tr", sessionId: "s", kind: "tool-result", role: "tool", content: { toolName: "bash", result: "y".repeat(5_000) }, createdAt: now });
+    const manager = new ContextManager(store, undefined, { reserveOutputTokens: 64, compactionThreshold: 0.8, recentTokenFraction: 0.5 });
+    const first = await manager.prepare({ model: "fast", sessionId: "s", messages: [{ role: "user", content: "go" }] }, 1_000); expect(first.compacted).toBe(true);
+    const second = await manager.prepare({ model: "fast", sessionId: "s", messages: [{ role: "user", content: "continue" }] }, 1_000); expect(second.compacted).toBe(false);
+    // The rebuilt canonical context is summary + post-checkpoint messages only.
+    expect(second.request.messages.map((message) => message.content)).toEqual([expect.stringContaining("Conversation summary"), "continue"]);
+    expect(store.transcriptAfter("s", 0).filter((entry) => entry.kind === "compaction")).toHaveLength(1);
+    store.close();
   });
 });

@@ -1,10 +1,12 @@
 import { setMarkdown } from "../../markdown.js";
 import type { ResourcePreview } from "../../preload.js";
 import { highlightSource } from "../../syntax-highlighting.js";
+import { projectRelativePath } from "../chat/tool-activity.js";
 import { svgIcon, textBlock } from "../primitives/dom.js";
 
 type Json = Record<string, any>;
 type InspectedResource = { kind: "file"; path: string } | { kind: "url"; url: string };
+type Heading = { title: string; location: string; kind: "file" | "url" | ResourcePreview["kind"] };
 
 export interface ResourceInspectorOptions {
   preview: HTMLElement;
@@ -17,6 +19,12 @@ export interface ResourceInspectorOptions {
   getProjectRoot: () => string;
   getSearchRoots: () => string[];
   showToast: (message: string) => void;
+  /**
+   * Fires when a local file preview resolves, so the repository can grow.
+   * The third argument is the chat reference that opened the file (when one
+   * was used), so a reference registered on appearance can be superseded.
+   */
+  onFileInspected?: (path: string, name: string, reference?: string) => void;
 }
 
 /** Owns local/remote resource resolution and every Inspector rendering mode. */
@@ -27,6 +35,13 @@ export class ResourceInspector {
   #sourceMode = false;
   #version = 0;
   #activeObjectUrl: string | undefined;
+  /** The chat reference currently being previewed (for repository superseding). */
+  #reference: string | undefined;
+  /** Whether this inspector is the visible tab; only it may write the shared header. */
+  #active = true;
+  #heading: Heading | undefined;
+  #openButtonHidden = true;
+  #renderToggleHidden = true;
 
   constructor(options: ResourceInspectorOptions) {
     this.#options = options;
@@ -37,13 +52,23 @@ export class ResourceInspector {
   empty(message: string): HTMLElement { return textBlock("inspector-empty", message); }
   cancelPending(): void { this.#version += 1; this.#revokeObjectUrl(); }
 
+  /**
+   * Marks this inspector as the visible tab. Activating one restores the
+   * shared header (title, location, icon, and toggles) from this inspector's
+   * state, since every tab shares the same header DOM.
+   */
+  setActive(active: boolean): void {
+    this.#active = active;
+    if (active) this.#restoreHeader();
+  }
+
   /** Previews a locally pasted image (data URL) in the Inspector. */
   previewImage(dataUrl: string, mimeType: string, name: string): void {
     this.#revokeObjectUrl();
     this.#resource = undefined;
     this.#preview = undefined;
-    this.#options.renderToggle.hidden = true;
-    this.#options.openButton.hidden = true;
+    this.#setRenderToggle(true);
+    this.#setOpenButton(true);
     this.#setHeading(name, `${mimeType} · ${this.#formatBytes(this.#dataUrlSize(dataUrl))} · Pasted image`, "file");
     this.#options.openPanel();
     this.#options.preview.replaceChildren();
@@ -58,33 +83,34 @@ export class ResourceInspector {
   previewPdf(dataUrl: string, mimeType: string, name: string): void {
     this.#resource = undefined;
     this.#preview = undefined;
-    this.#options.renderToggle.hidden = true;
-    this.#options.openButton.hidden = true;
+    this.#setRenderToggle(true);
+    this.#setOpenButton(true);
     this.#setHeading(name, `${mimeType} · ${this.#formatBytes(this.#dataUrlSize(dataUrl))} · Pasted PDF`, "file");
     this.#options.openPanel();
     this.#options.preview.replaceChildren();
     const frame = document.createElement("iframe");
     frame.className = "inspector-frame";
     frame.title = name;
-    // The PDF viewer will not initialize in a sandboxed frame without
-    // allow-same-origin; the framed content is an inert blob of the user's own
-    // file, so same-origin here carries no script execution risk. Chromium's
-    // viewer also renders data: URL PDFs unreliably, so the content is served
-    // as a same-process blob URL instead.
-    frame.setAttribute("sandbox", "allow-same-origin");
+    // Chromium's PDF viewer is a plugin, and the sandbox attribute disables
+    // plugins in the frame unconditionally (the "sandboxed plugins browsing
+    // context flag" has no opt-in token), which is why PDFs render blank in
+    // sandboxed frames even with allow-same-origin. The framed content is an
+    // inert blob of the user's own file (never HTML), so we intentionally
+    // leave this frame unsandboxed; the PDF plugin itself still runs in
+    // Chromium's separate sandboxed process. Chromium's viewer also renders
+    // data: URL PDFs unreliably, so the content is served as a same-process
+    // blob URL instead.
     frame.src = this.#objectUrl(this.#base64FromDataUrl(dataUrl), mimeType);
     this.#options.preview.append(frame);
   }
 
-  async previewArtifact(artifact: Json, selected: HTMLButtonElement, artifactList: HTMLElement): Promise<void> {
+  async previewArtifact(artifact: Json): Promise<void> {
     this.#revokeObjectUrl();
-    for (const item of artifactList.querySelectorAll(".artifact-item")) item.classList.remove("active");
-    selected.classList.add("active");
     this.#setHeading(String(artifact.name ?? "Artifact"), `${this.#formatBytes(Number(artifact.byteSize ?? 0))} · Attachment`, "file");
     this.#resource = undefined;
     this.#preview = undefined;
-    this.#options.openButton.hidden = true;
-    this.#options.renderToggle.hidden = true;
+    this.#setOpenButton(true);
+    this.#setRenderToggle(true);
     this.#options.openPanel();
     this.#options.preview.replaceChildren(this.empty("Loading preview…"));
     try {
@@ -113,9 +139,8 @@ export class ResourceInspector {
       if (artifact.kind === "pdf") {
         const frame = document.createElement("iframe");
         frame.className = "inspector-frame";
-        // See previewPdf: the viewer needs allow-same-origin in a sandboxed
+        // See previewPdf: the PDF viewer plugin cannot run in a sandboxed
         // frame, and a blob URL renders more reliably than a data: URL.
-        frame.setAttribute("sandbox", "allow-same-origin");
         frame.title = artifact.name;
         frame.src = this.#objectUrl(response.body, artifact.mimeType);
         this.#options.preview.append(frame);
@@ -131,7 +156,8 @@ export class ResourceInspector {
     const version = ++this.#version;
     this.#revokeObjectUrl();
     this.#preview = undefined;
-    this.#options.renderToggle.hidden = true;
+    this.#reference = reference;
+    this.#setRenderToggle(true);
     this.#options.openPanel();
     this.#options.preview.replaceChildren(this.empty("Loading preview…"));
     if (/^https?:\/\//i.test(reference)) {
@@ -139,7 +165,7 @@ export class ResourceInspector {
         const url = new URL(reference);
         this.#resource = { kind: "url", url: url.toString() };
         this.#setHeading(url.hostname, url.toString(), "url");
-        this.#options.openButton.hidden = false;
+        this.#setOpenButton(false);
         const frame = document.createElement("iframe");
         frame.className = "inspector-frame";
         frame.title = url.toString();
@@ -159,7 +185,7 @@ export class ResourceInspector {
       return;
     }
     this.#setHeading(reference.split(/[\\/]/).pop() ?? reference, reference, "file");
-    this.#options.openButton.hidden = true;
+    this.#setOpenButton(true);
     try {
       const preview = await window.fitz.previewResource({ projectRoot, reference, searchRoots: this.#options.getSearchRoots() });
       if (version !== this.#version) return;
@@ -167,16 +193,17 @@ export class ResourceInspector {
       this.#preview = preview;
       this.#sourceMode = false;
       this.#syncRenderToggle();
-      this.#options.renderToggle.hidden = preview.kind !== "markdown" && preview.kind !== "html";
-      this.#setHeading(preview.name, `${preview.path}${preview.line ? ` · line ${preview.line}` : ""}`, preview.kind);
-      this.#options.openButton.hidden = false;
+      this.#setRenderToggle(preview.kind !== "markdown" && preview.kind !== "html");
+      this.#setHeading(preview.name, `${projectRelativePath(preview.path, this.#options.getProjectRoot())}${preview.line ? ` · line ${preview.line}` : ""}`, preview.kind);
+      this.#setOpenButton(false);
       this.#render(preview);
+      this.#options.onFileInspected?.(preview.path, preview.name, this.#reference);
     } catch (error) {
       if (version !== this.#version) return;
       this.#resource = undefined;
       this.#preview = undefined;
-      this.#options.openButton.hidden = true;
-      this.#options.renderToggle.hidden = true;
+      this.#setOpenButton(true);
+      this.#setRenderToggle(true);
       this.#options.preview.replaceChildren(this.#error(this.#resourceError(error, reference)));
     }
   }
@@ -209,6 +236,33 @@ export class ResourceInspector {
     }
     if (preview.kind === "html" && !this.#sourceMode) {
       this.#options.preview.append(this.#htmlFrame(preview.content, preview.name));
+      return;
+    }
+    if (preview.kind === "image") {
+      const img = document.createElement("img");
+      img.className = "inspector-media";
+      img.alt = preview.name;
+      img.src = `data:${preview.mimeType ?? "image/png"};base64,${preview.base64 ?? ""}`;
+      this.#options.preview.append(img);
+      return;
+    }
+    if (preview.kind === "pdf") {
+      const frame = document.createElement("iframe");
+      frame.className = "inspector-frame";
+      // See previewPdf: the PDF viewer plugin cannot run in a sandboxed
+      // frame, so this frame is intentionally unsandboxed (the content is an
+      // inert blob of the user's own PDF, never HTML).
+      frame.title = preview.name;
+      frame.src = this.#objectUrl(preview.base64 ?? "", preview.mimeType ?? "application/pdf");
+      this.#options.preview.append(frame);
+      return;
+    }
+    if (preview.kind === "audio" || preview.kind === "video") {
+      const node = document.createElement(preview.kind) as HTMLAudioElement | HTMLVideoElement;
+      node.className = "inspector-media";
+      node.controls = true;
+      node.src = `data:${preview.mimeType ?? (preview.kind === "audio" ? "audio/mpeg" : "video/mp4")};base64,${preview.base64 ?? ""}`;
+      this.#options.preview.append(node);
       return;
     }
     const pre = this.#source(preview.content, preview.name);
@@ -255,7 +309,16 @@ export class ResourceInspector {
     (frameDocument.head ?? frameDocument.documentElement).append(style);
   }
 
-  #setHeading(title: string, location: string, kind: "file" | "url" | ResourcePreview["kind"]): void {
+  #restoreHeader(): void {
+    if (this.#heading) this.#setHeading(this.#heading.title, this.#heading.location, this.#heading.kind);
+    this.#options.openButton.hidden = this.#openButtonHidden;
+    this.#options.renderToggle.hidden = this.#renderToggleHidden;
+    if (this.#preview) this.#syncRenderToggle();
+  }
+
+  #setHeading(title: string, location: string, kind: Heading["kind"]): void {
+    this.#heading = { title, location, kind };
+    if (!this.#active) return;
     this.#options.title.textContent = title;
     this.#options.location.textContent = location;
     this.#options.icon.replaceChildren(kind === "url"
@@ -263,7 +326,18 @@ export class ResourceInspector {
       : svgIcon('<path d="M5 2.8h6l4 4v10.4H5z"></path><path d="M11 2.8v4h4"></path>'));
   }
 
+  #setOpenButton(hidden: boolean): void {
+    this.#openButtonHidden = hidden;
+    if (this.#active) this.#options.openButton.hidden = hidden;
+  }
+
+  #setRenderToggle(hidden: boolean): void {
+    this.#renderToggleHidden = hidden;
+    if (this.#active) this.#options.renderToggle.hidden = hidden;
+  }
+
   #syncRenderToggle(): void {
+    if (!this.#active) return;
     this.#options.renderToggle.setAttribute("aria-pressed", String(this.#sourceMode));
     this.#options.renderToggle.title = this.#sourceMode ? "View rendered" : "View source";
     this.#options.renderToggle.setAttribute("aria-label", this.#options.renderToggle.title);

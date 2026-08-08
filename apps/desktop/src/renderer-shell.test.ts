@@ -25,6 +25,8 @@ const administrationPage = readFileSync(new URL("./ui/administration/administrat
 const playbookWorkspace = readFileSync(new URL("./ui/playbooks/playbook-workspace.ts", import.meta.url), "utf8");
 const resourceInspector = readFileSync(new URL("./ui/inspector/resource-inspector.ts", import.meta.url), "utf8");
 const inspectorPanel = readFileSync(new URL("./ui/inspector/inspector-panel.ts", import.meta.url), "utf8");
+const artifactRepository = readFileSync(new URL("./ui/inspector/artifact-repository.ts", import.meta.url), "utf8");
+const resourcePreview = readFileSync(new URL("./resource-preview.ts", import.meta.url), "utf8");
 const projectSidebar = readFileSync(new URL("./ui/sidebar/project-sidebar.ts", import.meta.url), "utf8");
 const projects = readFileSync(new URL("./ui/projects/projects.ts", import.meta.url), "utf8");
 const composerCss = readFileSync(new URL("./ui/chat/composer.css", import.meta.url), "utf8");
@@ -563,17 +565,28 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"');
   });
 
-  it("shows an interactive project metadata card on hover", () => {
-    expect(html).toContain('id="project-hover-card"');
-    expect(html).toContain('id="hover-project-pin"');
-    expect(html).toContain('id="hover-project-path"');
-    expect(html).toContain('id="hover-project-edit"');
-    expect(projectSidebar).toContain("this.#showProjectHover(project, projectItem)");
-    expect(projectSidebar).toContain("this.#state.sessionsByProject.get(project.id)");
-    expect(projectSidebar).toContain('this.#beginEdit("project", this.#hoveredProjectId)');
+  it("drops the hover cards in favor of the centered create-project dialog", () => {
+    expect(html).not.toContain('id="project-hover-card"');
+    expect(html).not.toContain('id="chat-hover-card"');
+    expect(html).not.toContain('id="hover-project-pin"');
+    expect(html).not.toContain('id="hover-chat-title"');
+    expect(projectSidebar).not.toContain("#showProjectHover");
+    expect(projectSidebar).not.toContain("#showChatHover");
+    expect(projectSidebar).not.toContain("hideOverlays");
+    expect(projectSidebar).toContain("create-project-backdrop");
+    expect(projectSidebar).toContain('beginCreateProject(): void');
   });
 
-  it("matches the project hover controls and menu actions", () => {
+  it("lands every empty project on the same new-chat page the sidebar quick action opens", () => {
+    expect(renderer).not.toContain("createProjectThenNewChat");
+    expect(renderer).toContain("if (created) openNewChat()");
+    expect(renderer).toContain("if (projects.currentProjectId) openNewChat()");
+    expect(renderer).toContain('action.textContent = "Create project"');
+    expect(renderer).not.toContain('textContent = projects.currentProjectId ? "New task"');
+    expect(projects).toContain('rememberLocation({ view: "conversation", projectId: id, newChat: true })');
+  });
+
+  it("keeps the project quick action and context menu actions", () => {
     expect(projectSidebar).toContain('className = "tree-quick-action"');
     expect(projectSidebar).toContain("New chat in ${label}");
     expect(styles).not.toContain(".project-group:hover > .tree-item .tree-quick-action");
@@ -672,6 +685,78 @@ describe("desktop renderer shell", () => {
     expect(composerCss).toContain(".pdf-chip .attachment-preview { display: grid; grid-template-rows: 1fr auto; place-items: center; gap: 3px; padding: 8px; text-align: center; cursor: zoom-in; }");
     expect(composerCss).toContain(".pdf-chip .attachment-preview svg");
     expect(composerCss).toContain(".pdf-chip .pdf-name");
+  });
+
+  it("previews binary project files (images, PDFs, audio, and video) in the Inspector", () => {
+    // The main-process preview resolves binary files to base64 with a MIME type instead of rejecting NUL bytes.
+    expect(resourcePreview).toContain('MAX_BINARY_PREVIEW_BYTES');
+    expect(resourcePreview).toContain('"image" | "pdf" | "audio" | "video"');
+    expect(resourcePreview).toContain('IMAGE_EXTENSIONS');
+    expect(resourcePreview).toContain('mimeTypeFor(filePath)');
+    expect(resourcePreview).toContain('base64: bytes.toString("base64")');
+    // The Inspector renders images inline, frames PDFs as blob URLs, and plays audio/video with controls.
+    expect(resourceInspector).toContain('preview.kind === "image"');
+    expect(resourceInspector).toContain('img.src = `data:${preview.mimeType ?? "image/png"};base64,${preview.base64 ?? ""}`');
+    expect(resourceInspector).toContain('preview.kind === "pdf"');
+    expect(resourceInspector).toContain('frame.src = this.#objectUrl(preview.base64 ?? "", preview.mimeType ?? "application/pdf")');
+    expect(resourceInspector).toContain('preview.kind === "audio" || preview.kind === "video"');
+    expect(resourceInspector).toContain('node.controls = true');
+    expect(styles).toContain("img.inspector-media { padding: 16px 20px 24px; }");
+    expect(preload).toContain('"image" | "pdf" | "audio" | "video"');
+  });
+
+  it("turns the Inspector into a tabbed artifact repository with a fixed base tab", () => {
+    // The repository is the defacto base: a permanent, non-closable tab.
+    expect(inspectorPanel).toContain('className = "inspector-tabs"');
+    expect(inspectorPanel).toContain('setAttribute("role", "tablist")');
+    expect(inspectorPanel).toContain('closable: false');
+    expect(inspectorPanel).toContain('"Artifacts"');
+    expect(inspectorPanel).toContain('className = "inspector-tab-close"');
+    expect(inspectorPanel).toContain("setSessionArtifacts(artifacts: Json[]): void");
+    expect(inspectorPanel).toContain("resetPreview(): void");
+    expect(inspectorPanel).toContain("registerReference(reference: string): void");
+    // Files open from chat links and tool rows grow the persisted repository.
+    expect(artifactRepository).toContain('fitz-inspector-repository');
+    expect(artifactRepository).toContain("registerFile(path: string, name: string, reference?: string): void");
+    expect(artifactRepository).toContain("registerReference(reference: string): void");
+    expect(artifactRepository).toContain("setSessionArtifacts(artifacts: Json[]): void");
+    expect(artifactRepository).toContain("onOpenFile");
+    expect(artifactRepository).toContain("onOpenArtifact");
+    expect(artifactRepository).toContain("getProjectRoot");
+    expect(artifactRepository).toContain("projectRelativePath");
+    // The renderer feeds current-session uploads into the repository.
+    expect(renderer).toContain("inspectorPanel.setSessionArtifacts(");
+    // Every opened artifact gets its own closable tab, and the repo is the base.
+    expect(inspectorPanel).toContain("onFileInspected: (path, name, reference) => this.#onFileInspected(tab.id, path, name, reference)");
+    expect(inspectorPanel).toContain("this.#repository.registerFile(path, name, reference)");
+    expect(inspectorPanel).toContain('`upload:${String(artifact.id)}`');
+    // The inspector shows project-relative paths instead of absolute ones.
+    expect(resourceInspector).toContain("projectRelativePath(preview.path");
+    // Files register as soon as they render in chat, without a click.
+    expect(markdown).toContain('"fitz:resource-appeared"');
+    expect(renderer).toContain('window.addEventListener("fitz:resource-appeared"');
+    expect(renderer).toContain("inspectorPanel.registerReference(reference)");
+    // Middle-click (the mouse wheel button) closes artifact tabs.
+    expect(inspectorPanel).toContain("auxclick");
+    expect(inspectorPanel).toContain("event.button === 1");
+    expect(inspectorPanel).toContain("mousedown");
+    expect(styles).toContain(".inspector-tabs");
+    expect(styles).toContain(".inspector-tab.active");
+    expect(styles).toContain(".inspector-tab-close");
+    expect(styles).toContain(".inspector-tabpanel");
+    expect(styles).toContain(".inspector-repository");
+    expect(styles).toContain(".inspector-repository-item");
+  });
+
+  it("keeps the Inspector/Composer project-root callbacks null-safe during module load", () => {
+    // The artifact repository renders synchronously inside InspectorPanel's
+    // constructor, which fires `getProjectRoot` before `projects` is declared
+    // below (esbuild hoists `const` to `var`, so a missing `?.` becomes a
+    // TypeError at startup that freezes the whole window). Both callbacks must
+    // stay null-safe so construction cannot dereference the not-yet-assigned
+    // controller.
+    expect(renderer).toContain('getProjectRoot: () => String(projects?.activeProject()?.rootPath ?? ""),');
+    expect(renderer).toContain('getProjectRoot: () => String(projects?.activeProject()?.rootPath ?? "") || undefined,');
   });
 
   it("stages picker files as chips in a new chat and uploads them with the first message", () => {

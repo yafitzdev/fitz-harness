@@ -176,7 +176,7 @@ export class AgentSafetyService {
     return ({ content }) => redactToolResultContent(content as Array<{ type: string; text?: string }>);
   }
 
-  /** The runtime's `customTools`: registers `fitz.trash` and the sandboxed `bash` for this run. */
+  /** The runtime's `customTools`: registers `fitz_trash` and the sandboxed `bash` for this run. */
   createCustomTools(): (context: { cwd: string; runId?: string }) => ToolDefinition[] {
     return (context) => [
       createTrashTool(async (input) => this.trash(input.paths, context.runId, context.cwd)),
@@ -208,7 +208,7 @@ export class AgentSafetyService {
     };
   }
 
-  /** Handler backing the `fitz.trash` tool: move paths into the run trash, zone-validated. */
+  /** Handler backing the `fitz_trash` tool: move paths into the run trash, zone-validated. */
   async trash(paths: string[], runId: string | undefined, cwd: string): Promise<TrashMoveResult | { error: string }> {
     const ctx = this.#getContext(runId, cwd);
     const entries: TrashMoveResult["entries"] = [];

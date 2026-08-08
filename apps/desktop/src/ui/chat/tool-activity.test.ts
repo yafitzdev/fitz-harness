@@ -5,6 +5,7 @@ import {
   describeTool,
   displayName,
   iconPathFor,
+  projectRelativePath,
   registerToolMeta,
   summarizeBurst,
   toolPath,
@@ -137,6 +138,29 @@ describe("burstIconPath", () => {
     expect(burstIconPath(1, 2)).toContain('d="m4.2 14.8');
     expect(burstIconPath(0, 1)).toContain('d="m6 7 2.2 2');
     expect(burstIconPath(0, 0)).toContain('d="m6 7 2.2 2');
+  });
+});
+
+describe("projectRelativePath", () => {
+  it("strips the project root prefix from absolute paths", () => {
+    expect(projectRelativePath("/home/me/proj/src/app.ts", "/home/me/proj")).toBe("src/app.ts");
+    expect(projectRelativePath("C:\\work\\fitz\\src\\app.ts", "C:\\work\\fitz")).toBe("src/app.ts");
+    expect(projectRelativePath("/home/me/proj/src/app.ts", "/home/me/proj/")).toBe("src/app.ts");
+  });
+
+  it("matches root prefixes case-insensitively on Windows-style paths", () => {
+    expect(projectRelativePath("c:\\Work\\Fitz\\src\\app.ts", "C:\\work\\fitz")).toBe("src/app.ts");
+  });
+
+  it("leaves already-relative and out-of-root paths unchanged", () => {
+    expect(projectRelativePath("src/app.ts", "/home/me/proj")).toBe("src/app.ts");
+    expect(projectRelativePath("/etc/hosts", "/home/me/proj")).toBe("/etc/hosts");
+    expect(projectRelativePath("/home/me/proj-other/app.ts", "/home/me/proj")).toBe("/home/me/proj-other/app.ts");
+  });
+
+  it("returns the path unchanged when no root or path is provided", () => {
+    expect(projectRelativePath("/home/me/proj/src/app.ts", "")).toBe("/home/me/proj/src/app.ts");
+    expect(projectRelativePath("", "/home/me/proj")).toBe("");
   });
 });
 

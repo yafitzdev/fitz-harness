@@ -93,7 +93,7 @@ export async function evaluateToolCall(request: PiToolCall & { cwd: string; runI
       if (info.zone === "sensitive" || info.zone === "system" || info.zone === "protected") return block(ctx, toolName, info, `search`);
       return recordAllow(ctx, toolName, info);
     }
-    case "fitz.trash": {
+    case "fitz_trash": {
       // The tool handler does its own zone validation; the policy just lets it through.
       return recordAllow(ctx, toolName);
     }
@@ -221,9 +221,9 @@ async function intentBase(intent: BashIntent, ctx: PolicyContext): Promise<{ ok:
 async function evaluateDelete(intent: BashIntent, command: string, ctx: PolicyContext, signal?: AbortSignal, base: { path: string } = { path: ctx.cwd }): Promise<DeleteOutcome> {
   switch (intent.kind) {
     case "shred":
-      return { action: "block", reason: `shred is intentionally unrecoverable, so Fitz refuses to run it. Use rm (Fitz rewrites it to a trash move) or the fitz.trash tool.` };
+      return { action: "block", reason: `shred is intentionally unrecoverable, so Fitz refuses to run it. Use rm (Fitz rewrites it to a trash move) or the fitz_trash tool.` };
     case "truncate":
-      return { action: "block", reason: `truncate discards a file's contents permanently. Move the file to trash instead (rm or fitz.trash); truncate is only safe for files created this run.` };
+      return { action: "block", reason: `truncate discards a file's contents permanently. Move the file to trash instead (rm or fitz_trash); truncate is only safe for files created this run.` };
     case "find-exec-rm":
       return { action: "block", reason: `find -exec rm bypasses Fitz's trash rewrite. Use find -delete (Fitz rewrites it to a trash move) or remove the paths individually.` };
     case "find-delete": {
@@ -259,7 +259,7 @@ async function evaluatePlainDelete(intent: BashIntent, command: string, ctx: Pol
   // substitution produces; the trash rewrite cannot neutralize code that executes inside
   // an argument, so block it outright.
   if (/\$\(|`/.test(command)) {
-    return { action: "block", reason: `this delete contains a command substitution or backticks, which Fitz cannot safely rewrite to a trash move. Inline the paths or use explicit rm / fitz.trash commands.` };
+    return { action: "block", reason: `this delete contains a command substitution or backticks, which Fitz cannot safely rewrite to a trash move. Inline the paths or use explicit rm / fitz_trash commands.` };
   }
 
   // Whole-directory deletes that cannot be trashed by rename: `rm -rf .`, `rm -rf ..`.
@@ -420,29 +420,29 @@ function pathUnresolvable(target: BashTarget): string {
 function blockIntentReason(intent: BashIntent): string {
   switch (intent.kind) {
     case "git-destructive":
-      return `this git command permanently discards uncommitted work (git clean -f / reset --hard / checkout -- / restore / branch -D / stash drop). Fitz blocks it; commit or stash first, then remove files via rm or fitz.trash.`;
+      return `this git command permanently discards uncommitted work (git clean -f / reset --hard / checkout -- / restore / branch -D / stash drop). Fitz blocks it; commit or stash first, then remove files via rm or fitz_trash.`;
     case "git-rm":
-      return `git rm permanently removes files from the working tree and stages the deletion. Use rm <path> (Fitz moves it to trash) and then git add, or fitz.trash.`;
+      return `git rm permanently removes files from the working tree and stages the deletion. Use rm <path> (Fitz moves it to trash) and then git add, or fitz_trash.`;
     case "python-rm":
-      return `inline Python file deletion (os.remove / shutil.rmtree) bypasses Fitz's trash rewrite. Use rm (rewritten to a trash move) or the fitz.trash tool instead.`;
+      return `inline Python file deletion (os.remove / shutil.rmtree) bypasses Fitz's trash rewrite. Use rm (rewritten to a trash move) or the fitz_trash tool instead.`;
     case "node-rm":
-      return `inline Node.js file deletion (fs.unlink/rm/rmdir) bypasses Fitz's trash rewrite. Use rm (rewritten to a trash move) or the fitz.trash tool instead.`;
+      return `inline Node.js file deletion (fs.unlink/rm/rmdir) bypasses Fitz's trash rewrite. Use rm (rewritten to a trash move) or the fitz_trash tool instead.`;
     case "xargs-rm":
       return `rm through xargs bypasses Fitz's trash rewrite. Use find -delete (rewritten to a trash move) or remove the paths individually.`;
     case "rsync-delete":
-      return `rsync --delete permanently removes files not present at the source. Fitz blocks it; sync without --delete and remove stale files via rm or fitz.trash.`;
+      return `rsync --delete permanently removes files not present at the source. Fitz blocks it; sync without --delete and remove stale files via rm or fitz_trash.`;
     case "shred":
-      return `shred is intentionally unrecoverable; Fitz refuses to run it. Use rm (rewritten to a trash move) or fitz.trash.`;
+      return `shred is intentionally unrecoverable; Fitz refuses to run it. Use rm (rewritten to a trash move) or fitz_trash.`;
     case "find-exec-rm":
       return `find -exec rm bypasses Fitz's trash rewrite. Use find -delete (rewritten to a trash move) or remove the paths individually.`;
     case "truncate":
-      return `truncate discards a file's contents permanently. Move the file to trash instead (rm or fitz.trash).`;
+      return `truncate discards a file's contents permanently. Move the file to trash instead (rm or fitz_trash).`;
     case "script-stdin":
       return `Fitz cannot inspect a script read from stdin (a pipe or -). Inline the commands so they can be classified, or use explicit tools.`;
     case "script-file":
       return `Fitz blocks executing this script file because it cannot inspect its contents.`;
     case "nested-shell":
-      return `this interpreter command contains a file-deleting operation Fitz cannot rewrite. Use explicit rm or fitz.trash commands instead.`;
+      return `this interpreter command contains a file-deleting operation Fitz cannot rewrite. Use explicit rm or fitz_trash commands instead.`;
     default:
       return `Fitz blocked this operation (${intent.kind}).`;
   }
@@ -450,7 +450,7 @@ function blockIntentReason(intent: BashIntent): string {
 
 /** Reason for a delete or block discovered inside an embedded script (`sh -c`, `eval`, `find -exec`). */
 function nestedScriptDeleteReason(intent: BashIntent): string {
-  return `this delete runs inside an embedded script (${intent.command}); Fitz cannot rewrite it to a trash move. Use a direct rm or fitz.trash command instead.`;
+  return `this delete runs inside an embedded script (${intent.command}); Fitz cannot rewrite it to a trash move. Use a direct rm or fitz_trash command instead.`;
 }
 
 /** Apply span edits right-to-left so earlier offsets stay valid. */

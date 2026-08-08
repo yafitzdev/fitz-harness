@@ -28,13 +28,6 @@
 .tree-editing { display: grid; gap: 2px; }
 .tree-rename-input { width: 100%; min-width: 0; padding: 6px 9px; border: 1px solid #5a5e58; border-radius: var(--codex-radius-lg); outline: 0; background: #181a18; color: var(--text); font: inherit; }
 .tree-rename-input:focus { border-color: #6b6e69; }
-.tree-create-form { display: grid; gap: 6px; padding: 4px 6px 6px; }
-.tree-create-name { width: 100%; min-width: 0; padding: 7px 9px; border: 1px solid var(--border); border-radius: var(--codex-radius-lg); outline: 0; background: #181a18; color: var(--text); font: inherit; }
-.tree-create-name:focus { border-color: #5a5e58; }
-.tree-create-folder { min-width: 0; display: flex; align-items: center; gap: 7px; padding: 6px 8px; border-radius: var(--codex-radius-lg); background: transparent; color: var(--muted); cursor: pointer; text-align: left; font-size: 12px; }
-.tree-create-folder:hover { background: rgba(255,255,255,.06); color: var(--text); }
-.tree-create-folder span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tree-create-folder.has-folder { color: var(--text); }
 .tree-form-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .tree-form-actions button { padding: 5px 10px; border-radius: 7px; cursor: pointer; font-size: 12px; }
 .tree-form-cancel { background: transparent; color: var(--muted); }
@@ -44,22 +37,17 @@
 .tree-confirm-row { display: grid; gap: 6px; padding: 8px; border-radius: var(--codex-radius-lg); background: rgba(255,255,255,.05); }
 .tree-confirm-copy { color: var(--text); font-size: 12.5px; line-height: 1.4; }
 .sidebar-context-menu { position: fixed; z-index: 40; width: 242px; }
-.chat-hover-card { position: fixed; z-index: 39; width: 300px; padding: 15px 16px; border: 0; border-radius: var(--codex-radius-2xl); background: var(--codex-control); box-shadow: var(--codex-elevation-stroke), var(--codex-shadow-xl); pointer-events: none; backdrop-filter: blur(16px); }
-.chat-hover-card header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 13px; }
-.chat-hover-card strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
-.chat-hover-card time { flex: 0 0 auto; color: var(--muted); font-size: 12px; }
-.chat-hover-card p { display: flex; align-items: center; gap: 9px; margin: 7px 0 0; color: #d2d4cf; font-size: 13px; }
-.chat-hover-card svg { width: 16px; height: 16px; color: var(--muted); }
-.project-hover-card { position: fixed; z-index: 39; width: min(420px, calc(100vw - 24px)); overflow: hidden; border: 0; border-radius: var(--codex-radius-2xl); background: var(--codex-control); box-shadow: var(--codex-elevation-stroke), var(--codex-shadow-xl); backdrop-filter: blur(16px); }
-.project-hover-card header, .project-hover-detail, .project-hover-action { min-height: 45px; display: flex; align-items: center; gap: 10px; padding: 0 14px; }
-.project-hover-card header { justify-content: space-between; }
-.project-hover-card header > span { min-width: 0; display: flex; align-items: center; gap: 10px; }
-.project-hover-card strong, .project-hover-card span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.project-hover-card svg { flex: 0 0 auto; width: 18px; height: 18px; color: #c8cbc5; }
-.project-hover-card header button { flex: 0 0 auto; width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
-.project-hover-card header button:hover, .project-hover-card header button[aria-pressed="true"] { background: rgba(255,255,255,.07); color: var(--text); }
-.project-hover-detail { border-bottom: 1px solid #484b48; color: var(--text); }
-.project-hover-action { width: 100%; border-bottom: 1px solid #484b48; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
-.project-hover-action:last-child { border-bottom: 0; }
-.project-hover-action:hover:not(:disabled) { background: rgba(255,255,255,.065); }
-.project-hover-action:disabled { color: var(--subtle); cursor: default; }
+.create-project-backdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px; background: rgba(0,0,0,.55); backdrop-filter: blur(4px); }
+.create-project-dialog { width: min(400px, 100%); display: grid; gap: 14px; padding: 22px; border: 0; border-radius: var(--codex-radius-2xl); background: var(--codex-control); box-shadow: var(--codex-elevation-stroke), var(--codex-shadow-xl); }
+.create-project-dialog h2 { margin: 0; color: var(--text); font-size: 16px; font-weight: 650; }
+.create-project-hint { margin: -8px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+.create-project-field { display: grid; gap: 6px; color: var(--muted); font-size: 12.5px; }
+.create-project-name { width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--codex-radius-lg); outline: 0; background: #181a18; color: var(--text); font: inherit; }
+.create-project-name:focus { border-color: #6b6e69; }
+.create-project-folder { min-width: 0; display: flex; align-items: center; gap: 10px; }
+.create-project-folder-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--subtle); font-size: 12.5px; }
+.create-project-folder.has-folder .create-project-folder-label { color: var(--text); }
+.create-project-choose { flex: 0 0 auto; padding: 6px 12px; border-radius: var(--codex-radius-lg); background: rgba(255,255,255,.06); color: var(--text); cursor: pointer; font-size: 12.5px; }
+.create-project-choose:hover { background: rgba(255,255,255,.10); color: var(--text); }
+.create-project-actions { justify-content: flex-end; gap: 8px; }
+.create-project-actions button { padding: 7px 14px; border-radius: var(--codex-radius-lg); font-size: 13px; }

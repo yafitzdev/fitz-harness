@@ -4,7 +4,7 @@ import type { SqliteStore } from "@fitz/storage";
 
 /**
  * Store-backed adapter for the pi package's `PiSessionReader` contract. The pi package owns
- * the contract and the `fitz.session` tool; the host only supplies the data from the single
+ * the contract and the `fitz_session` tool; the host only supplies the data from the single
  * canonical store (SQLite). This is the one place transcripts become readable by the agent.
  *
  * Read-only by construction; owner scoping is not applied here because a local single-user

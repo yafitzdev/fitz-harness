@@ -200,9 +200,9 @@ describe("read policy", () => {
 });
 
 describe("misc policy behavior", () => {
-  it("lets the fitz.trash tool and unknown tools through (their handlers enforce zones)", async () => {
+  it("lets the fitz_trash tool and unknown tools through (their handlers enforce zones)", async () => {
     const { ctx } = makeContext();
-    await expect(evaluateToolCall({ toolName: "fitz.trash", input: { paths: [`${CWD}/x.txt`] } }, ctx)).resolves.toEqual({ action: "allow" });
+    await expect(evaluateToolCall({ toolName: "fitz_trash", input: { paths: [`${CWD}/x.txt`] } }, ctx)).resolves.toEqual({ action: "allow" });
     await expect(evaluateToolCall({ toolName: "git", input: { command: "status" } }, ctx)).resolves.toEqual({ action: "allow" });
   });
 

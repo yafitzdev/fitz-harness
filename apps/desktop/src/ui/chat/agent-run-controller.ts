@@ -35,6 +35,8 @@ export interface AgentRunControllerOptions {
   appendSystem: (message: string) => void;
   appendChangeSummary: (files: Array<{ path: string; action: "edited" | "created" }>) => void;
   addTokenEstimate: (text: string) => void;
+  /** Reset the live context estimate to an authoritative number (e.g. after an automatic compaction). */
+  recalibrateEstimate: (tokens: number) => void;
   setStatus: (label: string, state: string) => void;
   setEngineState: (state: string) => void;
   refreshControls: () => void;
@@ -92,7 +94,13 @@ export class AgentRunController {
       const response = await this.#options.api("/api/v1/agent/runs", "POST", request);
       this.#runId = String(response.data.id);
       this.#starting = false;
-      if (response.context?.compacted) this.#options.activity.appendContext();
+      if (response.context?.compacted) {
+        this.#options.activity.appendContext();
+        // The host reported an automatic compaction: the session context shrank to the
+        // checkpoint summary plus the recent window, so reset the meter to match.
+        const compactedEstimate = Number(response.context.estimatedContextTokens);
+        if (Number.isFinite(compactedEstimate) && compactedEstimate >= 0) this.#options.recalibrateEstimate(compactedEstimate);
+      }
       if (this.#cancelPending) await this.#options.api(`/api/v1/agent/runs/${this.#runId}`, "DELETE");
       await this.#follow(this.#runId, activity, startedAt);
     } catch (error) {
@@ -183,6 +191,7 @@ export class AgentRunController {
           if (delta) {
             if (!reasoning) { activity.remove(); reasoning = this.#options.activity.appendReasoning(true); }
             this.#options.activity.appendReasoningDelta(reasoning, delta);
+            this.#options.addTokenEstimate(delta);
           }
         }
         if (event.type === "reasoning.completed") {
@@ -219,6 +228,7 @@ export class AgentRunController {
           if (assistant) { this.#options.activity.markAssistantAsCommentary(assistant); assistant = undefined; }
           if (reasoning) { this.#options.activity.completeReasoning(reasoning); reasoning = undefined; }
           tools.set(toolCallId, { row: this.#options.activity.appendTool(toolName, input, toolCallId, true), toolName, input });
+          this.#options.addTokenEstimate(stringifyForEstimate(input));
           this.#options.setStatus(`Running ${toolName}`, "active");
           this.#options.setEngineState(toolName.toUpperCase());
         }
@@ -226,6 +236,7 @@ export class AgentRunController {
           const toolCallId = String(event.data?.toolCallId ?? "");
           const existing = tools.get(toolCallId);
           if (existing) this.#options.activity.completeTool(existing.row, existing.toolName, existing.input, event.data?.result, Boolean(event.data?.isError));
+          this.#options.addTokenEstimate(stringifyForEstimate(event.data?.result));
           // Track file changes from write/edit tools (updated)
           if (existing && (existing.toolName === "write" || existing.toolName === "edit") && !Boolean(event.data?.isError)) {
             const input = existing.input;
@@ -268,4 +279,11 @@ export class AgentRunController {
   }
 
   #delay(milliseconds: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }
+}
+
+/** Text form of a tool input/result for context estimation; structured payloads become JSON. */
+function stringifyForEstimate(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === undefined || value === null) return "";
+  try { return JSON.stringify(value); } catch { return String(value); }
 }

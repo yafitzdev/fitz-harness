@@ -39,7 +39,7 @@ export interface TrashMoveResult { moved: number; entries: Array<{ originalPath:
 export type TrashToolHandler = (input: { paths: string[] }) => Promise<TrashMoveResult | { error: string }>;
 /** One canonical transcript entry, reduced to what an agent needs to read. */
 export interface PiSessionMessage { sequence: number; role: "user" | "assistant" | "tool" | "system"; text: string }
-/** A past Fitz Codex conversation, as served to the agent's `fitz.session` tool. */
+/** A past Fitz Codex conversation, as served to the agent's `fitz_session` tool. */
 export interface PiSessionSnapshot { title: string; status: string; updatedAt: string; messages: PiSessionMessage[] }
 /**
  * Reads a past conversation from the Fitz session store. The host provides the store-backed
@@ -63,7 +63,7 @@ export type PiSessionFactory = (options: {
   evaluateTool?: (request: PiToolCall) => Promise<ToolEvaluation>;
   /** Post-execution redaction of tool results before the model sees them. */
   redactResult?: ToolResultRedactor;
-  /** Extra tools registered per run (e.g. `fitz.trash`). */
+  /** Extra tools registered per run (e.g. `fitz_trash`). */
   customTools?: ToolDefinition[];
 }) => Promise<PiSession>;
 export interface PiAgentRuntimeOptions {
@@ -71,7 +71,8 @@ export interface PiAgentRuntimeOptions {
   tools?: readonly string[];
   baseUrl?: string;
   apiKey?: string;
-  contextWindow?: number;
+  /** Model context window in tokens, or a per-request resolver (the request carries the resolved route id). */
+  contextWindow?: number | ((request: AgentRunRequest) => number);
   thinkingLevel?: ThinkingLevel;
   createSession?: PiSessionFactory;
   requestToolApproval?: ToolApprovalRequester;
@@ -88,9 +89,9 @@ export interface PiAgentRuntimeOptions {
 
 const CODING_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"] as const;
 /** Read-only tool that reads a past conversation from the Fitz session store. */
-export const SESSION_LOOKUP_TOOL = "fitz.session";
+export const SESSION_LOOKUP_TOOL = "fitz_session";
 /** Explicit trash tool: the agent can offer to move files to the run trash instead of deleting. */
-export const TRASH_TOOL = "fitz.trash";
+export const TRASH_TOOL = "fitz_trash";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls", SESSION_LOOKUP_TOOL]);
 
 export class PiAgentRuntime implements AgentRuntime {
@@ -99,7 +100,7 @@ export class PiAgentRuntime implements AgentRuntime {
   readonly #tools: readonly string[] | undefined;
   readonly #baseUrl: string;
   readonly #apiKey: string;
-  readonly #contextWindow: number;
+  readonly #contextWindow: number | ((request: AgentRunRequest) => number);
   readonly #thinkingLevel: ThinkingLevel;
   readonly #createSession: PiSessionFactory;
   readonly #requestToolApproval: ToolApprovalRequester | undefined;
@@ -129,6 +130,7 @@ export class PiAgentRuntime implements AgentRuntime {
     const channel = new EventChannel(); let session: PiSession | undefined; const controller = new AbortController();
     const cancel = () => { controller.abort(); void session?.abort(); }; if (signal) { if (signal.aborted) cancel(); else signal.addEventListener("abort", cancel, { once: true }); }
     const cwd = typeof this.#cwd === "function" ? this.#cwd(request) : this.#cwd;
+    const contextWindow = typeof this.#contextWindow === "function" ? this.#contextWindow(request) : this.#contextWindow;
     const sessionTask = (async () => {
       const created = await this.#createSession({
         cwd,
@@ -136,7 +138,7 @@ export class PiAgentRuntime implements AgentRuntime {
         routeId: request.model,
         baseUrl: this.#baseUrl,
         apiKey: this.#apiKey,
-        contextWindow: this.#contextWindow,
+        contextWindow,
         maxTokens: request.maxTokens ?? 16_384,
         agentDir: this.#agentDir,
         llmRoot: this.#llmRoot,
@@ -294,7 +296,7 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
   await resourceLoader.reload();
   const extensionTools = resourceLoader.getExtensions().extensions.flatMap((extension) => [...extension.tools.keys()]);
   // The SDK treats `tools` as a strict allowlist that also filters custom tools, so every
-  // custom tool we register (fitz.trash, fitz.session, the sandboxed bash) must be named
+  // custom tool we register (fitz_trash, fitz_session, the sandboxed bash) must be named
   // here or it is silently dropped from the session's tool registry.
   const customToolNames = [
     ...(options.sessionReader ? [SESSION_LOOKUP_TOOL] : []),
@@ -317,7 +319,7 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
 }
 
 /**
- * The `fitz.session` read-only tool: lets the agent read a past conversation from the Fitz
+ * The `fitz_session` read-only tool: lets the agent read a past conversation from the Fitz
  * session store (the host SQLite store) by session id. Registered only when the host supplies
  * a `sessionReader`, so sessions without store access never see a dead tool.
  */
@@ -345,7 +347,7 @@ export function createSessionLookupTool(reader: PiSessionReader): ToolDefinition
           ...(params.limit !== undefined ? { limit: params.limit } : {}),
         });
         return snapshot
-          ? toolResult(formatSessionSnapshot(snapshot), { source: "fitz.session" })
+          ? toolResult(formatSessionSnapshot(snapshot), { source: "fitz_session" })
           : toolResult(`No Fitz session found with id ${params.sessionId}.`);
       } catch (error) {
         return toolResult(`Could not read Fitz session ${params.sessionId}: ${error instanceof Error ? error.message : String(error)}`);
@@ -360,7 +362,7 @@ function toolResult(text: string, details: unknown = undefined): AgentToolResult
 }
 
 /**
- * The `fitz.trash` tool: moves paths into the run's agent trash instead of deleting them.
+ * The `fitz_trash` tool: moves paths into the run's agent trash instead of deleting them.
  * The host wires the handler to its TrashService so deletes the model performs explicitly
  * go through the same recoverable path as rewritten `rm` commands. Registered only when the
  * host supplies a trash handler via `customTools`.
@@ -376,7 +378,7 @@ export function createTrashTool(handler: TrashToolHandler): ToolDefinition {
       "Move files or directories to the current run's trash folder instead of hard-deleting them. Trash lives inside the workspace under .fitz-trash, is recoverable, and is emptied only with the user's explicit approval. Prefer this over rm/rmdir/del for anything the user might want back.",
     promptSnippet: "Move files to the run trash instead of deleting",
     promptGuidelines: [
-      "Prefer fitz.trash over destructive shell commands (rm, rmdir, del, rd, unlink, shred) whenever you are removing user-visible files.",
+      "Prefer fitz_trash over destructive shell commands (rm, rmdir, del, rd, unlink, shred) whenever you are removing user-visible files.",
       "Trashed paths can be restored from the host management UI; never bypass the trash to permanently delete data.",
     ],
     parameters,
@@ -440,7 +442,7 @@ export function buildFitzSystemInstructions(options: Pick<Parameters<PiSessionFa
     `- Inference engines: ${enginesDir}`,
     `- Model artifacts: ${modelsDir}`,
     `When asked about installed Pi extensions, inspect ${extensionsDir} directly. Do not inspect ~/.pi or infer installation state from upstream defaults.`,
-    "Past conversations are stored by Fitz in its session store. Use the fitz.session tool with a session id to read any earlier conversation the user asks about; the current session's history is injected automatically when it is continued.",
+    "Past conversations are stored by Fitz in its session store. Use the fitz_session tool with a session id to read any earlier conversation the user asks about; the current session's history is injected automatically when it is continued.",
     "The shell tool runs in Git Bash on Windows. Prefer the exact paths above and the active project directory.",
     "Never recursively search /, an entire drive, or the whole home directory to discover Fitz resources. Search the active project or an authoritative directory above. Ask before expanding beyond those locations.",
     "Do not read or reveal authentication files, API keys, bearer tokens, or other secrets unless the user explicitly asks for the exact secret-bearing operation.",
