@@ -768,7 +768,7 @@ describe("desktop renderer shell", () => {
     expect(inspectorPanel).toContain("newTab(): void");
     expect(inspectorPanel).toContain("this.#repository.render(repositoryView)");
     expect(inspectorPanel).toContain("setSessionArtifacts(artifacts: Json[]): void");
-    expect(inspectorPanel).toContain("resetPreview(): void");
+    expect(inspectorPanel).toContain("reset(): void");
     expect(inspectorPanel).toContain("registerReference(reference: string): void");
     // Files open from chat links and tool rows grow the persisted repository.
     expect(artifactRepository).toContain('fitz-inspector-repository');
@@ -781,6 +781,12 @@ describe("desktop renderer shell", () => {
     expect(artifactRepository).toContain("projectRelativePath");
     // The renderer feeds current-session uploads into the repository.
     expect(renderer).toContain("inspectorPanel.setSessionArtifacts(");
+    // The Inspector is contained to the chat it was opened in: switching
+    // chats or projects closes it and drops its tabs, and the repository
+    // reloads for the new session without forcing the panel open.
+    expect(renderer).toContain("let inspectorChatId: string | undefined;");
+    expect(renderer).toContain("if (sessionId !== inspectorChatId) { inspectorPanel.reset(); inspectorChatId = sessionId; }");
+    expect(renderer).not.toContain("inspectorPanel.resetPreview()");
     // Every opened artifact gets its own closable tab.
     expect(inspectorPanel).toContain("onFileInspected: (path, name, reference) => this.#onFileInspected(tab.id, path, name, reference)");
     expect(inspectorPanel).toContain("this.#repository.registerFile(path, name, reference)");

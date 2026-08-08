@@ -210,7 +210,7 @@ describe("InspectorPanel", () => {
     expect(localStorage.getItem("fitz-inspector-width")).toBeNull();
   });
 
-  it("returns to the artifact repository when the panel is closed and reset", async () => {
+  it("resets the panel and its tabs so the Inspector never leaks across chats", async () => {
     const host = mount();
     const view = new InspectorPanel(options(host, {
       getProjectRoot: () => "/project",
@@ -220,18 +220,23 @@ describe("InspectorPanel", () => {
     });
 
     await view.inspect("notes.txt");
-    expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toContain("notes.txt");
-
-    // resetPreview only acts while the panel is closed, and lands on the
-    // repository view (no tab selected).
-    view.open();
-    view.resetPreview();
-    expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toContain("notes.txt");
-
-    view.close();
-    view.resetPreview();
     expect(view.isOpen).toBe(true);
+    expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(1);
+    expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toContain("notes.txt");
+
+    // reset() closes the panel and drops every resource tab.
+    view.reset();
+    expect(view.isOpen).toBe(false);
+    expect(view.element.hidden).toBe(true);
+    expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(0);
+
+    // Reopening lands on the artifact repository home view — no stale tab.
+    view.open();
+    expect(view.isOpen).toBe(true);
+    expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(0);
     expect(view.tabBar.querySelector(".inspector-tab.active")).toBeNull();
+    const repo = view.element.querySelector<HTMLElement>(".inspector-tabpanel:not([hidden])")!;
+    expect(repo.querySelector(".inspector-repository-item")?.textContent).toContain("notes.txt");
     vi.unstubAllGlobals();
   });
 
@@ -341,8 +346,7 @@ describe("InspectorPanel", () => {
     vi.stubGlobal("fitz", { previewResource });
 
     await view.inspect("a.txt");
-    view.close();
-    view.resetPreview();
+    view.showRepository();
 
     const repo = view.element.querySelector<HTMLElement>(".inspector-tabpanel:not([hidden])")!;
     const row = repo.querySelector<HTMLButtonElement>(".inspector-repository-item");

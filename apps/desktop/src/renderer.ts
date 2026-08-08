@@ -32,6 +32,10 @@ let currentUserId: string | undefined;
 let managementConfiguration: Json | undefined;
 let newChatMode = false;
 let newChatProjectDetached = false;
+// The Inspector is contained to the chat it was opened in: switching chats
+// (or projects, or starting a new chat) closes it and drops its tabs, so a
+// chat never inherits another chat's previews.
+let inspectorChatId: string | undefined;
 let navigationIndex = -1;
 let replayingNavigation = false;
 const navigationHistory: AppLocation[] = [];
@@ -219,6 +223,7 @@ const projects = new ProjectsController({
   refreshComposerState,
   rememberLocation: (location) => rememberLocation(location),
   onSessionSelected: async (sessionId) => {
+    if (sessionId !== inspectorChatId) { inspectorPanel.reset(); inspectorChatId = sessionId; }
     composer.controls.resetContextStatus();
     const selectedSession = projects.currentSessionRecord();
     if (selectedSession?.routeId) composer.controls.setRoute(selectedSession.routeId);
@@ -272,6 +277,8 @@ const projects = new ProjectsController({
     rememberLocation({ view: "conversation", ...(projects.currentProjectId ? { projectId: projects.currentProjectId } : {}), sessionId });
   },
   onNoSession: async () => {
+    inspectorPanel.reset();
+    inspectorChatId = undefined;
     sessionTokenEstimate = 0;
     updateContextMeter();
     if (projects.currentProjectId) openNewChat();
@@ -560,7 +567,8 @@ function renderTree(): void {
 function openNewChat(): void {
   if (agentRuns.active) { showToast("Stop the current response before starting a new chat"); return; }
   showConversationWorkspace();
-  inspectorPanel.close();
+  inspectorPanel.reset();
+  inspectorChatId = undefined;
   if (projects.projects.length === 0) { projectSidebar.beginCreateProject(); return; }
   projects.setCurrentProject(projects.currentProjectId ?? projects.projects[0]!.id);
   if (!projects.currentProjectId) return;
@@ -857,7 +865,6 @@ async function steerPrompt(content: string): Promise<void> {
 async function loadArtifacts(): Promise<void> {
   artifacts.replaceChildren();
   composer.clearArtifactChips();
-  inspectorPanel.resetPreview();
   if (!projects.currentSessionId) { inspectorPanel.setSessionArtifacts([]); artifacts.append(panelEmpty("Artifacts appear with a task")); return; }
   const response = await api(`/api/v1/sessions/${projects.currentSessionId}/artifacts`);
   inspectorPanel.setSessionArtifacts(response.data ?? []);

@@ -277,10 +277,14 @@ export class InspectorPanel {
     this.#repository.registerReference(reference);
   }
 
-  /** Restores the artifact repository while the panel is closed. */
-  resetPreview(): void {
-    if (this.#open) return;
-    this.open();
+  /**
+   * Closes the panel and drops every resource tab so the Inspector never
+   * leaks state across chats: reopening lands on the artifact repository
+   * home view, which the renderer reloads for the current session.
+   */
+  reset(): void {
+    this.close();
+    for (const tab of [...this.#tabs]) this.#closeTab(tab.id);
     this.#showRepository();
   }
 
