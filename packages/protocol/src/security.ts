@@ -26,11 +26,19 @@ export interface DeviceAuthenticationRecord extends DeviceRecord {
   user: UserRecord;
 }
 
+export interface MediaQuota {
+  maxJobsPerWindow: number; // rolling-window job count, e.g. 20
+  windowHours: number; // default 24
+  maxConcurrentJobs: number; // default 1 (matches the single queue)
+  creditBudgetCents?: number; // cumulative credit cap within the window
+}
+
 export interface UserQuota {
   maxRequestsPerMinute: number;
   maxPromptChars: number;
   maxOutputTokens: number;
   maxQueueDepth: number;
+  media?: MediaQuota; // absent ⇒ media submits are denied (fail closed)
 }
 
 export interface AuditEventRecord {

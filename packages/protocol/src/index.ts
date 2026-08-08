@@ -1,4 +1,5 @@
 export * from "./domain.js";
+export * from "./media.js";
 export * from "./events.js";
 export * from "./openai.js";
 export * from "./security.js";

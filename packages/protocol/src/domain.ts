@@ -13,6 +13,23 @@ export const INSTANCE_STATES = [
 
 export type InstanceState = (typeof INSTANCE_STATES)[number];
 
+export type MediaModality = "image" | "video" | "audio";
+export type ModalityInput = "text" | "image" | "video" | "audio";
+
+export interface ModalityCapabilities {
+  /** Modalities the engine accepts as input (prompt refs / reference editing). */
+  input: ModalityInput[];
+  /** Modalities the engine can generate. */
+  output: MediaModality[];
+  /** Generation-specific limits, where the engine declares them. */
+  limits?: {
+    maxDurationSeconds?: number;
+    maxResolution?: string; // e.g. "768x768", "1280x720", "2560x1440"
+    maxRefs?: number; // H3 accepts up to 12 multimodal refs
+    maxFrames?: number;
+  };
+}
+
 export interface EngineCapabilities {
   chatCompletions: boolean;
   streaming: boolean;
@@ -20,6 +37,7 @@ export interface EngineCapabilities {
   responseFormat: boolean;
   minP: boolean;
   maxConcurrentGenerations: number;
+  modalities?: ModalityCapabilities; // absent ⇒ chat-only recipe
 }
 
 export interface RecipeLifecyclePolicy {
@@ -60,11 +78,15 @@ export interface EngineRegistration {
   updatedAt: string;
 }
 
+export type RouteKind = "chat" | "image" | "video" | "audio";
+
 export interface Route {
   id: string;
   displayName: string;
   description?: string;
   recipeId: string;
+  /** Defaults to "chat"; media routes are "image" | "video" | "audio". */
+  kind?: RouteKind;
   enabled: boolean;
   isDefault?: boolean;
 }

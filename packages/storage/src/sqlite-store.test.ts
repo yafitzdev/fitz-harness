@@ -1,4 +1,4 @@
-import type { EngineRegistration, Recipe, Route } from "@fitz/protocol";
+import type { EngineRegistration, MediaJobRecord, Recipe, Route } from "@fitz/protocol";
 import { describe, expect, it } from "vitest";
 import { SqliteStore } from "./sqlite-store.js";
 
@@ -131,4 +131,69 @@ describe("SqliteStore", () => {
   it("persists standalone chats with no project and keeps them out of project listings", () => { const store = SqliteStore.memory(); const now = new Date(0).toISOString(); store.createProject({ id: "chat-project", name: "Fitz", createdAt: now, updatedAt: now }); store.createSession({ id: "chat-1", title: "Standalone", status: "active", createdAt: now, updatedAt: now }); store.createSession({ id: "chat-2", projectId: "chat-project", title: "Wrapped", status: "active", createdAt: now, updatedAt: now }); const chat = store.getSession("chat-1"); expect(chat?.title).toBe("Standalone"); expect(chat?.projectId).toBeUndefined(); expect(store.listStandaloneSessions()).toEqual([expect.objectContaining({ id: "chat-1", title: "Standalone" })]); expect(store.listSessions("chat-project")).toEqual([expect.objectContaining({ id: "chat-2" })]); store.createSession({ id: "chat-3", title: "Mine", status: "active", ownerUserId: "user-1", createdAt: now, updatedAt: now }); store.createSession({ id: "chat-4", title: "Theirs", status: "active", ownerUserId: "user-2", createdAt: now, updatedAt: now }); expect(store.listStandaloneSessions("user-1").map((session) => session.id)).toEqual(["chat-3"]); store.close(); });
 
   it("stores and removes artifact content with its metadata", () => { const store = SqliteStore.memory(); const now = new Date(0).toISOString(); store.createProject({ id: "ap", name: "Artifacts", createdAt: now, updatedAt: now }); store.createSession({ id: "as", projectId: "ap", title: "Artifacts", status: "active", createdAt: now, updatedAt: now }); const artifact = { id: "a1", sessionId: "as", name: "result.txt", mimeType: "text/plain", kind: "text" as const, byteSize: 5, sha256: "hash", createdAt: now, metadata: {} }; store.createArtifact(artifact, Buffer.from("hello")); expect(store.listArtifacts("as")).toEqual([artifact]); expect(Buffer.from(store.getArtifactContent("a1")!).toString()).toBe("hello"); expect(store.deleteArtifact("a1")).toBe(true); expect(store.getArtifact("a1")).toBeUndefined(); expect(store.getArtifactContent("a1")).toBeUndefined(); expect(store.deleteArtifact("a1")).toBe(false); store.close(); });
+
+  it("round-trips media route kinds and keeps chat routes unchanged", () => {
+    const store = SqliteStore.memory();
+    store.upsertRoute({ id: "chat-1", displayName: "Chat", recipeId: "recipe-1", enabled: true });
+    store.upsertRoute({ id: "image", displayName: "Image", recipeId: "recipe-2", kind: "image", enabled: false });
+    const routes = store.listRoutes();
+    expect(routes.find((route) => route.id === "chat-1")).toEqual({ id: "chat-1", displayName: "Chat", recipeId: "recipe-1", enabled: true });
+    expect(routes.find((route) => route.id === "image")).toEqual(expect.objectContaining({ id: "image", displayName: "Image", recipeId: "recipe-2", kind: "image", enabled: false }));
+    store.close();
+  });
+
+  it("persists media jobs, partial updates, filters, and restart recovery", () => {
+    const store = SqliteStore.memory(); const now = new Date(0).toISOString();
+    store.createProject({ id: "media-project", name: "Media", createdAt: now, updatedAt: now });
+    store.createSession({ id: "session-1", projectId: "media-project", title: "Media", status: "active", createdAt: now, updatedAt: now });
+    const job: MediaJobRecord = { id: "job-1", sessionId: "session-1", routeId: "video", modality: "video", status: "queued", params: { prompt: "a cat", durationSeconds: 5 }, enqueuedAt: now, createdByUserId: "user-1", creditCostCents: 3 };
+    store.createMediaJob(job);
+    expect(store.getMediaJob("job-1")).toEqual(job);
+    store.updateMediaJob("job-1", { status: "started", startedAt: now, providerJobId: "provider-1", progress: 0.25 });
+    expect(store.getMediaJob("job-1")).toEqual(expect.objectContaining({ status: "started", startedAt: now, providerJobId: "provider-1", progress: 0.25, sessionId: "session-1" }));
+    expect(store.listMediaJobs({ ownerUserId: "user-1" })).toHaveLength(1);
+    expect(store.listMediaJobs({ status: "queued" })).toHaveLength(0);
+    expect(store.countNonTerminalMediaJobs("user-1", now)).toBe(1);
+    expect(store.recoverInterruptedMediaJobs()).toBe(1);
+    expect(store.getMediaJob("job-1")).toEqual(expect.objectContaining({ status: "interrupted", errorCode: "host_restarted" }));
+    store.close();
+  });
+
+  it("appends sequenced media job events and replays after a sequence", () => {
+    const store = SqliteStore.memory(); const now = new Date(0).toISOString();
+    store.createMediaJob({ id: "job-1", routeId: "video", modality: "video", status: "queued", params: { prompt: "x" }, enqueuedAt: now });
+    const first = store.appendMediaJobEvent("job-1", { type: "progress", progress: 0.5 }, now);
+    const second = store.appendMediaJobEvent("job-1", { type: "completed", result: { data: { url: "https://example.com/out.mp4" }, mimeType: "video/mp4", byteSize: 1024 } }, now);
+    expect([first.sequence, second.sequence]).toEqual([1, 2]);
+    expect(store.mediaJobEventsAfter("job-1", 0)).toEqual([first, second]);
+    expect(store.mediaJobEventsAfter("job-1", 1)).toEqual([second]);
+    expect(store.mediaJobEventsAfter("missing", 0)).toEqual([]);
+    store.close();
+  });
+
+  it("accumulates the media credit ledger per user within a window", () => {
+    const store = SqliteStore.memory(); const now = new Date(0).toISOString();
+    store.createMediaJob({ id: "job-1", routeId: "image", modality: "image", status: "completed", params: { prompt: "x" }, enqueuedAt: now, createdByUserId: "user-1" });
+    store.createMediaJob({ id: "job-2", routeId: "image", modality: "image", status: "completed", params: { prompt: "y" }, enqueuedAt: now, createdByUserId: "user-2" });
+    store.appendMediaCredit({ id: "c-1", userId: "user-1", jobId: "job-1", modality: "image", costCents: 3, createdAt: now });
+    store.appendMediaCredit({ id: "c-2", userId: "user-1", jobId: "job-1", modality: "image", costCents: 7, createdAt: now });
+    store.appendMediaCredit({ id: "c-3", userId: "user-2", jobId: "job-2", modality: "image", costCents: 100, createdAt: now });
+    expect(store.sumMediaLedgerForUser("user-1", now)).toBe(10);
+    expect(store.sumMediaLedgerForUser("user-1", new Date(1).toISOString())).toBe(0);
+    expect(store.sumMediaLedgerForUser("user-2", now)).toBe(100);
+    store.close();
+  });
+
+  it("detaches media jobs from deleted sessions without deleting the job", () => {
+    const store = SqliteStore.memory(); const now = new Date(0).toISOString();
+    store.createProject({ id: "mp", name: "Media", createdAt: now, updatedAt: now });
+    store.createSession({ id: "ms", projectId: "mp", title: "Media", status: "active", createdAt: now, updatedAt: now });
+    store.createMediaJob({ id: "job-1", sessionId: "ms", routeId: "image", modality: "image", status: "queued", params: { prompt: "x" }, enqueuedAt: now });
+    expect(store.deleteProject("mp")).toBe(true);
+    expect(store.getSession("ms")).toBeUndefined();
+    const detached = store.getMediaJob("job-1");
+    expect(detached?.id).toBe("job-1");
+    expect(detached?.sessionId).toBeUndefined();
+    store.close();
+  });
 });

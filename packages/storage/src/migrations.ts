@@ -276,4 +276,57 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_sessions_standalone ON sessions(updated_at DESC) WHERE project_id IS NULL;
     `,
   },
+  {
+    version: 9,
+    // Media generation: routes gain a `kind` (chat default; media routes are
+    // image/video/audio), plus the durable job model — media_jobs (submit/poll/
+    // cancel, restart recovery), media_job_events ((job_id, sequence) PK for SSE
+    // replay, mirroring agent_events), and media_quota_ledger (credit accounting
+    // for MediaQuota.creditBudgetCents).
+    sql: `
+      ALTER TABLE routes ADD COLUMN kind TEXT NOT NULL DEFAULT 'chat'
+        CHECK (kind IN ('chat', 'image', 'video', 'audio'));
+
+      CREATE TABLE IF NOT EXISTS media_jobs (
+        id TEXT PRIMARY KEY,
+        session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+        route_id TEXT NOT NULL,
+        modality TEXT NOT NULL CHECK (modality IN ('image', 'video', 'audio')),
+        status TEXT NOT NULL CHECK (status IN ('queued', 'started', 'progressing', 'completed', 'failed', 'cancelled', 'interrupted')),
+        params_json TEXT NOT NULL,
+        progress REAL,
+        artifact_id TEXT,
+        provider_job_id TEXT,
+        error_code TEXT,
+        enqueued_at TEXT NOT NULL,
+        started_at TEXT,
+        completed_at TEXT,
+        cancelled_at TEXT,
+        created_by_user_id TEXT,
+        credit_cost_cents INTEGER
+      );
+
+      CREATE TABLE IF NOT EXISTS media_job_events (
+        job_id TEXT NOT NULL REFERENCES media_jobs(id) ON DELETE CASCADE,
+        sequence INTEGER NOT NULL,
+        timestamp TEXT NOT NULL,
+        type TEXT NOT NULL,
+        event_json TEXT NOT NULL,
+        PRIMARY KEY (job_id, sequence)
+      );
+
+      CREATE TABLE IF NOT EXISTS media_quota_ledger (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        job_id TEXT REFERENCES media_jobs(id) ON DELETE CASCADE,
+        modality TEXT NOT NULL,
+        cost_cents INTEGER NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_media_jobs_owner ON media_jobs(created_by_user_id, enqueued_at);
+      CREATE INDEX IF NOT EXISTS idx_media_jobs_status ON media_jobs(status, enqueued_at);
+      CREATE INDEX IF NOT EXISTS idx_media_quota_ledger_user ON media_quota_ledger(user_id, created_at);
+    `,
+  },
 ] as const;

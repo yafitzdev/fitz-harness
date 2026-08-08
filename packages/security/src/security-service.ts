@@ -1,5 +1,5 @@
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import type { DeviceRecord, UserQuota, UserRecord, UserRole } from "@fitz/protocol";
+import type { DeviceRecord, MediaModality, MediaQuota, UserQuota, UserRecord, UserRole } from "@fitz/protocol";
 import { SqliteStore } from "@fitz/storage";
 
 export const DEFAULT_QUOTAS: Readonly<Record<UserRole, UserQuota>> = {
@@ -8,7 +8,7 @@ export const DEFAULT_QUOTAS: Readonly<Record<UserRole, UserQuota>> = {
   consumer: { maxRequestsPerMinute: 20, maxPromptChars: 100_000, maxOutputTokens: 8_192, maxQueueDepth: 5 },
 };
 
-export interface AuthenticatedPrincipal { user: UserRecord; device: DeviceRecord; routeGrants: readonly string[]; quota: UserQuota }
+export interface AuthenticatedPrincipal { user: UserRecord; device?: DeviceRecord; routeGrants: readonly string[]; quota: UserQuota }
 
 export class SecurityService {
   readonly #requests = new Map<string, number[]>();
@@ -45,6 +45,28 @@ export class SecurityService {
     if (recent.length >= q.maxRequestsPerMinute) throw new SecurityPolicyError("Request-rate quota exceeded");
     recent.push(Date.now()); this.#requests.set(principal.user.id, recent);
   }
+  /** Builds a device-less principal for in-process callers (e.g. the agent-tool path),
+   *  resolving the user + route grants + quota without a paired device. */
+  principalForUser(userId: string): AuthenticatedPrincipal {
+    const user = this.requireUser(userId);
+    return { user, routeGrants: this.store.listUserRouteGrants(userId), quota: this.store.getUserQuota(userId) ?? DEFAULT_QUOTAS[user.role] };
+  }
+  /** Media generation is paid work (KD-7): a principal without a configured
+   *  `quota.media` is denied at submit time (fail closed). */
+  enforceMediaQuota(principal: AuthenticatedPrincipal, request: { modality: MediaModality; creditCostCents?: number }): void {
+    const quota = principal.quota.media;
+    if (!quota) throw new SecurityPolicyError("Media quota is not configured; contact an administrator");
+    const since = new Date(Date.now() - quota.windowHours * 3_600_000).toISOString();
+    const windowJobs = this.store.countNonTerminalMediaJobs(principal.user.id, since);
+    if (windowJobs >= quota.maxJobsPerWindow) throw new SecurityPolicyError("Media job quota exceeded");
+    if (this.store.countNonTerminalMediaJobs(principal.user.id, new Date(0).toISOString()) >= quota.maxConcurrentJobs) {
+      throw new SecurityPolicyError("Media concurrent-job quota exceeded");
+    }
+    if (quota.creditBudgetCents !== undefined) {
+      const spent = this.store.sumMediaLedgerForUser(principal.user.id, since);
+      if (spent + (request.creditCostCents ?? 0) > quota.creditBudgetCents) throw new SecurityPolicyError("Media credit budget exceeded");
+    }
+  }
   setRouteGrants(userId: string, routeIds: readonly string[]): void { this.requireUser(userId); this.store.replaceUserRouteGrants(userId, routeIds); }
   setQuota(userId: string, quota: UserQuota): void { this.requireUser(userId); validateQuota(quota); this.store.setUserQuota(userId, quota); }
   audit(action: string, actorUserId?: string, targetType?: string, targetId?: string, detail: Record<string, unknown> = {}): void { this.store.appendAuditEvent({ id: randomUUID(), timestamp: new Date().toISOString(), action, detail, ...(actorUserId ? { actorUserId } : {}), ...(targetType ? { targetType } : {}), ...(targetId ? { targetId } : {}) }); }
@@ -55,4 +77,21 @@ export class SecurityService {
 
 export class SecurityPolicyError extends Error {}
 function bearer(value: string | string[] | undefined): string | undefined { if (typeof value !== "string") return undefined; const match = /^Bearer\s+(.+)$/i.exec(value); return match?.[1]; }
-function validateQuota(quota: UserQuota): void { for (const value of Object.values(quota)) if (!Number.isInteger(value) || value < 1) throw new SecurityPolicyError("Quota values must be positive integers"); }
+function validateQuota(quota: UserQuota): void {
+  for (const value of Object.values(quota)) {
+    if (value && typeof value === "object") {
+      validateMediaQuota(value as MediaQuota);
+      continue;
+    }
+    if (!Number.isInteger(value) || value < 1) throw new SecurityPolicyError("Quota values must be positive integers");
+  }
+}
+function validateMediaQuota(quota: MediaQuota): void {
+  const positiveInteger = (value: unknown): boolean => typeof value === "number" && Number.isInteger(value) && value >= 1;
+  if (!positiveInteger(quota.maxJobsPerWindow)) throw new SecurityPolicyError("maxJobsPerWindow must be a positive integer");
+  if (!positiveInteger(quota.windowHours)) throw new SecurityPolicyError("windowHours must be a positive integer");
+  if (!positiveInteger(quota.maxConcurrentJobs)) throw new SecurityPolicyError("maxConcurrentJobs must be a positive integer");
+  if (quota.creditBudgetCents !== undefined && (!Number.isInteger(quota.creditBudgetCents) || quota.creditBudgetCents < 0)) {
+    throw new SecurityPolicyError("creditBudgetCents must be a non-negative integer");
+  }
+}
