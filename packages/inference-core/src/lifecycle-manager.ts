@@ -4,10 +4,12 @@ import type {
   InferenceRequest,
   InstanceSnapshot,
   InstanceState,
+  MediaGenerationRequest,
+  MediaJobEvent,
   Recipe,
 } from "@fitz/protocol";
-import type { EngineAdapter, EngineInstanceHandle } from "./adapter.js";
-import { EngineAdapterRegistry } from "./adapter.js";
+import type { EngineAdapter, EngineInstanceHandle, MediaEngineAdapter, MediaJobHandle } from "./adapter.js";
+import { EngineAdapterRegistry, isMediaEngineAdapter } from "./adapter.js";
 import type { Clock, ScheduledTask } from "./clock.js";
 import { SystemClock } from "./clock.js";
 import { LifecycleEventBus } from "./event-bus.js";
@@ -31,7 +33,7 @@ export class LifecycleManager {
   #state: InstanceState = "UNLOADED";
   #instanceId: string | undefined;
   #recipe: Recipe | undefined;
-  #adapter: EngineAdapter | undefined;
+  #adapter: EngineAdapter | MediaEngineAdapter | undefined;
   #handle: EngineInstanceHandle | undefined;
   #startedAt: number | undefined;
   #lastActivityAt: number | undefined;
@@ -72,6 +74,9 @@ export class LifecycleManager {
   ): AsyncIterable<InferenceDelta> {
     await this.#ensureReady(recipe, signal);
     if (!this.#adapter || !this.#handle) throw new Error("Engine instance is not ready");
+    if (isMediaEngineAdapter(this.#adapter)) {
+      throw new Error(`Recipe ${recipe.id} uses a media engine adapter; runMedia is required`);
+    }
 
     this.#cancelEviction();
     this.#activeLeases += 1;
@@ -85,6 +90,59 @@ export class LifecycleManager {
       if (!isAbortError(error)) {
         this.#failureReason = errorMessage(error);
         this.#transition("FAILED", "generation-failed");
+      }
+      throw error;
+    } finally {
+      this.#activeLeases = Math.max(0, this.#activeLeases - 1);
+      this.#lastActivityAt = this.#clock.now();
+      if (this.#state === "BUSY") {
+        this.#transition("READY", signal.aborted ? "generation-cancelled" : "generation-completed");
+        this.#scheduleEviction();
+      }
+    }
+  }
+
+  /** Job-oriented generation (submit/poll/cancel). Shares the load/lease/eviction
+   *  lifecycle with chat: a generation holds its lease to the terminal state, so
+   *  a multi-minute video keeps the instance resident (no eviction policy change). */
+  async *runMedia(
+    recipe: Recipe,
+    request: MediaGenerationRequest,
+    signal: AbortSignal,
+  ): AsyncIterable<MediaJobEvent> {
+    await this.#ensureReady(recipe, signal);
+    const adapter = this.#mediaAdapter(recipe);
+    if (!this.#handle) throw new Error("Engine instance is not ready");
+    const handle = this.#handle;
+
+    this.#cancelEviction();
+    this.#activeLeases += 1;
+    this.#transition("BUSY", "media-generation-started");
+    let job: MediaJobHandle | undefined;
+    try {
+      job = await adapter.submit(handle, request, signal);
+      for (;;) {
+        const poll = await adapter.poll(handle, job, signal);
+        if (poll.status === "completed" && poll.result) {
+          yield { type: "completed", result: poll.result };
+          return;
+        }
+        if (poll.status === "failed") throw new Error(poll.error ?? "Media generation failed");
+        if (poll.status === "cancelled") throw abortError();
+        if (poll.progress !== undefined) yield { type: "progress", progress: poll.progress };
+        await abortableDelay(adapter.defaultPollIntervalMs ?? 1_000, signal);
+      }
+    } catch (error) {
+      if (isAbortError(error) && job) {
+        try {
+          await adapter.cancel(handle, job); // best-effort provider cancel
+        } catch {
+          // Preserve the original abort error; provider cancel is best-effort.
+        }
+      }
+      if (!isAbortError(error)) {
+        this.#failureReason = errorMessage(error);
+        this.#transition("FAILED", "media-generation-failed");
       }
       throw error;
     } finally {
@@ -140,6 +198,15 @@ export class LifecycleManager {
     if (this.#adapter && this.#handle) await this.#adapter.stop(this.#handle, mode);
     this.#clearInstance();
     this.#transition("UNLOADED", reason);
+  }
+
+  /** Media recipes must resolve to a MediaEngineAdapter; used only by runMedia. */
+  #mediaAdapter(recipe: Recipe): MediaEngineAdapter {
+    const adapter = this.#adapters.get(recipe.adapter);
+    if (!isMediaEngineAdapter(adapter)) {
+      throw new Error(`Recipe ${recipe.id} does not use a media engine adapter (${recipe.adapter})`);
+    }
+    return adapter;
   }
 
   async #ensureReady(recipe: Recipe, signal: AbortSignal): Promise<void> {
@@ -262,6 +329,28 @@ export class LifecycleManager {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
+}
+
+function abortError(): Error {
+  const error = new Error("Operation aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) throw abortError();
+  if (milliseconds <= 0) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    const handle = setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, milliseconds);
+    const abort = () => {
+      clearTimeout(handle);
+      reject(abortError());
+    };
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }
 
 function errorMessage(error: unknown): string {

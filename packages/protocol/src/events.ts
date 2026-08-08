@@ -19,11 +19,15 @@ export type InstanceStateChangedEvent = EventEnvelope<
   }
 >;
 
+export type QueueJobKind = "chat" | "media";
+
 export type QueueUpdatedEvent = EventEnvelope<
   "queue.updated",
   {
     requestId: string;
     routeId: string;
+    /** Discriminator: media jobs must not persist to `inference_requests` (§5.5). */
+    kind: QueueJobKind;
     position: number;
     depth: number;
     status: "queued" | "started" | "cancelled" | "completed" | "failed";

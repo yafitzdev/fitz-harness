@@ -58,9 +58,9 @@ export class RouteResolver {
     return structuredClone(recipe);
   }
 
-  listRoutes(): Route[] {
+  listRoutes(includeDisabled = false): Route[] {
     return [...this.#routes.values()]
-      .filter((route) => route.enabled)
+      .filter((route) => includeDisabled || route.enabled)
       .map((route) => structuredClone(route));
   }
 

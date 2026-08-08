@@ -1,23 +1,40 @@
 import { randomUUID } from "node:crypto";
-import type { InferenceDelta, InferenceRequest } from "@fitz/protocol";
+import type { InferenceDelta, InferenceRequest, MediaGenerationRequest, MediaJobEvent } from "@fitz/protocol";
 import { AsyncChannel } from "./async-channel.js";
 import { LifecycleEventBus } from "./event-bus.js";
 import { LifecycleManager } from "./lifecycle-manager.js";
 import { RouteResolver } from "./route-resolver.js";
 
-interface QueueJob {
-  id: string;
-  routeId: string;
-  recipeId?: string;
-  unloadAfterCompletion?: boolean;
-  request: InferenceRequest;
-  output: AsyncChannel<InferenceDelta>;
-  controller: AbortController;
-  detachExternalAbort?: () => void;
-}
+type QueueJob =
+  | {
+      kind: "chat";
+      id: string;
+      routeId: string;
+      recipeId?: string;
+      unloadAfterCompletion?: boolean;
+      request: InferenceRequest;
+      output: AsyncChannel<InferenceDelta>;
+      controller: AbortController;
+      detachExternalAbort?: () => void;
+    }
+  | {
+      kind: "media";
+      id: string;
+      routeId: string;
+      mediaRequest: MediaGenerationRequest;
+      output: AsyncChannel<MediaJobEvent>;
+      controller: AbortController;
+      detachExternalAbort?: () => void;
+    };
 
 export interface ScheduledStream extends AsyncIterable<InferenceDelta> {
   requestId: string;
+  cancel(): void;
+}
+
+export interface ScheduledMediaJob {
+  jobId: string;
+  events: AsyncIterable<MediaJobEvent>;
   cancel(): void;
 }
 
@@ -60,6 +77,50 @@ export class InferenceScheduler {
     return this.#enqueue(`recipe:${recipeId}`, input, externalSignal, recipeId, options.unloadAfterCompletion);
   }
 
+  /** Media generation rides the same shared FIFO: queue position, cancellation,
+   *  `queue.updated` events (with `kind: "media"`), and shutdown are shared. */
+  enqueueMedia(
+    routeId: string,
+    input: Omit<MediaGenerationRequest, "id" | "routeId">,
+    externalSignal?: AbortSignal,
+  ): ScheduledMediaJob {
+    const id = randomUUID();
+    const output = new AsyncChannel<MediaJobEvent>();
+    const controller = new AbortController();
+    const mediaRequest: MediaGenerationRequest = { ...input, id, routeId };
+    const job: QueueJob = {
+      kind: "media",
+      id,
+      routeId,
+      mediaRequest,
+      output,
+      controller,
+    };
+
+    if (!this.#accepting) {
+      output.fail(new Error("Inference scheduler is shutting down"));
+      return { jobId: id, events: output, cancel: () => undefined };
+    }
+
+    if (externalSignal) {
+      const abort = () => this.#cancel(job);
+      if (externalSignal.aborted) abort();
+      else {
+        externalSignal.addEventListener("abort", abort, { once: true });
+        job.detachExternalAbort = () => externalSignal.removeEventListener("abort", abort);
+      }
+    }
+
+    if (!controller.signal.aborted) {
+      this.#queue.push(job);
+      this.#publishQueue(job, "queued", this.#queue.length);
+      this.#publishQueuedPositions();
+      void this.#pump();
+    }
+
+    return { jobId: id, events: output, cancel: () => this.#cancel(job) };
+  }
+
   #enqueue(
     routeId: string,
     input: Omit<InferenceRequest, "id" | "routeId">,
@@ -72,6 +133,7 @@ export class InferenceScheduler {
     const controller = new AbortController();
     const request: InferenceRequest = { ...input, id, routeId };
     const job: QueueJob = {
+      kind: "chat",
       id,
       routeId,
       request,
@@ -147,11 +209,18 @@ export class InferenceScheduler {
         this.#publishQueuedPositions();
 
         try {
-          const recipe = job.recipeId ? this.routes.resolveRecipe(job.recipeId) : this.routes.resolve(job.routeId).recipe;
-          for await (const delta of this.lifecycle.run(recipe, job.request, job.controller.signal)) {
-            job.output.push(delta);
+          if (job.kind === "chat") {
+            const recipe = job.recipeId ? this.routes.resolveRecipe(job.recipeId) : this.routes.resolve(job.routeId).recipe;
+            for await (const delta of this.lifecycle.run(recipe, job.request, job.controller.signal)) {
+              job.output.push(delta);
+            }
+            if (job.unloadAfterCompletion) await this.lifecycle.stop(`recipe-test:${recipe.id}`, "graceful");
+          } else {
+            const recipe = this.routes.resolve(job.routeId).recipe;
+            for await (const event of this.lifecycle.runMedia(recipe, job.mediaRequest, job.controller.signal)) {
+              job.output.push(event);
+            }
           }
-          if (job.unloadAfterCompletion) await this.lifecycle.stop(`recipe-test:${recipe.id}`, "graceful");
           job.output.close();
           this.#publishQueue(job, "completed", 0);
         } catch (error) {
@@ -186,6 +255,7 @@ export class InferenceScheduler {
     this.events.queueUpdated({
       requestId: job.id,
       routeId: job.routeId,
+      kind: job.kind,
       position,
       depth: this.queueDepth,
       status,
