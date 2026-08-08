@@ -48,6 +48,7 @@ const taskTitle = element("task-title");
 const engineState = element("engine-state");
 const routeState = element("route-state");
 const inspectorNewTab = element("inspector-new-tab") as HTMLButtonElement;
+const inspectorRenderToggle = element("inspector-render-toggle") as HTMLButtonElement;
 const inspectorFullscreen = element("inspector-fullscreen") as HTMLButtonElement;
 const inspectorArtifacts = element("inspector-artifacts") as HTMLButtonElement;
 const artifacts = element("artifacts");
@@ -144,6 +145,7 @@ const inspectorPanel = new InspectorPanel({
   getProjectRoot: () => String(projects?.activeProject()?.rootPath ?? ""),
   getSearchRoots: () => activityTimeline.searchRoots(),
   showToast,
+  renderToggle: inspectorRenderToggle,
   onLayoutChange: () => conversationLayout?.sync(),
 });
 const composer = new Composer({
@@ -485,7 +487,7 @@ for (const windowButton of document.querySelectorAll<HTMLButtonElement>("[data-w
 connectionStatus.addEventListener("click", () => void initialize());
 inspectorNewTab.addEventListener("click", () => inspectorPanel.newTab());
 inspectorFullscreen.addEventListener("click", () => { /* Fullscreen preview: deferred. */ });
-inspectorArtifacts.addEventListener("click", () => inspectorPanel.toggleRepository());
+inspectorArtifacts.addEventListener("click", () => inspectorPanel.toggle());
 window.addEventListener("fitz:open-resource", (event) => {
   const reference = (event as CustomEvent<{ reference?: string }>).detail?.reference;
   if (reference) void inspectorPanel.inspect(reference);

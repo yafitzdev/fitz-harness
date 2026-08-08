@@ -17,6 +17,11 @@ export interface InspectorPanelOptions {
   getProjectRoot: () => string;
   getSearchRoots: () => string[];
   showToast: (message: string) => void;
+  /**
+   * The header's raw↔rendered toggle. Optional: it is wired to whichever
+   * tab is active, and hidden unless a markdown or HTML doc is open.
+   */
+  renderToggle?: HTMLButtonElement;
   /** Reflows the conversation whenever the panel opens, closes, or is resized. */
   onLayoutChange: () => void;
 }
@@ -38,12 +43,11 @@ type InspectorTab = {
  * The Inspector — the right-hand resource panel. It is its own component: it
  * builds its shell (preview surface and resizer), owns the open/close state
  * and the resizable width, and composes the tabbed preview surface. The tab
- * bar lives in the workspace header above the panel — browser-style tabs grow
+ * bar lives in the workspace header above the panel — bubble-style tabs grow
  * from the left edge of the inspector toward the header actions, and the
- * artifact repository is a dedicated view opened from the header's Artifacts
- * button rather than a tab. Closing the last tab closes the panel. The
- * renderer never touches the panel's internals; it only drives this public
- * surface.
+ * artifact repository is a dedicated view (the panel's home view) rather
+ * than a tab. The renderer never touches the panel's internals; it only
+ * drives this public surface.
  */
 export class InspectorPanel {
   readonly #options: InspectorPanelOptions;
@@ -53,8 +57,10 @@ export class InspectorPanel {
   readonly #tabBar: HTMLElement;
   readonly #pane: ResizablePane;
   readonly #repository: ArtifactRepository;
+  readonly #renderToggle: HTMLButtonElement | undefined;
   readonly #repositoryView: HTMLElement;
   readonly #tabs: InspectorTab[] = [];
+  readonly #resizeObserver: ResizeObserver;
   #activeTabId: string | undefined;
   #pastedCounter = 0;
   #emptyCounter = 0;
@@ -112,11 +118,20 @@ export class InspectorPanel {
 
     options.mount.append(resizer, element);
 
+    // Re-clamp the panel whenever the workspace changes size (window resize,
+    // sidebar drag). The pane's maximum depends on the workspace width but is
+    // only enforced inside set(), so without this a shrunken window would
+    // leave the panel overlapping the conversation. The user's preferred
+    // width stays in localStorage; this only constrains what fits right now.
+    this.#resizeObserver = new ResizeObserver(() => this.clampWidth());
+    this.#resizeObserver.observe(options.mount);
+
     this.#element = element;
     this.#resizer = resizer;
     this.#content = content;
     this.#tabBar = tabBar;
     this.#pane = pane;
+    this.#renderToggle = options.renderToggle;
     this.#repository = new ArtifactRepository({
       onOpenFile: (path) => void this.inspect(path),
       onOpenArtifact: (artifact) => void this.previewArtifact(artifact),
@@ -141,6 +156,17 @@ export class InspectorPanel {
   /** Current panel width in pixels (what the conversation reflows around). */
   width(): number { return this.#pane.value(); }
 
+  /**
+   * Pulls the panel back in when the workspace shrinks so it never
+   * overspills the conversation: the pane's maximum is workspaceWidth - 280
+   * (the conversation's floor), and re-applying it here enforces that live.
+   * Driven by a ResizeObserver on the workspace; exposed for tests. The
+   * clamped size is not persisted — the stored width is restored next launch.
+   */
+  clampWidth(): void {
+    this.#pane.set(this.#pane.value());
+  }
+
   open(): void {
     if (this.#open) return;
     this.#open = true;
@@ -149,6 +175,8 @@ export class InspectorPanel {
     this.#tabBar.hidden = false;
     // Without an active tab the repository is the panel's home view.
     if (!this.#tabs.some((candidate) => candidate.id === this.#activeTabId)) this.#showRepository();
+    // Reapplies the raw↔rendered toggle for the doc that reopens.
+    this.#tabs.find((candidate) => candidate.id === this.#activeTabId)?.inspector?.setActive(true);
     this.#options.mount.classList.add("inspector-open");
     // The app shell keeps the sidebar column when the Inspector is docked.
     this.#options.mount.parentElement?.classList.add("context-open");
@@ -161,12 +189,16 @@ export class InspectorPanel {
     this.#element.hidden = true;
     this.#resizer.hidden = true;
     this.#tabBar.hidden = true;
+    if (this.#renderToggle) this.#renderToggle.hidden = true;
     this.#options.mount.classList.remove("inspector-open");
     this.#options.mount.parentElement?.classList.remove("context-open");
     // Tabs survive closing the panel, so reopening returns to the same view.
     this.#options.onLayoutChange();
   }
 
+  /** The header's sidebar button: toggles the panel open and closed. Tabs and
+   *  the active view survive a close, so reopening returns to the same doc —
+   *  or to the artifact repository home view when nothing is open. */
   toggle(): void {
     if (this.#open) this.close();
     else this.open();
@@ -176,16 +208,6 @@ export class InspectorPanel {
   showRepository(): void {
     this.open();
     this.#showRepository();
-  }
-
-  /**
-   * The header's Artifacts button: opens the panel on the repository view.
-   * Clicking it again while the repository is showing closes the panel, so it
-   * doubles as the panel's close control.
-   */
-  toggleRepository(): void {
-    if (this.#open && this.#activeTabId === undefined) { this.close(); return; }
-    this.showRepository();
   }
 
   /** Opens the panel with a fresh empty tab (full tab behavior deferred). */
@@ -313,6 +335,7 @@ export class InspectorPanel {
       getProjectRoot: this.#options.getProjectRoot,
       getSearchRoots: this.#options.getSearchRoots,
       showToast: this.#options.showToast,
+      ...(this.#options.renderToggle ? { renderToggle: this.#options.renderToggle } : {}),
       onFileInspected: (path, name, reference) => this.#onFileInspected(tab.id, path, name, reference),
     });
     this.#attachTabHandlers(tab);
@@ -374,6 +397,8 @@ export class InspectorPanel {
     this.#repositoryView.hidden = true;
     this.#activeTabId = id;
     if (tab.inspector) tab.inspector.setActive(true);
+    // Tabs without a preview (empty tabs) have no raw↔rendered mode.
+    else if (this.#renderToggle) this.#renderToggle.hidden = true;
   }
 
   /** Switches to the repository view: no tab selected, the repo list shown. */
@@ -386,6 +411,7 @@ export class InspectorPanel {
       candidate.content.hidden = true;
     }
     this.#repositoryView.hidden = false;
+    if (this.#renderToggle) this.#renderToggle.hidden = true;
   }
 
   #closeTab(id: string): void {
@@ -403,8 +429,8 @@ export class InspectorPanel {
       // Activate the tab that slides into the closed slot (or the new last).
       this.#activateTab(this.#tabs[Math.min(index, this.#tabs.length - 1)]!.id);
     } else {
-      // No tabs left: the panel closes; reopening lands on the repository.
-      this.close();
+      // No tabs left: fall back to the artifact repository home view.
+      this.#showRepository();
     }
   }
 }

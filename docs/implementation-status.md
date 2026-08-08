@@ -62,12 +62,14 @@
   a blob-URL frame for Chromium's viewer (intentionally unsandboxed because the sandbox attribute
   disables the PDF viewer plugin and blanks the preview), and audio/video with inline controls.
 - Tabbed Inspector with the artifact repository as a persistent view behind a header button: the
-  Inspector itself is content only — its bubble-style tab bar lives in the workspace header, above
-  the panel, growing rightward from the left edge of the header, and the repository is no longer a tab. Three action buttons sit at
-  the right of the header: `+` opens a new empty tab, `< >` is a deferred fullscreen-preview
-  placeholder, and `H` (the artifact-repo button, a mirror of the sidebar titlebar icon) toggles the
-  panel onto the repository view — it also closes the panel when the repository view is already
-  showing, doubling as the panel's close control. Closing the last tab closes the panel. The
+  Inspector itself is content only — its rounded-square bubble tab bar lives in the workspace
+  header, above the panel, growing rightward from the inspector's left edge, and the repository is
+  no longer a tab. The right of the header carries the raw↔rendered toggle (revealed only for
+  markdown and HTML docs), `+` (new empty tab), `< >` (deferred fullscreen preview), and `H` (the
+  sidebar button, a mirror of the sidebar titlebar icon), which toggles the panel open and closed —
+  tabs and the active view survive a close, so reopening returns to the same doc, and the
+  repository is the panel's home view when nothing is open. Closing the last doc tab falls back to
+  the artifact view. The
   repository grows with every file the agent produces (registered the moment a file appears in the
   conversation, no click needed — streaming partials are superseded by the complete path, and chat
   references are replaced by their resolved absolute path once inspected) plus the current session's

@@ -93,7 +93,7 @@ describe("InspectorPanel", () => {
     expect(onLayoutChange).toHaveBeenCalledTimes(2);
   });
 
-  it("toggles open state and closes from the repository button", () => {
+  it("toggles the panel open and closed without destroying the open view", () => {
     const host = mount();
     const view = panel(host);
 
@@ -103,12 +103,12 @@ describe("InspectorPanel", () => {
     view.toggle();
     expect(view.isOpen).toBe(false);
 
-    // The repository is the home view: opening lands there, and the Artifacts
-    // button closes the panel when the repository is already showing.
-    view.toggleRepository();
+    // The repository is the panel's home view: opening lands there, and the
+    // sidebar button closes the panel again without destroying the view.
+    view.toggle();
     expect(view.isOpen).toBe(true);
     expect(view.tabBar.querySelector(".inspector-tab.active")).toBeNull();
-    view.toggleRepository();
+    view.toggle();
     expect(view.isOpen).toBe(false);
     expect(view.element.hidden).toBe(true);
     expect(view.tabBar.hidden).toBe(true);
@@ -132,6 +132,41 @@ describe("InspectorPanel", () => {
     expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toBe("New tab 2");
   });
 
+  it("wires the header's raw↔rendered toggle to the active markdown tab", async () => {
+    const host = mount();
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "icon-button";
+    toggle.hidden = true;
+    const view = new InspectorPanel(options(host, {
+      renderToggle: toggle,
+      getProjectRoot: () => "/project",
+    }));
+    vi.stubGlobal("fitz", {
+      previewResource: vi.fn(async () => ({ kind: "markdown", name: "notes.md", path: "/project/notes.md", content: "# Hi", size: 5 })),
+    });
+
+    // A markdown doc reveals the toggle, showing the rendered view.
+    await view.inspect("notes.md");
+    expect(toggle.hidden).toBe(false);
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(toggle.title).toBe("View source");
+    expect(view.element.querySelector(".inspector-markdown")).not.toBeNull();
+
+    // Clicking it switches to the raw source; the button state follows.
+    toggle.click();
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(toggle.title).toBe("View rendered");
+    expect(view.element.querySelector(".inspector-source")).not.toBeNull();
+
+    // Tabs without a raw↔rendered mode (images, empty tabs) hide it again.
+    view.previewImage("data:image/png;base64,AAAA", "image/png", "shot.png");
+    expect(toggle.hidden).toBe(true);
+    view.newTab();
+    expect(toggle.hidden).toBe(true);
+    vi.unstubAllGlobals();
+  });
+
   it("restores the persisted width and resizes from the divider keyboard", () => {
     const host = mount();
     const view = panel(host);
@@ -146,6 +181,33 @@ describe("InspectorPanel", () => {
 
     view.resizer.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft" }));
     expect(view.width()).toBe(400);
+  });
+
+  it("clamps the panel width when the workspace shrinks so it never overspills the conversation", () => {
+    const host = mount();
+    const view = panel(host);
+    view.open();
+    expect(view.width()).toBe(400);
+    expect(host.style.getPropertyValue("--inspector-width")).toBe("400px");
+
+    // The workspace narrows (window resize, sidebar drag): the pane's maximum
+    // is workspaceWidth - 280, and re-clamping pulls the panel in so the
+    // conversation keeps its 280px floor instead of being covered.
+    host.getBoundingClientRect = () => ({ width: 600, height: 700, top: 0, left: 0, right: 600, bottom: 700, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+    view.clampWidth();
+    expect(view.width()).toBe(320); // 600 - 280
+    expect(host.style.getPropertyValue("--inspector-width")).toBe("320px");
+    expect(view.resizer.getAttribute("aria-valuenow")).toBe("320");
+
+    // Growing the workspace back does not override the clamped width; the
+    // user re-drags the divider to widen the panel.
+    host.getBoundingClientRect = () => ({ width: 1000, height: 700, top: 0, left: 0, right: 1000, bottom: 700, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+    view.clampWidth();
+    expect(view.width()).toBe(320);
+
+    // The clamped size is not persisted: the preferred width is restored on
+    // the next launch at a roomier window.
+    expect(localStorage.getItem("fitz-inspector-width")).toBeNull();
   });
 
   it("returns to the artifact repository when the panel is closed and reset", async () => {
@@ -214,13 +276,15 @@ describe("InspectorPanel", () => {
     // Closing the panel keeps the tab alive, so its preview survives a reopen.
     view.close();
     expect(revokeObjectURL).not.toHaveBeenCalled();
-    // Closing the tab itself releases the preview's blob URL; with no tabs
-    // left the panel closes too.
+    // Reopening returns to the same doc; closing the last tab then falls
+    // back to the repository home view and releases the preview's blob URL.
+    view.open();
     const close = view.tabBar.querySelector<HTMLButtonElement>(".inspector-tab-close")!;
     close.click();
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:test-pdf");
     expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(0);
-    expect(view.isOpen).toBe(false);
+    expect(view.isOpen).toBe(true);
+    expect(view.tabBar.querySelector(".inspector-tab.active")).toBeNull();
   });
 
   it("renders an inspected image file inline in the Inspector", async () => {
@@ -308,14 +372,15 @@ describe("InspectorPanel", () => {
     expect(request).toHaveBeenCalledWith({ path: "/api/v1/artifacts/42/content", responseType: "base64" });
 
     // Stale uploads from a previous session leave the repository; closing the
-    // only tab closes the panel.
+    // only tab falls back to the repository home view.
     view.setSessionArtifacts([]);
     expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(0);
-    expect(view.isOpen).toBe(false);
+    expect(view.isOpen).toBe(true);
+    expect(view.tabBar.querySelector(".inspector-tab.active")).toBeNull();
     vi.unstubAllGlobals();
   });
 
-  it("closes every tab, and closing the last tab closes the panel", () => {
+  it("closes every tab, and closing the last tab falls back to the repository", () => {
     const host = mount();
     const view = panel(host);
     view.previewImage("data:image/png;base64,AAAA", "image/png", "shot.png");
@@ -332,12 +397,13 @@ describe("InspectorPanel", () => {
     expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(1);
     expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toContain("two.png");
 
-    // Closing the last tab closes the whole panel.
+    // Closing the last tab falls back to the repository home view.
     const lastClose = view.tabBar.querySelector<HTMLButtonElement>(".inspector-tab-close")!;
     lastClose.click();
-    expect(view.isOpen).toBe(false);
     expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(0);
-    expect(view.tabBar.hidden).toBe(true);
+    expect(view.isOpen).toBe(true);
+    expect(view.tabBar.querySelector(".inspector-tab.active")).toBeNull();
+    expect(view.element.querySelector(".inspector-tabpanel:not([hidden])")).not.toBeNull();
   });
 
   it("merges duplicate tabs for the same file opened by different references", async () => {
@@ -448,12 +514,12 @@ describe("InspectorPanel", () => {
     expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(1);
     expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toContain("shot.png");
 
-    // Middle-clicking the last tab closes the whole panel.
+    // Middle-clicking the last tab falls back to the repository home view.
     const last = view.tabBar.querySelector<HTMLElement>(".inspector-tab")!;
     last.dispatchEvent(new MouseEvent("auxclick", { button: 1, bubbles: true, cancelable: true }));
     expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(0);
-    expect(view.isOpen).toBe(false);
-    expect(view.tabBar.hidden).toBe(true);
+    expect(view.isOpen).toBe(true);
+    expect(view.element.querySelector(".inspector-tabpanel:not([hidden])")).not.toBeNull();
   });
 
   it("suppresses browser autoscroll for middle-clicks on the tab bar", () => {
@@ -471,7 +537,7 @@ describe("InspectorPanel", () => {
     expect(left.defaultPrevented).toBe(false);
   });
 
-  it("switches between file tabs and the repository view from the header button", async () => {
+  it("closes and reopens the panel from the header button, keeping the open doc", async () => {
     const host = mount();
     const view = new InspectorPanel(options(host, {
       getProjectRoot: () => "/project",
@@ -483,16 +549,21 @@ describe("InspectorPanel", () => {
     await view.inspect("one.txt");
     expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toContain("one.txt");
 
-    // The repository button switches to the repository view (no tab selected).
-    view.toggleRepository();
+    // The sidebar button closes the panel but keeps the open doc open.
+    view.toggle();
+    expect(view.isOpen).toBe(false);
+    expect(view.element.hidden).toBe(true);
+
+    // Reopening returns to the same doc, not the repository view.
+    view.toggle();
+    expect(view.isOpen).toBe(true);
+    expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toContain("one.txt");
+
+    // Closing the doc tab falls back to the repository home view.
+    view.tabBar.querySelector<HTMLElement>(".inspector-tab-close")!.click();
     expect(view.isOpen).toBe(true);
     expect(view.tabBar.querySelector(".inspector-tab.active")).toBeNull();
     expect(view.element.querySelector(".inspector-tabpanel:not([hidden])")).not.toBeNull();
-
-    // Clicking the file tab again restores its preview.
-    const tabs = view.tabBar.querySelectorAll<HTMLElement>(".inspector-tab");
-    tabs[0]!.click();
-    expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toContain("one.txt");
     vi.unstubAllGlobals();
   });
 
