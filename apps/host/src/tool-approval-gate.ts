@@ -1,22 +1,48 @@
 import { randomUUID } from "node:crypto";
+import { MEDIA_TOOLS, type PiToolCall } from "@fitz/agent-pi";
 import type { ToolApprovalRecord } from "@fitz/protocol";
 import type { ToolApprovalRequester } from "@fitz/agent-pi";
 import type { SqliteStore } from "@fitz/storage";
+import { creditCostCentsFor } from "./media-jobs.js";
 
 export function createToolApprovalRequester(store: SqliteStore, pollIntervalMs = 100): ToolApprovalRequester {
   return (request, signal) => {
+    const enriched = enrichMediaRequest(store, request);
     const approval: ToolApprovalRecord = {
       id: randomUUID(),
-      sessionId: request.sessionId,
-      toolCallId: request.toolCallId,
-      toolName: request.toolName,
+      sessionId: enriched.sessionId,
+      toolCallId: enriched.toolCallId,
+      toolName: enriched.toolName,
       status: "pending",
-      request: recordRequest(request.input),
+      request: recordRequest(enriched.input),
       requestedAt: new Date().toISOString(),
     };
     store.createToolApproval(approval);
     return { approvalId: approval.id, decision: waitForDecision(store, approval.id, signal, pollIntervalMs) };
   };
+}
+
+/**
+ * Media approvals (§5.9) carry an estimated credit cost so the approver sees what the
+ * generation is billed at (`recipe.configuration.costCentsPerJob`, in cents). The
+ * estimate is display-only: the executed job's ledger entry is whatever the coordinator
+ * computes at submit time. The injected field is harmless to non-media tools — they are
+ * returned unchanged.
+ */
+function enrichMediaRequest(store: SqliteStore, request: PiToolCall & { sessionId: string }): PiToolCall & { sessionId: string } {
+  if (!MEDIA_TOOLS.has(request.toolName)) return request;
+  const input = request.input !== null && typeof request.input === "object" && !Array.isArray(request.input) ? request.input as Record<string, unknown> : undefined;
+  const routeId = typeof input?.route_id === "string" && input.route_id ? input.route_id : mediaRouteIdFor(request.toolName);
+  const route = store.listRoutes().find((candidate) => candidate.id === routeId);
+  const recipe = route ? store.listRecipes().find((candidate) => candidate.id === route.recipeId) : undefined;
+  const cost = recipe ? creditCostCentsFor(recipe) : undefined;
+  if (cost === undefined) return request;
+  return { ...request, input: { ...(input ?? {}), estimated_credit_cost_cents: cost } };
+}
+
+/** Well-known media route id for a tool: `generate_image` → "image", etc. */
+function mediaRouteIdFor(toolName: string): string {
+  return toolName === "generate_video" ? "video" : toolName === "generate_audio" ? "audio" : "image";
 }
 
 async function waitForDecision(store: SqliteStore, approvalId: string, signal: AbortSignal, pollIntervalMs: number): Promise<"approved" | "denied"> {

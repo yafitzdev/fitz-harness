@@ -144,6 +144,11 @@ export class AgentSafetyService {
   createToolEvaluator(): ToolEvaluator {
     return async (request, signal) => {
       const ctx = this.#getContext(request.runId, request.cwd);
+      // Media tools (§5.9) resolve their per-tool policy against the run's owner, exactly
+      // like the HTTP approval endpoint's `resolveToolPolicy(userId, role, toolName)`
+      // consult: user-level policy wins, then role-level, then the "ask" default.
+      const run = request.runId ? this.#store.getAgentRun(request.runId) : undefined;
+      const owner = run?.ownerUserId ? this.#store.getUser(run.ownerUserId) : undefined;
       const policyCtx: PolicyContext = {
         runId: ctx.runId,
         cwd: ctx.cwd,
@@ -166,6 +171,7 @@ export class AgentSafetyService {
         nextSequence: () => ++ctx.sequence,
         log: ctx.log,
         createdPaths: ctx.createdPaths,
+        resolveToolPolicy: (toolName) => this.#store.resolveToolPolicy(owner?.id, owner?.role, toolName),
       };
       return evaluateToolCall(request, policyCtx, signal);
     };

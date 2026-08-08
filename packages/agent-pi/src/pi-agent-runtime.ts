@@ -92,6 +92,13 @@ const CODING_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"] as 
 export const SESSION_LOOKUP_TOOL = "fitz_session";
 /** Explicit trash tool: the agent can offer to move files to the run trash instead of deleting. */
 export const TRASH_TOOL = "fitz_trash";
+/**
+ * Media-generation tools (§5.9): Ask-first in every access mode — generation is paid
+ * work (KD-7), so these never auto-allow even in full mode without a human gate.
+ * The host registers the tool definitions via `customTools`; this set is what the
+ * runtime and policy engine use to treat them as money-spending calls.
+ */
+export const MEDIA_TOOLS = new Set(["generate_image", "generate_video", "generate_audio"]);
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls", SESSION_LOOKUP_TOOL]);
 
 export class PiAgentRuntime implements AgentRuntime {
@@ -193,7 +200,9 @@ export class PiAgentRuntime implements AgentRuntime {
    */
   async #approveTool(mode: ToolAccessMode, toolCall: PiToolCall, signal: AbortSignal, channel: EventChannel): Promise<PiToolApprovalResult> {
     if (READ_ONLY_TOOLS.has(toolCall.toolName)) return { allowed: true };
-    if (mode === "full") return { allowed: true };
+    // Media tools never auto-allow in full mode (§5.9): they fall through to the durable
+    // approval gate (or a clear block when no approval service is available).
+    if (mode === "full" && !MEDIA_TOOLS.has(toolCall.toolName)) return { allowed: true };
     if (mode === "read-only") return { allowed: false, reason: `${toolCall.toolName} is blocked in Read only mode` };
     if (!this.#requestToolApproval) return { allowed: false, reason: "This tool requires approval, but no approval service is available" };
     const handle = this.#requestToolApproval({ toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, input: toolCall.input, sessionId: "" }, signal);
@@ -220,7 +229,10 @@ export class PiAgentRuntime implements AgentRuntime {
     // No policy configured: legacy behavior.
     if (isReadOnlyTool) return { action: "allow" };
     if (mode === "read-only") return { action: "block", reason: `${toolCall.toolName} is blocked in Read only mode` };
-    if (mode === "full") return { action: "allow" };
+    // Media tools are Ask-first even in full mode (§5.9): generation is paid work, so the
+    // legacy auto-allow is skipped and the call escalates to the approval gate (or blocks
+    // when no approval service is available).
+    if (mode === "full" && !MEDIA_TOOLS.has(toolCall.toolName)) return { action: "allow" };
     return this.#escalate(sessionId, toolCall, signal, channel);
   }
 
@@ -357,7 +369,7 @@ export function createSessionLookupTool(reader: PiSessionReader): ToolDefinition
   return tool;
 }
 
-function toolResult(text: string, details: unknown = undefined): AgentToolResult<unknown> {
+export function toolResult(text: string, details: unknown = undefined): AgentToolResult<unknown> {
   return { content: [{ type: "text", text }], details };
 }
 

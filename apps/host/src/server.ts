@@ -8,7 +8,10 @@ import { ManagedOpenAIEngineAdapter, OpenAICompatibleEngineAdapter } from "@fitz
 import { LlamaCppEngineAdapter } from "@fitz/engine-llama-cpp";
 import type { Recipe, Route } from "@fitz/protocol";
 import { SqliteStore } from "@fitz/storage";
+import { SecurityService } from "@fitz/security";
 import { createHost } from "./create-app.js";
+import { createMediaTools } from "./media-tools.js";
+import type { MediaJobCoordinator } from "./media-jobs.js";
 import { ModelCatalogService } from "./model-catalog.js";
 import { PiAgentRuntime, PiPackageService } from "@fitz/agent-pi";
 import { createNInferPlaybook } from "./ninfer-playbook.js";
@@ -42,6 +45,9 @@ for (const directory of [runtimePaths.piAgentDir, runtimePaths.logsDir, runtimeP
 const engineOptions = engineModeOptions(engineMode);
 const store = new SqliteStore(databasePath);
 const authPepper = authMode === "required" ? resolveAuthPepper(store) : undefined;
+// One SecurityService shared by HTTP auth, the media coordinator, and the agent media
+// tools: in-process submits build device-less principals via `principalForUser` (§5.9).
+const security = authPepper ? new SecurityService(store, authPepper) : undefined;
 if (engineMode === "ninfer") reconcileNInferConfiguration(store);
 extendLocalModelResidency(store);
 // Safety layer: deterministic policy engine (trash-everything deletes, zone blocking),
@@ -51,12 +57,16 @@ const safety = new AgentSafetyService({
   snapshotsDir: runtimePaths.snapshotsDir,
   runtimeDirs: [runtimePaths.piAgentDir, runtimePaths.logsDir, runtimePaths.cacheDir, runtimePaths.engineRoot, runtimePaths.modelRoot, runtimePaths.llmRoot],
 });
+// Late-bound: the media coordinator is constructed inside createHost, but customTools
+// runs per agent run — after host startup — so the closure reads the assigned instance.
+let mediaJobs: MediaJobCoordinator | undefined;
 const runtime = createHost({
   store,
   logger: true,
   resourcePolicy: { reserveVramMiB },
   authMode,
   safety,
+  ...(security ? { security } : {}),
   ...(internalAgentToken ? { internalAgentToken } : {}),
   localPort: port,
   startupManager: new WindowsStartupManager(resolve(moduleDirectory, "../start-host.ps1")),
@@ -90,12 +100,18 @@ const runtime = createHost({
       sessionReader: createSessionReader(store),
       toolPolicy: safety.createToolEvaluator(),
       redactToolResult: safety.createResultRedactor(),
-      customTools: safety.createCustomTools(),
+      customTools: (context) => [
+        ...safety.createCustomTools()(context),
+        // Media tools are paid work (§5.9): registered only when a security service
+        // exists, so quota and route-grant enforcement never silently disappear.
+        ...(mediaJobs && security ? createMediaTools({ mediaJobs, store, security })(context) : []),
+      ],
       agentDir: runtimePaths.piAgentDir,
       llmRoot: runtimePaths.llmRoot,
     }),
   } : {}),
 });
+mediaJobs = runtime.mediaJobs;
 
 await runtime.app.listen({ host, port });
 

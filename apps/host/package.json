@@ -16,8 +16,8 @@
     "@fitz/connectivity": "workspace:*",
     "@fitz/context": "workspace:*",
     "@fitz/engine-fake": "workspace:*",
-    "@fitz/engine-media-fake": "workspace:*",
     "@fitz/engine-llama-cpp": "workspace:*",
+    "@fitz/engine-media-fake": "workspace:*",
     "@fitz/engine-ninfer": "workspace:*",
     "@fitz/engine-openai-compatible": "workspace:*",
     "@fitz/inference-core": "workspace:*",
@@ -28,6 +28,7 @@
     "@fitz/security": "workspace:*",
     "@fitz/storage": "workspace:*",
     "fastify": "^5.11.0",
-    "npm": "11.10.0"
+    "npm": "11.10.0",
+    "typebox": "^1.3.7"
   }
 }

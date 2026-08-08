@@ -282,7 +282,9 @@ export class MediaJobCoordinator {
   }
 }
 
-function creditCostCentsFor(recipe: Recipe): number | undefined {
+/** The submit-time credit cost for a recipe's job, from `configuration.costCentsPerJob`
+ *  (cents). Undefined when the recipe declares no per-job cost (free/local routes). */
+export function creditCostCentsFor(recipe: Recipe): number | undefined {
   const value = recipe.configuration.costCentsPerJob;
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 }

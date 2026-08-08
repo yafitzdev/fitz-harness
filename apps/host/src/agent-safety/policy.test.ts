@@ -219,3 +219,30 @@ describe("misc policy behavior", () => {
     await expect(evaluateToolCall({ toolName: "bash", input: {} }, ctx)).resolves.toEqual({ action: "allow" });
   });
 });
+
+describe("media tool policy (§5.9)", () => {
+  it("asks by default for every media generation tool", async () => {
+    const { ctx } = makeContext();
+    await expect(evaluateToolCall({ toolName: "generate_image", input: { prompt: "a cat" } }, ctx)).resolves.toEqual({ action: "ask" });
+    await expect(evaluateToolCall({ toolName: "generate_video", input: { prompt: "a cat" } }, ctx)).resolves.toEqual({ action: "ask" });
+    await expect(evaluateToolCall({ toolName: "generate_audio", input: { prompt: "a cat" } }, ctx)).resolves.toEqual({ action: "ask" });
+  });
+
+  it("applies an admin allow/deny override via resolveToolPolicy", async () => {
+    const { ctx, records } = makeContext({ resolveToolPolicy: (toolName) => (toolName === "generate_image" ? "allow" : "deny") });
+    await expect(evaluateToolCall({ toolName: "generate_image", input: { prompt: "a cat" } }, ctx)).resolves.toEqual({ action: "allow" });
+    await expect(evaluateToolCall({ toolName: "generate_video", input: { prompt: "a cat" } }, ctx)).resolves.toEqual({ action: "block", reason: "generate_video denied by policy" });
+    expect(records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ toolName: "generate_image", effect: "allow", detail: { decision: "allow" } }),
+      expect.objectContaining({ toolName: "generate_video", effect: "block", detail: { decision: "deny" } }),
+    ]));
+  });
+
+  it("records the ask decision in the action log without blocking", async () => {
+    const { ctx, records } = makeContext();
+    await expect(evaluateToolCall({ toolName: "generate_image", input: { prompt: "a cat" } }, ctx)).resolves.toEqual({ action: "ask" });
+    expect(records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ toolName: "generate_image", effect: "allow", detail: { decision: "ask" } }),
+    ]));
+  });
+});

@@ -9,7 +9,7 @@
  */
 
 import type { ToolActionEffect } from "@fitz/protocol";
-import type { PiToolCall, ToolEvaluation } from "@fitz/agent-pi";
+import { MEDIA_TOOLS, type PiToolCall, type ToolEvaluation } from "@fitz/agent-pi";
 import { analyzeBashCommand, type BashIntent, type BashTarget } from "./bash-analyzer.js";
 import { canonicalizePath, classifyPath, rawBasename, resolveAbsolutePath, shellQuote, type PathInfo, type PathZone } from "./paths.js";
 
@@ -47,6 +47,13 @@ export interface PolicyContext {
   nextSequence(): number;
   log: ActionLog;
   createdPaths: Set<string>;
+  /**
+   * Per-tool policy override for paid media tools (§5.9). The safety service resolves the
+   * run's owner (user-level policy first, then role-level) exactly like the HTTP approval
+   * endpoint's `resolveToolPolicy` consult; the policy engine maps the decision onto the
+   * ToolEvaluation union. Absent, media tools default to "ask".
+   */
+  resolveToolPolicy?: (toolName: string) => "allow" | "deny" | "ask";
 }
 
 const ALLOWED_WRITE_ZONES: ReadonlySet<PathZone> = new Set(["workspace", "runtime", "temp"]);
@@ -98,8 +105,32 @@ export async function evaluateToolCall(request: PiToolCall & { cwd: string; runI
       return recordAllow(ctx, toolName);
     }
     default:
+      if (MEDIA_TOOLS.has(toolName)) return evaluateMediaTool(toolName, ctx);
       return recordAllow(ctx, toolName);
   }
+}
+
+/**
+ * Media generation (§5.9) is Ask-first: generation is paid work (KD-7), so the
+ * deterministic engine consults the store's per-tool policy (`resolveToolPolicy`) and
+ * maps allow/deny/ask onto the ToolEvaluation union (which has no "deny" action —
+ * "deny" becomes a block). The default — no policy row, or no run owner — is "ask",
+ * which escalates to the human approval gate. The audit row uses effect "allow" for
+ * "ask" because nothing was mechanically blocked; `detail.decision` carries the real
+ * outcome so every media decision stays replayable.
+ */
+function evaluateMediaTool(toolName: string, ctx: PolicyContext): ToolEvaluation {
+  const decision = ctx.resolveToolPolicy?.(toolName) ?? "ask";
+  if (decision === "allow") {
+    ctx.log.record({ toolName, effect: "allow", detail: { decision } });
+    return { action: "allow" };
+  }
+  if (decision === "deny") {
+    ctx.log.record({ toolName, effect: "block", detail: { decision } });
+    return { action: "block", reason: `${toolName} denied by policy` };
+  }
+  ctx.log.record({ toolName, effect: "allow", detail: { decision: "ask" } });
+  return { action: "ask" };
 }
 
 // ---------------------------------------------------------------------------

@@ -186,6 +186,65 @@ describe("PiAgentRuntime", () => {
     expect(events).toEqual([{ type: "assistant.delta", text: "blocked" }]);
   });
 
+  it("ask-first: media generation tools escalate to approval in full mode without a policy engine", async () => {
+    let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+    const runtime = new PiAgentRuntime({
+      requestToolApproval: (request) => ({ approvalId: "media-approval", decision: Promise.resolve(request.toolName === "generate_image" ? "approved" : "denied") }),
+      createSession: async (options) => ({
+        subscribe: (next) => { listener = next; return () => undefined; },
+        prompt: async () => {
+          // Full mode would auto-allow a plain tool, but paid media generation is
+          // Ask-first even without a policy engine (§5.9): it goes through the gate.
+          const approved = await options.evaluateTool!({ toolCallId: "img-1", toolName: "generate_image", input: { prompt: "a red cube" } });
+          expect(approved).toEqual({ action: "allow" });
+          const denied = await options.evaluateTool!({ toolCallId: "vid-1", toolName: "generate_video", input: { prompt: "a cat" } });
+          expect(denied).toEqual({ action: "block", reason: "The user denied generate_video" });
+          listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "done" } });
+        },
+        abort: async () => undefined,
+        dispose: () => undefined,
+      }),
+    });
+    const events = [];
+    for await (const event of runtime.run({ model: "fast", sessionId: "session-1", accessMode: "full", messages: [{ role: "user", content: "make media" }] })) events.push(event);
+    expect(events).toEqual([
+      { type: "tool.approval.requested", approvalId: "media-approval", toolCallId: "img-1", toolName: "generate_image", input: { prompt: "a red cube" } },
+      { type: "tool.approval.resolved", approvalId: "media-approval", toolCallId: "img-1", toolName: "generate_image", decision: "approved" },
+      { type: "tool.approval.requested", approvalId: "media-approval", toolCallId: "vid-1", toolName: "generate_video", input: { prompt: "a cat" } },
+      { type: "tool.approval.resolved", approvalId: "media-approval", toolCallId: "vid-1", toolName: "generate_video", decision: "denied" },
+      { type: "assistant.delta", text: "done" },
+    ]);
+  });
+
+  it("blocks media generation tools in full mode when no approval service exists", async () => {
+    let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+    const runtime = new PiAgentRuntime({ createSession: async (options) => ({ subscribe: (next) => { listener = next; return () => undefined; }, prompt: async () => {
+      // Neither a policy engine nor an approval service: the SDK falls back to the
+      // approval gate, and the media special case refuses to auto-allow (KD-7).
+      expect(options.evaluateTool).toBeUndefined();
+      expect(await options.approveTool({ toolCallId: "img-1", toolName: "generate_image", input: { prompt: "a cat" } })).toEqual({ allowed: false, reason: "This tool requires approval, but no approval service is available" });
+      expect(await options.approveTool({ toolCallId: "bash-1", toolName: "bash", input: { command: "pwd" } })).toEqual({ allowed: true });
+      listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "blocked" } });
+    }, abort: async () => undefined, dispose: () => undefined }) });
+    const events = []; for await (const event of runtime.run({ model: "fast", sessionId: "session-1", accessMode: "full", messages: [{ role: "user", content: "make media" }] })) events.push(event);
+    expect(events).toEqual([{ type: "assistant.delta", text: "blocked" }]);
+  });
+
+  it("blocks media generation tools in Read only mode without reaching the approval gate", async () => {
+    let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+    let approvals = 0;
+    const runtime = new PiAgentRuntime({
+      requestToolApproval: (request) => { approvals += 1; return { approvalId: "never", decision: Promise.resolve("denied") }; },
+      createSession: async (options) => ({ subscribe: (next) => { listener = next; return () => undefined; }, prompt: async () => {
+        expect(await options.approveTool({ toolCallId: "read-1", toolName: "read", input: { path: "README.md" } })).toEqual({ allowed: true });
+        expect(await options.approveTool({ toolCallId: "img-1", toolName: "generate_image", input: { prompt: "a cat" } })).toEqual({ allowed: false, reason: "generate_image is blocked in Read only mode" });
+        listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "blocked" } });
+      }, abort: async () => undefined, dispose: () => undefined }) });
+    const events = []; for await (const event of runtime.run({ model: "fast", accessMode: "read-only", messages: [{ role: "user", content: "inspect" }] })) events.push(event);
+    expect(events).toEqual([{ type: "assistant.delta", text: "blocked" }]);
+    expect(approvals).toBe(0);
+  });
+
   it("runs the real Pi loop against the selected Fitz route and executes coding tools", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "fitz-pi-"));
     await writeFile(join(cwd, "probe.txt"), "PI_TOOL_OK", "utf8");

@@ -40,6 +40,9 @@ const BUILT_IN_TOOLS: Record<string, ToolMeta> = {
   web_search: { kind: "command", presentVerb: "Running", pastVerb: "Ran", icon: "sparkle", displayName: "Web search", bucket: "web" },
   fetch_content: { kind: "command", presentVerb: "Running", pastVerb: "Ran", icon: "sparkle", displayName: "Fetch content", bucket: "fetch" },
   get_search_content: { kind: "command", presentVerb: "Running", pastVerb: "Ran", icon: "sparkle", displayName: "Search result", bucket: "fetch" },
+  generate_image: { kind: "command", presentVerb: "Generating", pastVerb: "Generated", icon: "sparkle", displayName: "image" },
+  generate_video: { kind: "command", presentVerb: "Generating", pastVerb: "Generated", icon: "sparkle", displayName: "video" },
+  generate_audio: { kind: "command", presentVerb: "Generating", pastVerb: "Generated", icon: "sparkle", displayName: "audio" },
 };
 
 const DEFAULT_TOOL: ToolMeta = { kind: "command", presentVerb: "Running", pastVerb: "Ran", icon: "sparkle" };
