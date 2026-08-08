@@ -779,8 +779,8 @@ describe("desktop renderer shell", () => {
   });
 
   it("previews binary project files (images, PDFs, audio, and video) in the Inspector", () => {
-    // The main-process preview resolves binary files to base64 with a MIME type instead of rejecting NUL bytes.
-    expect(resourcePreview).toContain('MAX_BINARY_PREVIEW_BYTES');
+    // The main-process preview resolves binary files to base64 with a MIME-aware size bound from the shared helper.
+    expect(resourcePreview).toContain('maxPreviewBytes');
     expect(resourcePreview).toContain('"image" | "pdf" | "audio" | "video"');
     expect(resourcePreview).toContain('IMAGE_EXTENSIONS');
     expect(resourcePreview).toContain('mimeTypeFor(filePath)');

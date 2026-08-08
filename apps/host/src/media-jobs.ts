@@ -38,7 +38,6 @@ const DEFAULT_ARTIFACT_LIMITS: Record<MediaModality, number> = {
 };
 
 const MAX_ARTIFACT_NAME_LENGTH = 160;
-const MAX_ERROR_CODE_LENGTH = 400;
 
 export class ArtifactTooLargeError extends Error {
   constructor(readonly modality: MediaModality, readonly byteSize: number, readonly limit: number) {
@@ -270,9 +269,12 @@ export class MediaJobCoordinator {
     });
   }
 
+  /** Terminal failure: `errorCode` carries the machine-readable code
+   *  (e.g. `artifact_too_large`, design doc §5.11) and the failed event keeps
+   *  the human-readable message. */
   #fail(id: string, message: string, errorCode = "generation_failed"): void {
     const now = new Date().toISOString();
-    this.#store.updateMediaJob(id, { status: "failed", errorCode: message.slice(0, MAX_ERROR_CODE_LENGTH), completedAt: now });
+    this.#store.updateMediaJob(id, { status: "failed", errorCode, completedAt: now });
     this.#appendEvent(id, { type: "failed", error: message });
   }
 

@@ -1,7 +1,7 @@
 {
   "name": "@fitz/desktop", "version": "0.0.0", "description": "Fitz Codex local-first agent desktop", "author": "Fitz Codex", "private": true, "type": "module", "main": "dist/bootstrap.cjs",
   "scripts": { "build": "tsc -b && node scripts/copy-static.mjs", "typecheck": "tsc -b --pretty false", "start": "pnpm build && electron .", "pack:win": "pnpm build && electron-builder --win dir --publish never", "dist:win": "pnpm build && electron-builder --win nsis --publish never" },
-  "dependencies": { "@fitz/connectivity": "workspace:*", "electron-updater": "6.8.9", "highlight.js": "^11.11.1" },
+  "dependencies": { "@fitz/connectivity": "workspace:*", "@fitz/media": "workspace:*", "electron-updater": "6.8.9", "highlight.js": "^11.11.1" },
   "devDependencies": { "electron": "43.2.0", "electron-builder": "26.15.3", "esbuild": "^0.25.0" },
   "build": { "appId": "dev.yafitz.fitzcodex", "productName": "Fitz Codex", "asar": true, "files": ["dist/**/*", "package.json"], "extraResources": [
       { "from": "../../release/host", "to": "host" },

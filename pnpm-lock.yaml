@@ -30,6 +30,9 @@ importers:
       '@fitz/connectivity':
         specifier: workspace:*
         version: link:../../packages/connectivity
+      '@fitz/media':
+        specifier: workspace:*
+        version: link:../../packages/media
       electron-updater:
         specifier: 6.8.9
         version: 6.8.9

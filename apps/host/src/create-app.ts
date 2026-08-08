@@ -582,7 +582,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         return response;
       }
       if (terminal.status === "failed") {
-        return reply.code(502).send({ error: { message: terminal.errorCode ?? "Image generation failed", type: "media_generation_failed", param: job.id, code: "media_generation_failed" } });
+        return reply.code(502).send({ error: { message: mediaJobFailureMessage(store, terminal), type: "media_generation_failed", param: job.id, code: "media_generation_failed" } });
       }
       if (terminal.status === "cancelled") {
         return reply.code(409).send({ error: { message: "Image generation was cancelled", type: "media_generation_cancelled", param: job.id, code: "media_generation_cancelled" } });
@@ -646,7 +646,19 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   app.post("/api/v1/sessions/:sessionId/compact", async (request, reply) => { try { const session = store.getSession((request.params as { sessionId: string }).sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); const principal = principals.get(request); if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); const body = isRecord(request.body) ? request.body : {}; const publicRouteId = typeof body.model === "string" ? requireString(body.model, "model") : session.routeId ?? "default"; const routeId = resolveSessionRouteId(session, publicRouteId); const resolved = resolveActiveRoute(routeId); const result = await context.compactSession(session.id, resolved.recipe.contextTokens); security?.audit("session.compacted", principal?.user.id, "session", session.id, { routeId, throughSequence: result.entry.content.throughSequence }); return { data: result }; } catch (error) { return reply.code(error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) }); } });
   app.get("/api/v1/sessions/:sessionId/artifacts", async (request, reply) => { const session = store.getSession((request.params as { sessionId: string }).sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); if (!canAccessOwner(principals.get(request), session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); return { data: store.listArtifacts(session.id) }; });
   app.post("/api/v1/sessions/:sessionId/artifacts", async (request, reply) => { try { const session = store.getSession((request.params as { sessionId: string }).sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); const principal = principals.get(request); if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); const body = requireRecord(request.body); const name = requireString(body.name, "name"); const mimeType = normalizeMimeType(requireString(body.mimeType, "mimeType")); const content = decodeBase64(body.contentBase64); if (content.byteLength > 5_000_000) throw new TypeError("Artifact exceeds the 5000000 byte limit"); const artifact = { id: randomUUID(), sessionId: session.id, name, mimeType, kind: classifyArtifact(mimeType, name), byteSize: content.byteLength, sha256: createHash("sha256").update(content).digest("hex"), createdAt: new Date().toISOString(), metadata: isRecord(body.metadata) ? body.metadata : {}, ...(principal ? { createdByUserId: principal.user.id } : {}) }; store.createArtifact(artifact, content); security?.audit("artifact.created", principal?.user.id, "artifact", artifact.id, { sessionId: session.id, mimeType, byteSize: artifact.byteSize }); return reply.code(201).send({ data: artifact }); } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
-  app.get("/api/v1/artifacts/:artifactId/content", async (request, reply) => { const artifact = store.getArtifact((request.params as { artifactId: string }).artifactId); if (!artifact) return reply.code(404).send({ error: "Artifact not found" }); const session = store.getSession(artifact.sessionId); if (!session || !canAccessOwner(principals.get(request), session.ownerUserId)) return reply.code(403).send({ error: "Artifact access denied" }); const content = store.getArtifactContent(artifact.id); if (!content) return reply.code(404).send({ error: "Artifact content not found" }); return reply.header("x-content-type-options", "nosniff").header("content-security-policy", "sandbox; default-src 'none'").header("content-disposition", `attachment; filename="${safeFilename(artifact.name)}"`).type(artifact.mimeType).send(Buffer.from(content)); });
+  app.get("/api/v1/artifacts/:artifactId/content", async (request, reply) => {
+    const artifact = store.getArtifact((request.params as { artifactId: string }).artifactId);
+    if (!artifact) return reply.code(404).send({ error: "Artifact not found" });
+    const session = store.getSession(artifact.sessionId);
+    if (!session || !canAccessOwner(principals.get(request), session.ownerUserId)) return reply.code(403).send({ error: "Artifact access denied" });
+    const content = store.getArtifactContent(artifact.id);
+    if (!content) return reply.code(404).send({ error: "Artifact content not found" });
+    const range = resolveByteRange(request.headers.range, content.byteLength);
+    if (range === "unsatisfiable") return reply.code(416).header("content-range", `bytes */${content.byteLength}`).send();
+    const base = () => reply.header("accept-ranges", "bytes").header("x-content-type-options", "nosniff").header("content-security-policy", "sandbox; default-src 'none'").header("content-disposition", `attachment; filename="${safeFilename(artifact.name)}"`).type(artifact.mimeType);
+    if (range === null) return base().send(Buffer.from(content));
+    return base().code(206).header("content-range", `bytes ${range.start}-${range.end}/${content.byteLength}`).send(Buffer.from(content.subarray(range.start, range.end + 1)));
+  });
   app.delete("/api/v1/artifacts/:artifactId", async (request, reply) => { const artifact = store.getArtifact((request.params as { artifactId: string }).artifactId); if (!artifact) return reply.code(404).send({ error: "Artifact not found" }); const session = store.getSession(artifact.sessionId); const principal = principals.get(request); if (!session || !canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Artifact access denied" }); store.deleteArtifact(artifact.id); security?.audit("artifact.deleted", principal?.user.id, "artifact", artifact.id, { sessionId: artifact.sessionId, name: artifact.name }); return reply.code(204).send(); });
   app.post("/api/v1/sessions/:sessionId/tool-approvals", async (request, reply) => { try { const session = store.getSession((request.params as { sessionId: string }).sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); const principal = principals.get(request); if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); const body = requireRecord(request.body); const toolName = requireString(body.toolName, "toolName"); const decision = store.resolveToolPolicy(principal?.user.id, principal?.user.role, toolName); const now = new Date().toISOString(); const approval = { id: randomUUID(), sessionId: session.id, toolCallId: requireString(body.toolCallId, "toolCallId"), toolName, status: decision === "allow" ? "approved" as const : decision === "deny" ? "denied" as const : "pending" as const, request: isRecord(body.request) ? body.request : {}, requestedAt: now, ...(typeof body.runId === "string" ? { runId: body.runId } : {}), ...(decision !== "ask" ? { resolvedAt: now } : {}) }; store.createToolApproval(approval); security?.audit("tool-approval.requested", principal?.user.id, "tool-approval", approval.id, { toolName, decision }); return reply.code(201).send({ data: approval }); } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
   app.get("/api/v1/sessions/:sessionId/tool-approvals", async (request, reply) => { const session = store.getSession((request.params as { sessionId: string }).sessionId); if (!session) return reply.code(404).send({ error: "Session not found" }); if (!canAccessOwner(principals.get(request), session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" }); const query = request.query as { status?: string }; return { data: store.listToolApprovals(session.id, parseApprovalStatus(query.status)) }; });
@@ -989,7 +1001,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         const job = mediaJobs.submit({ routeId: route.id, modality: route.kind as MediaModality, params: { prompt: MEDIA_TEST_PROMPTS[route.kind as MediaModality] } });
         const terminal = await awaitMediaJob(mediaJobs, job.id, mediaImageTimeoutMs);
         if (terminal.status !== "completed") {
-          throw new Error(`Media test failed (job ${job.id}): ${terminal.errorCode ?? terminal.status}`);
+          throw new Error(`Media test failed (job ${job.id}): ${mediaJobFailureMessage(store, terminal)}`);
         }
         return {
           data: {
@@ -1649,6 +1661,17 @@ function canAccessOwner(principal: AuthenticatedPrincipal | undefined, ownerUser
 function canAccessMediaJob(principal: AuthenticatedPrincipal | undefined, job: MediaJobRecord): boolean { return !principal || principal.user.role === "administrator" || principal.user.id === job.createdByUserId; }
 function isTerminalMediaStatus(status: string | undefined): boolean { return status === "completed" || status === "failed" || status === "cancelled" || status === "interrupted"; }
 function isTerminalMediaEvent(type: string): boolean { return type === "completed" || type === "failed" || type === "cancelled"; }
+/** Human-readable failure text for a terminal media job: the failed event's
+ *  message (the record's `errorCode` holds the machine code, e.g.
+ *  `artifact_too_large`). */
+function mediaJobFailureMessage(store: SqliteStore, job: MediaJobRecord): string {
+  const events = store.mediaJobEventsAfter(job.id, 0);
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]?.event;
+    if (event?.type === "failed") return event.error;
+  }
+  return job.errorCode ?? `Media generation ended with status ${job.status}`;
+}
 
 /** Pick the enabled route to probe for a recipe's media-test: prefer a
  *  well-known media route (image/video/audio) so the probe exercises the
@@ -1770,6 +1793,33 @@ function isTerminalAgentEvent(type: string): boolean { return type === "run.comp
 function parseApprovalStatus(value: string | undefined): "pending" | "approved" | "denied" | "cancelled" | undefined { return value === "pending" || value === "approved" || value === "denied" || value === "cancelled" ? value : undefined; }
 function decodeBase64(value: unknown): Buffer { if (typeof value !== "string" || value.length === 0 || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) throw new TypeError("contentBase64 must be valid padded base64"); return Buffer.from(value, "base64"); }
 function safeFilename(value: string): string { return value.replace(/[\r\n"\\/]/g, "_").slice(0, 160) || "artifact"; }
+/** RFC 7233 single-range resolution for the artifact content endpoint: returns
+ *  `{ start, end }` for a satisfiable range, `"unsatisfiable"` when the range
+ *  cannot be satisfied (respond 416 with a `Content-Range: bytes * /<total>`
+ *  header), or `null` to serve the full body (200). Absent/malformed headers,
+ *  `bytes=*`, and multi-range sets (multipart/byteranges is out of scope for
+ *  v1; RFC 7233 §3.1 permits ignoring them) all resolve to `null`. Suffix
+ *  (`bytes=-N`) and open-ended (`bytes=N-`) ranges are supported; an end
+ *  beyond the body clamps to the last byte. */
+function resolveByteRange(header: string | undefined, total: number): { start: number; end: number } | "unsatisfiable" | null {
+  if (!header) return null;
+  if (total === 0) return "unsatisfiable";
+  const spec = /^bytes=(.+)$/i.exec(header.trim())?.[1]?.trim();
+  if (!spec || spec === "*" || spec.includes(",")) return null;
+  if (spec.startsWith("-")) {
+    const suffix = Number(spec.slice(1));
+    if (!Number.isSafeInteger(suffix) || suffix <= 0) return null;
+    return { start: Math.max(0, total - suffix), end: total - 1 };
+  }
+  const separator = spec.indexOf("-");
+  if (separator === -1) return null;
+  const start = Number(spec.slice(0, separator));
+  if (!Number.isSafeInteger(start) || start < 0 || start >= total) return "unsatisfiable";
+  const endText = spec.slice(separator + 1);
+  const end = endText === "" ? total - 1 : Number(endText);
+  if (!Number.isSafeInteger(end) || end < start) return "unsatisfiable";
+  return { start, end: Math.min(end, total - 1) };
+}
 
 function isDirectLoopbackRequest(request: FastifyRequest): boolean {
   const address = request.ip.startsWith("::ffff:") ? request.ip.slice("::ffff:".length) : request.ip;

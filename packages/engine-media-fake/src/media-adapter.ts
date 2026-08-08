@@ -32,6 +32,10 @@ export interface FakeMediaEngineOptions {
    *  should serve the canonical `deterministicMediaBytes` for the modality,
    *  as `fixtures/media/fake-media-server.mjs` does. */
   resultUrl?: string;
+  /** When set, completed jobs return inline bytes padded to exactly this many
+   *  bytes — exercising the coordinator's kind-aware artifact caps (design doc
+   *  §5.11, PR 8). */
+  resultByteLength?: number;
 }
 
 const MIME_TYPES: Record<MediaModality, string> = {
@@ -85,12 +89,14 @@ export class FakeMediaEngineAdapter implements MediaEngineAdapter<FakeInstanceHa
   readonly #progressPerPoll: number;
   readonly #failWhenPromptIncludes: string | undefined;
   readonly #resultUrl: string | undefined;
+  readonly #resultByteLength: number | undefined;
   readonly #jobs = new Map<string, { request: MediaGenerationRequest; progress: number }>();
 
   constructor(options: FakeMediaEngineOptions = {}) {
     this.#progressPerPoll = options.progressPerPoll ?? 0.25;
     this.#failWhenPromptIncludes = options.failWhenPromptIncludes;
     this.#resultUrl = options.resultUrl;
+    this.#resultByteLength = options.resultByteLength;
   }
 
   async prepare(recipe: Recipe, _signal: AbortSignal): Promise<void> {
@@ -161,7 +167,13 @@ export class FakeMediaEngineAdapter implements MediaEngineAdapter<FakeInstanceHa
     record.progress = Math.min(1, record.progress + this.#progressPerPoll);
     if (record.progress >= 1) {
       this.#jobs.delete(job.id);
-      return { status: "completed", progress: 1, result: mediaResultFor(record.request.modality, this.#resultUrl) };
+      const result = mediaResultFor(record.request.modality, this.#resultUrl);
+      if (this.#resultByteLength !== undefined && result.data instanceof Uint8Array) {
+        const padded = new Uint8Array(this.#resultByteLength);
+        padded.set(result.data);
+        return { status: "completed", progress: 1, result: { data: padded, mimeType: result.mimeType, byteSize: padded.byteLength } };
+      }
+      return { status: "completed", progress: 1, result };
     }
     return { status: "progressing", progress: record.progress };
   }

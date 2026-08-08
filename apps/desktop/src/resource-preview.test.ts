@@ -70,15 +70,22 @@ describe("desktop resource previews", () => {
     expect(preview.base64).toBe(pdf.toString("base64"));
   });
 
-  it("allows binary previews above the 2 MB text cap and rejects oversized binaries", async () => {
+  it("allows binary previews above the 2 MB text cap and applies MIME-aware bounds", async () => {
     const parent = await mkdtemp(join(tmpdir(), "fitz-preview-bin-"));
     const root = join(parent, "project");
     await mkdir(root);
-    // A 3 MB image would previously fail the shared 2 MB cap; binary previews get a 10 MB cap.
+    // A 3 MB image would previously fail the shared 2 MB cap; binary previews get MIME-aware caps.
     await writeFile(join(root, "large.png"), Buffer.alloc(3 * 1024 * 1024, 7));
     await expect(readProjectResource(root, "large.png")).resolves.toMatchObject({ kind: "image", mimeType: "image/png" });
-    await writeFile(join(root, "huge.png"), Buffer.alloc(10 * 1024 * 1024 + 1, 7));
-    await expect(readProjectResource(root, "huge.png")).rejects.toThrow("10 MB maximum");
+    // Video/audio get the raised media caps (~150–250 MiB, design doc §5.11):
+    // an 11 MiB clip that used to hit the flat 10 MB binary cap now previews.
+    await writeFile(join(root, "clip.mp4"), Buffer.alloc(11 * 1024 * 1024, 7));
+    await expect(readProjectResource(root, "clip.mp4")).resolves.toMatchObject({ kind: "video", mimeType: "video/mp4" });
+    await writeFile(join(root, "song.wav"), Buffer.alloc(11 * 1024 * 1024, 7));
+    await expect(readProjectResource(root, "song.wav")).resolves.toMatchObject({ kind: "audio", mimeType: "audio/wav" });
+    // Images cap at 25 MiB (aligned with the host image artifact cap).
+    await writeFile(join(root, "huge.png"), Buffer.alloc(25 * 1024 * 1024 + 1, 7));
+    await expect(readProjectResource(root, "huge.png")).rejects.toThrow("25 MB maximum");
   });
 
   it("still rejects unknown binary files and oversized text files gracefully", async () => {

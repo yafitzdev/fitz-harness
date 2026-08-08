@@ -1,8 +1,8 @@
 import { readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, relative, resolve } from "node:path";
+import { maxPreviewBytes } from "@fitz/media";
 
 const MAX_TEXT_PREVIEW_BYTES = 2 * 1024 * 1024;
-const MAX_BINARY_PREVIEW_BYTES = 10 * 1024 * 1024;
 const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown", ".mdx"]);
 const HTML_EXTENSIONS = new Set([".html", ".htm"]);
 const CODE_EXTENSIONS = new Set([
@@ -42,7 +42,8 @@ export async function readProjectResource(projectRoot: string, reference: string
   const kind = previewKind(filePath);
   const binaryKind = kind === "image" || kind === "pdf" || kind === "audio" || kind === "video";
   if (binaryKind) {
-    if (metadata.size > MAX_BINARY_PREVIEW_BYTES) throw new Error("This file is too large to preview (10 MB maximum)");
+    const maxBytes = maxPreviewBytes(mimeTypeFor(filePath));
+    if (metadata.size > maxBytes) throw new Error(`This file is too large to preview (${maxBytes / (1024 * 1024)} MB maximum)`);
     const bytes = await readFile(filePath);
     return { kind, name: basename(filePath), path: filePath, content: "", size: metadata.size, mimeType: mimeTypeFor(filePath), base64: bytes.toString("base64") };
   }

@@ -70,6 +70,46 @@ describe("Fitz host media jobs", () => {
     }
   });
 
+  it("fails a job whose artifact exceeds the kind-aware size cap without writing it", async () => {
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter({ resultByteLength: 25 * 1024 * 1024 + 1 })] });
+    try {
+      await registerMediaRecipe(runtime, "h3-img", ["image"]);
+      await assignRoute(runtime, "image", "h3-img");
+
+      const submitted = await runtime.app.inject({ method: "POST", url: "/api/v1/media/jobs", payload: { routeId: "image", modality: "image", params: { prompt: "oversized render" } } });
+      expect(submitted.statusCode).toBe(202);
+      const job = await waitForJobStatus(runtime, submitted.json().data.id, "failed");
+      // The machine code lands on the job (design doc §5.11) while the
+      // human-readable message stays on the failed event.
+      expect(job).toEqual(expect.objectContaining({ errorCode: "artifact_too_large" }));
+      const events = runtime.store.mediaJobEventsAfter(job.id, 0);
+      const failed = [...events].reverse().find((event) => event.event.type === "failed");
+      expect(failed?.event).toEqual(expect.objectContaining({ type: "failed" }));
+      expect(String((failed?.event as { error: string }).error)).toContain("exceeds the 26214400 byte artifact limit");
+    } finally {
+      await runtime.app.close();
+    }
+  });
+
+  it("honors the mediaArtifactLimits store setting per modality", async () => {
+    const store = SqliteStore.memory();
+    store.setSetting("mediaArtifactLimits", { image: 100 });
+    const runtime = createHost({ store, adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter({ resultByteLength: 128 })] });
+    try {
+      await registerMediaRecipe(runtime, "h3-img", ["image"]);
+      await assignRoute(runtime, "image", "h3-img");
+
+      const submitted = await runtime.app.inject({ method: "POST", url: "/api/v1/media/jobs", payload: { routeId: "image", modality: "image", params: { prompt: "capped render" } } });
+      const job = await waitForJobStatus(runtime, submitted.json().data.id, "failed");
+      expect(job).toEqual(expect.objectContaining({ errorCode: "artifact_too_large" }));
+      const events = runtime.store.mediaJobEventsAfter(job.id, 0);
+      const failed = [...events].reverse().find((event) => event.event.type === "failed");
+      expect(String((failed?.event as { error: string }).error)).toContain("100 byte artifact limit");
+    } finally {
+      await runtime.app.close();
+    }
+  });
+
   it("keeps chat persistence working while media jobs stay out of inference_requests", async () => {
     const runtime = createHost({ adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter()] });
     try {
