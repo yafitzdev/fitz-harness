@@ -32,6 +32,7 @@ import { LifecycleEventBus } from "./event-bus.js";
 import { LifecycleManager } from "./lifecycle-manager.js";
 import { RouteNotFoundError, RouteResolver } from "./route-resolver.js";
 import { InferenceScheduler } from "./scheduler.js";
+import { GpuThermalGuard } from "./thermal.js";
 
 type QueueUpdatedEvent = Extract<InferenceLifecycleEvent, { type: "queue.updated" }>;
 
@@ -364,6 +365,45 @@ describe("InferenceScheduler media jobs", () => {
     expect(lifecycle.snapshot().state).toBe("READY");
     expect(mediaAdapter.starts).toHaveLength(2);
     expect(mediaAdapter.stops).toEqual([expect.objectContaining({ mode: "force" })]);
+  });
+
+  it("cancels and unloads a local media engine after a thermal safety failure", async () => {
+    const mediaAdapter = new MediaFakeEngineAdapter({ progressPerPoll: 0.02 });
+    let sample = 0;
+    const thermalGuard = new GpuThermalGuard(
+      {
+        snapshot: async () => ({
+          capturedAt: new Date(0).toISOString(),
+          totalRamMiB: 64_000,
+          freeRamMiB: 32_000,
+          totalVramMiB: 32_000,
+          usedVramMiB: 30_000,
+          freeVramMiB: 2_000,
+          gpuTemperatureC: sample++ === 0 ? 74 : 82,
+          gpuPowerLimitW: 450,
+          gpuMinPowerLimitW: 400,
+          gpuMaxPowerLimitW: 450,
+          gpuTelemetryAvailable: true,
+        }),
+      },
+      { setPowerLimit: async () => undefined },
+    );
+    const lifecycle = new LifecycleManager({
+      adapters: new EngineAdapterRegistry([mediaAdapter]),
+      thermalGuard,
+    });
+    const scheduler = new InferenceScheduler(
+      new RouteResolver([route("video", "media-recipe", "video")], [mediaRecipe("media-recipe", 600, "video")]),
+      lifecycle,
+    );
+
+    await expect(
+      collectMedia(scheduler.enqueueMedia("video", mediaInput("video", "hot render")).events),
+    ).rejects.toThrow("hard limit");
+
+    expect(mediaAdapter.cancelled).toEqual([{ instanceId: expect.any(String), jobId: "provider-1" }]);
+    expect(mediaAdapter.stops).toEqual([{ instanceId: expect.any(String), mode: "force" }]);
+    expect(lifecycle.snapshot()).toMatchObject({ state: "UNLOADED", activeLeases: 0 });
   });
 
   it("holds the lease through the generation and evicts after the idle TTL", async () => {

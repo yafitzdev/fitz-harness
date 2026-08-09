@@ -144,7 +144,8 @@ export class LifecycleManager {
         await abortableDelay(adapter.defaultPollIntervalMs ?? 1_000, signal);
       }
     } catch (error) {
-      if ((isAbortError(error) || error instanceof ThermalSafetyError) && job) {
+      const thermalFailure = error instanceof ThermalSafetyError;
+      if ((isAbortError(error) || thermalFailure) && job) {
         try {
           await adapter.cancel(handle, job); // best-effort provider cancel
         } catch {
@@ -154,6 +155,7 @@ export class LifecycleManager {
       if (!isAbortError(error)) {
         this.#failureReason = errorMessage(error);
         this.#transition("FAILED", "media-generation-failed");
+        if (thermalFailure) await this.#unloadAfterThermalFailure(adapter, handle);
       }
       throw error;
     } finally {
@@ -288,6 +290,25 @@ export class LifecycleManager {
     const validation = await adapter.validateRecipe(recipe);
     if (!validation.valid) throw new Error(validation.issues.map((issue) => issue.message).join("; "));
     await adapter.prepare?.(recipe, signal);
+  }
+
+  /** A thermal stop is different from an ordinary provider failure: leaving a
+   *  local model resident after its safety guard fired keeps the failed engine
+   *  and its VRAM allocation alive without an eviction timer. Only report the
+   *  instance as unloaded after the adapter confirms that its process stopped;
+   *  otherwise retain FAILED + the handle so a later force-stop can retry. */
+  async #unloadAfterThermalFailure(
+    adapter: MediaEngineAdapter,
+    handle: EngineInstanceHandle,
+  ): Promise<void> {
+    try {
+      const report = await adapter.stop(handle, "force");
+      if (!report.stopped) return;
+    } catch {
+      return;
+    }
+    this.#clearInstance();
+    this.#transition("UNLOADED", "thermal-safety-eviction");
   }
 
   #scheduleEviction(): void {
