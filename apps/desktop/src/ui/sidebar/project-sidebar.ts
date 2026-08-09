@@ -176,11 +176,15 @@ export class ProjectSidebarController {
   #renderPinned(): void {
     const pinnedTree = this.#elements.pinnedTree;
     pinnedTree.replaceChildren();
+    const sessionsCoveredByProjects = new Set<string>();
     for (const projectId of this.#pinnedProjects) {
       const project = this.#project(projectId);
-      if (project) pinnedTree.append(this.#pinnedProjectItem(project));
+      if (!project) continue;
+      for (const session of this.#state.sessionsByProject.get(project.id) ?? []) sessionsCoveredByProjects.add(session.id);
+      pinnedTree.append(this.#pinnedProjectGroup(project));
     }
     for (const sessionId of this.#pinnedSessions) {
+      if (sessionsCoveredByProjects.has(sessionId)) continue;
       const standalone = this.#state.chats.find((session) => session.id === sessionId);
       if (standalone) { pinnedTree.append(this.#pinnedSessionItem(standalone)); continue; }
       for (const project of this.#state.projects) {
@@ -191,15 +195,29 @@ export class ProjectSidebarController {
     this.#elements.pinnedSection.hidden = pinnedTree.childElementCount === 0;
   }
 
-  #pinnedProjectItem(project: ProjectSidebarProject): HTMLElement {
+  #pinnedProjectGroup(project: ProjectSidebarProject): HTMLElement {
     if (this.#editing?.kind === "project" && this.#editing.id === project.id) {
       return this.#editingRow("project-row pinned-row", project.name, 80, (value) => this.#commitEdit(value));
     }
+    const group = document.createElement("div");
+    group.className = "project-group pinned-project-group expanded";
+    group.dataset.projectId = project.id;
     const item = this.#treeItem(project.name, "project-row pinned-row", this.#folderIcon(), () => this.#options.selectProject(project.id), (toggle, event) => this.#openMenu("project", project.id, undefined, toggle, event), () => this.#options.newChat(project.id));
     const button = item.querySelector<HTMLButtonElement>(".project-row")!;
     button.classList.toggle("active", project.id === this.#state.currentProjectId && !this.#state.currentSessionId && !this.#state.newChat);
-    this.#appendPin(button);
-    return item;
+    button.setAttribute("aria-expanded", "true");
+    this.#appendPinAction(item, "project", project.id);
+    group.append(item);
+    const children = document.createElement("div");
+    children.className = "project-children";
+    const childrenInner = document.createElement("div");
+    childrenInner.className = "project-children-inner";
+    const sessions = this.#state.sessionsByProject.get(project.id) ?? [];
+    if (sessions.length === 0) childrenInner.append(this.#empty("No chats"));
+    for (const session of sessions) childrenInner.append(this.#sessionItem(session, project));
+    children.append(childrenInner);
+    group.append(children);
+    return group;
   }
 
   #pinnedSessionItem(session: ProjectSidebarSession, project?: ProjectSidebarProject): HTMLElement {
@@ -209,7 +227,7 @@ export class ProjectSidebarController {
     const item = this.#treeItem(session.title, "chat-row pinned-row", undefined, () => this.#options.selectSession(session.id, project?.id), (toggle, event) => this.#openMenu(project ? "task" : "chat", session.id, project?.id, toggle, event));
     const button = item.querySelector<HTMLButtonElement>(".chat-row")!;
     button.classList.toggle("active", session.id === this.#state.currentSessionId && project?.id === this.#state.currentProjectId);
-    this.#appendPin(button);
+    this.#appendPinAction(item, "session", session.id);
     return item;
   }
 
@@ -229,7 +247,7 @@ export class ProjectSidebarController {
     const projectButton = projectItem.querySelector<HTMLButtonElement>(".project-row")!;
     projectButton.classList.toggle("active", project.id === this.#state.currentProjectId && !this.#state.currentSessionId && !this.#state.newChat);
     projectButton.setAttribute("aria-expanded", String(expanded));
-    if (this.#pinnedProjects.has(project.id)) this.#appendPin(projectButton);
+    this.#appendPinAction(projectItem, "project", project.id);
     group.append(projectItem);
 
     const children = document.createElement("div");
@@ -251,9 +269,7 @@ export class ProjectSidebarController {
     const item = this.#treeItem(session.title, "task-row", undefined, () => this.#options.selectSession(session.id, project.id), (toggle, event) => this.#openMenu("task", session.id, project.id, toggle, event));
     const button = item.querySelector<HTMLButtonElement>(".task-row")!;
     button.classList.toggle("active", session.id === this.#state.currentSessionId);
-    if (this.#pinnedSessions.has(session.id)) {
-      this.#appendPin(button);
-    }
+    this.#appendPinAction(item, "session", session.id);
     return item;
   }
 
@@ -264,18 +280,27 @@ export class ProjectSidebarController {
     const item = this.#treeItem(chat.title, "chat-row", undefined, () => this.#options.selectSession(chat.id, undefined), (toggle, event) => this.#openMenu("chat", chat.id, undefined, toggle, event));
     const button = item.querySelector<HTMLButtonElement>(".chat-row")!;
     button.classList.toggle("active", chat.id === this.#state.currentSessionId && !this.#state.currentProjectId);
-    if (this.#pinnedSessions.has(chat.id)) {
-      this.#appendPin(button);
-    }
+    this.#appendPinAction(item, "session", chat.id);
     return item;
   }
 
-  #appendPin(button: HTMLButtonElement): void {
-    const pin = svgIcon('<path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path>');
-    pin.classList.add("pin-indicator");
-    pin.setAttribute("role", "img");
-    pin.setAttribute("aria-label", "Pinned");
-    button.append(pin);
+  #appendPinAction(item: HTMLElement, kind: "project" | "session", id: string): void {
+    const values = kind === "project" ? this.#pinnedProjects : this.#pinnedSessions;
+    const pinned = values.has(id);
+    const pin = document.createElement("button");
+    pin.type = "button";
+    pin.className = "tree-pin-action";
+    pin.classList.toggle("pinned", pinned);
+    const label = kind === "project" ? "project" : "chat";
+    pin.title = pinned ? `Unpin ${label}` : `Pin ${label}`;
+    pin.setAttribute("aria-label", pin.title);
+    pin.setAttribute("aria-pressed", String(pinned));
+    pin.append(svgIcon('<path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path>'));
+    pin.addEventListener("click", (event) => {
+      event.stopPropagation();
+      this.#toggleStored(values, id, kind === "project" ? "fitz-pinned-projects" : "fitz-pinned-sessions");
+    });
+    item.insertBefore(pin, item.querySelector(".tree-quick-action, .tree-menu-toggle"));
   }
 
   #treeItem(label: string, className: string, icon: SVGElement | undefined, action: () => void, menu: (toggle: HTMLButtonElement, event: MouseEvent) => void, quickAction?: () => void): HTMLElement {

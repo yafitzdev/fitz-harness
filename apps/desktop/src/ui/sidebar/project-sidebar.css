@@ -22,15 +22,15 @@
 .project-row.active, .task-row.active, .chat-row.active { background: var(--tint-6); color: var(--text); }
 .project-row span, .task-row span, .chat-row span { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; -webkit-mask-image: linear-gradient(to right, black 0, black calc(100% - 6px), transparent 100%); mask-image: linear-gradient(to right, black 0, black calc(100% - 6px), transparent 100%); }
 .project-row svg, .task-row svg, .chat-row svg { flex: 0 0 auto; width: 14px; height: 14px; }
-.pin-indicator { position: absolute; z-index: 1; top: 50%; right: 35px; width: 14px; height: 14px; transform: translateY(-50%); fill: currentColor; stroke: currentColor; color: var(--grey-800); pointer-events: none; opacity: 0; transition: opacity 120ms ease; }
-.tree-item:has(.project-row) .pin-indicator { right: 62px; }
-.tree-item:hover .pin-indicator, .tree-item:focus-within .pin-indicator { opacity: 1; }
-.tree-menu-toggle, .tree-quick-action { position: absolute; z-index: 2; top: 50%; width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border-radius: 7px; transform: translateY(-50%); background: transparent; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease; }
+.tree-menu-toggle, .tree-quick-action, .tree-pin-action { position: absolute; z-index: 2; top: 50%; width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border-radius: 7px; transform: translateY(-50%); background: transparent; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease; }
 .tree-menu-toggle { right: 4px; }
 .tree-quick-action { right: 31px; }
-.tree-item:hover .tree-menu-toggle, .tree-item:hover .tree-quick-action, .tree-item:focus-within .tree-menu-toggle, .tree-item:focus-within .tree-quick-action, .tree-menu-toggle[aria-expanded="true"] { opacity: 1; }
-.tree-menu-toggle:hover, .tree-quick-action:hover { background: var(--tint-5); color: var(--text); }
-.tree-menu-toggle svg, .tree-quick-action svg { width: 15px; height: 15px; }
+.tree-pin-action { right: 31px; }
+.tree-item:has(.project-row) .tree-pin-action { right: 58px; }
+.tree-item:hover .tree-menu-toggle, .tree-item:hover .tree-quick-action, .tree-item:hover .tree-pin-action, .tree-item:focus-within .tree-menu-toggle, .tree-item:focus-within .tree-quick-action, .tree-item:focus-within .tree-pin-action, .tree-menu-toggle[aria-expanded="true"] { opacity: 1; }
+.tree-menu-toggle:hover, .tree-quick-action:hover, .tree-pin-action:hover { background: var(--tint-5); color: var(--text); }
+.tree-menu-toggle svg, .tree-quick-action svg, .tree-pin-action svg { width: 15px; height: 15px; }
+.tree-pin-action.pinned svg { fill: currentColor; }
 .tree-empty { padding: 6px 9px 8px 30px; color: var(--subtle); font-size: 12px; }
 .tree-editing { display: grid; gap: 2px; }
 .tree-rename-input { width: 100%; min-width: 0; padding: 6px 9px; border: 1px solid var(--grey-450); border-radius: var(--radius-lg); outline: 0; background: var(--grey-100); color: var(--text); font: inherit; }

@@ -203,7 +203,8 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".task-row { padding: 4px 9px 4px 30px; }");
     expect(styles).toContain("mask-image: linear-gradient(to right, black 0, black calc(100% - 6px), transparent 100%)");
     expect(styles).not.toContain(".project-row span, .task-row span, .chat-row span { overflow: hidden; text-overflow: ellipsis;");
-    expect(styles).toContain(".tree-item:hover .pin-indicator, .tree-item:focus-within .pin-indicator { opacity: 1; }");
+    expect(styles).toContain(".tree-item:hover .tree-menu-toggle, .tree-item:hover .tree-quick-action, .tree-item:hover .tree-pin-action");
+    expect(styles).toContain(".tree-pin-action.pinned svg { fill: currentColor; }");
     expect(tokensCss).toContain("--sidebar-item-radius: 7px");
     expect(styles).toContain("border-radius: var(--sidebar-item-radius)");
     expect(tokensCss).toContain("--grey-300: #303030");
