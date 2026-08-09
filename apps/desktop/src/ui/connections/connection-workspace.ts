@@ -118,6 +118,7 @@ export class ConnectionWorkspaceController {
   private readonly options: ConnectionWorkspaceOptions;
   private records: ConsumerConnectionSummary[] = [];
   private configuration: Json | undefined;
+  private refreshGeneration = 0;
 
   constructor(options: ConnectionWorkspaceOptions) {
     this.options = options;
@@ -191,10 +192,15 @@ export class ConnectionWorkspaceController {
   }
 
   async sync(reportFailure: boolean): Promise<void> {
-    const results = await this.options.bridge.syncConsumerConnections();
-    this.records = await this.options.bridge.listConsumerConnections();
-    this.configuration = await this.options.reloadConfiguration();
-    this.render();
+    const generation = ++this.refreshGeneration;
+    let results: Array<{ id: string; connected: boolean; error?: string }>;
+    try {
+      results = await this.options.bridge.syncConsumerConnections();
+      if (!await this.refreshSnapshot(generation)) return;
+    } catch (error) {
+      if (generation !== this.refreshGeneration) return;
+      throw error;
+    }
     const failed = results.filter((item) => !item.connected);
     if (reportFailure && failed.length) this.options.showStatus(failed[0]?.error ?? "Connection failed", "error");
   }
@@ -457,9 +463,23 @@ export class ConnectionWorkspaceController {
   }
 
   private async refreshRecordsAndConfiguration(): Promise<void> {
-    this.records = await this.options.bridge.listConsumerConnections();
-    this.configuration = await this.options.reloadConfiguration();
-    this.render();
+    const generation = ++this.refreshGeneration;
+    await this.refreshSnapshot(generation);
+  }
+
+  private async refreshSnapshot(generation: number): Promise<boolean> {
+    try {
+      const records = await this.options.bridge.listConsumerConnections();
+      const configuration = await this.options.reloadConfiguration();
+      if (generation !== this.refreshGeneration) return false;
+      this.records = records;
+      this.configuration = configuration;
+      this.render();
+      return true;
+    } catch (error) {
+      if (generation !== this.refreshGeneration) return false;
+      throw error;
+    }
   }
 
   private async assignRoute(definition: (typeof FIXED_ROUTES)[number], model: ConnectionModelView, button: HTMLButtonElement): Promise<void> {

@@ -77,6 +77,43 @@ describe("ConnectionWorkspaceController", () => {
     expect(elements.connections.textContent).toContain("YanPC");
   });
 
+  it("does not let an obsolete connection sync replace the latest snapshot", async () => {
+    let resolveOld: ((value: Array<{ id: string; connected: boolean; error?: string }>) => void) | undefined;
+    const oldSync = new Promise<Array<{ id: string; connected: boolean; error?: string }>>((resolve) => { resolveOld = resolve; });
+    let syncCalls = 0;
+    const syncConsumerConnections = vi.fn(async () => {
+      syncCalls += 1;
+      return syncCalls === 1 ? oldSync : [];
+    });
+    let listCalls = 0;
+    const listConsumerConnections = vi.fn(async () => {
+      listCalls += 1;
+      const current = listCalls === 1;
+      return [{
+        id: current ? "new" : "old",
+        displayName: current ? "Current API" : "Stale API",
+        baseUrl: "https://remote.test/v1",
+        authType: "none" as const,
+        hasCredential: false,
+        template: "openai-compatible" as const,
+        models: [],
+        mediaModels: [],
+        updatedAt: "now",
+      }];
+    });
+    const { controller, elements, calls } = setup({ syncConsumerConnections, listConsumerConnections });
+    const staleLoad = controller.sync(true);
+    await Promise.resolve();
+
+    await controller.sync(false);
+    resolveOld?.([{ id: "old", connected: false, error: "Obsolete failure" }]);
+    await staleLoad;
+
+    expect(elements.connections.textContent).toContain("Current API");
+    expect(elements.connections.textContent).not.toContain("Stale API");
+    expect(calls.showStatus).not.toHaveBeenCalledWith("Obsolete failure", "error");
+  });
+
   it("owns editor auth state and saves a new OpenAI-compatible connection", async () => {
     const { controller, elements, bridge, calls } = setup();
     click(elements.newConnection);
