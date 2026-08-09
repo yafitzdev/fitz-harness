@@ -56,6 +56,7 @@ export class ProjectsController {
   private chatRecords: SessionRecord[] = [];
   private currentProjectIdValue: string | undefined;
   private currentSessionIdValue: string | undefined;
+  private loadGeneration = 0;
 
   constructor(options: ProjectsOptions) {
     this.options = options;
@@ -82,15 +83,29 @@ export class ProjectsController {
 
   /** Fetches projects and their sessions, resolves the active selection, and renders. */
   async load(preferredProject?: string, preferredSession?: string): Promise<void> {
-    const response = await this.options.api("/api/v1/projects");
-    this.records = response.data ?? [];
+    const generation = ++this.loadGeneration;
+    let records: ProjectRecord[];
+    let sessions: Map<string, SessionRecord[]>;
+    let chats: SessionRecord[];
+    try {
+      const response = await this.options.api("/api/v1/projects");
+      records = response.data ?? [];
+      sessions = new Map();
+      await Promise.all(records.map(async (project) => {
+        const response = await this.options.api(`/api/v1/projects/${project.id}/sessions`);
+        sessions.set(project.id, (response.data ?? []).filter((session: Json) => session.status !== "archived"));
+      }));
+      const chatsResponse = await this.options.api("/api/v1/chats");
+      chats = (chatsResponse.data ?? []).filter((session: Json) => session.status !== "archived");
+    } catch (error) {
+      if (generation !== this.loadGeneration) return;
+      throw error;
+    }
+    if (generation !== this.loadGeneration) return;
+    this.records = records;
     this.sessions.clear();
-    await Promise.all(this.records.map(async (project) => {
-      const sessions = await this.options.api(`/api/v1/projects/${project.id}/sessions`);
-      this.sessions.set(project.id, (sessions.data ?? []).filter((session: Json) => session.status !== "archived"));
-    }));
-    const chatsResponse = await this.options.api("/api/v1/chats");
-    this.chatRecords = (chatsResponse.data ?? []).filter((session: Json) => session.status !== "archived");
+    for (const [projectId, projectSessions] of sessions) this.sessions.set(projectId, projectSessions);
+    this.chatRecords = chats;
 
     if (preferredProject && this.records.some((project) => project.id === preferredProject)) this.currentProjectIdValue = preferredProject;
     else if (this.currentProjectIdValue === undefined) {

@@ -59,8 +59,8 @@ function fakeApi(initial: { projects: Json[]; sessions: Record<string, Json[]>; 
   return api;
 }
 
-function setup(initial?: { projects: Json[]; sessions: Record<string, Json[]>; chats?: Json[] }) {
-  const api = fakeApi(initial ?? { projects: [], sessions: {} });
+function setup(initial?: { projects: Json[]; sessions: Record<string, Json[]>; chats?: Json[] }, apiOverride?: ProjectsOptions["api"]) {
+  const api = apiOverride ? vi.fn(apiOverride) : fakeApi(initial ?? { projects: [], sessions: {} });
   const bridge = { openPath: vi.fn(async () => {}) };
   const calls = {
     sidebar: {
@@ -108,6 +108,38 @@ describe("ProjectsController", () => {
     expect(calls.sidebar.ensureExpanded).toHaveBeenCalledWith("project-a");
     expect(calls.renderTree).toHaveBeenCalled();
     expect(calls.onSessionSelected).toHaveBeenCalledWith("session-a1");
+  });
+
+  it("commits only the newest overlapping project-tree load", async () => {
+    let resolveOld: ((value: Json) => void) | undefined;
+    const oldProjects = new Promise<Json>((resolve) => { resolveOld = resolve; });
+    let projectRequests = 0;
+    const api: ProjectsOptions["api"] = async (path) => {
+      if (path === "/api/v1/projects") {
+        projectRequests += 1;
+        return projectRequests === 1
+          ? oldProjects
+          : { data: [{ id: "project-new", name: "Current" }] };
+      }
+      if (path === "/api/v1/projects/project-new/sessions") return { data: [{ id: "session-new", title: "Current task" }] };
+      if (path === "/api/v1/projects/project-old/sessions") return { data: [{ id: "session-old", title: "Stale task" }] };
+      if (path === "/api/v1/chats") return { data: [] };
+      return { data: [] };
+    };
+    const { controller, calls } = setup(undefined, api);
+    const staleLoad = controller.load();
+    await Promise.resolve();
+
+    await controller.load();
+    resolveOld?.({ data: [{ id: "project-old", name: "Stale" }] });
+    await staleLoad;
+
+    expect(controller.projects.map((project) => project.id)).toEqual(["project-new"]);
+    expect(controller.sessionsByProject.get("project-new")?.[0]?.id).toBe("session-new");
+    expect(controller.sessionsByProject.has("project-old")).toBe(false);
+    expect(controller.currentSessionId).toBe("session-new");
+    expect(calls.onSessionSelected).toHaveBeenCalledTimes(1);
+    expect(calls.onSessionSelected).toHaveBeenCalledWith("session-new");
   });
 
   it("lands on the project itself when it has no sessions", async () => {
