@@ -4,8 +4,8 @@
 .section-heading { height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 0 7px; color: var(--muted); }
 .section-heading, .project-row, .task-row, .chat-row { font-size: 13.5px; }
 .pinned-heading > span, .projects-heading > span, .chats-heading > span { color: var(--subtle); font-weight: 650; }
-.projects-heading #new-project { opacity: 0; pointer-events: none; transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease; }
-.projects-heading:hover #new-project, .projects-heading:focus-within #new-project, #new-project:focus-visible { opacity: 1; pointer-events: auto; }
+.projects-heading #new-project, .chats-heading #new-standalone-chat { opacity: 0; pointer-events: none; transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease; }
+.projects-heading:hover #new-project, .projects-heading:focus-within #new-project, #new-project:focus-visible, .chats-heading:hover #new-standalone-chat, .chats-heading:focus-within #new-standalone-chat, #new-standalone-chat:focus-visible { opacity: 1; pointer-events: auto; }
 .project-tree { display: grid; gap: 1px; }
 .project-group { display: grid; gap: 0; }
 .project-children { display: grid; grid-template-rows: 0fr; opacity: 0; transform: translateY(-4px); transition: grid-template-rows 140ms ease, opacity 120ms ease, transform 140ms ease; }

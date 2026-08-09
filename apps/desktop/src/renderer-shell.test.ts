@@ -71,6 +71,7 @@ describe("desktop renderer shell", () => {
       "sidebar-menu",
       "sidebar-resizer",
       "new-session",
+      "new-standalone-chat",
       "manage-playbooks",
       "new-project",
       "connection-status",
@@ -192,7 +193,7 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("height: 42px; display: flex; align-items: center");
     expect(html).toContain('class="sidebar-section projects-section"');
     expect(html).toContain('class="section-heading projects-heading"');
-    expect(styles).toContain(".projects-heading #new-project { opacity: 0; pointer-events: none;");
+    expect(styles).toContain(".projects-heading #new-project, .chats-heading #new-standalone-chat { opacity: 0; pointer-events: none;");
     expect(html).toContain('id="pinned-section" class="sidebar-section pinned-section" hidden');
     expect(html).toContain('id="pinned" class="project-tree"');
     expect(styles).toContain(".sidebar-content-divider { margin: 12px 7px 4px; border-top: 1px solid var(--border-soft); }");
@@ -687,6 +688,9 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('id="chats" class="project-tree" aria-label="Chats"');
     expect(html).toContain("<span>Chats</span>");
     expect(html).toContain('class="section-heading chats-heading"');
+    expect(html).toContain('id="new-standalone-chat" class="icon-button" type="button" title="New chat" aria-label="New chat"');
+    expect(renderer).toContain('element("new-standalone-chat").addEventListener("click", openNewChat)');
+    expect(styles).toContain(".chats-heading:hover #new-standalone-chat, .chats-heading:focus-within #new-standalone-chat, #new-standalone-chat:focus-visible { opacity: 1; pointer-events: auto; }");
     expect(renderer).toContain("chatsMount: element(\"chats\")");
     expect(projectSidebar).toContain("chatsMount: HTMLElement");
     expect(projectSidebar).toContain("chats: readonly ProjectSidebarSession[]");

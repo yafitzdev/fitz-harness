@@ -640,6 +640,7 @@ document.addEventListener("keydown", (event) => {
 
 element("new-project").addEventListener("click", () => projectSidebar.beginCreateProject());
 element("new-session").addEventListener("click", openNewChat);
+element("new-standalone-chat").addEventListener("click", openNewChat);
 element("manage-playbooks").addEventListener("click", () => void openPlaybookPage());
 connectionsButton.addEventListener("click", () => void openConnectionsPage());
 pluginsButton.addEventListener("click", () => void openPluginsPage());
