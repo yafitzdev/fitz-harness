@@ -17,6 +17,8 @@ const activityTimeline = readFileSync(new URL("./ui/chat/activity-timeline.ts", 
 const toolActivity = readFileSync(new URL("./ui/chat/tool-activity.ts", import.meta.url), "utf8");
 const reasoningView = readFileSync(new URL("./ui/chat/reasoning-view.ts", import.meta.url), "utf8");
 const agentRunController = readFileSync(new URL("./ui/chat/agent-run-controller.ts", import.meta.url), "utf8");
+const mediaJobFeed = readFileSync(new URL("./ui/chat/media-job-feed.ts", import.meta.url), "utf8");
+const agentQueue = readFileSync(new URL("./ui/queue/agent-queue.ts", import.meta.url), "utf8");
 const composerControls = readFileSync(new URL("./ui/chat/composer-controls.ts", import.meta.url), "utf8");
 const composer = readFileSync(new URL("./ui/chat/composer.ts", import.meta.url), "utf8");
 const connectionWorkspace = readFileSync(new URL("./ui/connections/connection-workspace.ts", import.meta.url), "utf8");
@@ -676,9 +678,9 @@ describe("desktop renderer shell", () => {
   it("shows and controls the serialized native-agent request queue", () => {
     expect(html).toContain('id="request-queue"');
     expect(html).toContain('id="queue-count"');
-    expect(renderer).toContain('api("/api/v1/agent/queue")');
+    expect(agentQueue).toContain('this.#options.api("/api/v1/agent/queue")');
     expect(agentRunController).toContain('event.type === "run.queue.updated"');
-    expect(renderer).toContain('cancelQueuedRun(String(item.runId), cancel)');
+    expect(agentQueue).toContain('this.#cancel(String(item.runId), cancel)');
     expect(renderer).toContain('setTimeout(scheduleQueueRefresh, 1_000)');
     expect(styles).toContain(".queue-item");
     expect(styles).toContain(".queue-cancel");
@@ -881,10 +883,10 @@ describe("desktop renderer shell", () => {
 
   it("keeps generated media out of composer attachments and animates media progress", () => {
     expect(renderer).toContain("if (!artifact.metadata?.mediaJobId)");
-    expect(renderer).toContain("activityTimeline.finishWork(job.completedAt)");
-    expect(renderer).toContain("activityTimeline.appendWork(row)");
-    expect(renderer).toContain('appendMessage("assistant", `Here is your ${job.modality}!`, job.completedAt)');
-    expect(renderer).toContain('answer.classList.add("media-result-message")');
+    expect(mediaJobFeed).toContain("this.#options.finishWork(job.completedAt)");
+    expect(mediaJobFeed).toContain("this.#options.appendWork(row)");
+    expect(mediaJobFeed).toContain('this.#options.appendAssistant(`Here is your ${job.modality}!`, job.completedAt)');
+    expect(mediaJobFeed).toContain('answer.classList.add("media-result-message")');
     expect(styles).toContain("animation: run-activity-spinner 900ms linear infinite");
     expect(styles).toContain(".media-result-message > .media-job-notice { margin: 0; }");
     expect(styles).not.toContain("animation: spin 900ms linear infinite");

@@ -3,6 +3,7 @@ import { estimateTokens, estimateTranscriptContext } from "./context-estimate.js
 import { MessageActions, type ActionableMessageRole } from "./ui/chat/message-actions.js";
 import { ActivityTimeline } from "./ui/chat/activity-timeline.js";
 import { AgentRunController } from "./ui/chat/agent-run-controller.js";
+import { MediaJobFeed } from "./ui/chat/media-job-feed.js";
 import { MediaJobTracker, type MediaJobSummary } from "./ui/chat/media-job-tracker.js";
 import { Composer } from "./ui/chat/composer.js";
 import { projectRelativePath } from "./ui/chat/tool-activity.js";
@@ -22,6 +23,7 @@ import { AdministrationPageController } from "./ui/administration/administration
 import { PlaybookWorkspaceController } from "./ui/playbooks/playbook-workspace.js";
 import { ProjectsController } from "./ui/projects/projects.js";
 import { ProjectSidebarController } from "./ui/sidebar/project-sidebar.js";
+import { AgentQueueController } from "./ui/queue/agent-queue.js";
 
 type Json = Record<string, any>;
 type AppLocation = { view: "conversation"; projectId?: string; sessionId?: string; newChat?: boolean } | { view: "playbooks" | "connections" | "plugins" | "models" | "administration" };
@@ -40,7 +42,6 @@ let newChatProjectDetached = false;
 // the artifact repository re-scopes to the session, so a chat never inherits
 // another chat's files or previews.
 let inspectorChatId: string | undefined;
-const mediaJobRows = new Map<string, HTMLElement>();
 let navigationIndex = -1;
 let replayingNavigation = false;
 const navigationHistory: AppLocation[] = [];
@@ -59,8 +60,6 @@ const routeState = element("route-state");
 const inspectorRenderToggle = element("inspector-render-toggle") as HTMLButtonElement;
 const inspectorArtifacts = element("inspector-artifacts") as HTMLButtonElement;
 const artifacts = element("artifacts");
-const requestQueue = element("request-queue");
-const queueCount = element("queue-count");
 const artifactFile = element("artifact-file") as HTMLInputElement;
 const addArtifactButton = element("add-artifact") as HTMLButtonElement;
 const updateButton = element("update") as HTMLButtonElement;
@@ -230,7 +229,7 @@ const projects = new ProjectsController({
   rememberLocation: (location) => rememberLocation(location),
   onSessionSelected: async (sessionId) => {
     mediaJobs.reset();
-    mediaJobRows.clear();
+    mediaJobFeed.reset();
     if (sessionId !== inspectorChatId) { inspectorPanel.reset(); inspectorPanel.setChat(sessionId); inspectorChatId = sessionId; }
     composer.controls.resetContextStatus();
     const selectedSession = projects.currentSessionRecord();
@@ -287,7 +286,7 @@ const projects = new ProjectsController({
   },
   onNoSession: async () => {
     mediaJobs.reset();
-    mediaJobRows.clear();
+    mediaJobFeed.reset();
     inspectorPanel.reset();
     inspectorPanel.setChat(undefined);
     inspectorChatId = undefined;
@@ -307,14 +306,31 @@ const activityTimeline = new ActivityTimeline({
   },
   showToast,
 });
+const agentQueue = new AgentQueueController({
+  list: element("request-queue"),
+  count: element("queue-count"),
+  api,
+  showToast,
+  errorMessage,
+});
+const mediaJobFeed = new MediaJobFeed({
+  messages,
+  appendWork: (row) => activityTimeline.appendWork(row),
+  finishWork: (completedAt) => activityTimeline.finishWork(completedAt),
+  appendAssistant: (text, createdAt) => appendMessage("assistant", text, createdAt),
+  openArtifact: (artifact) => inspectorPanel.previewArtifact(artifact),
+  retry: async (job) => (await api(`/api/v1/media/jobs/${encodeURIComponent(job.id)}/retry`, "POST")).data as MediaJobSummary,
+  watch: (jobId) => mediaJobs.watch(jobId),
+  showToast,
+  errorMessage,
+});
 const mediaJobs = new MediaJobTracker({
   api,
   onTerminal: async (job, failure) => {
     if (job.sessionId && job.sessionId !== projects.currentSessionId) return;
     const artifactsForSession = job.status === "completed" ? await loadArtifacts() : [];
     const artifact = job.artifactId ? artifactsForSession.find((item) => item.id === job.artifactId) : undefined;
-    renderMediaJob(job, failure, artifact);
-    activityTimeline.finishWork(job.completedAt);
+    mediaJobFeed.render(job, failure, artifact);
     if (artifact) await inspectorPanel.previewArtifact(artifact);
   },
 });
@@ -332,13 +348,13 @@ const agentRuns = new AgentRunController({
   setEngineState: (state) => { engineState.textContent = state; },
   refreshControls: refreshComposerState,
   queueVisible: () => inspectorPanel.isOpen,
-  refreshQueue: loadAgentQueue,
+  refreshQueue: () => agentQueue.refresh(),
   showToast,
   errorMessage,
   terminalReplayError: (error) => error instanceof HttpError,
   onMediaJobSubmitted: (jobId, toolName) => {
     const modality = toolName === "generate_image" ? "image" : toolName === "generate_audio" ? "audio" : "video";
-    renderMediaJob({ id: jobId, modality, status: "queued" });
+    mediaJobFeed.render({ id: jobId, modality, status: "queued" });
     mediaJobs.watch(jobId);
   },
 });
@@ -956,123 +972,22 @@ async function loadMediaJobs(sessionId: string, sessionArtifacts: Json[]): Promi
   for (const job of jobs) {
     const artifact = job.artifactId ? sessionArtifacts.find((item) => item.id === job.artifactId) : undefined;
     if (["queued", "started", "progressing"].includes(job.status)) {
-      renderMediaJob(job, undefined, artifact);
+      mediaJobFeed.render(job, undefined, artifact);
       mediaJobs.watch(job.id);
       continue;
     }
     const failure = job.status === "completed"
       ? undefined
       : await mediaJobs.failureMessage(job.id, job.errorCode ?? `Media generation ${job.status}`);
-    renderMediaJob(job, failure, artifact);
-    activityTimeline.finishWork(job.completedAt);
+    mediaJobFeed.render(job, failure, artifact);
   }
   messages.scrollTop = messages.scrollHeight;
-}
-
-function renderMediaJob(job: MediaJobSummary, failure?: string, artifact?: Json): void {
-  if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
-  const completed = job.status === "completed";
-  const label = `${job.modality[0]!.toUpperCase()}${job.modality.slice(1)}`;
-  let row = mediaJobRows.get(job.id);
-  if (!row) {
-    row = document.createElement("article");
-    row.className = "message media-job-notice";
-    row.dataset.mediaJobId = job.id;
-    mediaJobRows.set(job.id, row);
-    // Progress belongs to the agent's work disclosure. A completed artifact is
-    // promoted below into a final assistant response instead.
-    if (!completed) activityTimeline.appendWork(row);
-  }
-  row.className = `message media-job-notice ${job.status}`;
-  row.replaceChildren();
-  const icon = document.createElement("span");
-  icon.className = "media-job-icon";
-  icon.append(svg(job.status === "completed"
-    ? '<path d="m4 10 4 4 8-9"></path>'
-    : job.status === "failed" || job.status === "interrupted"
-      ? '<path d="m5 5 10 10M15 5 5 15"></path>'
-      : '<circle cx="10" cy="10" r="7"></circle>'));
-  const copy = document.createElement("span");
-  copy.className = "media-job-copy";
-  const title = document.createElement("strong");
-  title.textContent = completed ? `${label} ready`
-    : job.status === "failed" || job.status === "interrupted" ? `${label} generation failed`
-      : job.status === "cancelled" ? `${label} generation cancelled`
-        : `${label} generation in progress`;
-  const detail = document.createElement("small");
-  detail.textContent = failure ?? (artifact?.name ? artifact.name : job.status === "completed" ? "Generated artifact" : "Fitz is following this job in the background.");
-  copy.append(title, detail);
-  row.append(icon, copy);
-  if (artifact) {
-    const open = document.createElement("button");
-    open.type = "button";
-    open.className = "media-job-open";
-    open.textContent = "Open";
-    open.addEventListener("click", () => void inspectorPanel.previewArtifact(artifact));
-    row.append(open);
-  } else if (["failed", "cancelled", "interrupted"].includes(job.status)) {
-    const retry = document.createElement("button");
-    retry.type = "button";
-    retry.className = "media-job-open";
-    retry.textContent = "Retry";
-    retry.addEventListener("click", () => void retryMediaJob(job, retry));
-    row.append(retry);
-  }
-  if (completed && !row.closest(".media-result-message")) {
-    // The durable media result is the assistant's final answer, not hidden
-    // reasoning. appendMessage closes the active Worked-for disclosure before
-    // adding this response, then the card is placed above its hover actions.
-    const content = appendMessage("assistant", `Here is your ${job.modality}!`, job.completedAt);
-    const answer = content.closest<HTMLElement>(".message.assistant");
-    if (answer) {
-      answer.classList.add("media-result-message");
-      const actions = answer.querySelector<HTMLElement>(":scope > .message-actions");
-      answer.insertBefore(row, actions);
-    }
-  }
-  messages.scrollTop = messages.scrollHeight;
-}
-
-async function retryMediaJob(job: MediaJobSummary, button: HTMLButtonElement): Promise<void> {
-  button.disabled = true;
-  try {
-    const response = await api(`/api/v1/media/jobs/${encodeURIComponent(job.id)}/retry`, "POST");
-    const retried = response.data as MediaJobSummary;
-    renderMediaJob(retried);
-    mediaJobs.watch(retried.id);
-  } catch (error) {
-    button.disabled = false;
-    showToast(errorMessage(error));
-  }
-}
-
-async function loadAgentQueue(): Promise<void> {
-  try {
-    const response = await api("/api/v1/agent/queue"); const items = response.data ?? [];
-    requestQueue.replaceChildren(); queueCount.textContent = String(items.length);
-    if (!items.length) { requestQueue.append(panelEmpty("No active requests")); return; }
-    for (const item of items) {
-      const row = document.createElement("div"); row.className = `queue-item ${item.status}`;
-      const state = document.createElement("span"); state.className = "queue-state"; if (item.status === "queued") state.textContent = String(item.position);
-      const copy = document.createElement("span"); copy.className = "queue-copy";
-      const title = document.createElement("strong"); title.textContent = item.sessionTitle ?? `${item.routeId} task`;
-      const detail = document.createElement("small"); detail.textContent = item.status === "running" ? `${item.projectName ?? "Agent"} · Running` : `${item.projectName ?? "Agent"} · Position ${item.position}`;
-      const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "queue-cancel"; cancel.title = item.status === "running" ? "Stop request" : "Remove from queue"; cancel.setAttribute("aria-label", cancel.title); cancel.append(svg('<path d="m5 5 10 10M15 5 5 15"></path>'));
-      cancel.addEventListener("click", () => void cancelQueuedRun(String(item.runId), cancel)); copy.append(title, detail); row.append(state, copy, cancel); requestQueue.append(row);
-    }
-  } catch { requestQueue.replaceChildren(panelEmpty("Queue unavailable")); queueCount.textContent = "—"; }
-}
-
-async function cancelQueuedRun(runId: string, button: HTMLButtonElement): Promise<void> {
-  button.disabled = true;
-  try { await api(`/api/v1/agent/runs/${runId}`, "DELETE"); await loadAgentQueue(); }
-  catch (error) { button.disabled = false; showToast(errorMessage(error)); }
 }
 
 function scheduleQueueRefresh(): void {
   if (queueRefreshTimer) clearTimeout(queueRefreshTimer); queueRefreshTimer = undefined;
   if (!inspectorPanel.isOpen) return;
-  void loadAgentQueue().finally(() => { if (inspectorPanel.isOpen) queueRefreshTimer = setTimeout(scheduleQueueRefresh, 1_000); });
+  void agentQueue.refresh().finally(() => { if (inspectorPanel.isOpen) queueRefreshTimer = setTimeout(scheduleQueueRefresh, 1_000); });
 }
 
 function chooseArtifact(): void {
