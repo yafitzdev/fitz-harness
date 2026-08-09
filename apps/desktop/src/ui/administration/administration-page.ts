@@ -1,20 +1,18 @@
-import type { DesktopUpdateStatus } from "../../preload.js";
 import { FIXED_ROUTES } from "../connections/connection-workspace.js";
 import { CollapsibleSection } from "../layout/collapsible-section.js";
 import { createCopyButton } from "../primitives/copy-button.js";
 import { textBlock } from "../primitives/dom.js";
+import { DesktopUpdateController, type DesktopUpdateBridge } from "./desktop-update-controller.js";
+import { DiagnosticsController, type DiagnosticsBridge } from "./diagnostics-controller.js";
+import { HostLifecycleController } from "./host-lifecycle-controller.js";
+import { SafetyRecoveryController } from "./safety-recovery-controller.js";
 
 type Json = Record<string, any>;
 
 export type AdministrationPageApi = (path: string, method?: string, body?: unknown) => Promise<Json>;
 
-export interface AdministrationPageBridge {
+export interface AdministrationPageBridge extends DesktopUpdateBridge, DiagnosticsBridge {
   copyText(text: string): Promise<void>;
-  saveDiagnostics(content: string): Promise<string | undefined>;
-  checkForUpdates(): Promise<void>;
-  installUpdate(): Promise<void>;
-  updateStatus(): Promise<DesktopUpdateStatus>;
-  onUpdateStatus(listener: (update: DesktopUpdateStatus) => void): () => void;
 }
 
 export interface AdministrationPageElements {
@@ -91,21 +89,73 @@ export class AdministrationPageController {
   private readonly options: AdministrationPageOptions;
   private users: Json[] = [];
   private policies: Json[] = [];
-  private diagnosticBundle: Json | undefined;
-  private pendingRemoteAction: "enable" | "disable" | undefined;
-  private pendingStartupAction: "install" | "remove" | undefined;
-  private pendingEmptyTrash = false;
+  private readonly hostLifecycle: HostLifecycleController;
+  private readonly diagnostics: DiagnosticsController;
+  private readonly safetyRecovery: SafetyRecoveryController;
 
   constructor(elements: AdministrationPageElements, options: AdministrationPageOptions) {
     this.elements = elements;
     this.options = options;
     CollapsibleSection.adoptAll(this.elements.sections, { storageKey: "fitz-collapsed-admin-sections" });
+    this.hostLifecycle = new HostLifecycleController({
+      refreshRemote: elements.refreshRemoteAccess,
+      cancelRemote: elements.cancelRemoteAccess,
+      remoteStatus: elements.remoteAccessStatus,
+      remoteConfirmation: elements.remoteAccessConfirmation,
+      remoteConfirmationText: elements.remoteAccessConfirmationText,
+      enableRemote: elements.enableRemoteAccess,
+      disableRemote: elements.disableRemoteAccess,
+      confirmRemote: elements.confirmRemoteAccess,
+      refreshStartup: elements.refreshHostStartup,
+      cancelStartup: elements.cancelHostStartup,
+      startupStatus: elements.hostStartupStatus,
+      startupConfirmation: elements.hostStartupConfirmation,
+      startupConfirmationText: elements.hostStartupConfirmationText,
+      installStartup: elements.installHostStartup,
+      removeStartup: elements.removeHostStartup,
+      confirmStartup: elements.confirmHostStartup,
+    }, {
+      api: options.api,
+      reload: () => this.load(),
+      showToast: options.showToast,
+      errorMessage: options.errorMessage,
+    });
+    new DesktopUpdateController({
+      check: elements.checkDesktopUpdate,
+      install: elements.installDesktopUpdate,
+      label: elements.desktopUpdateLabel,
+      version: elements.desktopUpdateVersion,
+      progress: elements.desktopUpdateProgress,
+      globalInstall: elements.updateButton,
+    }, options.bridge);
+    this.diagnostics = new DiagnosticsController({
+      generatedAt: elements.diagnosticGeneratedAt,
+      summary: elements.diagnosticSummary,
+      metrics: elements.diagnosticMetrics,
+      failures: elements.diagnosticFailures,
+      exportButton: elements.exportDiagnostics,
+    }, {
+      bridge: options.bridge,
+      showToast: options.showToast,
+      errorMessage: options.errorMessage,
+    });
+    this.safetyRecovery = new SafetyRecoveryController({
+      trash: elements.adminTrash,
+      snapshots: elements.adminSnapshots,
+      toolActions: elements.adminToolActions,
+      emptyTrash: elements.emptyTrashButton,
+      runRetention: elements.gcRetentionButton,
+      confirmation: elements.emptyTrashConfirmation,
+      confirmationText: elements.emptyTrashConfirmationText,
+      cancelEmptyTrash: elements.cancelEmptyTrash,
+      confirmEmptyTrash: elements.confirmEmptyTrash,
+    }, {
+      api: options.api,
+      reload: () => this.load(),
+      showToast: options.showToast,
+      errorMessage: options.errorMessage,
+    });
     this.bind();
-    this.options.bridge.onUpdateStatus((update) => this.renderDesktopUpdate(update));
-    void this.options.bridge
-      .updateStatus()
-      .then((update) => this.renderDesktopUpdate(update))
-      .catch(() => this.renderDesktopUpdate({ state: "error" }));
   }
 
   showLoading(): void {
@@ -136,13 +186,12 @@ export class AdministrationPageController {
       this.renderToolPolicySubjects();
       this.renderToolPolicies();
       this.renderAdminAuditEvents(audit.data ?? []);
-      this.renderSafetyTrash(trash.data ?? []);
-      this.renderSafetySnapshots(snapshots.data ?? []);
-      this.renderSafetyToolActions(toolActions.data ?? []);
-      this.diagnosticBundle = diagnostics;
-      this.renderDiagnostics(diagnostics);
-      this.renderRemoteAccess(remote.data);
-      this.renderHostStartup(startup.data);
+      this.safetyRecovery.renderTrash(trash.data ?? []);
+      this.safetyRecovery.renderSnapshots(snapshots.data ?? []);
+      this.safetyRecovery.renderToolActions(toolActions.data ?? []);
+      this.diagnostics.render(diagnostics);
+      this.hostLifecycle.renderRemote(remote.data);
+      this.hostLifecycle.renderStartup(startup.data);
     } catch (error) {
       this.elements.adminUsers.replaceChildren(emptyState(`Administration unavailable: ${this.options.errorMessage(error)}`));
     }
@@ -150,10 +199,6 @@ export class AdministrationPageController {
 
   private bind(): void {
     this.elements.refresh.addEventListener("click", () => void this.load());
-    this.elements.emptyTrashButton.addEventListener("click", () => this.showEmptyTrashConfirmation());
-    this.elements.cancelEmptyTrash.addEventListener("click", () => this.hideEmptyTrashConfirmation());
-    this.elements.confirmEmptyTrash.addEventListener("click", () => void this.applyEmptyTrash());
-    this.elements.gcRetentionButton.addEventListener("click", () => void this.runRetention());
     this.elements.pairingCodeForm.addEventListener("submit", (event) => { event.preventDefault(); void this.issuePairingCode(); });
     const copyPairingCode = createCopyButton({
       copyText: (text) => void this.options.bridge.copyText(text),
@@ -168,20 +213,6 @@ export class AdministrationPageController {
     this.elements.createUserForm.addEventListener("submit", (event) => { event.preventDefault(); void this.createAdminUser(); });
     this.elements.toolPolicySubjectType.addEventListener("change", () => this.renderToolPolicySubjects());
     this.elements.toolPolicyForm.addEventListener("submit", (event) => { event.preventDefault(); void this.saveToolPolicy(); });
-    this.elements.exportDiagnostics.addEventListener("click", () => void this.exportDiagnosticBundle());
-    this.elements.refreshRemoteAccess.addEventListener("click", () => void this.loadRemoteAccess());
-    this.elements.enableRemoteAccess.addEventListener("click", () => this.showRemoteConfirmation("enable"));
-    this.elements.disableRemoteAccess.addEventListener("click", () => this.showRemoteConfirmation("disable"));
-    this.elements.cancelRemoteAccess.addEventListener("click", () => this.hideRemoteConfirmation());
-    this.elements.confirmRemoteAccess.addEventListener("click", () => void this.applyRemoteAccessChange());
-    this.elements.refreshHostStartup.addEventListener("click", () => void this.loadHostStartup());
-    this.elements.installHostStartup.addEventListener("click", () => this.showStartupConfirmation("install"));
-    this.elements.removeHostStartup.addEventListener("click", () => this.showStartupConfirmation("remove"));
-    this.elements.cancelHostStartup.addEventListener("click", () => this.hideStartupConfirmation());
-    this.elements.confirmHostStartup.addEventListener("click", () => void this.applyStartupChange());
-    this.elements.checkDesktopUpdate.addEventListener("click", () => void this.checkForDesktopUpdate());
-    this.elements.installDesktopUpdate.addEventListener("click", () => void this.options.bridge.installUpdate());
-    this.elements.updateButton.addEventListener("click", () => void this.options.bridge.installUpdate());
   }
 
   private async issuePairingCode(): Promise<void> {
@@ -369,310 +400,6 @@ export class AdministrationPageController {
     if (!events.length) this.elements.adminAuditEvents.append(emptyState("No activity yet"));
   }
 
-  private renderSafetyTrash(entries: Json[]): void {
-    this.elements.adminTrash.replaceChildren();
-    for (const entry of entries) {
-      const row = document.createElement("div");
-      row.className = "admin-safety-row";
-      const restored = Boolean(entry.restoredAt);
-      const detail = document.createElement("span");
-      detail.className = "admin-safety-detail";
-      detail.append(
-        Object.assign(document.createElement("strong"), { textContent: entry.originalPath }),
-        Object.assign(document.createElement("small"), {
-          textContent: `${entry.workspaceRoot ?? ""} · ${restored ? "restored" : "in trash"} · ${entry.createdAt ? new Date(entry.createdAt).toLocaleString() : ""}`.trim(),
-        }),
-      );
-      row.append(detail);
-      if (!restored) {
-        const restore = document.createElement("button");
-        restore.type = "button";
-        restore.textContent = "Restore";
-        restore.addEventListener("click", () => void this.restoreTrashEntry(entry.id));
-        row.append(restore);
-      }
-      this.elements.adminTrash.append(row);
-    }
-    if (!entries.length) this.elements.adminTrash.append(emptyState("Nothing in the trash"));
-  }
-
-  private renderSafetySnapshots(snapshots: Json[]): void {
-    this.elements.adminSnapshots.replaceChildren();
-    for (const snapshot of snapshots) {
-      const row = document.createElement("div");
-      row.className = "admin-safety-row";
-      const detail = document.createElement("span");
-      detail.className = "admin-safety-detail";
-      const restorable = snapshot.status === "active" || snapshot.status === "restored";
-      detail.append(
-        Object.assign(document.createElement("strong"), { textContent: snapshot.runId }),
-        Object.assign(document.createElement("small"), {
-          textContent: `${snapshot.status} · ${Number(snapshot.fileCount ?? 0).toLocaleString()} files · ${snapshot.createdAt ? new Date(snapshot.createdAt).toLocaleString() : ""}`.trim(),
-        }),
-      );
-      row.append(detail);
-      if (snapshot.status === "active") {
-        const restore = document.createElement("button");
-        restore.type = "button";
-        restore.textContent = "Restore snapshot";
-        restore.addEventListener("click", () => void this.restoreSnapshot(snapshot.runId));
-        row.append(restore);
-      }
-      this.elements.adminSnapshots.append(row);
-    }
-    if (!snapshots.length) this.elements.adminSnapshots.append(emptyState("No snapshots yet"));
-  }
-
-  private renderSafetyToolActions(actions: Json[]): void {
-    this.elements.adminToolActions.replaceChildren();
-    for (const action of actions) {
-      const row = document.createElement("div");
-      row.className = "admin-safety-row";
-      const detail = document.createElement("span");
-      detail.className = "admin-safety-detail";
-      detail.append(
-        Object.assign(document.createElement("strong"), { textContent: `${action.toolName} · ${action.effect}` }),
-        Object.assign(document.createElement("small"), {
-          textContent: `${action.runId ?? ""}${action.path ? ` · ${action.path}` : ""} · ${action.timestamp ? new Date(action.timestamp).toLocaleString() : ""}`.trim(),
-        }),
-      );
-      row.append(detail);
-      this.elements.adminToolActions.append(row);
-    }
-    if (!actions.length) this.elements.adminToolActions.append(emptyState("No tool actions recorded yet"));
-  }
-
-  private showEmptyTrashConfirmation(): void {
-    this.pendingEmptyTrash = true;
-    this.elements.emptyTrashConfirmationText.textContent = "Permanently delete every file in the agent trash? This cannot be undone — restored files are not affected.";
-    this.elements.emptyTrashConfirmation.hidden = false;
-  }
-
-  private hideEmptyTrashConfirmation(): void {
-    this.pendingEmptyTrash = false;
-    this.elements.emptyTrashConfirmation.hidden = true;
-  }
-
-  private async applyEmptyTrash(): Promise<void> {
-    if (!this.pendingEmptyTrash) return;
-    this.elements.confirmEmptyTrash.disabled = true;
-    try {
-      const response = await this.options.api("/api/v1/management/trash", "DELETE");
-      this.hideEmptyTrashConfirmation();
-      await this.load();
-      this.options.showToast(`Trash emptied (${response.data?.removed ?? 0} file${response.data?.removed === 1 ? "" : "s"} removed)`);
-    } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
-    finally { this.elements.confirmEmptyTrash.disabled = false; }
-  }
-
-  private async runRetention(): Promise<void> {
-    this.elements.gcRetentionButton.disabled = true;
-    try {
-      const response = await this.options.api("/api/v1/management/trash/gc", "POST", { maxAgeDays: 30 });
-      await this.load();
-      const result = response.data ?? {};
-      this.options.showToast(`Retention swept ${Number(result.trash ?? 0)} trashed file${Number(result.trash) === 1 ? "" : "s"} and ${Number(result.snapshots ?? 0)} snapshot${Number(result.snapshots) === 1 ? "" : "s"}`);
-    } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
-    finally { this.elements.gcRetentionButton.disabled = false; }
-  }
-
-  private async restoreTrashEntry(id: string): Promise<void> {
-    try {
-      await this.options.api(`/api/v1/management/trash/${encodeURIComponent(id)}/restore`, "POST");
-      await this.load();
-      this.options.showToast("File restored");
-    } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
-  }
-
-  private async restoreSnapshot(runId: string): Promise<void> {
-    try {
-      await this.options.api(`/api/v1/management/snapshots/${encodeURIComponent(runId)}/restore`, "POST");
-      await this.load();
-      this.options.showToast(`Workspace restored from run ${runId}`);
-    } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
-  }
-
-  private renderDiagnostics(diagnostics: Json): void {
-    this.elements.diagnosticGeneratedAt.textContent = diagnostics.generatedAt
-      ? `Captured ${new Date(diagnostics.generatedAt).toLocaleString()} · values are redacted before leaving the host`
-      : "";
-    this.elements.diagnosticSummary.replaceChildren();
-    const stats = [
-      ["Engine", diagnostics.engine?.state ?? "Unknown"],
-      ["Queue", String(diagnostics.queueDepth ?? 0)],
-      ["Free RAM", diagnosticMib(diagnostics.resources?.freeRamMiB, diagnostics.resources?.totalRamMiB)],
-      ["Free VRAM", diagnosticMib(diagnostics.resources?.freeVramMiB, diagnostics.resources?.totalVramMiB)],
-    ];
-    for (const [label, value] of stats) {
-      const stat = document.createElement("div");
-      stat.className = "diagnostic-stat";
-      stat.append(
-        Object.assign(document.createElement("small"), { textContent: label }),
-        Object.assign(document.createElement("strong"), { textContent: value }),
-      );
-      this.elements.diagnosticSummary.append(stat);
-    }
-
-    const metricRows: Array<[string, string]> = [];
-    for (const [name, value] of Object.entries(diagnostics.metrics?.counters ?? {})) metricRows.push([name, Number(value).toLocaleString()]);
-    for (const [name, value] of Object.entries(diagnostics.metrics?.gauges ?? {})) metricRows.push([name, String(value)]);
-    for (const [name, value] of Object.entries<Json>(diagnostics.metrics?.timings ?? {})) metricRows.push([name, `${Number(value.averageMs ?? 0).toFixed(1)} ms avg`]);
-    renderDiagnosticRows(this.elements.diagnosticMetrics, metricRows, "No metrics recorded yet");
-
-    const failures: Array<[string, string]> = [];
-    for (const request of diagnostics.recentRequests ?? []) {
-      if (["failed", "interrupted", "cancelled"].includes(request.status)) failures.push([`${request.routeId} · ${request.status}`, request.errorCode ?? request.id]);
-    }
-    for (const event of diagnostics.recentLifecycleEvents ?? []) {
-      if (event.data?.state === "FAILED") failures.push([event.data.recipeId ?? "engine", event.data.reason ?? "Engine failed"]);
-    }
-    renderDiagnosticRows(this.elements.diagnosticFailures, failures.slice(0, 20), "No recent failures");
-  }
-
-  private async exportDiagnosticBundle(): Promise<void> {
-    if (!this.diagnosticBundle) return;
-    this.elements.exportDiagnostics.disabled = true;
-    try {
-      const path = await this.options.bridge.saveDiagnostics(JSON.stringify(this.diagnosticBundle, null, 2));
-      if (path) this.options.showToast(`Diagnostics saved to ${path}`);
-    } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
-    finally { this.elements.exportDiagnostics.disabled = false; }
-  }
-
-  private async checkForDesktopUpdate(): Promise<void> {
-    this.elements.checkDesktopUpdate.disabled = true;
-    try { await this.options.bridge.checkForUpdates(); }
-    catch { this.renderDesktopUpdate({ state: "error" }); }
-    finally {
-      if (this.elements.desktopUpdateLabel.dataset.state !== "checking" && this.elements.desktopUpdateLabel.dataset.state !== "downloading") {
-        this.elements.checkDesktopUpdate.disabled = false;
-      }
-    }
-  }
-
-  private renderDesktopUpdate(update: DesktopUpdateStatus): void {
-    const percent = update.state === "downloaded" ? 100 : Math.max(0, Math.min(100, update.percent ?? 0));
-    const labels: Record<DesktopUpdateStatus["state"], string> = {
-      idle: "Ready to check",
-      checking: "Checking for updates…",
-      available: "Update found. Download starting…",
-      downloading: `Downloading update · ${Math.round(percent)}%`,
-      current: "Fitz is up to date",
-      downloaded: "Update ready to install",
-      error: "Update check failed",
-      development: "Update checks are available in packaged builds",
-    };
-    this.elements.desktopUpdateLabel.textContent = labels[update.state];
-    this.elements.desktopUpdateLabel.dataset.state = update.state;
-    this.elements.desktopUpdateVersion.textContent = update.version ? `Version ${update.version}` : "";
-    this.elements.desktopUpdateProgress.style.width = `${percent}%`;
-    const busy = update.state === "checking" || update.state === "available" || update.state === "downloading";
-    this.elements.checkDesktopUpdate.disabled = busy;
-    this.elements.installDesktopUpdate.hidden = update.state !== "downloaded";
-    this.elements.updateButton.hidden = update.state !== "downloaded";
-  }
-
-  private async loadRemoteAccess(): Promise<void> {
-    try {
-      const response = await this.options.api("/api/v1/management/connectivity/status");
-      this.renderRemoteAccess(response.data);
-    } catch (error) { this.elements.remoteAccessStatus.replaceChildren(emptyState(`Remote status unavailable: ${this.options.errorMessage(error)}`)); }
-  }
-
-  private renderRemoteAccess(remote: Json): void {
-    const tailscale = remote.tailscale ?? {};
-    const configuration = remote.serve?.configuration;
-    const served = remote.serve?.available === true && configuration && Object.keys(configuration).length > 0;
-    const values = [
-      ["Tailscale", String(tailscale.state ?? "unknown").replaceAll("-", " ")],
-      ["Device", tailscale.dnsName ?? tailscale.addresses?.[0] ?? "Not connected"],
-      ["Private HTTPS", remote.serve?.available === false ? "Unavailable" : served ? "Enabled" : "Disabled"],
-    ];
-    this.elements.remoteAccessStatus.replaceChildren();
-    for (const [label, value] of values) {
-      const card = document.createElement("div");
-      card.className = "remote-access-card";
-      card.append(
-        Object.assign(document.createElement("small"), { textContent: label }),
-        Object.assign(document.createElement("strong"), { textContent: value }),
-      );
-      this.elements.remoteAccessStatus.append(card);
-    }
-    this.elements.enableRemoteAccess.disabled = tailscale.state !== "connected" || served;
-    this.elements.disableRemoteAccess.disabled = !served;
-  }
-
-  private showRemoteConfirmation(action: "enable" | "disable"): void {
-    this.pendingRemoteAction = action;
-    this.elements.remoteAccessConfirmationText.textContent = action === "enable"
-      ? "Enable private HTTPS through Tailscale Serve for this Fitz host?"
-      : "Disable the private HTTPS route? Remote clients will disconnect.";
-    this.elements.confirmRemoteAccess.textContent = action === "enable" ? "Confirm enable" : "Confirm disable";
-    this.elements.remoteAccessConfirmation.hidden = false;
-  }
-
-  private hideRemoteConfirmation(): void {
-    this.pendingRemoteAction = undefined;
-    this.elements.remoteAccessConfirmation.hidden = true;
-  }
-
-  private async applyRemoteAccessChange(): Promise<void> {
-    if (!this.pendingRemoteAction) return;
-    const action = this.pendingRemoteAction;
-    this.elements.confirmRemoteAccess.disabled = true;
-    try {
-      if (action === "enable") await this.options.api("/api/v1/management/connectivity/tailscale-serve", "POST", {});
-      else await this.options.api("/api/v1/management/connectivity/tailscale-serve", "DELETE");
-      this.hideRemoteConfirmation();
-      await this.load();
-      this.options.showToast(action === "enable" ? "Private HTTPS enabled" : "Private HTTPS disabled");
-    } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
-    finally { this.elements.confirmRemoteAccess.disabled = false; }
-  }
-
-  private async loadHostStartup(): Promise<void> {
-    try {
-      const response = await this.options.api("/api/v1/management/startup");
-      this.renderHostStartup(response.data);
-    } catch (error) { this.elements.hostStartupStatus.replaceChildren(emptyState(`Startup status unavailable: ${this.options.errorMessage(error)}`)); }
-  }
-
-  private renderHostStartup(startup: Json): void {
-    this.elements.hostStartupStatus.replaceChildren(
-      Object.assign(document.createElement("strong"), { textContent: startup.configured ? "Starts at sign-in" : "Does not start at sign-in" }),
-      Object.assign(document.createElement("span"), { textContent: startup.message ?? (startup.available ? "Per-user Windows startup" : "Packaged host launcher unavailable") }),
-    );
-    this.elements.installHostStartup.disabled = !startup.available || startup.configured;
-    this.elements.removeHostStartup.disabled = !startup.configured;
-  }
-
-  private showStartupConfirmation(action: "install" | "remove"): void {
-    this.pendingStartupAction = action;
-    this.elements.hostStartupConfirmationText.textContent = action === "install"
-      ? "Start the lightweight Fitz host automatically at Windows sign-in?"
-      : "Remove Fitz host from Windows sign-in startup?";
-    this.elements.confirmHostStartup.textContent = action === "install" ? "Confirm startup" : "Confirm removal";
-    this.elements.hostStartupConfirmation.hidden = false;
-  }
-
-  private hideStartupConfirmation(): void {
-    this.pendingStartupAction = undefined;
-    this.elements.hostStartupConfirmation.hidden = true;
-  }
-
-  private async applyStartupChange(): Promise<void> {
-    if (!this.pendingStartupAction) return;
-    const action = this.pendingStartupAction;
-    this.elements.confirmHostStartup.disabled = true;
-    try {
-      await this.options.api("/api/v1/management/startup", action === "install" ? "POST" : "DELETE", action === "install" ? {} : undefined);
-      this.hideStartupConfirmation();
-      await this.load();
-      this.options.showToast(action === "install" ? "Host will start at sign-in" : "Host startup removed");
-    } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
-    finally { this.elements.confirmHostStartup.disabled = false; }
-  }
-
   private async saveToolPolicy(): Promise<void> {
     setFormBusy(this.elements.toolPolicyForm, true);
     try {
@@ -717,25 +444,6 @@ export class AdministrationPageController {
     } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
     finally { button.disabled = false; }
   }
-}
-
-function renderDiagnosticRows(container: HTMLElement, rows: Array<[string, string]>, empty: string): void {
-  container.replaceChildren();
-  for (const [name, value] of rows) {
-    const row = document.createElement("div");
-    row.className = "diagnostic-row";
-    row.append(
-      Object.assign(document.createElement("span"), { textContent: name }),
-      Object.assign(document.createElement("strong"), { textContent: value }),
-    );
-    container.append(row);
-  }
-  if (!rows.length) container.append(emptyState(empty));
-}
-
-function diagnosticMib(free: unknown, total: unknown): string {
-  if (!Number.isFinite(Number(free)) || !Number.isFinite(Number(total))) return "Unavailable";
-  return `${Math.round(Number(free)).toLocaleString()} / ${Math.round(Number(total)).toLocaleString()} MiB`;
 }
 
 function emptyState(message: string): HTMLElement {

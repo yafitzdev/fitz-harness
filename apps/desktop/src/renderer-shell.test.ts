@@ -31,6 +31,10 @@ const composer = readFileSync(new URL("./ui/chat/composer.ts", import.meta.url),
 const connectionWorkspace = readFileSync(new URL("./ui/connections/connection-workspace.ts", import.meta.url), "utf8");
 const pluginCatalog = readFileSync(new URL("./ui/plugins/plugin-catalog.ts", import.meta.url), "utf8");
 const administrationPage = readFileSync(new URL("./ui/administration/administration-page.ts", import.meta.url), "utf8");
+const desktopUpdateController = readFileSync(new URL("./ui/administration/desktop-update-controller.ts", import.meta.url), "utf8");
+const diagnosticsController = readFileSync(new URL("./ui/administration/diagnostics-controller.ts", import.meta.url), "utf8");
+const hostLifecycleController = readFileSync(new URL("./ui/administration/host-lifecycle-controller.ts", import.meta.url), "utf8");
+const safetyRecoveryController = readFileSync(new URL("./ui/administration/safety-recovery-controller.ts", import.meta.url), "utf8");
 const playbookWorkspace = readFileSync(new URL("./ui/playbooks/playbook-workspace.ts", import.meta.url), "utf8");
 const resourceInspector = readFileSync(new URL("./ui/inspector/resource-inspector.ts", import.meta.url), "utf8");
 const inspectorPanel = readFileSync(new URL("./ui/inspector/inspector-panel.ts", import.meta.url), "utf8");
@@ -933,6 +937,11 @@ describe("desktop renderer shell", () => {
     expect(administrationPage).toContain('api("/api/v1/management/trash")');
     expect(administrationPage).toContain('api("/api/v1/management/snapshots")');
     expect(administrationPage).toContain('api("/api/v1/management/tool-actions?limit=100")');
+    expect(administrationPage).toContain("this.safetyRecovery.renderTrash");
+    expect(administrationPage).toContain("this.safetyRecovery.renderSnapshots");
+    expect(administrationPage).toContain("this.safetyRecovery.renderToolActions");
+    expect(safetyRecoveryController).toContain('api("/api/v1/management/trash", "DELETE")');
+    expect(safetyRecoveryController).toContain('api("/api/v1/management/trash/gc", "POST", { maxAgeDays: 30 })');
     expect(administrationPage).toContain('/routes`, "PUT", { routeIds }');
     expect(administrationPage).toContain('/quota`, "PUT", quota');
     expect(administrationPage).toContain('revokeAdminDevice(device.id)');
@@ -1013,8 +1022,8 @@ describe("desktop renderer shell", () => {
       expect(html).toContain(`id="${id}"`);
     }
     expect(administrationPage).toContain('api("/api/v1/management/diagnostics")');
-    expect(administrationPage).toContain("this.renderDiagnostics(diagnostics)");
-    expect(administrationPage).toContain("saveDiagnostics(JSON.stringify(this.diagnosticBundle, null, 2))");
+    expect(administrationPage).toContain("this.diagnostics.render(diagnostics)");
+    expect(diagnosticsController).toContain("saveDiagnostics(JSON.stringify(this.#bundle, null, 2))");
     expect(preload).toContain('ipcRenderer.invoke("fitz:save-diagnostics", content)');
     expect(main).toContain('ipcMain.handle("fitz:save-diagnostics"');
     expect(main).toContain("content.length > 10_000_000");
@@ -1026,10 +1035,10 @@ describe("desktop renderer shell", () => {
     for (const id of ["remote-access-status", "enable-remote-access", "disable-remote-access", "remote-access-confirmation", "confirm-remote-access"]) {
       expect(html).toContain(`id="${id}"`);
     }
-    expect(administrationPage).toContain('api("/api/v1/management/connectivity/status")');
-    expect(administrationPage).toContain('showRemoteConfirmation("enable")');
-    expect(administrationPage).toContain('api("/api/v1/management/connectivity/tailscale-serve", "POST", {})');
-    expect(administrationPage).toContain('api("/api/v1/management/connectivity/tailscale-serve", "DELETE")');
+    expect(hostLifecycleController).toContain('api("/api/v1/management/connectivity/status")');
+    expect(hostLifecycleController).toContain('#showRemoteConfirmation("enable")');
+    expect(hostLifecycleController).toContain('api("/api/v1/management/connectivity/tailscale-serve", "POST", {})');
+    expect(hostLifecycleController).toContain('api("/api/v1/management/connectivity/tailscale-serve", "DELETE")');
     expect(styles).toContain(".remote-access-confirmation[hidden]");
   });
 
@@ -1037,9 +1046,9 @@ describe("desktop renderer shell", () => {
     for (const id of ["check-desktop-update", "install-desktop-update", "desktop-update-label", "desktop-update-progress"]) {
       expect(html).toContain(`id="${id}"`);
     }
-    expect(administrationPage).toContain("updateStatus(): Promise<DesktopUpdateStatus>");
-    expect(administrationPage).toContain(".then((update) => this.renderDesktopUpdate(update))");
-    expect(administrationPage).toContain("Downloading update · ${Math.round(percent)}%");
+    expect(desktopUpdateController).toContain("updateStatus(): Promise<DesktopUpdateStatus>");
+    expect(desktopUpdateController).toContain(".then((update) => this.render(update))");
+    expect(desktopUpdateController).toContain("Downloading update · ${Math.round(percent)}%");
     expect(preload).toContain('ipcRenderer.invoke("fitz:update-status")');
     expect(main).toContain('autoUpdater.on("download-progress"');
     expect(main).toContain('publishUpdateStatus({ state: "development" })');
@@ -1050,9 +1059,9 @@ describe("desktop renderer shell", () => {
     for (const id of ["host-startup-status", "install-host-startup", "remove-host-startup", "host-startup-confirmation", "confirm-host-startup"]) {
       expect(html).toContain(`id="${id}"`);
     }
-    expect(administrationPage).toContain('api("/api/v1/management/startup")');
-    expect(administrationPage).toContain('showStartupConfirmation("install")');
-    expect(administrationPage).toContain('action === "install" ? "POST" : "DELETE"');
+    expect(hostLifecycleController).toContain('api("/api/v1/management/startup")');
+    expect(hostLifecycleController).toContain('#showStartupConfirmation("install")');
+    expect(hostLifecycleController).toContain('action === "install" ? "POST" : "DELETE"');
     expect(styles).toContain(".host-startup-status");
   });
 });
