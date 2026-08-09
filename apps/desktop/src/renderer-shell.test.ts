@@ -61,8 +61,6 @@ describe("desktop renderer shell", () => {
       "manage-playbooks",
       "new-project",
       "connection-status",
-      "inspector-new-tab",
-      "inspector-fullscreen",
       "inspector-artifacts",
       "context-add",
       "add-artifact",
@@ -88,14 +86,13 @@ describe("desktop renderer shell", () => {
     expect(composerCss).toContain("@container composer (max-width: 480px)");
     expect(composerCss).toContain("#access-mode-label { display: none; }");
     expect(composerCss).toContain("@container composer (max-width: 380px)");
-    expect(composerCss).toContain("#model-name { display: none; }");
-    // The summary is split into route / model name / effort spans, so only the
-    // model name span hides; the access button keeps a tooltip when icon-only.
+    // The summary is the stable route / effort contract; resolved model
+    // details remain available in the settings menu.
     expect(composer).toContain('id="model-route"');
-    expect(composer).toContain('id="model-name"');
+    expect(composer).not.toContain('id="model-name"');
     expect(composer).toContain('id="model-effort"');
     expect(composerControls).toContain("displayName?: string");
-    expect(composerControls).toContain("this.elements.modelName.hidden = !modelName");
+    expect(composerControls).not.toContain("modelName");
     expect(composerControls).toContain("accessModeToggle.title = value.label");
     // The renderer passes the short route name alongside the "route · model" label.
     expect(renderer).toContain("displayName: routeName");
@@ -294,8 +291,8 @@ describe("desktop renderer shell", () => {
     expect(playbookWorkspace).toContain('state === "passed" ? "✓ Working"');
     expect(playbookWorkspace).toContain('state === "failed" ? "Retry"');
     expect(playbookWorkspace).toContain('isMedia ? "Generating a test image…" : "Sending “Say hi.” to this recipe"');
-    expect(playbookWorkspace).toContain('modelLabel.className = "recipe-card-label"');
-    expect(playbookWorkspace).toContain('contextLabel.className = "recipe-card-label recipe-context-label"');
+    expect(playbookWorkspace).toContain("labels.append(...recipeMetadata({");
+    expect(connectionWorkspace).toContain("labels.append(...recipeMetadata({");
     expect(playbookWorkspace).not.toContain('detail.textContent = `${recipe.adapter} · ${recipe.modelId}`');
     expect(styles).toContain(".recipe-test-button");
     expect(styles).toContain(".recipe-test-button.passed");
@@ -647,8 +644,9 @@ describe("desktop renderer shell", () => {
   });
 
   it("keeps standalone chats in their own sidebar section, sibling to projects", () => {
-    // The sidebar carries a Chats section below Projects, rendered into #chats.
-    expect(html).toContain('id="chats" class="project-tree" aria-label="Chats"');
+    // The sidebar carries a clearly named standalone-chat section below Projects.
+    expect(html).toContain('id="chats" class="project-tree" aria-label="Standalone chats"');
+    expect(html).toContain("<span>Standalone chats</span>");
     expect(html).toContain('class="section-heading chats-heading"');
     expect(renderer).toContain("chatsMount: element(\"chats\")");
     expect(projectSidebar).toContain("chatsMount: HTMLElement");
@@ -687,11 +685,10 @@ describe("desktop renderer shell", () => {
   });
 
   it("replaces the deferred Environment surface with a resource Inspector", () => {
-    // The header carries the Inspector's browser-style tab actions: + (new
-    // tab), < > (fullscreen placeholder), and H (artifacts repository).
+    // The header carries only working Inspector actions.
     expect(html).toContain('id="inspector-render-toggle" class="icon-button" type="button" title="View source" aria-label="View source" aria-pressed="false" hidden');
-    expect(html).toContain('id="inspector-new-tab" class="icon-button" type="button" title="New tab" aria-label="New tab"');
-    expect(html).toContain('id="inspector-fullscreen" class="icon-button" type="button" title="Fullscreen" aria-label="Fullscreen"');
+    expect(html).not.toContain('id="inspector-new-tab"');
+    expect(html).not.toContain('id="inspector-fullscreen"');
     expect(html).toContain('id="inspector-artifacts" class="icon-button" type="button" title="Toggle inspector" aria-label="Toggle inspector"');
     expect(html).not.toContain('id="context-toggle"');
     expect(html).not.toContain('id="context-panel"');
@@ -709,7 +706,6 @@ describe("desktop renderer shell", () => {
     expect(renderer).not.toContain('item("Toggle environment"');
     expect(renderer).toContain('window.addEventListener("fitz:open-resource"');
     expect(renderer).toContain("inspectorPanel.inspect(reference)");
-    expect(renderer).toContain("inspectorPanel.newTab()");
     expect(renderer).toContain("inspectorPanel.toggle()");
     expect(renderer).not.toContain("inspectorPanel.toggleRepository()");
     // The header's raw↔rendered toggle is handed to the panel, which wires it
@@ -807,7 +803,7 @@ describe("desktop renderer shell", () => {
     expect(inspectorPanel).toContain('className = "inspector-tab-close"');
     expect(inspectorPanel).toContain("toggle(): void");
     expect(inspectorPanel).not.toContain("toggleRepository(): void");
-    expect(inspectorPanel).toContain("newTab(): void");
+    expect(inspectorPanel).not.toContain("newTab(): void");
     expect(inspectorPanel).toContain("this.#repository.render(repositoryView)");
     expect(inspectorPanel).toContain("setSessionArtifacts(artifacts: Json[]): void");
     expect(inspectorPanel).toContain("reset(): void");

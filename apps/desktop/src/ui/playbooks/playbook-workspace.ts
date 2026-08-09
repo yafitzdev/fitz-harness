@@ -1,4 +1,5 @@
 import { CollapsibleSection } from "../layout/collapsible-section.js";
+import { recipeMetadata } from "../recipes/recipe-metadata.js";
 
 type Json = Record<string, any>;
 
@@ -204,11 +205,12 @@ export class PlaybookWorkspaceController {
     const section = CollapsibleSection.create({
       id: playbookId,
       storageKey: "fitz-collapsed-playbooks",
-      title: engine?.displayName ?? playbookId,
+      title: engine?.displayName ?? "Unconfigured engine",
       className: "playbook-card",
       actions,
       onToggle: () => this.render(),
     });
+    if (!engine) section.root.title = `Engine folder: ${playbookId}`;
     if (!section.collapsed) {
       if (engine && !playbookRecipes.length) section.appendBody(emptyState("No recipes yet"));
       if (engine) for (const recipe of playbookRecipes) section.appendBody(this.renderRecipeCard(recipe));
@@ -228,13 +230,12 @@ export class PlaybookWorkspaceController {
     name.textContent = recipe.displayName;
     const labels = document.createElement("div");
     labels.className = "recipe-card-labels";
-    const modelLabel = document.createElement("span");
-    modelLabel.className = "recipe-card-label";
-    modelLabel.textContent = recipe.modelId;
-    const contextLabel = document.createElement("span");
-    contextLabel.className = "recipe-card-label recipe-context-label";
-    contextLabel.textContent = `${formatTokenCount(recipe.contextTokens)} ctx`;
-    labels.append(modelLabel, contextLabel);
+    labels.append(...recipeMetadata({
+      modelId: String(recipe.modelId ?? recipe.id),
+      contextTokens: Number(recipe.contextTokens),
+      capabilities: recipe.capabilities,
+      experimental: recipe.configuration?.experimental === true,
+    }));
     recipeDetails.append(name, labels);
     const recipeActions = document.createElement("div");
     recipeActions.className = "recipe-card-actions";
@@ -334,10 +335,6 @@ function emptyState(message: string): HTMLElement {
 
 function setFormBusy(form: HTMLFormElement, busy: boolean): void {
   for (const control of form.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>("input,button,select")) control.disabled = busy;
-}
-
-function formatTokenCount(value: number): string {
-  return value >= 1000 ? `${Math.round(value / 1000)}k` : String(Math.round(value));
 }
 
 function samePlaybook(left: unknown, right: unknown): boolean {

@@ -339,7 +339,7 @@ describe("ModelsPageController", () => {
     expect(calls.openPath).toHaveBeenCalledWith("/models/org/model/");
     expect(calls.openExternal).not.toHaveBeenCalled();
 
-    const show = [...page.querySelectorAll<HTMLButtonElement>("#downloaded-models .model-action")].find((button) => button.textContent === "Show in folder")!;
+    const show = [...page.querySelectorAll<HTMLButtonElement>("#downloaded-models .action-menu-surface button")].find((button) => button.textContent === "Show in folder")!;
     click(show);
 
     expect(calls.openPath).toHaveBeenCalledWith("/models/org/model/");
@@ -362,9 +362,9 @@ describe("ModelsPageController", () => {
     await controller.load();
     expect(page.querySelector("#downloaded-models")?.textContent).toContain("model.Q4_K_M.gguf");
 
-    const deleteButton = page.querySelector<HTMLButtonElement>("#downloaded-models .model-action.danger")!;
+    const deleteButton = page.querySelector<HTMLButtonElement>("#downloaded-models .action-menu-surface button.danger")!;
     click(deleteButton);
-    expect(deleteButton.textContent).toBe("Delete?");
+    expect(deleteButton.textContent).toBe("Confirm delete");
     click(deleteButton);
 
     await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/models/downloaded", "DELETE", { repoId: "org/model", fileName: "model.Q4_K_M.gguf" }));

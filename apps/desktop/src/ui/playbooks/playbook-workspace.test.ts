@@ -120,6 +120,8 @@ describe("PlaybookWorkspaceController", () => {
     // Registered engines offer Configure and Add recipe; unregistered folders offer Set up.
     expect([...cards[0]!.querySelectorAll<HTMLButtonElement>(".collapsible-actions button")].map((button) => button.textContent)).toEqual(["Configure", "Add recipe"]);
     expect([...cards[1]!.querySelectorAll<HTMLButtonElement>(".collapsible-actions button")].map((button) => button.textContent)).toEqual(["Set up"]);
+    expect(cards[1]!.querySelector("h3")?.textContent).toBe("Unconfigured engine");
+    expect((cards[1] as HTMLElement).title).toBe("Engine folder: scratch");
     expect(elements.title.textContent).toBe("Playbooks");
   });
 

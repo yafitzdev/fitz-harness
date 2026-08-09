@@ -1,0 +1,7 @@
+.action-menu { position: relative; }
+.action-menu > summary { list-style: none; }
+.action-menu > summary::-webkit-details-marker { display: none; }
+.action-menu-toggle { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 9px; color: var(--muted); cursor: pointer; }
+.action-menu-toggle:hover, .action-menu[open] .action-menu-toggle { color: var(--text); background: var(--tint-5); }
+.action-menu-toggle svg { width: 16px; height: 16px; }
+.action-menu-surface { position: absolute; z-index: 40; top: calc(100% + 4px); right: 0; width: max-content; min-width: 142px; padding: 4px; border-radius: var(--radius-lg); background: var(--floating-surface); box-shadow: var(--elevation-stroke), var(--shadow-popover); }

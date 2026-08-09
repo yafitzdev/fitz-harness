@@ -18,7 +18,6 @@ export interface ComposerControlsElements {
   modelMenu: HTMLElement;
   modelSummary: HTMLElement;
   modelRoute: HTMLElement;
-  modelName: HTMLElement;
   modelEffort: HTMLElement;
   modelValue: HTMLElement;
   effortValue: HTMLElement;
@@ -108,15 +107,12 @@ export class ComposerControls {
   refreshLabels(): void {
     const option = [...this.elements.model.options].find((candidate) => candidate.value === this.routeId);
     const fullLabel = option?.textContent ?? "Model";
-    // The full label may be "Smart · ninfer-1.5b" (route name + model name)
-    // or just "Smart". The route name alone stays visible when the composer
-    // is squeezed; the model name hides so only "Smart · Medium" remains.
+    // The connection owns the concrete model behind a route. The composer
+    // therefore exposes the stable route contract (Fast/Default/Smart), while
+    // the settings menu may still show the resolved model for diagnostics.
     const routeName = option?.dataset.displayName || fullLabel;
-    const modelName = fullLabel === routeName ? "" : fullLabel.slice(`${routeName} · `.length);
     const effortLabel = [...this.elements.effort.options].find((candidate) => candidate.value === this.elements.effort.value)?.textContent ?? "Medium";
     this.elements.modelRoute.textContent = routeName;
-    this.elements.modelName.textContent = modelName ? ` · ${modelName}` : "";
-    this.elements.modelName.hidden = !modelName;
     this.elements.modelEffort.textContent = ` · ${effortLabel}`;
     this.elements.modelValue.textContent = fullLabel;
     this.elements.effortValue.textContent = effortLabel;

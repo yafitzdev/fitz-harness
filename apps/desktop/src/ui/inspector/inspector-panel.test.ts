@@ -114,24 +114,6 @@ describe("InspectorPanel", () => {
     expect(view.tabBar.hidden).toBe(true);
   });
 
-  it("opens a new empty tab from the + button", () => {
-    const host = mount();
-    const view = panel(host);
-
-    view.newTab();
-    expect(view.isOpen).toBe(true);
-    expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(1);
-    const active = view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")!;
-    expect(active.textContent).toBe("New tab");
-    expect(active.querySelector(".inspector-tab-close")).not.toBeNull();
-    const tabPanel = view.element.querySelector<HTMLElement>(".inspector-tabpanel:not([hidden])")!;
-    expect(tabPanel.querySelector(".inspector-empty")?.textContent).toContain("Nothing open yet");
-
-    view.newTab();
-    expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(2);
-    expect(view.tabBar.querySelector<HTMLElement>(".inspector-tab.active")?.textContent).toBe("New tab 2");
-  });
-
   it("wires the header's raw↔rendered toggle to the active markdown tab", async () => {
     const host = mount();
     const toggle = document.createElement("button");
@@ -159,10 +141,8 @@ describe("InspectorPanel", () => {
     expect(toggle.title).toBe("View rendered");
     expect(view.element.querySelector(".inspector-source")).not.toBeNull();
 
-    // Tabs without a raw↔rendered mode (images, empty tabs) hide it again.
+    // Tabs without a raw↔rendered mode (images) hide it again.
     view.previewImage("data:image/png;base64,AAAA", "image/png", "shot.png");
-    expect(toggle.hidden).toBe(true);
-    view.newTab();
     expect(toggle.hidden).toBe(true);
     vi.unstubAllGlobals();
   });

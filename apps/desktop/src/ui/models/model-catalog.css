@@ -9,6 +9,7 @@
 .model-card-linked:focus-visible { outline: 1px solid var(--muted); outline-offset: -2px; border-radius: 10px; }
 .model-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
 .model-actions { display: flex; align-items: center; gap: 5px; }
+.model-card:not(:hover):not(:focus-within) .model-actions > .action-menu:not([open]) { opacity: 0; }
 .model-action { height: 28px; padding: 0 9px; border: 1px solid var(--border-soft); border-radius: 9px; background: var(--tint-1); color: var(--text); font-size: 11px; cursor: pointer; }
 .model-action:hover { background: var(--tint-5); }
 .model-action.danger { color: var(--danger); }

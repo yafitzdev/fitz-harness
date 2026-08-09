@@ -46,7 +46,7 @@ const COMPOSER_TEMPLATE = `
           <button type="button" data-environment-choice="cloud" disabled><svg viewBox="0 0 20 20"><path d="M5.5 15.5h9a3 3 0 0 0 .5-6 5 5 0 0 0-9.4-1.4A3.8 3.8 0 0 0 5.5 15.5z"></path></svg><span>Cloud</span></button>
           <div id="create-worktree-form" class="create-branch-form" hidden><input id="new-worktree-branch" placeholder="Worktree branch" autocomplete="off"><button id="create-worktree-submit" type="button">Create</button></div>
           <hr>
-          <button type="button" data-environment-choice="usage"><svg viewBox="0 0 20 20"><path d="M4 14.5a7 7 0 1 1 12 0"></path><path d="m10 11 3-3"></path></svg><span>Usage remaining</span><svg class="choice-chevron" viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"></path></svg></button>
+          <button type="button" data-environment-choice="usage"><svg viewBox="0 0 20 20"><path d="M4 14.5a7 7 0 1 1 12 0"></path><path d="m10 11 3-3"></path></svg><span>Context usage</span><svg class="choice-chevron" viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"></path></svg></button>
         </div>
       </div>
       <div class="context-control-wrap">
@@ -86,7 +86,7 @@ const COMPOSER_TEMPLATE = `
           </div>
         </div>
         <div class="model-picker">
-          <button id="model-toggle" class="model-toggle" type="button" aria-label="Model settings" aria-expanded="false" disabled><span id="model-summary"><span id="model-route">Model</span><span id="model-name" hidden></span><span id="model-effort"> · Medium</span></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"></path></svg></button>
+          <button id="model-toggle" class="model-toggle" type="button" aria-label="Model settings" aria-expanded="false" disabled><span id="model-summary"><span id="model-route">Model</span><span id="model-effort"> · Medium</span></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"></path></svg></button>
           <div id="model-menu" class="popover model-menu" hidden>
             <button class="setting-row" type="button" data-setting="model"><span>Model</span><span><span id="model-value">Model</span><svg viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"></path></svg></span></button>
             <button class="setting-row" type="button" data-setting="effort"><span>Effort</span><span><span id="effort-value">Medium</span><svg viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"></path></svg></span></button>
@@ -337,7 +337,6 @@ export class Composer {
       modelMenu: this.el<HTMLElement>("#model-menu"),
       modelSummary: this.el<HTMLElement>("#model-summary"),
       modelRoute: this.el<HTMLElement>("#model-route"),
-      modelName: this.el<HTMLElement>("#model-name"),
       modelEffort: this.el<HTMLElement>("#model-effort"),
       modelValue: this.el<HTMLElement>("#model-value"),
       effortValue: this.el<HTMLElement>("#effort-value"),

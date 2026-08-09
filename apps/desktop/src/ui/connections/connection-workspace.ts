@@ -2,9 +2,10 @@ import type { ConsumerConnectionInput, ConsumerConnectionSummary } from "../../p
 import { ManagementPageLayout, managementRefreshIcon } from "../layout/management-page.js";
 import { CollapsibleSection } from "../layout/collapsible-section.js";
 import { svgIcon } from "../primitives/dom.js";
+import { recipeMetadata, type RecipeModality } from "../recipes/recipe-metadata.js";
 
 type Json = Record<string, any>;
-export type MediaModality = "image" | "video" | "audio";
+export type MediaModality = Exclude<RecipeModality, "text">;
 
 const CONNECTION_EDITOR_TEMPLATE = `
   <div id="connection-editor" class="management-editor" hidden>
@@ -298,21 +299,11 @@ export class ConnectionWorkspaceController {
     name.textContent = model.displayName ?? model.id;
     const labels = document.createElement("div");
     labels.className = "recipe-card-labels";
-    const modelLabel = document.createElement("span");
-    modelLabel.className = "recipe-card-label";
-    modelLabel.textContent = model.modelId ?? "API model";
-    labels.append(modelLabel);
-    const textLabel = document.createElement("span");
-    textLabel.className = "recipe-card-label media-modality-badge media-text";
-    textLabel.textContent = "Text";
-    textLabel.title = "Generates text";
-    labels.append(textLabel);
-    if (model.contextTokens) {
-      const contextLabel = document.createElement("span");
-      contextLabel.className = "recipe-card-label recipe-context-label";
-      contextLabel.textContent = `${formatTokenCount(model.contextTokens)} ctx`;
-      labels.append(contextLabel);
-    }
+    labels.append(...recipeMetadata({
+      modelId: model.modelId ?? "API model",
+      ...(model.contextTokens ? { contextTokens: model.contextTokens } : {}),
+      capabilities: { chatCompletions: true },
+    }));
     details.append(name, labels);
     const actions = document.createElement("div");
     actions.className = "recipe-card-actions";
@@ -356,29 +347,11 @@ export class ConnectionWorkspaceController {
     name.textContent = model.displayName;
     const labels = document.createElement("div");
     labels.className = "recipe-card-labels";
-    const modelLabel = document.createElement("span");
-    modelLabel.className = "recipe-card-label";
-    modelLabel.textContent = model.modelId;
-    labels.append(modelLabel);
-    for (const modality of model.modalities) {
-      const modalityLabel = document.createElement("span");
-      modalityLabel.className = `recipe-card-label media-modality-badge media-${modality}`;
-      modalityLabel.textContent = modality === "image" ? "Image" : modality === "video" ? "Video" : "Audio";
-      modalityLabel.title = `Generates ${modality}`;
-      labels.append(modalityLabel);
-    }
-    for (const badge of mediaLimitBadges(model.limits)) {
-      const limitLabel = document.createElement("span");
-      limitLabel.className = "recipe-card-label media-limit-badge";
-      limitLabel.textContent = badge;
-      labels.append(limitLabel);
-    }
-    if (model.experimental) {
-      const experimentalLabel = document.createElement("span");
-      experimentalLabel.className = "recipe-card-label media-experimental-badge";
-      experimentalLabel.textContent = "Experimental";
-      labels.append(experimentalLabel);
-    }
+    labels.append(...recipeMetadata({
+      modelId: model.modelId,
+      capabilities: { chatCompletions: false, modalities: { output: model.modalities, ...(model.limits ? { limits: model.limits } : {}) } },
+      ...(model.experimental ? { experimental: true } : {}),
+    }));
     details.append(name, labels);
     const actions = document.createElement("div");
     actions.className = "recipe-card-actions";
@@ -581,10 +554,6 @@ function setFormBusy(form: HTMLFormElement, busy: boolean): void {
   for (const control of form.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>("input,button,select")) control.disabled = busy;
 }
 
-function formatTokenCount(value: number): string {
-  return value >= 1000 ? `${Math.round(value / 1000)}k` : String(Math.round(value));
-}
-
 /** Media recipes hosted on this PC (playbook/engine recipes, §5.10): one card
  *  per recipe with all of its output modalities as route toggles. */
 function hostedMediaViews(recipes: Json[]): MediaModelView[] {
@@ -617,15 +586,4 @@ function savedMediaViews(connection: ConsumerConnectionSummary): MediaModelView[
     byRecipe.set(model.recipeId, view);
   }
   return [...byRecipe.values()];
-}
-
-/** Compact limit badges for a media recipe's modality capabilities (§5.10). */
-function mediaLimitBadges(limits: MediaModelView["limits"] | undefined): string[] {
-  if (!limits) return [];
-  const badges: string[] = [];
-  if (typeof limits.maxDurationSeconds === "number") badges.push(`≤${limits.maxDurationSeconds}s`);
-  if (typeof limits.maxResolution === "string") badges.push(`≤${limits.maxResolution}`);
-  if (typeof limits.maxRefs === "number") badges.push(`≤${limits.maxRefs} refs`);
-  if (typeof limits.maxFrames === "number") badges.push(`≤${limits.maxFrames} frames`);
-  return badges;
 }

@@ -63,7 +63,6 @@ export class InspectorPanel {
   readonly #resizeObserver: ResizeObserver;
   #activeTabId: string | undefined;
   #pastedCounter = 0;
-  #emptyCounter = 0;
   #open = false;
 
   constructor(options: InspectorPanelOptions) {
@@ -210,12 +209,6 @@ export class InspectorPanel {
     this.#showRepository();
   }
 
-  /** Opens the panel with a fresh empty tab (full tab behavior deferred). */
-  newTab(): void {
-    this.open();
-    this.#addEmptyTab();
-  }
-
   /**
    * Opens (or focuses) a tab for a local file or URL and previews it. Local
    * files are registered in the artifact repository once they resolve.
@@ -322,23 +315,6 @@ export class InspectorPanel {
     return { button, closeButton };
   }
 
-  /** Adds a blank tab (the header's + button): no preview yet. */
-  #addEmptyTab(): void {
-    const id = `empty:${++this.#emptyCounter}`;
-    const label = this.#emptyCounter === 1 ? "New tab" : `New tab ${this.#emptyCounter}`;
-    const { button, closeButton } = this.#tabButton(label, true);
-    const content = document.createElement("div");
-    content.className = "inspector-tabpanel";
-    content.hidden = true;
-    content.append(this.empty("Nothing open yet — open a file from the conversation to preview it here."));
-    const tab: InspectorTab = { id, label, closable: true, button, closeButton, content, inspector: undefined };
-    this.#attachTabHandlers(tab);
-    this.#tabs.push(tab);
-    this.#tabBar.append(button);
-    this.#content.append(content);
-    this.#activateTab(id);
-  }
-
   #addResourceTab(id: string, label: string): InspectorTab {
     const { button, closeButton } = this.#tabButton(label, true);
     const content = document.createElement("div");
@@ -413,7 +389,6 @@ export class InspectorPanel {
     this.#repositoryView.hidden = true;
     this.#activeTabId = id;
     if (tab.inspector) tab.inspector.setActive(true);
-    // Tabs without a preview (empty tabs) have no raw↔rendered mode.
     else if (this.#renderToggle) this.#renderToggle.hidden = true;
   }
 

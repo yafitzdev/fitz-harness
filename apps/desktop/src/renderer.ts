@@ -8,9 +8,11 @@ import { Composer } from "./ui/chat/composer.js";
 import { projectRelativePath } from "./ui/chat/tool-activity.js";
 import { ConnectionWorkspaceController, FIXED_ROUTES, type FixedRouteId } from "./ui/connections/connection-workspace.js";
 import { InspectorPanel } from "./ui/inspector/inspector-panel.js";
+import { AdaptiveWorkspace } from "./ui/layout/adaptive-workspace.js";
 import { ConversationLayout } from "./ui/layout/conversation-layout.js";
 import { ManagementPageLayout, managementRefreshIcon } from "./ui/layout/management-page.js";
 import { WorkspacePageController } from "./ui/layout/workspace-pages.js";
+import { canOpenManagementView, managementNavigationVisibility } from "./ui/navigation/navigation-policy.js";
 import { CustomSelectController } from "./ui/primitives/custom-select.js";
 import { requiredElement as element, requiredQuery as query, svgIcon as svg, textBlock } from "./ui/primitives/dom.js";
 import { ResizablePane } from "./ui/primitives/resizable-pane.js";
@@ -54,9 +56,7 @@ const projectTitle = element("project-title");
 const taskTitle = element("task-title");
 const engineState = element("engine-state");
 const routeState = element("route-state");
-const inspectorNewTab = element("inspector-new-tab") as HTMLButtonElement;
 const inspectorRenderToggle = element("inspector-render-toggle") as HTMLButtonElement;
-const inspectorFullscreen = element("inspector-fullscreen") as HTMLButtonElement;
 const inspectorArtifacts = element("inspector-artifacts") as HTMLButtonElement;
 const artifacts = element("artifacts");
 const requestQueue = element("request-queue");
@@ -141,6 +141,7 @@ administrationLayout.addContent({
 });
 
 let conversationLayout: ConversationLayout | undefined;
+let adaptiveWorkspace: AdaptiveWorkspace | undefined;
 const sidebarPane = new ResizablePane({
   divider: sidebarResizer, storageKey: "fitz-sidebar-width", defaultValue: 254, minimum: 240, maximum: 520,
   pointerValue: (event) => event.clientX,
@@ -153,7 +154,7 @@ const inspectorPanel = new InspectorPanel({
   getSearchRoots: () => activityTimeline.searchRoots(),
   showToast,
   renderToggle: inspectorRenderToggle,
-  onLayoutChange: () => conversationLayout?.sync(),
+  onLayoutChange: () => { adaptiveWorkspace?.sync(); conversationLayout?.sync(); },
 });
 const composer = new Composer({
   mount: workspace,
@@ -190,6 +191,7 @@ const composer = new Composer({
   isRunning: () => agentRuns.active,
 });
 conversationLayout = new ConversationLayout({ workspace, messages, composer: composer.root, scrollButton: composer.scrollButton, inspectorWidth: () => inspectorPanel.width() });
+adaptiveWorkspace = new AdaptiveWorkspace({ shell, workspace, onLayoutChange: () => conversationLayout?.sync() });
 const customSelects = new CustomSelectController(selectPopover, closePopovers);
 const projectSidebar = new ProjectSidebarController({
   mount: element("projects"),
@@ -518,8 +520,6 @@ element("sidebar-menu").addEventListener("click", toggleSidebar);
 for (const menuButton of document.querySelectorAll<HTMLButtonElement>("[data-app-menu]")) menuButton.addEventListener("click", (event) => openAppMenu(menuButton.dataset.appMenu ?? "", menuButton, event));
 for (const windowButton of document.querySelectorAll<HTMLButtonElement>("[data-window-action]")) windowButton.addEventListener("click", () => void window.fitz.windowAction(windowButton.dataset.windowAction as "minimize" | "maximize" | "close"));
 connectionStatus.addEventListener("click", () => void initialize());
-inspectorNewTab.addEventListener("click", () => inspectorPanel.newTab());
-inspectorFullscreen.addEventListener("click", () => { /* Fullscreen preview: deferred. */ });
 inspectorArtifacts.addEventListener("click", () => inspectorPanel.toggle());
 window.addEventListener("fitz:open-resource", (event) => {
   const reference = (event as CustomEvent<{ reference?: string }>).detail?.reference;
@@ -677,7 +677,7 @@ function openProjectWorktreeSetup(id: string): void { openNewChatForProject(id);
 async function copyValue(value: string, message: string): Promise<void> { await window.fitz.copyText(value); showToast(message); }
 
 async function openPlaybookPage(): Promise<void> {
-  if (!pairingPage.hidden) { pairingCode.focus(); return; }
+  if (!canOpenManagementView("playbooks", administrator) || !pairingPage.hidden) { if (!pairingPage.hidden) pairingCode.focus(); return; }
   closePopovers();
   inspectorPanel.close();
   playbookWorkspace.closeEditor();
@@ -688,9 +688,9 @@ async function openPlaybookPage(): Promise<void> {
 }
 
 async function openConnectionsPage(): Promise<void> { if (!pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("connections"); await connectionWorkspace.sync(false); rememberLocation({ view: "connections" }); }
-async function openPluginsPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("plugins"); pluginsPageController.showLoading(); await pluginsPageController.load(false); rememberLocation({ view: "plugins" }); }
-async function openModelsPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("models"); modelsPageController.showLoading(); await modelsPageController.load(false); rememberLocation({ view: "models" }); }
-async function openAdministrationPage(): Promise<void> { if (!administrator || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); workspacePages.show("administration"); administrationPageController.showLoading(); await administrationPageController.load(); rememberLocation({ view: "administration" }); }
+async function openPluginsPage(): Promise<void> { if (!canOpenManagementView("plugins", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("plugins"); pluginsPageController.showLoading(); await pluginsPageController.load(false); rememberLocation({ view: "plugins" }); }
+async function openModelsPage(): Promise<void> { if (!canOpenManagementView("models", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("models"); modelsPageController.showLoading(); await modelsPageController.load(false); rememberLocation({ view: "models" }); }
+async function openAdministrationPage(): Promise<void> { if (!canOpenManagementView("administration", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); workspacePages.show("administration"); administrationPageController.showLoading(); await administrationPageController.load(); rememberLocation({ view: "administration" }); }
 function showPairingPage(message: string): void { closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); workspacePages.show("pairing"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
 function showConversationWorkspace(): void { playbookWorkspace.closeEditor(); workspacePages.show("conversation"); }
 function setConversationInert(inert: boolean): void { for (const area of [workspaceHeader, messages, composer.root]) { area.toggleAttribute("inert", inert); area.setAttribute("aria-hidden", String(inert)); } }
@@ -728,11 +728,12 @@ async function navigateHistory(offset: -1 | 1): Promise<void> {
 }
 
 function applyNavigation(): void {
-  element("manage-playbooks").hidden = false;
-  connectionsButton.hidden = false;
-  pluginsButton.hidden = !administrator;
-  modelsButton.hidden = !administrator;
-  administrationButton.hidden = !administrator;
+  const visibility = managementNavigationVisibility(administrator);
+  element("manage-playbooks").hidden = !visibility.playbooks;
+  connectionsButton.hidden = !visibility.connections;
+  pluginsButton.hidden = !visibility.plugins;
+  modelsButton.hidden = !visibility.models;
+  administrationButton.hidden = !visibility.administration;
 }
 
 async function pairDevice(): Promise<void> {
@@ -1181,7 +1182,7 @@ function updateTitles(): void {
   taskTitle.textContent = "";
 }
 
-function toggleSidebar(): void { shell.classList.toggle("sidebar-collapsed"); closePopovers(); }
+function toggleSidebar(): void { adaptiveWorkspace?.toggleSidebar(); closePopovers(); }
 function updateContextMeter(): void { composer.controls.updateContext(sessionTokenEstimate + estimateTokens(composer.value), contextTokenLimit); }
 
 async function compactCurrentSession(): Promise<void> {

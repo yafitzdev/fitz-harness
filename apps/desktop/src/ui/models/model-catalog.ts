@@ -2,6 +2,7 @@ import { CollapsibleSection } from "../layout/collapsible-section.js";
 import { svgIcon } from "../primitives/dom.js";
 import { CatalogFilterBar } from "../catalog/catalog-filter-bar.js";
 import { catalogQueryString, type CatalogNumericFilter, type CatalogSortOption } from "../catalog/catalog-filters.js";
+import { createActionMenu } from "../primitives/action-menu.js";
 
 export type ModelCatalogApi = (path: string, method?: string, body?: unknown) => Promise<Record<string, any>>;
 
@@ -208,10 +209,10 @@ export class ModelCatalogController {
         action: () => this.options.openPath(parentDirectory(entry.path)),
       });
       const actions = card.querySelector(".model-actions") as HTMLElement;
-      actions.append(
-        this.action("Show in folder", () => this.options.openPath(parentDirectory(entry.path))),
-        this.confirmAction("Delete", () => this.removeDownloaded(entry)),
-      );
+      actions.append(createActionMenu([
+        { label: "Show in folder", action: () => this.options.openPath(parentDirectory(entry.path)) },
+        { label: "Delete", action: () => this.removeDownloaded(entry), danger: true, confirm: true },
+      ], `Actions for ${modelName(entry.repoId)}`));
       this.elements.downloadedList.append(card);
     }
   }
@@ -246,39 +247,6 @@ export class ModelCatalogController {
     actions.className = "model-actions";
     card.append(icon, copy, actions);
     return card;
-  }
-
-  private action(label: string, action: () => void | Promise<void>): HTMLButtonElement {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "model-action";
-    button.textContent = label;
-    button.addEventListener("click", () => void action());
-    return button;
-  }
-
-  private confirmAction(label: string, action: () => void | Promise<void>): HTMLButtonElement {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "model-action danger";
-    button.textContent = label;
-    button.addEventListener("click", async () => {
-      if (button.dataset.confirm !== "true") {
-        button.dataset.confirm = "true";
-        button.textContent = `${label}?`;
-        return;
-      }
-      await action();
-      button.dataset.confirm = "false";
-      button.textContent = label;
-    });
-    button.addEventListener("mouseleave", () => {
-      if (button.dataset.confirm === "true") {
-        button.dataset.confirm = "false";
-        button.textContent = label;
-      }
-    });
-    return button;
   }
 
   private downloadAction(repoId: string): HTMLButtonElement {

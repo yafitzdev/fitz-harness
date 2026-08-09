@@ -71,10 +71,8 @@
 /* ---- Squeeze behavior ------------------------------------------------------
    The composer docks into the conversation column, so its width follows the
    chat window (and the Inspector stealing space). Width container queries let
-   the toolbar shed text before it starts mangling: first the access label
-   goes icon-only, then the model name hides leaving "Smart · Medium". The
-   model name carries its leading " · " so hiding it collapses cleanly, and
-   the summary ellipsizes as a safety net for very long model names. */
+   the toolbar shed text before it starts mangling: the access label goes
+   icon-only, while the route/effort summary remains the stable contract. */
 #model-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 @container composer (max-width: 480px) {
@@ -83,5 +81,4 @@
 
 @container composer (max-width: 380px) {
   .model-toggle { min-width: 0; }
-  #model-name { display: none; }
 }
