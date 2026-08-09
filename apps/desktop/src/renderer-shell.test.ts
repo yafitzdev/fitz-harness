@@ -172,6 +172,14 @@ describe("desktop renderer shell", () => {
     expect(navigationHistory).toContain('async navigate(offset: -1 | 1)');
   });
 
+  it("keeps one desktop instance and focuses it on repeated launches", () => {
+    expect(main).toContain('const primaryInstance = desktopSmoke || app.requestSingleInstanceLock()');
+    expect(main).toContain('if (!desktopSmoke) app.on("second-instance", focusPrimaryWindow)');
+    expect(main).toContain('if (window.isMinimized()) window.restore()');
+    expect(main).toContain('if (!window.isVisible()) window.show()');
+    expect(main).toContain('window.focus()');
+  });
+
   it("keeps every management workspace on one stable scrollbar-aware axis", () => {
     expect(styles).toContain("--management-content-width: 900px");
     expect(styles).toContain("scrollbar-gutter: stable both-edges");

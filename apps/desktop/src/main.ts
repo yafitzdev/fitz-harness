@@ -135,6 +135,7 @@ ipcMain.handle("fitz:update-check", async () => { if (app.isPackaged) await auto
 ipcMain.handle("fitz:update-install", () => { if (app.isPackaged) autoUpdater.quitAndInstall(false, true); });
 
 function createWindow(): void { const window = new BrowserWindow({ width: 1280, height: 800, minWidth: 860, minHeight: 560, frame: false, autoHideMenuBar: true, show: false, backgroundColor: "#111317", webPreferences: { preload: join(directory, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, plugins: true /* enable Chromium's PDF viewer for PDFs embedded in the Inspector */ } }); window.webContents.setWindowOpenHandler(({ url }) => { if (isAllowedExternalUrl(url)) void shell.openExternal(url).catch(() => undefined); return { action: "deny" }; }); window.webContents.on("will-navigate", (event, url) => { if (url !== window.webContents.getURL()) event.preventDefault(); }); window.on("app-command", (_event, command) => { if (command === "browser-backward") window.webContents.send("fitz:navigation-command", "back"); else if (command === "browser-forward") window.webContents.send("fitz:navigation-command", "forward"); }); window.once("ready-to-show", () => window.show()); void window.loadFile(join(directory, "renderer", "index.html")); }
+function focusPrimaryWindow(): void { const window = BrowserWindow.getAllWindows()[0]; if (!window) return; if (window.isMinimized()) window.restore(); if (!window.isVisible()) window.show(); window.focus(); }
 function publishUpdateStatus(status: DesktopUpdateStatus): void { latestUpdateStatus = status; for (const window of BrowserWindow.getAllWindows()) window.webContents.send("fitz:update-status", status); }
 autoUpdater.autoDownload = true;
 autoUpdater.on("checking-for-update", () => publishUpdateStatus({ state: "checking" }));
@@ -143,22 +144,27 @@ autoUpdater.on("download-progress", (progress) => publishUpdateStatus({ state: "
 autoUpdater.on("update-not-available", (info) => publishUpdateStatus({ state: "current", version: info.version }));
 autoUpdater.on("update-downloaded", (info) => publishUpdateStatus({ state: "downloaded", version: info.version, percent: 100 }));
 autoUpdater.on("error", () => publishUpdateStatus({ state: "error" }));
-await app.whenReady();
-deviceToken ??= loadDeviceToken();
-if (process.env.FITZ_DESKTOP_SMOKE === "1") {
-  if (process.env.FITZ_DESKTOP_SMOKE_OUTPUT) {
-    writeFileSync(process.env.FITZ_DESKTOP_SMOKE_OUTPUT, "FITZ_DESKTOP_SMOKE_OK\n", { encoding: "utf8", flag: "wx" });
-  }
+const desktopSmoke = process.env.FITZ_DESKTOP_SMOKE === "1";
+const primaryInstance = desktopSmoke || app.requestSingleInstanceLock();
+if (!primaryInstance) {
   app.quit();
 } else {
-  if (isLoopbackHost(hostUrl) && !(await ensureLocalHost())) {
+  if (!desktopSmoke) app.on("second-instance", focusPrimaryWindow);
+  await app.whenReady();
+  deviceToken ??= loadDeviceToken();
+  if (desktopSmoke) {
+    if (process.env.FITZ_DESKTOP_SMOKE_OUTPUT) writeFileSync(process.env.FITZ_DESKTOP_SMOKE_OUTPUT, "FITZ_DESKTOP_SMOKE_OK\n", { encoding: "utf8", flag: "wx" });
     app.quit();
   } else {
-  createWindow();
-  if (app.isPackaged) void autoUpdater.checkForUpdates().catch(() => undefined);
+    if (isLoopbackHost(hostUrl) && !(await ensureLocalHost())) app.quit();
+    else {
+      createWindow();
+      if (app.isPackaged) void autoUpdater.checkForUpdates().catch(() => undefined);
+    }
+    app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+    app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
   }
 }
-app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); }); app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
 async function ensureLocalHost(): Promise<boolean> {
   const supervisor = new HostSupervisor({ origin: hostUrl, packaged: app.isPackaged, resourcesPath: process.resourcesPath });
   for (;;) {
