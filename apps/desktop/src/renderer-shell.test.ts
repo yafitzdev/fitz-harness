@@ -19,6 +19,8 @@ const reasoningView = readFileSync(new URL("./ui/chat/reasoning-view.ts", import
 const agentRunController = readFileSync(new URL("./ui/chat/agent-run-controller.ts", import.meta.url), "utf8");
 const mediaJobFeed = readFileSync(new URL("./ui/chat/media-job-feed.ts", import.meta.url), "utf8");
 const agentQueue = readFileSync(new URL("./ui/queue/agent-queue.ts", import.meta.url), "utf8");
+const artifactController = readFileSync(new URL("./ui/artifacts/artifact-controller.ts", import.meta.url), "utf8");
+const navigationHistory = readFileSync(new URL("./ui/navigation/navigation-history.ts", import.meta.url), "utf8");
 const composerControls = readFileSync(new URL("./ui/chat/composer-controls.ts", import.meta.url), "utf8");
 const composer = readFileSync(new URL("./ui/chat/composer.ts", import.meta.url), "utf8");
 const connectionWorkspace = readFileSync(new URL("./ui/connections/connection-workspace.ts", import.meta.url), "utf8");
@@ -149,10 +151,10 @@ describe("desktop renderer shell", () => {
     expect(main).toContain('window.webContents.send("fitz:navigation-command", "back")');
     expect(preload).toContain('onNavigationCommand(listener: (command: "back" | "forward")');
     expect(preload).toContain('ipcRenderer.on("fitz:navigation-command", handler)');
-    expect(renderer).toContain('window.fitz.onNavigationCommand((command) => void navigateHistory');
-    expect(renderer).toContain('type AppLocation = { view: "conversation"');
-    expect(renderer).toContain('navigationHistory.splice(navigationIndex + 1)');
-    expect(renderer).toContain('async function navigateHistory(offset: -1 | 1)');
+    expect(renderer).toContain('window.fitz.onNavigationCommand((command) => void navigationHistory.navigate');
+    expect(navigationHistory).toContain('| { view: "conversation";');
+    expect(navigationHistory).toContain('this.#entries.splice(this.#index + 1)');
+    expect(navigationHistory).toContain('async navigate(offset: -1 | 1)');
   });
 
   it("keeps every management workspace on one stable scrollbar-aware axis", () => {
@@ -304,7 +306,7 @@ describe("desktop renderer shell", () => {
   it("exposes working keyboard, retry, attachment, and cancellation paths", () => {
     expect(composer).toContain('event.key === "Enter"');
     expect(renderer).toContain('connectionStatus.addEventListener("click"');
-    expect(renderer).toContain("artifactFile.click()");
+    expect(artifactController).toContain("this.#options.fileInput.click()");
     expect(renderer).not.toContain('api(`/api/v1/artifacts/${artifact.id}`, "DELETE")');
     expect(composer).toContain("chip.remove()");
     expect(projectSidebar).toContain("this.#options.chooseFolder()");
@@ -822,7 +824,7 @@ describe("desktop renderer shell", () => {
     expect(artifactRepository).toContain("getProjectRoot");
     expect(artifactRepository).toContain("projectRelativePath");
     // The renderer feeds current-session uploads into the repository.
-    expect(renderer).toContain("inspectorPanel.setSessionArtifacts(");
+    expect(artifactController).toContain("this.#options.setSessionArtifacts(artifacts)");
     // The Inspector is contained to the chat it was opened in: switching
     // chats or projects closes it and drops its tabs, and the artifact
     // repository re-scopes to the new session (per-chat storage key) without
@@ -873,8 +875,8 @@ describe("desktop renderer shell", () => {
   it("stages picker files as chips in a new chat and uploads them with the first message", () => {
     // The attach button unlocks in new chat mode so "+" works before a session exists.
     expect(renderer).toContain('hasSession: Boolean(projects.currentSessionId || newChatMode)');
-    expect(renderer).toContain('if (!projects.currentSessionId && !newChatMode) { showToast("Create or select a task before attaching a file"); return; }');
-    expect(renderer).toContain('if (newChatMode) { composer.attachFile(file); return; }');
+    expect(artifactController).toContain('this.#options.showToast("Create or select a task before attaching a file")');
+    expect(artifactController).toContain("this.#options.stageFile(file)");
     expect(composer).toContain("attachFile(file: File): void");
     expect(composer).toContain('const kind = file.type.startsWith("image/") ? "image" : file.type === "application/pdf" ? "pdf" : "file";');
     expect(composer).toContain('this.options.onError("Attached file is too large (max 5 MB)");');
@@ -882,7 +884,7 @@ describe("desktop renderer shell", () => {
   });
 
   it("keeps generated media out of composer attachments and animates media progress", () => {
-    expect(renderer).toContain("if (!artifact.metadata?.mediaJobId)");
+    expect(artifactController).toContain("if (!artifact.metadata?.mediaJobId)");
     expect(mediaJobFeed).toContain("this.#options.finishWork(job.completedAt)");
     expect(mediaJobFeed).toContain("this.#options.appendWork(row)");
     expect(mediaJobFeed).toContain('this.#options.appendAssistant(`Here is your ${job.modality}!`, job.completedAt)');

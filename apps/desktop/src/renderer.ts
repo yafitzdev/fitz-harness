@@ -14,6 +14,7 @@ import { ConversationLayout } from "./ui/layout/conversation-layout.js";
 import { ManagementPageLayout, managementRefreshIcon } from "./ui/layout/management-page.js";
 import { WorkspacePageController } from "./ui/layout/workspace-pages.js";
 import { canOpenManagementView, managementNavigationVisibility } from "./ui/navigation/navigation-policy.js";
+import { NavigationHistoryController, type AppLocation } from "./ui/navigation/navigation-history.js";
 import { CustomSelectController } from "./ui/primitives/custom-select.js";
 import { requiredElement as element, requiredQuery as query, svgIcon as svg, textBlock } from "./ui/primitives/dom.js";
 import { ResizablePane } from "./ui/primitives/resizable-pane.js";
@@ -24,9 +25,9 @@ import { PlaybookWorkspaceController } from "./ui/playbooks/playbook-workspace.j
 import { ProjectsController } from "./ui/projects/projects.js";
 import { ProjectSidebarController } from "./ui/sidebar/project-sidebar.js";
 import { AgentQueueController } from "./ui/queue/agent-queue.js";
+import { ArtifactController } from "./ui/artifacts/artifact-controller.js";
 
 type Json = Record<string, any>;
-type AppLocation = { view: "conversation"; projectId?: string; sessionId?: string; newChat?: boolean } | { view: "playbooks" | "connections" | "plugins" | "models" | "administration" };
 
 let queueRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let sessionTokenEstimate = 0;
@@ -42,9 +43,6 @@ let newChatProjectDetached = false;
 // the artifact repository re-scopes to the session, so a chat never inherits
 // another chat's files or previews.
 let inspectorChatId: string | undefined;
-let navigationIndex = -1;
-let replayingNavigation = false;
-const navigationHistory: AppLocation[] = [];
 let routeCards: Json[] = [];
 
 const shell = query(".app-shell");
@@ -59,9 +57,6 @@ const engineState = element("engine-state");
 const routeState = element("route-state");
 const inspectorRenderToggle = element("inspector-render-toggle") as HTMLButtonElement;
 const inspectorArtifacts = element("inspector-artifacts") as HTMLButtonElement;
-const artifacts = element("artifacts");
-const artifactFile = element("artifact-file") as HTMLInputElement;
-const addArtifactButton = element("add-artifact") as HTMLButtonElement;
 const updateButton = element("update") as HTMLButtonElement;
 const appMenuPopover = element("app-menu-popover");
 const selectPopover = element("select-popover");
@@ -174,7 +169,7 @@ const composer = new Composer({
     agentRuns.scheduleWarmup(text, composer.controls.routeId);
   },
   onValueChange: () => { updateContextMeter(); refreshComposerState(); },
-  onAttach: () => chooseArtifact(),
+  onAttach: () => artifactController.choose(),
   onDismissProject: () => { newChatProjectDetached = true; showNewChatLanding(); },
   onPreviewPasted: (kind, dataUrl, mimeType, name) => {
     if (kind === "pdf") inspectorPanel.previewPdf(dataUrl, mimeType, name);
@@ -226,7 +221,7 @@ const projects = new ProjectsController({
   leaveNewChat: () => { newChatMode = false; workspace.classList.remove("new-chat-open"); composer.exitNewChat(); },
   renderTree,
   refreshComposerState,
-  rememberLocation: (location) => rememberLocation(location),
+  rememberLocation: (location) => navigationHistory.remember(location),
   onSessionSelected: async (sessionId) => {
     mediaJobs.reset();
     mediaJobFeed.reset();
@@ -274,7 +269,7 @@ const projects = new ProjectsController({
       updateContextMeter();
       if (!messages.childElementCount) showLanding(true);
       messages.scrollTop = messages.scrollHeight;
-      const sessionArtifacts = await loadArtifacts();
+      const sessionArtifacts = await artifactController.load();
       await loadMediaJobs(sessionId, sessionArtifacts);
     } catch (error) {
       messages.replaceChildren();
@@ -282,7 +277,7 @@ const projects = new ProjectsController({
     }
     refreshComposerState();
     composer.focus();
-    rememberLocation({ view: "conversation", ...(projects.currentProjectId ? { projectId: projects.currentProjectId } : {}), sessionId });
+    navigationHistory.remember({ view: "conversation", ...(projects.currentProjectId ? { projectId: projects.currentProjectId } : {}), sessionId });
   },
   onNoSession: async () => {
     mediaJobs.reset();
@@ -294,7 +289,7 @@ const projects = new ProjectsController({
     updateContextMeter();
     if (projects.currentProjectId) openNewChatForProject(projects.currentProjectId);
     else showLanding();
-    await loadArtifacts();
+    await artifactController.load();
   },
 });
 const activityTimeline = new ActivityTimeline({
@@ -313,6 +308,22 @@ const agentQueue = new AgentQueueController({
   showToast,
   errorMessage,
 });
+const artifactController = new ArtifactController({
+  list: element("artifacts"),
+  fileInput: element("artifact-file") as HTMLInputElement,
+  pickButton: element("add-artifact") as HTMLButtonElement,
+  getSessionId: () => projects.currentSessionId,
+  isNewChat: () => newChatMode,
+  api,
+  setSessionArtifacts: (items) => inspectorPanel.setSessionArtifacts(items),
+  previewArtifact: (artifact, source, list) => inspectorPanel.previewArtifact(artifact, source, list),
+  openInspector: () => inspectorPanel.open(),
+  clearChips: () => composer.clearArtifactChips(),
+  addChip: (name, detail, preview, remove) => composer.addArtifactChip(name, detail, preview, remove),
+  stageFile: (file) => composer.attachFile(file),
+  showToast,
+  errorMessage,
+});
 const mediaJobFeed = new MediaJobFeed({
   messages,
   appendWork: (row) => activityTimeline.appendWork(row),
@@ -328,7 +339,7 @@ const mediaJobs = new MediaJobTracker({
   api,
   onTerminal: async (job, failure) => {
     if (job.sessionId && job.sessionId !== projects.currentSessionId) return;
-    const artifactsForSession = job.status === "completed" ? await loadArtifacts() : [];
+    const artifactsForSession = job.status === "completed" ? await artifactController.load() : [];
     const artifact = job.artifactId ? artifactsForSession.find((item) => item.id === job.artifactId) : undefined;
     mediaJobFeed.render(job, failure, artifact);
     if (artifact) await inspectorPanel.previewArtifact(artifact);
@@ -514,9 +525,13 @@ const administrationPageController = new AdministrationPageController({
   showToast,
   errorMessage,
 });
+const navigationHistory = new NavigationHistoryController({
+  blocked: () => agentRuns.active,
+  replay: replayLocation,
+});
 void initialize();
 
-window.fitz.onNavigationCommand((command) => void navigateHistory(command === "back" ? -1 : 1));
+window.fitz.onNavigationCommand((command) => void navigationHistory.navigate(command === "back" ? -1 : 1));
 document.addEventListener("keydown", (event) => {
   if (event.ctrlKey && event.key.toLowerCase() === "n") { event.preventDefault(); openNewChat(); }
   if (event.ctrlKey && event.key.toLowerCase() === "b") { event.preventDefault(); toggleSidebar(); }
@@ -545,9 +560,7 @@ window.addEventListener("fitz:resource-appeared", (event) => {
   const reference = (event as CustomEvent<{ reference?: string }>).detail?.reference;
   if (reference) inspectorPanel.registerReference(reference);
 });
-element("context-add").addEventListener("click", chooseArtifact);
-addArtifactButton.addEventListener("click", chooseArtifact);
-artifactFile.addEventListener("change", () => void uploadArtifact());
+element("context-add").addEventListener("click", () => artifactController.choose());
 pairingForm.addEventListener("submit", (event) => { event.preventDefault(); void pairDevice(); });
 document.addEventListener("click", closePopovers);
 
@@ -630,7 +643,7 @@ function openNewChat(): void {
   updateContextMeter();
   refreshComposerState();
   composer.focus();
-  rememberLocation({ view: "conversation", newChat: true });
+  navigationHistory.remember({ view: "conversation", newChat: true });
 }
 
 /** Starts a new chat bound to the current project (per-project "+" quick action, project flows). */
@@ -659,7 +672,7 @@ function openProjectNewChat(): void {
   updateContextMeter();
   refreshComposerState();
   composer.focus();
-  rememberLocation({ view: "conversation", projectId: projects.currentProjectId, newChat: true });
+  navigationHistory.remember({ view: "conversation", projectId: projects.currentProjectId, newChat: true });
 }
 
 function openNewChatForProject(id: string): void { projects.setCurrentProject(id); projectSidebar.ensureExpanded(id); openProjectNewChat(); }
@@ -700,46 +713,28 @@ async function openPlaybookPage(): Promise<void> {
   workspacePages.show("playbooks");
   playbookWorkspace.showLoading();
   await loadManagementConfiguration(true);
-  rememberLocation({ view: "playbooks" });
+  navigationHistory.remember({ view: "playbooks" });
 }
 
-async function openConnectionsPage(): Promise<void> { if (!pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("connections"); await connectionWorkspace.sync(false); rememberLocation({ view: "connections" }); }
-async function openPluginsPage(): Promise<void> { if (!canOpenManagementView("plugins", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("plugins"); pluginsPageController.showLoading(); await pluginsPageController.load(false); rememberLocation({ view: "plugins" }); }
-async function openModelsPage(): Promise<void> { if (!canOpenManagementView("models", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("models"); modelsPageController.showLoading(); await modelsPageController.load(false); rememberLocation({ view: "models" }); }
-async function openAdministrationPage(): Promise<void> { if (!canOpenManagementView("administration", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); workspacePages.show("administration"); administrationPageController.showLoading(); await administrationPageController.load(); rememberLocation({ view: "administration" }); }
+async function openConnectionsPage(): Promise<void> { if (!pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("connections"); await connectionWorkspace.sync(false); navigationHistory.remember({ view: "connections" }); }
+async function openPluginsPage(): Promise<void> { if (!canOpenManagementView("plugins", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("plugins"); pluginsPageController.showLoading(); await pluginsPageController.load(false); navigationHistory.remember({ view: "plugins" }); }
+async function openModelsPage(): Promise<void> { if (!canOpenManagementView("models", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("models"); modelsPageController.showLoading(); await modelsPageController.load(false); navigationHistory.remember({ view: "models" }); }
+async function openAdministrationPage(): Promise<void> { if (!canOpenManagementView("administration", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); workspacePages.show("administration"); administrationPageController.showLoading(); await administrationPageController.load(); navigationHistory.remember({ view: "administration" }); }
 function showPairingPage(message: string): void { closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); workspacePages.show("pairing"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
 function showConversationWorkspace(): void { playbookWorkspace.closeEditor(); workspacePages.show("conversation"); }
 function setConversationInert(inert: boolean): void { for (const area of [workspaceHeader, messages, composer.root]) { area.toggleAttribute("inert", inert); area.setAttribute("aria-hidden", String(inert)); } }
 
-function rememberLocation(location: AppLocation): void {
-  if (replayingNavigation) return;
-  const previous = navigationHistory[navigationIndex];
-  if (previous && JSON.stringify(previous) === JSON.stringify(location)) return;
-  navigationHistory.splice(navigationIndex + 1);
-  navigationHistory.push(location);
-  navigationIndex = navigationHistory.length - 1;
-}
-
-async function navigateHistory(offset: -1 | 1): Promise<void> {
-  const nextIndex = navigationIndex + offset;
-  const location = navigationHistory[nextIndex];
-  if (!location || agentRuns.active) return;
-  navigationIndex = nextIndex;
-  replayingNavigation = true;
-  try {
-    if (location.view === "playbooks") await openPlaybookPage();
-    else if (location.view === "connections") await openConnectionsPage();
-    else if (location.view === "plugins") await openPluginsPage();
-    else if (location.view === "models") await openModelsPage();
-    else if (location.view === "administration") await openAdministrationPage();
-    else if (location.view === "conversation") {
-      if (location.newChat && location.projectId) openNewChatForProject(location.projectId);
-      else if (location.newChat) openNewChat();
-      else if (location.sessionId) await projects.selectSession(location.sessionId, true, location.projectId);
-      else if (location.projectId) await projects.selectProject(location.projectId);
-    }
-  } finally {
-    replayingNavigation = false;
+async function replayLocation(location: AppLocation): Promise<void> {
+  if (location.view === "playbooks") await openPlaybookPage();
+  else if (location.view === "connections") await openConnectionsPage();
+  else if (location.view === "plugins") await openPluginsPage();
+  else if (location.view === "models") await openModelsPage();
+  else if (location.view === "administration") await openAdministrationPage();
+  else if (location.view === "conversation") {
+    if (location.newChat && location.projectId) openNewChatForProject(location.projectId);
+    else if (location.newChat) openNewChat();
+    else if (location.sessionId) await projects.selectSession(location.sessionId, true, location.projectId);
+    else if (location.projectId) await projects.selectProject(location.projectId);
   }
 }
 
@@ -889,12 +884,12 @@ async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLE
   const imageParts: Array<{ type: "image_url"; image_url: { url: string } }> = [];
   for (const pasted of attachments) {
     try {
-      const response = await api(`/api/v1/sessions/${projects.currentSessionId}/artifacts`, "POST", {
+      const artifact = await artifactController.uploadData(projects.currentSessionId, {
         name: pasted.kind === "image" ? `screenshot-${Date.now()}.png` : pasted.name,
         mimeType: pasted.mimeType,
         contentBase64: pasted.dataUrl.split(",")[1]!,
       });
-      if (pasted.kind === "image") imageParts.push({ type: "image_url" as const, image_url: { url: `/api/v1/artifacts/${response.data.id}` } });
+      if (pasted.kind === "image") imageParts.push({ type: "image_url" as const, image_url: { url: `/api/v1/artifacts/${artifact.id}` } });
     } catch (error) { showToast(errorMessage(error)); }
   }
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
@@ -942,30 +937,6 @@ async function steerPrompt(content: string): Promise<void> {
   }
 }
 
-async function loadArtifacts(): Promise<Json[]> {
-  artifacts.replaceChildren();
-  composer.clearArtifactChips();
-  if (!projects.currentSessionId) { inspectorPanel.setSessionArtifacts([]); artifacts.append(panelEmpty("Artifacts appear with a task")); return []; }
-  const response = await api(`/api/v1/sessions/${projects.currentSessionId}/artifacts`);
-  const sessionArtifacts = response.data ?? [];
-  inspectorPanel.setSessionArtifacts(sessionArtifacts);
-  if (!sessionArtifacts.length) artifacts.append(panelEmpty("No artifacts yet"));
-  for (const artifact of sessionArtifacts) {
-    const value = document.createElement("button"); value.type = "button"; value.className = "artifact-item";
-    const name = document.createElement("span"); name.textContent = artifact.name;
-    const size = document.createElement("small"); size.textContent = formatBytes(artifact.byteSize);
-    value.append(name, size); value.addEventListener("click", () => void inspectorPanel.previewArtifact(artifact, value, artifacts)); artifacts.append(value);
-    // Generated media is a durable task artifact, never an input attachment.
-    // User-uploaded artifacts retain the existing chip behavior until sent or
-    // removed, while anything produced by a media job lives only in the
-    // repository and its chat result row.
-    if (!artifact.metadata?.mediaJobId) {
-      composer.addArtifactChip(artifact.name, formatBytes(artifact.byteSize), () => void inspectorPanel.previewArtifact(artifact, value, artifacts), () => undefined);
-    }
-  }
-  return sessionArtifacts;
-}
-
 async function loadMediaJobs(sessionId: string, sessionArtifacts: Json[]): Promise<void> {
   const response = await api(`/api/v1/media/jobs?sessionId=${encodeURIComponent(sessionId)}&limit=100`);
   const jobs = Array.isArray(response.data) ? [...response.data].reverse() as MediaJobSummary[] : [];
@@ -988,28 +959,6 @@ function scheduleQueueRefresh(): void {
   if (queueRefreshTimer) clearTimeout(queueRefreshTimer); queueRefreshTimer = undefined;
   if (!inspectorPanel.isOpen) return;
   void agentQueue.refresh().finally(() => { if (inspectorPanel.isOpen) queueRefreshTimer = setTimeout(scheduleQueueRefresh, 1_000); });
-}
-
-function chooseArtifact(): void {
-  if (!projects.currentSessionId && !newChatMode) { showToast("Create or select a task before attaching a file"); return; }
-  artifactFile.click();
-}
-
-async function uploadArtifact(): Promise<void> {
-  const file = artifactFile.files?.[0]; artifactFile.value = "";
-  if (!file) return;
-  if (file.size > 5_000_000) { showToast("Artifacts are currently limited to 5 MB"); return; }
-  if (projects.currentSessionId) {
-    try {
-      const contentBase64 = bytesToBase64(new Uint8Array(await file.arrayBuffer()));
-      await api(`/api/v1/sessions/${projects.currentSessionId}/artifacts`, "POST", { name: file.name, mimeType: file.type || "application/octet-stream", contentBase64 });
-      await loadArtifacts(); inspectorPanel.open(); showToast(`Attached ${file.name}`);
-    } catch (error) { showToast(errorMessage(error)); }
-    return;
-  }
-  // No session yet (new chat): stage the file as a chip and upload it with the first message.
-  if (newChatMode) { composer.attachFile(file); return; }
-  showToast("Create or select a task before attaching a file");
 }
 
 function showLanding(hasTask = false): void {
@@ -1086,7 +1035,7 @@ function appendChangeSummary(files: Array<{ path: string; action: "edited" | "cr
 
 function refreshComposerState(): void {
   const ready = Boolean((projects.currentSessionId || newChatMode) && composer.controls.routeId);
-  addArtifactButton.disabled = !projects.currentSessionId;
+  artifactController.setEnabled(Boolean(projects.currentSessionId));
   // The attach button also unlocks in a new chat so files can be staged for the first message.
   composer.setState({ ready, running: agentRuns.active, hasSession: Boolean(projects.currentSessionId || newChatMode) });
 }
@@ -1131,8 +1080,6 @@ async function api(path: string, method = "GET", body?: unknown): Promise<Json> 
 function sparkIcon(): SVGElement { return svg('<path d="M10 2.8c.5 3.7 2.4 5.8 6.2 7.2-3.8 1.4-5.7 3.5-6.2 7.2-.5-3.7-2.4-5.8-6.2-7.2C7.6 8.6 9.5 6.5 10 2.8Z"></path>'); }
 function terminalCloudIcon(): SVGElement { return svg('<path d="M6.2 16.4c-2 0-3.7-1.6-3.7-3.6 0-1.2.6-2.3 1.5-3-.4-1.8.5-3.6 2.1-4.4.7-1.7 2.4-2.8 4.2-2.8 1.5 0 2.9.7 3.8 1.9 1.8-.1 3.3 1.3 3.4 3.1 1 .7 1.7 1.9 1.7 3.2 0 1.5-.8 2.8-2.1 3.5-.5 1.8-2.1 3-4 3-.8 0-1.6-.2-2.2-.7-.7.6-1.6.9-2.5.9-.8 0-1.6-.3-2.2-.7z"></path><path d="m6.8 8 1.8 2-1.8 2M10.7 12.3h2.7"></path>'); }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
-function bytesToBase64(bytes: Uint8Array): string { let binary = ""; for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000)); return btoa(binary); }
-function formatBytes(value: number): string { return value < 1024 ? `${value} B` : `${(value / 1024).toFixed(1)} KB`; }
 
 function formatTokenCount(value: number): string { return value >= 1000 ? `${Math.round(value / 1000)}k` : String(Math.round(value)); }
 class HttpError extends Error { constructor(message: string, readonly status: number) { super(message); } }
