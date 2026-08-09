@@ -231,6 +231,7 @@ const projects = new ProjectsController({
   refreshComposerState,
   rememberLocation: (location) => navigationHistory.remember(location),
   onSessionSelected: async (sessionId) => {
+    const isCurrent = () => projects.currentSessionId === sessionId;
     mediaJobs.reset();
     mediaJobFeed.reset();
     if (sessionId !== inspectorChatId) { inspectorPanel.reset(); inspectorPanel.setChat(sessionId); inspectorChatId = sessionId; }
@@ -241,18 +242,23 @@ const projects = new ProjectsController({
     messages.replaceChildren(loadingMessage("Loading conversation…"));
     try {
       const transcript = await api(`/api/v1/sessions/${sessionId}/transcript`);
+      if (!isCurrent()) return;
       sessionTokenEstimate = conversationTranscript.restore(transcript.data ?? []);
       const pendingApprovals = await api(`/api/v1/sessions/${sessionId}/tool-approvals?status=pending`);
+      if (!isCurrent()) return;
       for (const approval of pendingApprovals.data ?? []) activityTimeline.appendApproval(approval);
       updateContextMeter();
       if (!messages.childElementCount) showLanding(true);
       messages.scrollTop = messages.scrollHeight;
       const sessionArtifacts = await artifactController.load();
-      await loadMediaJobs(sessionId, sessionArtifacts);
+      if (!isCurrent()) return;
+      await loadMediaJobs(sessionId, sessionArtifacts, isCurrent);
     } catch (error) {
+      if (!isCurrent()) return;
       messages.replaceChildren();
       appendMessage("system", errorMessage(error));
     }
+    if (!isCurrent()) return;
     refreshComposerState();
     composer.focus();
     navigationHistory.remember({ view: "conversation", ...(projects.currentProjectId ? { projectId: projects.currentProjectId } : {}), sessionId });
@@ -859,10 +865,12 @@ async function ensurePromptSession(title: string, routeId: string): Promise<stri
   return response.data.id as string;
 }
 
-async function loadMediaJobs(sessionId: string, sessionArtifacts: Json[]): Promise<void> {
+async function loadMediaJobs(sessionId: string, sessionArtifacts: Json[], isCurrent: () => boolean = () => true): Promise<void> {
   const response = await api(`/api/v1/media/jobs?sessionId=${encodeURIComponent(sessionId)}&limit=100`);
+  if (!isCurrent()) return;
   const jobs = Array.isArray(response.data) ? [...response.data].reverse() as MediaJobSummary[] : [];
   for (const job of jobs) {
+    if (!isCurrent()) return;
     const artifact = job.artifactId ? sessionArtifacts.find((item) => item.id === job.artifactId) : undefined;
     if (["queued", "started", "progressing"].includes(job.status)) {
       mediaJobFeed.render(job, undefined, artifact);
@@ -872,8 +880,10 @@ async function loadMediaJobs(sessionId: string, sessionArtifacts: Json[]): Promi
     const failure = job.status === "completed"
       ? undefined
       : await mediaJobs.failureMessage(job.id, job.errorCode ?? `Media generation ${job.status}`);
+    if (!isCurrent()) return;
     mediaJobFeed.render(job, failure, artifact);
   }
+  if (!isCurrent()) return;
   messages.scrollTop = messages.scrollHeight;
 }
 

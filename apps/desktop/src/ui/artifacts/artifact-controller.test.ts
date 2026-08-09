@@ -2,13 +2,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ArtifactController } from "./artifact-controller.js";
 
-function setup(overrides: { sessionId?: string; newChat?: boolean; artifacts?: Record<string, any>[] } = {}) {
+function setup(overrides: { sessionId?: string; newChat?: boolean; artifacts?: Record<string, any>[]; api?: (path: string, method?: string, body?: unknown) => Promise<Record<string, any>> } = {}) {
   const list = document.createElement("div");
   const fileInput = document.createElement("input");
   fileInput.type = "file";
   const pickButton = document.createElement("button");
   const calls = {
-    api: vi.fn(async () => ({ data: overrides.artifacts ?? [] })),
+    api: vi.fn(overrides.api ?? (async () => ({ data: overrides.artifacts ?? [] }))),
     setSessionArtifacts: vi.fn(),
     previewArtifact: vi.fn(),
     openInspector: vi.fn(),
@@ -42,6 +42,29 @@ describe("ArtifactController", () => {
     expect(calls.addChip).toHaveBeenCalledOnce();
     expect(calls.addChip.mock.calls[0]?.[0]).toBe("notes.md");
     expect(calls.setSessionArtifacts).toHaveBeenCalledWith([upload, generated]);
+  });
+
+  it("does not let a stale task response replace the current artifact list", async () => {
+    let resolveOld: ((value: Record<string, any>) => void) | undefined;
+    const oldResponse = new Promise<Record<string, any>>((resolve) => { resolveOld = resolve; });
+    const overrides: Parameters<typeof setup>[0] = {
+      sessionId: "session-old",
+      api: async (path) => path.includes("session-old")
+        ? oldResponse
+        : { data: [{ id: "new", name: "current.md", byteSize: 10 }] },
+    };
+    const { controller, list, calls } = setup(overrides);
+    const staleLoad = controller.load();
+    await Promise.resolve();
+    overrides.sessionId = "session-new";
+
+    await controller.load();
+    resolveOld?.({ data: [{ id: "old", name: "stale.md", byteSize: 10 }] });
+    await staleLoad;
+
+    expect(list.textContent).toContain("current.md");
+    expect(list.textContent).not.toContain("stale.md");
+    expect(calls.setSessionArtifacts).toHaveBeenLastCalledWith([{ id: "new", name: "current.md", byteSize: 10 }]);
   });
 
   it("stages a selected file when composing a new chat", async () => {

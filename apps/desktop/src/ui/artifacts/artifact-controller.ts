@@ -23,6 +23,7 @@ export interface ArtifactControllerOptions {
 /** Owns task artifact loading, picker staging, upload, and repository rendering. */
 export class ArtifactController {
   readonly #options: ArtifactControllerOptions;
+  #loadGeneration = 0;
 
   constructor(options: ArtifactControllerOptions) {
     this.#options = options;
@@ -41,6 +42,7 @@ export class ArtifactController {
   }
 
   async load(): Promise<Json[]> {
+    const generation = ++this.#loadGeneration;
     const { list } = this.#options;
     list.replaceChildren();
     this.#options.clearChips();
@@ -51,6 +53,7 @@ export class ArtifactController {
       return [];
     }
     const response = await this.#options.api(`/api/v1/sessions/${sessionId}/artifacts`);
+    if (generation !== this.#loadGeneration || this.#options.getSessionId() !== sessionId) return [];
     const artifacts = Array.isArray(response.data) ? response.data : [];
     this.#options.setSessionArtifacts(artifacts);
     if (!artifacts.length) list.append(textBlock("panel-empty", "No artifacts yet"));
