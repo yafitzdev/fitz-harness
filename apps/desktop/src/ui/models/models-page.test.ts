@@ -258,6 +258,42 @@ describe("ModelsPageController", () => {
     await vi.waitFor(() => expect(page.querySelectorAll("#model-catalog .model-card")).toHaveLength(2));
   });
 
+  it("keeps active download controls while appending catalog results", async () => {
+    vi.useFakeTimers();
+    const api = vi.fn(async (path: string) => {
+      if (path === "/api/v1/management/models/downloaded") return { data: [] };
+      if (path === "/api/v1/management/models/downloads") return { data: [{ id: "d1", repoId: "a/b", fileName: "b.gguf", received: 10, total: 100, status: "active" }] };
+      if (path === "/api/v1/management/models/downloads/d1") return { data: { id: "d1", repoId: "a/b", fileName: "b.gguf", received: 10, total: 100, status: "active" } };
+      if (path.includes("offset=0")) return { data: { total: 2, models: [{ id: "a/b", downloads: 1, likes: 0 }] } };
+      return { data: { total: 2, models: [{ id: "c/d", downloads: 2, likes: 1 }] } };
+    });
+    const { controller, page } = setup(api);
+    await controller.load();
+    expect(page.querySelector("#model-catalog .model-progress-cancel")).not.toBeNull();
+
+    click(page.querySelector<HTMLButtonElement>("#load-more-models")!);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(page.querySelector("#model-catalog .model-progress-cancel")).not.toBeNull();
+  });
+
+  it("contains a rejected catalog pagination request", async () => {
+    let catalogPage = 0;
+    const api = vi.fn(async (path: string) => {
+      if (path === "/api/v1/management/models/downloaded" || path === "/api/v1/management/models/downloads") return { data: [] };
+      if (catalogPage++ === 0) return { data: { total: 2, models: [{ id: "a/b", downloads: 1, likes: 0 }] } };
+      throw new Error("Catalog unavailable");
+    });
+    const { controller, page, calls } = setup(api);
+    await controller.load();
+
+    click(page.querySelector<HTMLButtonElement>("#load-more-models")!);
+
+    await vi.waitFor(() => expect(calls.showStatus).toHaveBeenCalledWith("Catalog unavailable", "error"));
+    expect(page.querySelector("#model-catalog")?.textContent).toContain("b");
+  });
+
   it("reloads the page when the header refresh action is clicked", async () => {
     const api = vi.fn(async (path: string) => {
       if (path === "/api/v1/management/models/downloaded" || path === "/api/v1/management/models/downloads") return { data: [] };

@@ -126,10 +126,10 @@ export class ModelCatalogController {
   }
 
   async load(appendCatalog = false): Promise<void> {
-    this.stopPolls();
-    this.downloads.clear();
     try {
       if (!appendCatalog) {
+        this.stopPolls();
+        this.downloads.clear();
         const [downloaded, active] = await Promise.all([
           this.options.api("/api/v1/management/models/downloaded"),
           this.options.api("/api/v1/management/models/downloads"),
@@ -145,8 +145,10 @@ export class ModelCatalogController {
       await this.loadCatalog(appendCatalog);
     } catch (error) {
       const message = this.options.errorMessage(error);
-      this.elements.downloadedList.replaceChildren(emptyState(message));
-      this.elements.catalogList.replaceChildren();
+      if (!appendCatalog) {
+        this.elements.downloadedList.replaceChildren(emptyState(message));
+        this.elements.catalogList.replaceChildren();
+      }
       this.options.showStatus(message, "error");
     }
   }
@@ -157,7 +159,7 @@ export class ModelCatalogController {
       if (this.searchTimer) clearTimeout(this.searchTimer);
       this.searchTimer = setTimeout(() => void this.load(false), this.searchDelayMs);
     });
-    this.elements.loadMoreModels.addEventListener("click", () => void this.loadCatalog(true));
+    this.elements.loadMoreModels.addEventListener("click", () => void this.load(true));
     for (const tab of this.elements.pipelineTabs) {
       tab.addEventListener("click", () => {
         this.pipelineTag = tab.dataset.pipeline ?? "text-generation";
@@ -195,7 +197,7 @@ export class ModelCatalogController {
       }
       this.elements.catalogList.append(card);
     }
-    this.elements.loadMoreModels.hidden = visible.length >= this.catalogTotal;
+    this.elements.loadMoreModels.hidden = this.models.length >= this.catalogTotal;
   }
 
   private renderDownloaded(): void {

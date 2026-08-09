@@ -175,6 +175,23 @@ describe("PluginCatalogController", () => {
     await settle();
     expect(api).toHaveBeenCalledWith("/api/v1/management/pi/catalog?query=pi%20tools&offset=1&limit=30&sort=downloads&direction=desc&type=extension");
     expect(elements.pluginCatalog.querySelectorAll(".plugin-card")).toHaveLength(2);
+    expect(elements.loadMorePlugins.hidden).toBe(true);
+  });
+
+  it("contains a rejected catalog pagination request", async () => {
+    let page = 0;
+    const api = vi.fn(async (path: string) => {
+      if (path === "/api/v1/management/pi/packages" || path === "/api/v1/management/pi/skills") return { data: [] };
+      if (page++ === 0) return { data: { total: 2, packages: [{ name: "one", description: "One", version: "1", links: {} }] } };
+      throw new Error("Catalog unavailable");
+    });
+    const { controller, elements, calls } = setup(api);
+    await controller.load();
+
+    click(elements.loadMorePlugins);
+
+    await vi.waitFor(() => expect(calls.showStatus).toHaveBeenCalledWith("Catalog unavailable", "error"));
+    expect(elements.pluginCatalog.textContent).toContain("one");
   });
 
   it("filters installed skills by the section search", async () => {

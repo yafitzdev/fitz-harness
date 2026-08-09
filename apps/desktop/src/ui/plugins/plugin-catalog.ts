@@ -122,8 +122,10 @@ export class PluginCatalogController {
       await this.loadCatalog(appendCatalog);
     } catch (error) {
       const message = this.options.errorMessage(error);
-      this.elements.installedPlugins.replaceChildren(emptyState(message));
-      this.elements.pluginCatalog.replaceChildren();
+      if (!appendCatalog) {
+        this.elements.installedPlugins.replaceChildren(emptyState(message));
+        this.elements.pluginCatalog.replaceChildren();
+      }
       this.options.showStatus(message, "error");
     }
   }
@@ -142,7 +144,7 @@ export class PluginCatalogController {
       this.searchTimer = setTimeout(() => void this.load(false), this.searchDelayMs);
     });
     this.elements.skillSearch.addEventListener("input", () => this.renderSkills());
-    this.elements.loadMorePlugins.addEventListener("click", () => void this.loadCatalog(true));
+    this.elements.loadMorePlugins.addEventListener("click", () => void this.load(true));
   }
 
   private async loadCatalog(append: boolean): Promise<void> {
@@ -195,7 +197,7 @@ export class PluginCatalogController {
       card.querySelector(".plugin-actions")?.append(this.installAction(entry.name));
       this.elements.pluginCatalog.append(card);
     }
-    this.elements.loadMorePlugins.hidden = visible.length >= this.catalogTotal;
+    this.elements.loadMorePlugins.hidden = this.catalogPackages.length >= this.catalogTotal;
   }
 
   private renderSkills(): void {
