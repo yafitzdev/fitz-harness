@@ -26,7 +26,6 @@ export interface HostLifecycleElements {
 export interface HostLifecycleOptions {
   api: HostLifecycleApi;
   reload: () => Promise<void>;
-  showToast: (message: string) => void;
   errorMessage: (error: unknown) => string;
 }
 
@@ -104,6 +103,7 @@ export class HostLifecycleController {
 
   #showRemoteConfirmation(action: "enable" | "disable"): void {
     this.#pendingRemoteAction = action;
+    this.#clearConfirmationError(this.#elements.remoteConfirmation);
     this.#elements.remoteConfirmationText.textContent = action === "enable"
       ? "Enable private HTTPS through Tailscale Serve for this Fitz host?"
       : "Disable the private HTTPS route? Remote clients will disconnect.";
@@ -114,6 +114,7 @@ export class HostLifecycleController {
   #hideRemoteConfirmation(): void {
     this.#pendingRemoteAction = undefined;
     this.#elements.remoteConfirmation.hidden = true;
+    this.#clearConfirmationError(this.#elements.remoteConfirmation);
   }
 
   async #applyRemoteChange(): Promise<void> {
@@ -125,13 +126,15 @@ export class HostLifecycleController {
       else await this.#options.api("/api/v1/management/connectivity/tailscale-serve", "DELETE");
       this.#hideRemoteConfirmation();
       await this.#options.reload();
-      this.#options.showToast(action === "enable" ? "Private HTTPS enabled" : "Private HTTPS disabled");
-    } catch (error) { this.#options.showToast(this.#options.errorMessage(error)); }
+    } catch (error) {
+      this.#showConfirmationError(this.#elements.remoteConfirmation, this.#elements.remoteConfirmationText, error);
+    }
     finally { this.#elements.confirmRemote.disabled = false; }
   }
 
   #showStartupConfirmation(action: "install" | "remove"): void {
     this.#pendingStartupAction = action;
+    this.#clearConfirmationError(this.#elements.startupConfirmation);
     this.#elements.startupConfirmationText.textContent = action === "install"
       ? "Start the lightweight Fitz host automatically at Windows sign-in?"
       : "Remove Fitz host from Windows sign-in startup?";
@@ -142,6 +145,7 @@ export class HostLifecycleController {
   #hideStartupConfirmation(): void {
     this.#pendingStartupAction = undefined;
     this.#elements.startupConfirmation.hidden = true;
+    this.#clearConfirmationError(this.#elements.startupConfirmation);
   }
 
   async #applyStartupChange(): Promise<void> {
@@ -152,9 +156,22 @@ export class HostLifecycleController {
       await this.#options.api("/api/v1/management/startup", action === "install" ? "POST" : "DELETE", action === "install" ? {} : undefined);
       this.#hideStartupConfirmation();
       await this.#options.reload();
-      this.#options.showToast(action === "install" ? "Host will start at sign-in" : "Host startup removed");
-    } catch (error) { this.#options.showToast(this.#options.errorMessage(error)); }
+    } catch (error) {
+      this.#showConfirmationError(this.#elements.startupConfirmation, this.#elements.startupConfirmationText, error);
+    }
     finally { this.#elements.confirmStartup.disabled = false; }
+  }
+
+  #showConfirmationError(container: HTMLElement, label: HTMLElement, error: unknown): void {
+    label.textContent = this.#options.errorMessage(error);
+    container.dataset.state = "error";
+    container.setAttribute("role", "alert");
+    container.hidden = false;
+  }
+
+  #clearConfirmationError(container: HTMLElement): void {
+    delete container.dataset.state;
+    container.removeAttribute("role");
   }
 }
 

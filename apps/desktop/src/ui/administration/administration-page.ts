@@ -117,7 +117,6 @@ export class AdministrationPageController {
     }, {
       api: options.api,
       reload: () => this.load(),
-      showToast: options.showToast,
       errorMessage: options.errorMessage,
     });
     new DesktopUpdateController({

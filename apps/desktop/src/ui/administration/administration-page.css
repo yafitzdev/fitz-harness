@@ -22,6 +22,7 @@
 .remote-access-actions button:hover, .remote-access-confirmation button:hover { background: var(--tint-7); }
 .remote-access-confirmation { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; padding: 10px 11px; border-radius: var(--radius-lg); background: var(--tint-2); color: var(--muted); font-size: 11px; }
 .remote-access-confirmation[hidden] { display: none; }
+.remote-access-confirmation[data-state="error"] { color: var(--danger); }
 .remote-access-confirmation > div { display: flex; gap: 7px; }
 .host-startup-status { min-height: 50px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 11px; border-radius: var(--radius-lg); background: var(--grey-200); }
 .host-startup-status strong { font-size: 12px; font-weight: 520; }

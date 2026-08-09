@@ -303,8 +303,7 @@ describe("AdministrationPageController", () => {
     expect(elements.remoteAccessConfirmationText.textContent).toContain("Enable private HTTPS");
     click(elements.confirmRemoteAccess);
     await vi.waitFor(() => expect(calls).toHaveBeenCalledWith("/api/v1/management/connectivity/tailscale-serve", "POST", {}));
-    await vi.waitFor(() => expect(showToast).toHaveBeenCalledWith("Private HTTPS enabled"));
-    expect(elements.remoteAccessConfirmation.hidden).toBe(true);
+    await vi.waitFor(() => expect(elements.remoteAccessConfirmation.hidden).toBe(true));
 
     click(elements.installHostStartup);
     expect(elements.hostStartupConfirmation.hidden).toBe(false);
@@ -315,8 +314,8 @@ describe("AdministrationPageController", () => {
     click(elements.installHostStartup);
     click(elements.confirmHostStartup);
     await vi.waitFor(() => expect(calls).toHaveBeenCalledWith("/api/v1/management/startup", "POST", {}));
-    await vi.waitFor(() => expect(showToast).toHaveBeenCalledWith("Host will start at sign-in"));
-    expect(elements.hostStartupConfirmation.hidden).toBe(true);
+    await vi.waitFor(() => expect(elements.hostStartupConfirmation.hidden).toBe(true));
+    expect(showToast).not.toHaveBeenCalled();
   });
 
   it("empties the trash only after an explicit confirmation", async () => {

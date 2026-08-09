@@ -20,9 +20,8 @@ function setup() {
     return { data: {} };
   });
   const reload = vi.fn(async () => undefined);
-  const showToast = vi.fn();
-  const controller = new HostLifecycleController(elements, { api, reload, showToast, errorMessage: (error) => String(error) });
-  return { controller, elements, api, reload, showToast };
+  const controller = new HostLifecycleController(elements, { api, reload, errorMessage: (error) => String(error) });
+  return { controller, elements, api, reload };
 }
 
 beforeEach(() => document.body.replaceChildren());
@@ -39,19 +38,41 @@ describe("HostLifecycleController", () => {
   });
 
   it("stages and applies remote-access and startup mutations", async () => {
-    const { elements, api, reload, showToast } = setup();
+    const { elements, api, reload } = setup();
     click(elements.enableRemote);
     expect(elements.remoteConfirmation.hidden).toBe(false);
     click(elements.confirmRemote);
     await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/connectivity/tailscale-serve", "POST", {}));
-    await vi.waitFor(() => expect(showToast).toHaveBeenCalledWith("Private HTTPS enabled"));
+    await vi.waitFor(() => expect(elements.remoteConfirmation.hidden).toBe(true));
     expect(reload).toHaveBeenCalledOnce();
 
     click(elements.installStartup);
     expect(elements.startupConfirmation.hidden).toBe(false);
     click(elements.confirmStartup);
     await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/startup", "POST", {}));
-    await vi.waitFor(() => expect(showToast).toHaveBeenCalledWith("Host will start at sign-in"));
+    await vi.waitFor(() => expect(elements.startupConfirmation.hidden).toBe(true));
     expect(reload).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps mutation failures inside their confirmation surfaces", async () => {
+    const { elements, api, reload } = setup();
+    api.mockImplementation(async (path: string) => {
+      if (path.includes("tailscale-serve")) throw new Error("Tailscale is unavailable");
+      if (path.endsWith("startup")) throw new Error("Startup registration failed");
+      return { data: {} };
+    });
+
+    click(elements.enableRemote);
+    click(elements.confirmRemote);
+    await vi.waitFor(() => expect(elements.remoteConfirmationText.textContent).toContain("Tailscale is unavailable"));
+    expect(elements.remoteConfirmation.hidden).toBe(false);
+    expect(elements.remoteConfirmation.getAttribute("role")).toBe("alert");
+
+    click(elements.installStartup);
+    click(elements.confirmStartup);
+    await vi.waitFor(() => expect(elements.startupConfirmationText.textContent).toContain("Startup registration failed"));
+    expect(elements.startupConfirmation.hidden).toBe(false);
+    expect(elements.startupConfirmation.getAttribute("role")).toBe("alert");
+    expect(reload).not.toHaveBeenCalled();
   });
 });
