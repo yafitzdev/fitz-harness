@@ -3,6 +3,7 @@ import { svgIcon } from "./dom.js";
 export interface ActionMenuItem {
   label: string;
   action: () => void | Promise<void>;
+  onError?: (error: unknown) => void;
   danger?: boolean;
   confirm?: boolean;
 }
@@ -28,13 +29,23 @@ export function createActionMenu(items: readonly ActionMenuItem[], label = "More
     button.textContent = item.label;
     button.addEventListener("click", async (event) => {
       event.stopPropagation();
+      if (button.disabled) return;
       if (item.confirm && button.dataset.confirm !== "true") {
         button.dataset.confirm = "true";
         button.textContent = `Confirm ${item.label.toLowerCase()}`;
         return;
       }
-      await item.action();
       root.open = false;
+      button.disabled = true;
+      root.setAttribute("aria-busy", "true");
+      try {
+        await item.action();
+      } catch (error) {
+        item.onError?.(error);
+      } finally {
+        button.disabled = false;
+        root.removeAttribute("aria-busy");
+      }
     });
     menu.append(button);
   }

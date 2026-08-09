@@ -23,4 +23,34 @@ describe("createActionMenu", () => {
     await Promise.resolve();
     expect(remove).toHaveBeenCalledOnce();
   });
+
+  it("runs async actions once and contains rejected callbacks", async () => {
+    let resolveAction: (() => void) | undefined;
+    const action = vi.fn(() => new Promise<void>((resolve) => { resolveAction = resolve; }));
+    const onError = vi.fn();
+    const menu = createActionMenu([
+      { label: "Slow action", action },
+      { label: "Broken action", action: () => Promise.reject(new Error("bridge unavailable")), onError },
+    ]);
+    document.body.append(menu);
+    const buttons = menu.querySelectorAll<HTMLButtonElement>("button");
+
+    buttons[0]!.click();
+    buttons[0]!.click();
+    expect(action).toHaveBeenCalledOnce();
+    expect(buttons[0]!.disabled).toBe(true);
+    expect(menu.getAttribute("aria-busy")).toBe("true");
+    resolveAction?.();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(buttons[0]!.disabled).toBe(false);
+    expect(menu.hasAttribute("aria-busy")).toBe(false);
+
+    buttons[1]!.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onError).toHaveBeenCalledOnce();
+    expect((onError.mock.calls[0]?.[0] as Error).message).toBe("bridge unavailable");
+    expect(buttons[1]!.disabled).toBe(false);
+  });
 });
