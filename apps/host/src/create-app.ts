@@ -39,7 +39,7 @@ import {
 } from "@fitz/protocol";
 import { MetricsRegistry, redactSecrets } from "@fitz/observability";
 import { DEFAULT_QUOTAS, SecurityPolicyError, SecurityService, type AuthenticatedPrincipal } from "@fitz/security";
-import { ArtifactRepository, MemoryBlobStore, SqliteStore } from "@fitz/storage";
+import { ArtifactRepository, MemoryBlobStore, SqliteStore, type StorageDurabilityService } from "@fitz/storage";
 import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
 import { DownloadNotFoundError, type ModelCatalogService } from "./model-catalog.js";
 import { AgentRunCoordinator } from "./agent-runs.js";
@@ -134,6 +134,8 @@ export interface CreateHostOptions {
   /** The host safety layer (policy engine, snapshots, trash, redaction). Optional so tests can run without it. */
   safety?: AgentSafetyService;
   artifacts?: ArtifactRepository;
+  /** Coordinated database/artifact backup, restore, and storage maintenance. */
+  storageDurability?: StorageDurabilityService;
 }
 
 export interface HostRuntime {
@@ -151,6 +153,7 @@ export interface HostRuntime {
   fakeAdapter?: FakeEngineAdapter;
   safety?: AgentSafetyService;
   artifacts: ArtifactRepository;
+  storageDurability?: StorageDurabilityService;
 }
 
 export function createHost(options: CreateHostOptions = {}): HostRuntime {
@@ -174,6 +177,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   });
   const store = options.store ?? SqliteStore.memory();
   const artifacts = options.artifacts ?? new ArtifactRepository(store, new MemoryBlobStore());
+  const storageDurability = options.storageDurability;
   const authMode = options.authMode ?? "disabled";
   const security = options.security ?? (authMode === "required" ? new SecurityService(store, options.authPepper ?? "") : undefined);
   const recoveredInterruptedRequests = store.recoverInterruptedRequests();
@@ -945,6 +949,14 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
   });
   app.get("/api/v1/management/audit-events", { preHandler: administratorGuard }, async (request) => { const query = request.query as { limit?: string }; return { data: store.listAuditEvents(Math.min(toNonNegativeInteger(query.limit, 100), 1000)) }; });
+  app.get("/api/v1/management/storage", { preHandler: administratorGuard }, async (_request, reply) => { try { return { data: { report: await artifacts.inspect(), backups: storageDurability ? await storageDurability.listBackups() : [], available: Boolean(storageDurability) } }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
+  app.post("/api/v1/management/storage/verify", { preHandler: administratorGuard }, async (request, reply) => { try { const body = isRecord(request.body) ? request.body : {}; const report = await artifacts.inspect({ verifyChecksums: body.verifyChecksums !== false }); security?.audit("storage.verified", principals.get(request)?.user.id, "storage", undefined, { issues: report.issues.length, verifiedChecksums: report.verifiedChecksums }); return { data: report }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
+  app.post("/api/v1/management/storage/gc", { preHandler: administratorGuard }, async (request, reply) => { try { const result = await artifacts.collectGarbage(); security?.audit("storage.garbage-collected", principals.get(request)?.user.id, "storage", undefined, { ...result }); return { data: result }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
+  app.put("/api/v1/management/storage/quota", { preHandler: administratorGuard }, async (request, reply) => { try { const body = requireRecord(request.body); const quotaBytes = body.quotaBytes === null ? undefined : Number(body.quotaBytes); if (quotaBytes !== undefined && (!Number.isSafeInteger(quotaBytes) || quotaBytes < 1)) throw new TypeError("quotaBytes must be a positive integer or null"); if (quotaBytes === undefined) store.deleteSetting("artifactStorageQuotaBytes"); else store.setSetting("artifactStorageQuotaBytes", quotaBytes); security?.audit("storage.quota-updated", principals.get(request)?.user.id, "storage", undefined, { quotaBytes: quotaBytes ?? null }); return { data: { quotaBytes: quotaBytes ?? null } }; } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
+  app.get("/api/v1/management/backups", { preHandler: administratorGuard }, async (_request, reply) => { try { if (!storageDurability) throw new Error("Storage backups are unavailable"); return { data: await storageDurability.listBackups() }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
+  app.post("/api/v1/management/backups", { preHandler: administratorGuard }, async (request, reply) => { try { if (!storageDurability) throw new Error("Storage backups are unavailable"); const backup = await storageDurability.createBackup(); security?.audit("storage.backup-created", principals.get(request)?.user.id, "backup", backup.id, { objects: backup.objects, bytes: backup.bytes }); return reply.code(201).send({ data: backup }); } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
+  app.post("/api/v1/management/backups/:id/validate", { preHandler: administratorGuard }, async (request, reply) => { try { if (!storageDurability) throw new Error("Storage backups are unavailable"); const id = (request.params as { id: string }).id; return { data: await storageDurability.validateBackup(id, true) }; } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
+  app.post("/api/v1/management/backups/:id/restore", { preHandler: administratorGuard }, async (request, reply) => { try { if (!storageDurability) throw new Error("Storage backups are unavailable"); const id = (request.params as { id: string }).id; const result = await storageDurability.scheduleRestore(id); security?.audit("storage.restore-scheduled", principals.get(request)?.user.id, "backup", id); return { data: result }; } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
   app.get("/api/v1/management/snapshots", { preHandler: administratorGuard }, async (_request, reply) => { try { if (!safety) throw new Error("Safety layer is unavailable"); return { data: safety.listSnapshots() }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
   app.post("/api/v1/management/snapshots/:runId/restore", { preHandler: administratorGuard }, async (request, reply) => { try { if (!safety) throw new Error("Safety layer is unavailable"); const runId = (request.params as { runId: string }).runId; const result = await safety.restoreSnapshot(runId); security?.audit("snapshot.restored", principals.get(request)?.user.id, "snapshot", runId); return { data: result }; } catch (error) { return reply.code(error instanceof Error && error.message === "Snapshot not found" ? 404 : 400).send({ error: errorMessage(error) }); } });
   app.get("/api/v1/management/trash", { preHandler: administratorGuard }, async (_request, reply) => { try { if (!safety) throw new Error("Safety layer is unavailable"); return { data: safety.listTrash() }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
@@ -965,6 +977,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     app,
     store,
     artifacts,
+    ...(storageDurability ? { storageDurability } : {}),
     routes,
     events,
     lifecycle,

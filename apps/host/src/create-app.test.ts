@@ -9,7 +9,7 @@ import { createHost } from "./create-app.js";
 import { ModelCatalogService } from "./model-catalog.js";
 import { TailscaleMonitor, TailscaleServeManager, WindowsStartupManager } from "@fitz/connectivity";
 import { SecurityService } from "@fitz/security";
-import { SqliteStore } from "@fitz/storage";
+import { ArtifactRepository, LocalBlobStore, SqliteStore, StorageDurabilityService } from "@fitz/storage";
 
 describe("Fitz host", () => {
   it("boots idle and exposes consumer routes instead of recipes", async () => {
@@ -303,6 +303,37 @@ describe("Fitz host", () => {
     expect(denied.statusCode).toBe(403);
     expect(allowed.statusCode).toBe(200);
     await runtime.app.close();
+  });
+
+  it("administers coordinated artifact storage, quota, backups, and staged restore", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fitz-storage-admin-"));
+    const paths = { dataRoot: root, databasePath: join(root, "fitz.db"), artifactsDir: join(root, "artifacts"), backupsDir: join(root, "backups") };
+    const store = new SqliteStore(paths.databasePath);
+    const artifacts = new ArtifactRepository(store, new LocalBlobStore(paths.artifactsDir), { quotaBytes: () => store.getSetting<number>("artifactStorageQuotaBytes") });
+    await artifacts.initialize();
+    store.createSession({ id: "storage-session", title: "Storage", status: "active", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() });
+    await artifacts.create({ id: "storage-artifact", sessionId: "storage-session", name: "proof.txt", mimeType: "text/plain", kind: "text", createdAt: new Date(0).toISOString(), metadata: {} }, Buffer.from("durable"));
+    const storageDurability = new StorageDurabilityService(artifacts, paths);
+    const runtime = createHost({ store, artifacts, storageDurability, adminToken: "storage-token" });
+    const headers = { "x-fitz-admin-token": "storage-token" };
+    try {
+      const status = await runtime.app.inject({ method: "GET", url: "/api/v1/management/storage", headers });
+      expect(status.statusCode, status.body).toBe(200);
+      expect(status.json().data.report).toEqual(expect.objectContaining({ artifacts: 1, objects: 1, referencedBytes: 7, issues: [] }));
+      const quota = await runtime.app.inject({ method: "PUT", url: "/api/v1/management/storage/quota", headers, payload: { quotaBytes: 1024 } });
+      expect(quota.statusCode, quota.body).toBe(200);
+      expect(store.getSetting("artifactStorageQuotaBytes")).toBe(1024);
+      const backup = await runtime.app.inject({ method: "POST", url: "/api/v1/management/backups", headers });
+      expect(backup.statusCode, backup.body).toBe(201);
+      const backupId = backup.json().data.id as string;
+      const validation = await runtime.app.inject({ method: "POST", url: `/api/v1/management/backups/${backupId}/validate`, headers });
+      expect(validation.statusCode, validation.body).toBe(200);
+      expect(validation.json().data.integrity).toBe("ok");
+      const restore = await runtime.app.inject({ method: "POST", url: `/api/v1/management/backups/${backupId}/restore`, headers });
+      expect(restore.statusCode, restore.body).toBe(200);
+      expect(restore.json().data).toEqual(expect.objectContaining({ backupId, restartRequired: true }));
+      expect(existsSync(join(root, "pending-storage-restore.json"))).toBe(true);
+    } finally { await runtime.app.close(); rmSync(root, { recursive: true, force: true }); }
   });
 
   it("refuses a load when the configured VRAM reserve cannot be maintained", async () => {

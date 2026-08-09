@@ -3,7 +3,7 @@ import { FakeEngineAdapter } from "@fitz/engine-fake";
 import { FakeMediaEngineAdapter, deterministicMediaBytes } from "@fitz/engine-media-fake";
 import type { MediaModality, Recipe, Route } from "@fitz/protocol";
 import { RouteResolver } from "@fitz/inference-core";
-import { SqliteStore } from "@fitz/storage";
+import { ArtifactRepository, MemoryBlobStore, SqliteStore } from "@fitz/storage";
 import { createHost, ensureMediaRoutes, type HostRuntime } from "./create-app.js";
 import { reconcileNInferConfiguration } from "./ninfer-reconcile.js";
 
@@ -111,6 +111,20 @@ describe("Fitz host media jobs", () => {
     } finally {
       await runtime.app.close();
     }
+  });
+
+  it("reports the global artifact quota separately from a per-media size limit", async () => {
+    const store = SqliteStore.memory();
+    store.setSetting("artifactStorageQuotaBytes", 1);
+    const artifacts = new ArtifactRepository(store, new MemoryBlobStore(), { quotaBytes: () => store.getSetting<number>("artifactStorageQuotaBytes") });
+    const runtime = createHost({ store, artifacts, adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter({ resultByteLength: 128 })] });
+    try {
+      await registerMediaRecipe(runtime, "h3-img", ["image"]);
+      await assignRoute(runtime, "image", "h3-img");
+      const submitted = await runtime.app.inject({ method: "POST", url: "/api/v1/media/jobs", payload: { routeId: "image", modality: "image", params: { prompt: "quota constrained" } } });
+      const job = await waitForJobStatus(runtime, submitted.json().data.id, "failed");
+      expect(job).toEqual(expect.objectContaining({ errorCode: "artifact_quota_exceeded" }));
+    } finally { await runtime.app.close(); }
   });
 
   it("keeps chat persistence working while media jobs stay out of inference_requests", async () => {

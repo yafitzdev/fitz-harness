@@ -76,4 +76,15 @@
 #desktop-update-version { color: var(--subtle); }
 .desktop-update-track { grid-column: 1 / -1; height: 3px; overflow: hidden; border-radius: 2px; background: var(--tint-4); }
 .desktop-update-track span { width: 0; height: 100%; display: block; border-radius: inherit; background: var(--grey-600); transition: width 180ms ease; }
+.storage-quota-form { margin-top: 12px; }
+.storage-integrity-list, .storage-backup-list { display: grid; gap: 1px; overflow: hidden; border-radius: var(--radius-lg); background: var(--border-soft); }
+.storage-integrity-row, .storage-backup-row { min-height: 45px; display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 12px; padding: 8px 12px; background: var(--grey-200); }
+.storage-integrity-row { grid-template-columns: 150px minmax(0,1fr); }
+.storage-integrity-row strong { color: var(--danger-soft); font-size: 10px; font-weight: 520; text-transform: capitalize; }
+.storage-integrity-row span { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.storage-backup-detail { min-width: 0; display: grid; gap: 2px; }
+.storage-backup-detail strong { font-size: 11px; font-weight: 520; }
+.storage-backup-detail small { color: var(--subtle); font-size: 10px; }
+.storage-backup-row button { height: 30px; padding: 0 10px; border-radius: var(--radius-md); background: var(--tint-5); color: var(--text); cursor: pointer; }
+.storage-backup-row button:hover { background: var(--tint-7); }
 @media (max-width: 760px) { .admin-inline-form { align-items: stretch; flex-direction: column; } .admin-inline-form label { width: 100%; } .admin-access { grid-template-columns: 1fr 1fr; } .admin-user > summary { grid-template-columns: minmax(0,1fr) 120px; } .admin-user-status { display: none; } }

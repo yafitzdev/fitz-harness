@@ -7,6 +7,7 @@ import { DesktopUpdateController, type DesktopUpdateBridge } from "./desktop-upd
 import { DiagnosticsController, type DiagnosticsBridge } from "./diagnostics-controller.js";
 import { HostLifecycleController } from "./host-lifecycle-controller.js";
 import { SafetyRecoveryController } from "./safety-recovery-controller.js";
+import { StorageDurabilityController } from "./storage-durability-controller.js";
 
 type Json = Record<string, any>;
 
@@ -75,6 +76,18 @@ export interface AdministrationPageElements {
   desktopUpdateVersion: HTMLElement;
   desktopUpdateProgress: HTMLElement;
   updateButton: HTMLButtonElement;
+  storageSummary: HTMLElement;
+  storageIssues: HTMLElement;
+  storageBackups: HTMLElement;
+  storageQuota: HTMLInputElement;
+  verifyStorage: HTMLButtonElement;
+  collectStorageGarbage: HTMLButtonElement;
+  createStorageBackup: HTMLButtonElement;
+  saveStorageQuota: HTMLButtonElement;
+  storageRestoreConfirmation: HTMLElement;
+  storageRestoreConfirmationText: HTMLElement;
+  cancelStorageRestore: HTMLButtonElement;
+  confirmStorageRestore: HTMLButtonElement;
 }
 
 export interface AdministrationPageOptions {
@@ -94,6 +107,7 @@ export class AdministrationPageController {
   private readonly hostLifecycle: HostLifecycleController;
   private readonly diagnostics: DiagnosticsController;
   private readonly safetyRecovery: SafetyRecoveryController;
+  private readonly storageDurability: StorageDurabilityController;
 
   constructor(elements: AdministrationPageElements, options: AdministrationPageOptions) {
     this.elements = elements;
@@ -156,6 +170,25 @@ export class AdministrationPageController {
       showStatus: options.showStatus,
       errorMessage: options.errorMessage,
     });
+    this.storageDurability = new StorageDurabilityController({
+      summary: elements.storageSummary,
+      issues: elements.storageIssues,
+      backups: elements.storageBackups,
+      quota: elements.storageQuota,
+      verify: elements.verifyStorage,
+      collectGarbage: elements.collectStorageGarbage,
+      createBackup: elements.createStorageBackup,
+      saveQuota: elements.saveStorageQuota,
+      confirmation: elements.storageRestoreConfirmation,
+      confirmationText: elements.storageRestoreConfirmationText,
+      cancelRestore: elements.cancelStorageRestore,
+      confirmRestore: elements.confirmStorageRestore,
+    }, {
+      api: options.api,
+      reload: () => this.load(),
+      showStatus: options.showStatus,
+      errorMessage: options.errorMessage,
+    });
     this.bind();
   }
 
@@ -166,7 +199,7 @@ export class AdministrationPageController {
   async load(): Promise<void> {
     if (!this.options.isAdministrator()) return;
     try {
-      const [users, policies, audit, diagnostics, remote, startup, trash, snapshots, toolActions] = await Promise.all([
+      const [users, policies, audit, diagnostics, remote, startup, trash, snapshots, toolActions, storage] = await Promise.all([
         this.options.api("/api/v1/management/users"),
         this.options.api("/api/v1/management/tool-policies"),
         this.options.api("/api/v1/management/audit-events?limit=50"),
@@ -176,6 +209,7 @@ export class AdministrationPageController {
         this.options.api("/api/v1/management/trash"),
         this.options.api("/api/v1/management/snapshots"),
         this.options.api("/api/v1/management/tool-actions?limit=100"),
+        this.options.api("/api/v1/management/storage").catch((error) => ({ data: { error: this.options.errorMessage(error), report: {}, backups: [], available: false } })),
       ]);
       this.users = users.data ?? [];
       this.policies = policies.data ?? [];
@@ -193,6 +227,7 @@ export class AdministrationPageController {
       this.diagnostics.render(diagnostics);
       this.hostLifecycle.renderRemote(remote.data);
       this.hostLifecycle.renderStartup(startup.data);
+      this.storageDurability.render(storage.data ?? {});
     } catch (error) {
       this.elements.adminUsers.replaceChildren(emptyState(`Administration unavailable: ${this.options.errorMessage(error)}`));
     }

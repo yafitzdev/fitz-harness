@@ -56,6 +56,12 @@
 - Owner-scoped artifact metadata and content storage with SHA-256 integrity metadata and size bounds,
   strict MIME classification, defensive content headers, and a desktop artifact panel with inert text,
   allowlisted media, sandboxed PDF preview, upload, and binary fallback.
+- Artifact payloads are immutable content-addressed objects outside SQLite. Coordinated online backups
+  capture the database and every referenced object behind one mutation boundary, validate SQLite plus
+  object checksums before publication, and stage a confirmed restore before the next database open.
+  Administration exposes integrity scans, race-free orphan collection, optional global storage quota,
+  backup creation, and rollback-preserving restore. Active delivery leases prevent garbage collection
+  from deleting an object while HTTP is streaming it.
 - Generalized image, video, and audio generation pipeline with capability-aware recipes and routes,
   durable submit/poll/cancel jobs, sequenced replayable events, queue/lifecycle leases, crash recovery,
   cancellation, progress, and per-kind artifact size limits.

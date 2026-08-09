@@ -22,13 +22,15 @@ the real NiNfer configuration and exposes the configured recipes through the Fas
 Smart connection routes. On Windows, Fitz launches and stops the engine inside the configured Ubuntu
 WSL distribution while the desktop continues to connect to `127.0.0.1:8787`.
 
-Development keeps all mutable state in the repository under `data/` (`FITZ_DATA_ROOT`): sessions in
-`data/database/fitz.db`, Pi packages in `data/pi/`, logs in `data/logs/`, cache in `data/cache/`.
+Development keeps all mutable state in the repository under `data/` (`FITZ_DATA_ROOT`): sessions and
+artifact metadata in `data/database/fitz.db`, content-addressed artifact payloads in `data/artifacts/`,
+coordinated verified backups in `data/backups/`, Pi packages in `data/pi/`, logs in `data/logs/`, and
+cache in `data/cache/`.
 The dev scripts build workspace packages before starting and refuse to start if another host already
 occupies the port; set `FITZ_PORT` to override the default `8787`.
 
 Production installs bundle Electron, the host, Node, Pi, and npm. Mutable database, Pi package, log,
-and cache state lives beneath `%LOCALAPPDATA%\Fitz Codex`; clean engine repositories and model files
-live beneath `%USERPROFILE%\llm`. Tailscale remains an independently installed Windows service.
+cache, artifact, and backup state lives beneath `%LOCALAPPDATA%\Fitz Codex`; clean engine repositories
+and model files live beneath `%USERPROFILE%\.llm`. Tailscale remains an independently installed Windows service.
 
 Use `pnpm dev:fake` only when deterministic fake inference is explicitly needed for UI development.

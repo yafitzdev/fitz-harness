@@ -80,6 +80,7 @@ function adminApi() {
       { runId: "run-1", sequence: 2, timestamp: "2026-08-04T09:00:02Z", toolName: "read", effect: "allow", detail: {} },
     ] },
     "/api/v1/management/pairing-codes": { data: { code: "ABCD-EFGH", expiresAt: "2026-08-04T11:00:00Z" } },
+    "/api/v1/management/storage": { data: { report: { artifacts: 2, objects: 1, referencedBytes: 1024, orphanObjects: 0, orphanBytes: 0, issues: [] }, backups: [], available: true } },
   };
   const api = vi.fn(async (path: string) => {
     if (path.startsWith("/api/v1/management/users/") && path.endsWith("/access")) return access(path.split("/")[5]!);
@@ -108,12 +109,16 @@ function setup(
     hostStartupStatus: node("div"), hostStartupConfirmation: node("div"), hostStartupConfirmationText: node("span"),
     installHostStartup: node("button"), removeHostStartup: node("button"), confirmHostStartup: node("button"),
     checkDesktopUpdate: node("button"), installDesktopUpdate: node("button"), desktopUpdateLabel: node("span"), desktopUpdateVersion: node("span"), desktopUpdateProgress: node("span"), updateButton: node("button"),
+    storageSummary: node("div"), storageIssues: node("div"), storageBackups: node("div"), storageQuota: node("input"),
+    verifyStorage: node("button"), collectStorageGarbage: node("button"), createStorageBackup: node("button"), saveStorageQuota: node("button"),
+    storageRestoreConfirmation: node("div"), storageRestoreConfirmationText: node("span"), cancelStorageRestore: node("button"), confirmStorageRestore: node("button"),
   };
   elements.pairingCodeResult.hidden = true;
   elements.remoteAccessConfirmation.hidden = true;
   elements.hostStartupConfirmation.hidden = true;
   elements.installDesktopUpdate.hidden = true;
   elements.updateButton.hidden = true;
+  elements.storageRestoreConfirmation.hidden = true;
   selectOptions(elements.pairingCodeRole, ["consumer", "agent", "administrator"]);
   selectOptions(elements.pairingCodeTtl, ["600", "3600", "86400"]);
   selectOptions(elements.createUserRole, ["consumer", "agent", "administrator"]);
@@ -176,6 +181,7 @@ describe("AdministrationPageController", () => {
     expect(api).toHaveBeenCalledWith("/api/v1/management/trash");
     expect(api).toHaveBeenCalledWith("/api/v1/management/snapshots");
     expect(api).toHaveBeenCalledWith("/api/v1/management/tool-actions?limit=100");
+    expect(api).toHaveBeenCalledWith("/api/v1/management/storage");
 
     const users = elements.adminUsers.querySelectorAll(".admin-user");
     expect(users).toHaveLength(2);
@@ -505,6 +511,9 @@ function setupWithSections(
     hostStartupStatus: node("div"), hostStartupConfirmation: node("div"), hostStartupConfirmationText: node("span"),
     installHostStartup: node("button"), removeHostStartup: node("button"), confirmHostStartup: node("button"),
     checkDesktopUpdate: node("button"), installDesktopUpdate: node("button"), desktopUpdateLabel: node("span"), desktopUpdateVersion: node("span"), desktopUpdateProgress: node("span"), updateButton: node("button"),
+    storageSummary: node("div"), storageIssues: node("div"), storageBackups: node("div"), storageQuota: node("input"),
+    verifyStorage: node("button"), collectStorageGarbage: node("button"), createStorageBackup: node("button"), saveStorageQuota: node("button"),
+    storageRestoreConfirmation: node("div"), storageRestoreConfirmationText: node("span"), cancelStorageRestore: node("button"), confirmStorageRestore: node("button"),
   };
   const controller = new AdministrationPageController(elements, {
     api: overrides.api ?? adminApi(),

@@ -51,4 +51,38 @@ describe("ArtifactRepository", () => {
       inspected.close();
     } finally { await rm(root, { recursive: true, force: true }); }
   });
+
+  it("reports corruption, enforces the configured quota, and collects orphans explicitly", async () => {
+    const database = SqliteStore.memory();
+    let quota = 6;
+    const blobs = new MemoryBlobStore();
+    const artifacts = new ArtifactRepository(database, blobs, { quotaBytes: () => quota });
+    database.createSession({ id: "session", title: "Storage", status: "active", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() });
+    await artifacts.create({ id: "one", sessionId: "session", name: "one.txt", mimeType: "text/plain", kind: "text", createdAt: new Date(0).toISOString(), metadata: {} }, Buffer.from("shared"));
+    await expect(artifacts.create({ id: "two", sessionId: "session", name: "two.txt", mimeType: "text/plain", kind: "text", createdAt: new Date(0).toISOString(), metadata: {} }, Buffer.from("larger!"))).rejects.toThrow("quota exceeded");
+    quota = 100;
+    await blobs.put(Buffer.from("orphan"));
+    const report = await artifacts.inspect({ verifyChecksums: true });
+    expect(report).toMatchObject({ artifacts: 1, objects: 1, referencedBytes: 6, orphanObjects: 1, quotaBytes: 100, issues: [] });
+    expect(await artifacts.collectGarbage()).toMatchObject({ objects: 1, bytes: 6 });
+    expect((await artifacts.inspect()).orphanObjects).toBe(0);
+    database.close();
+  });
+
+  it("does not garbage-collect an immutable object while a response is streaming it", async () => {
+    const database = SqliteStore.memory();
+    const blobs = new MemoryBlobStore();
+    const artifacts = new ArtifactRepository(database, blobs);
+    database.createSession({ id: "session", title: "Leases", status: "active", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() });
+    await artifacts.create({ id: "leased", sessionId: "session", name: "leased.txt", mimeType: "text/plain", kind: "text", createdAt: new Date(0).toISOString(), metadata: {} }, Buffer.from("still streaming"));
+    const opened = await artifacts.open("leased");
+    expect(opened).toBeDefined();
+    await artifacts.delete("leased");
+    expect(await artifacts.collectGarbage()).toMatchObject({ objects: 0 });
+    const received: Buffer[] = [];
+    for await (const chunk of opened!.stream) received.push(Buffer.from(chunk));
+    expect(Buffer.concat(received).toString()).toBe("still streaming");
+    expect(await artifacts.collectGarbage()).toMatchObject({ objects: 1 });
+    database.close();
+  });
 });

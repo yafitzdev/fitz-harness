@@ -14,6 +14,8 @@ export interface FitzRuntimePaths {
   snapshotsDir: string;
   /** Content-addressed artifact payloads. SQLite stores metadata only. */
   artifactsDir: string;
+  /** Coordinated SQLite + artifact snapshots and pre-restore rollback copies. */
+  backupsDir: string;
 }
 
 export function resolveRuntimePaths(environment: NodeJS.ProcessEnv = process.env): FitzRuntimePaths {
@@ -30,6 +32,7 @@ export function resolveRuntimePaths(environment: NodeJS.ProcessEnv = process.env
     modelRoot: resolve(environment.FITZ_MODEL_ROOT ?? join(llmRoot, "models")),
     snapshotsDir: resolve(environment.FITZ_SNAPSHOTS_DIR ?? join(dataRoot, "snapshots")),
     artifactsDir: resolve(environment.FITZ_ARTIFACTS_DIR ?? join(dataRoot, "artifacts")),
+    backupsDir: resolve(environment.FITZ_BACKUPS_DIR ?? join(dataRoot, "backups")),
   };
 }
 

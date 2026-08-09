@@ -12,7 +12,7 @@ import type {
 } from "@fitz/protocol";
 import type { InferenceScheduler, RouteResolver, ScheduledMediaJob } from "@fitz/inference-core";
 import { SecurityPolicyError, type AuthenticatedPrincipal, type SecurityService } from "@fitz/security";
-import { BlobSizeLimitError, type ArtifactRepository, type BlobSource, type MediaJobEventEnvelope, type SqliteStore } from "@fitz/storage";
+import { ArtifactQuotaExceededError, BlobSizeLimitError, type ArtifactRepository, type BlobSource, type MediaJobEventEnvelope, type SqliteStore } from "@fitz/storage";
 import { classifyArtifact, normalizeMimeType } from "@fitz/media";
 
 export interface MediaSubmitInput {
@@ -195,7 +195,7 @@ export class MediaJobCoordinator {
             });
             this.#credit(id);
           } catch (error) {
-            this.#fail(id, errorMessage(error), error instanceof ArtifactTooLargeError ? "artifact_too_large" : undefined);
+            this.#fail(id, errorMessage(error), error instanceof ArtifactTooLargeError ? "artifact_too_large" : error instanceof ArtifactQuotaExceededError ? "artifact_quota_exceeded" : undefined);
           }
         }
       }

@@ -1,4 +1,4 @@
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import { backup, DatabaseSync, type SQLInputValue } from "node:sqlite";
 import type {
   AuditEventRecord,
   AgentEventEnvelope,
@@ -116,6 +116,7 @@ export interface LegacyArtifactContent { artifactId: string; content: Uint8Array
 interface ToolActionRow { run_id: string; sequence: number; timestamp: string; tool_name: string; effect: ToolActionRecord["effect"]; path: string | null; detail_json: string }
 interface SnapshotRow { run_id: string; workspace_root: string; snapshot_dir: string; created_at: string; status: SnapshotRecord["status"]; file_count: number }
 interface TrashRow { id: string; run_id: string | null; workspace_root: string; original_path: string; trash_path: string; created_at: string; restored_at: string | null }
+export interface ArtifactStorageEntry { artifactId: string; backend: string; objectKey: string; byteSize: number; sha256: string }
 
 export class SqliteStore {
   readonly #database: DatabaseSync;
@@ -703,6 +704,7 @@ export class SqliteStore {
   listArtifacts(sessionId: string): ArtifactRecord[] { return (this.#database.prepare(`SELECT id, session_id, name, mime_type, kind, byte_size, sha256, storage_backend, object_key, created_at, created_by_user_id, metadata_json FROM artifacts WHERE session_id = ? ORDER BY created_at DESC`).all(sessionId) as unknown as ArtifactRow[]).map(mapArtifact); }
   getArtifactStorage(id: string): ArtifactStorageRef | undefined { const row = this.#database.prepare(`SELECT storage_backend, object_key FROM artifacts WHERE id = ?`).get(id) as Pick<ArtifactRow, "storage_backend" | "object_key"> | undefined; return row ? { backend: row.storage_backend, objectKey: row.object_key } : undefined; }
   listArtifactStorage(backend: string): ArtifactStorageRef[] { return (this.#database.prepare(`SELECT storage_backend, object_key FROM artifacts WHERE storage_backend = ?`).all(backend) as unknown as Array<Pick<ArtifactRow, "storage_backend" | "object_key">>).map((row) => ({ backend: row.storage_backend, objectKey: row.object_key })); }
+  listArtifactStorageEntries(): ArtifactStorageEntry[] { return (this.#database.prepare(`SELECT id, storage_backend, object_key, byte_size, sha256 FROM artifacts ORDER BY id`).all() as unknown as Array<{ id: string; storage_backend: string; object_key: string; byte_size: number; sha256: string }>).map((row) => ({ artifactId: row.id, backend: row.storage_backend, objectKey: row.object_key, byteSize: row.byte_size, sha256: row.sha256 })); }
   deleteArtifact(id: string): boolean { return this.#database.prepare(`DELETE FROM artifacts WHERE id = ?`).run(id).changes > 0; }
   nextLegacyArtifactContent(): LegacyArtifactContent | undefined { if (!this.#legacyArtifactsExist()) return undefined; const row = this.#database.prepare(`SELECT id, content FROM artifacts_legacy ORDER BY id LIMIT 1`).get() as { id: string; content: Uint8Array } | undefined; return row ? { artifactId: row.id, content: row.content } : undefined; }
   countLegacyArtifactRefs(): number { return Number((this.#database.prepare(`SELECT COUNT(*) AS count FROM artifacts WHERE storage_backend = 'legacy-sqlite'`).get() as { count: number }).count); }
@@ -834,6 +836,14 @@ export class SqliteStore {
       | { value_json: string }
       | undefined;
     return row ? (JSON.parse(row.value_json) as T) : undefined;
+  }
+
+  deleteSetting(key: string): boolean {
+    return this.#database.prepare("DELETE FROM settings WHERE key = ?").run(key).changes > 0;
+  }
+
+  async backupTo(path: string): Promise<number> {
+    return backup(this.#database, path);
   }
 
   close(): void {

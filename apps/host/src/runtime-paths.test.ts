@@ -16,6 +16,8 @@ describe("Fitz runtime paths", () => {
     expect(paths.dataRoot).toContain("Fitz Codex");
     expect(paths.databasePath).toContain("database");
     expect(paths.piAgentDir).toContain("pi");
+    expect(paths.artifactsDir).toContain("artifacts");
+    expect(paths.backupsDir).toContain("backups");
     expect(paths.engineRoot).toBe("C:\\Users\\tester\\llm\\engines");
     expect(paths.modelRoot).toBe("C:\\Users\\tester\\llm\\models");
   });

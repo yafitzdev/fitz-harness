@@ -95,6 +95,7 @@ Order matters; the code is done, the deployment is not.
 - Single-assignment routes (a route points at exactly one recipe).
 - OQ-1 resolved: `ModelCatalogService` stays GGUF-only; catalog pipeline tags (`text-to-video`, `image-generation`) are a **follow-up**, not this work.
 - OQ-4 resolved: SQLite stores artifact metadata and opaque object references only. Payloads live in the content-addressed artifact directory beneath Fitz's data root and pre-v12 BLOBs migrate automatically at host startup.
+- Storage durability now treats SQLite plus referenced artifact objects as one recoverable dataset: online verified backups, pre-open staged restore with rollback preservation, checksum scans, active-stream-safe garbage collection, and an optional global artifact quota are exposed through Administration.
 
 ## Suggested first prompt for Codex
 

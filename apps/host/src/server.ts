@@ -9,7 +9,7 @@ import { ManagedOpenAIEngineAdapter, OpenAICompatibleEngineAdapter } from "@fitz
 import { LlamaCppEngineAdapter } from "@fitz/engine-llama-cpp";
 import { ComfyUIEngineAdapter } from "@fitz/engine-comfyui";
 import type { Recipe, Route } from "@fitz/protocol";
-import { ArtifactRepository, LocalBlobStore, SqliteStore } from "@fitz/storage";
+import { applyPendingStorageRestore, ArtifactRepository, LocalBlobStore, SqliteStore, StorageDurabilityService } from "@fitz/storage";
 import { SecurityService } from "@fitz/security";
 import { createHost } from "./create-app.js";
 import { createMediaTools } from "./media-tools.js";
@@ -45,13 +45,16 @@ const agentRuntimeMode = process.env.FITZ_AGENT_RUNTIME ?? "pi";
 const agentBaseUrl = process.env.FITZ_AGENT_BASE_URL ?? `http://127.0.0.1:${port}/v1`;
 const internalAgentToken = agentRuntimeMode === "pi" && !process.env.FITZ_AGENT_BASE_URL ? randomBytes(32).toString("base64url") : undefined;
 
+const restoredStorage = await applyPendingStorageRestore(runtimePaths);
+if (restoredStorage) console.info("Scheduled storage restore applied", restoredStorage);
 mkdirSync(dirname(databasePath), { recursive: true });
-for (const directory of [runtimePaths.piAgentDir, runtimePaths.logsDir, runtimePaths.cacheDir, runtimePaths.engineRoot, runtimePaths.modelRoot, runtimePaths.snapshotsDir, runtimePaths.artifactsDir]) mkdirSync(directory, { recursive: true });
+for (const directory of [runtimePaths.piAgentDir, runtimePaths.logsDir, runtimePaths.cacheDir, runtimePaths.engineRoot, runtimePaths.modelRoot, runtimePaths.snapshotsDir, runtimePaths.artifactsDir, runtimePaths.backupsDir]) mkdirSync(directory, { recursive: true });
 const engineOptions = engineModeOptions(engineMode);
 const store = new SqliteStore(databasePath);
-const artifacts = new ArtifactRepository(store, new LocalBlobStore(runtimePaths.artifactsDir));
+const artifacts = new ArtifactRepository(store, new LocalBlobStore(runtimePaths.artifactsDir), { quotaBytes: () => store.getSetting<number>("artifactStorageQuotaBytes") });
 const artifactRecovery = await artifacts.initialize();
 if (artifactRecovery.migrated || artifactRecovery.collected) console.info("Artifact store reconciled", artifactRecovery);
+const storageDurability = new StorageDurabilityService(artifacts, runtimePaths);
 const storeInitiallyEmpty = store.listRecipes().length === 0;
 const authPepper = authMode === "required" ? resolveAuthPepper(store) : undefined;
 // One SecurityService shared by HTTP auth, the media coordinator, and the agent media
@@ -76,6 +79,7 @@ let mediaJobs: MediaJobCoordinator | undefined;
 const runtime = createHost({
   store,
   artifacts,
+  storageDurability,
   logger: true,
   resourcePolicy: { reserveVramMiB },
   authMode,
