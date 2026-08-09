@@ -1,6 +1,7 @@
 import { setMarkdown } from "../../markdown.js";
 import type { ActionableMessageRole } from "./message-actions.js";
 import { projectRelativePath } from "./tool-activity.js";
+import { scrollToLatestIfFollowing } from "./conversation-scroll.js";
 
 export interface ConversationMessageActivity {
   finishWork(createdAt?: string): void;
@@ -30,6 +31,10 @@ export class ConversationMessageFeed {
     if (role !== "commentary" && !this.#options.runActive()) this.#options.activity.finishWork(createdAt);
     const article = document.createElement("article");
     article.className = `message ${role}`;
+    if (role === "system") {
+      article.setAttribute("role", "alert");
+      article.setAttribute("aria-live", "polite");
+    }
     const content = document.createElement("div");
     content.className = "message-body";
     if (role === "assistant" || role === "commentary") setMarkdown(content, text);
@@ -90,5 +95,5 @@ export class ConversationMessageFeed {
     if (this.#options.messages.querySelector(".landing, .new-chat-landing")) this.#options.messages.replaceChildren();
   }
 
-  #scroll(): void { this.#options.messages.scrollTop = this.#options.messages.scrollHeight; }
+  #scroll(): void { scrollToLatestIfFollowing(this.#options.messages); }
 }

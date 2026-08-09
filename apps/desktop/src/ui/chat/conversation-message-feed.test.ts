@@ -39,4 +39,17 @@ describe("ConversationMessageFeed", () => {
     expect(messages.textContent).toContain("new.ts");
     expect(messages.textContent).not.toContain("C:\\work");
   });
+
+  it("renders long failures as accessible plain-text alerts", () => {
+    const { feed, messages, actions } = setup();
+    const failure = `Request failed: ${"unbroken".repeat(80)}`;
+    const body = feed.append("system", failure);
+    const article = body.closest("article");
+    expect(article?.getAttribute("role")).toBe("alert");
+    expect(article?.getAttribute("aria-live")).toBe("polite");
+    expect(body.textContent).toBe(failure);
+    expect(body.classList.contains("markdown")).toBe(false);
+    expect(actions.attach).not.toHaveBeenCalled();
+    expect(messages.textContent).toContain("Request failed");
+  });
 });

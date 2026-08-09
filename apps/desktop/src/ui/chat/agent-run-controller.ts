@@ -1,6 +1,7 @@
 import { reconnectDelay } from "@fitz/connectivity/reconnect";
 
 import { mediaJobIdFromToolResult } from "./media-job-tracker.js";
+import { scrollToLatestIfFollowing } from "./conversation-scroll.js";
 
 type Json = Record<string, any>;
 
@@ -186,7 +187,7 @@ export class AgentRunController {
           const delta = String(event.data?.text ?? "");
           this.#options.appendAssistantDelta(assistant, delta);
           this.#options.addTokenEstimate(delta);
-          this.#options.messages.scrollTop = this.#options.messages.scrollHeight;
+          scrollToLatestIfFollowing(this.#options.messages);
         }
         if (event.type === "reasoning.delta") {
           // Model thinking streams into its own collapsible activity row, separate

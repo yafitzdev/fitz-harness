@@ -1,3 +1,5 @@
+import { isFollowingLatest, resumeFollowingLatest } from "../chat/conversation-scroll.js";
+
 export interface ConversationLayoutOptions {
   workspace: HTMLElement;
   messages: HTMLElement;
@@ -13,6 +15,7 @@ export class ConversationLayout {
 
   constructor(options: ConversationLayoutOptions) {
     this.#options = options;
+    isFollowingLatest(options.messages);
     this.#resizeObserver = new ResizeObserver(this.sync);
     this.#contentObserver = new MutationObserver(this.sync);
     for (const target of [options.messages, options.composer, options.workspace]) this.#resizeObserver.observe(target);
@@ -48,6 +51,7 @@ export class ConversationLayout {
   };
 
   readonly scrollToBottom = (): void => {
+    resumeFollowingLatest(this.#options.messages);
     this.#options.messages.scrollTo({ top: this.#options.messages.scrollHeight, behavior: "smooth" });
   };
 }

@@ -1,5 +1,6 @@
 import { svgIcon } from "../primitives/dom.js";
 import type { MediaJobSummary } from "./media-job-tracker.js";
+import { scrollToLatestIfFollowing } from "./conversation-scroll.js";
 
 type Json = Record<string, any>;
 
@@ -72,7 +73,7 @@ export class MediaJobFeed {
       }
     }
     if (["completed", "failed", "cancelled", "interrupted"].includes(job.status)) this.#options.finishWork(job.completedAt);
-    messages.scrollTop = messages.scrollHeight;
+    scrollToLatestIfFollowing(messages);
   }
 
   #action(label: string, action: (button: HTMLButtonElement) => void | Promise<void>): HTMLButtonElement {

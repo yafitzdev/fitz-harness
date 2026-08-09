@@ -1,6 +1,7 @@
 import { svgIcon } from "../primitives/dom.js";
 import { ReasoningView } from "./reasoning-view.js";
 import { activityKind, burstIconPath, describeTool, iconPathFor, summarizeBurst, toolPath } from "./tool-activity.js";
+import { scrollToLatestIfFollowing } from "./conversation-scroll.js";
 
 type Json = Record<string, any>;
 type WorkSummary = { root: HTMLElement; toggle: HTMLButtonElement; details: HTMLElement; startedAt: number; lastAt: number };
@@ -433,5 +434,5 @@ export class ActivityTimeline {
     return minutes > 0 ? `${minutes}m ${String(seconds % 60).padStart(2, "0")}s` : `${seconds}s`;
   }
   #removeLanding(): void { if (this.#options.messages.querySelector(".landing, .new-chat-landing")) this.#options.messages.replaceChildren(); }
-  #scroll(): void { this.#options.messages.scrollTop = this.#options.messages.scrollHeight; }
+  #scroll(): void { scrollToLatestIfFollowing(this.#options.messages); }
 }

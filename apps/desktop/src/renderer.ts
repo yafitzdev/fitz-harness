@@ -393,7 +393,7 @@ const promptSubmission = new PromptSubmissionController({
   runId: () => agentRuns.runId,
   startRun: (request) => agentRuns.start(request),
   steerRun: (content) => agentRuns.steer(content),
-  showError: showToast,
+  showError: (message) => { appendMessage("system", message); },
   errorMessage,
 });
 const playbookWorkspace = new PlaybookWorkspaceController({

@@ -177,7 +177,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .markdown-table tr:last-child td { border-bottom: 0; }
 .markdown-table th:last-child,
 .markdown-table td:last-child { border-right: 0; }
-.message.system { padding: 10px 12px; border-left: 2px solid var(--danger); background: var(--danger-tint); color: var(--danger-soft); }
+.message.system { padding: 10px 12px; overflow-wrap: anywhere; border-left: 2px solid var(--danger); background: var(--danger-tint); color: var(--danger-soft); }
 .media-job-notice { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 52px; padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: var(--radius-lg); background: var(--tint-2); color: var(--muted); }
 .media-result-message > .message-body { margin-bottom: 9px; }
 .media-result-message > .media-job-notice { margin: 0; }
