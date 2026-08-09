@@ -12,8 +12,8 @@
 .project-children-inner { min-height: 0; display: grid; gap: 0; overflow: hidden; }
 .project-group.expanded > .project-children { grid-template-rows: 1fr; opacity: 1; transform: translateY(0); }
 .tree-item { position: relative; min-width: 0; }
-.project-row, .task-row, .chat-row { width: 100%; display: flex; align-items: center; gap: 8px; min-width: 0; background: transparent; color: var(--muted); border-radius: var(--sidebar-item-radius); cursor: pointer; text-align: left; transition: padding-right 120ms ease; }
-.project-row { padding: 5px 8px; color: var(--grey-800); font-weight: 500; }
+.project-row, .task-row, .chat-row { width: 100%; display: flex; align-items: center; gap: 8px; min-width: 0; background: transparent; color: var(--text); border-radius: var(--sidebar-item-radius); cursor: pointer; text-align: left; transition: padding-right 120ms ease; }
+.project-row { padding: 5px 8px; font-weight: 500; }
 .task-row { padding: 4px 9px 4px 30px; }
 .chat-row { padding: 4px 9px; }
 .tree-item:hover .task-row, .tree-item:focus-within .task-row, .tree-item:hover .chat-row, .tree-item:focus-within .chat-row { padding-right: 55px; }

@@ -197,6 +197,7 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('id="pinned" class="project-tree"');
     expect(styles).toContain(".sidebar-content-divider { margin: 12px 7px 4px; border-top: 1px solid var(--border-soft); }");
     expect(styles).toContain(".pinned-heading > span, .projects-heading > span, .chats-heading > span { color: var(--subtle); font-weight: 650; }");
+    expect(styles).toContain(".project-row, .task-row, .chat-row { width: 100%; display: flex; align-items: center; gap: 8px; min-width: 0; background: transparent; color: var(--text);");
     expect(html).not.toContain("<kbd>Ctrl N</kbd>");
     expect(styles).toContain(".project-tree { display: grid; gap: 1px; }");
     expect(styles).toContain(".section-heading, .project-row, .task-row, .chat-row { font-size: 13.5px; }");
