@@ -190,9 +190,11 @@ describe("desktop renderer shell", () => {
     expect(projectSidebar).toContain('this.#treeItem(session.title, "task-row", undefined');
     expect(renderer).not.toContain("function chatIcon()");
     expect(styles).toContain("height: 42px; display: flex; align-items: center");
+    expect(html).toContain('class="sidebar-section projects-section"');
     expect(html).toContain('class="section-heading projects-heading"');
     expect(styles).toContain(".projects-heading #new-project { opacity: 0; pointer-events: none;");
-    expect(styles).toContain(".projects-heading > span { color: var(--grey-800); font-weight: 650; }");
+    expect(styles).toContain(".projects-section { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--border-soft); }");
+    expect(styles).toContain(".projects-heading > span, .chats-heading > span { color: var(--muted); font-weight: 650; }");
     expect(styles).toContain(".project-tree { display: grid; gap: 1px; }");
     expect(styles).toContain(".task-row { padding: 4px 34px 4px 30px;");
     expect(tokensCss).toContain("--sidebar-item-radius: 7px");
@@ -687,7 +689,7 @@ describe("desktop renderer shell", () => {
     expect(projects).toContain("startChat(session: SessionRecord): void");
     expect(projects).toContain('else if (this.chatRecords.some((chat) => chat.id === id)) this.currentProjectIdValue = undefined');
     expect(styles).toContain(".chat-row { padding: 4px 34px 4px 9px; font-size: 13.5px; }");
-    expect(styles).toContain(".chats-heading > span { color: var(--grey-800); font-weight: 650; }");
+    expect(styles).toContain(".projects-heading > span, .chats-heading > span { color: var(--muted); font-weight: 650; }");
   });
 
   it("clears the starter screen and reports unobtrusive work progress before output arrives", () => {

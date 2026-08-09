@@ -1,8 +1,8 @@
 .sidebar-section { margin-top: 16px; min-height: 0; overflow: auto; }
 .sidebar-section + .sidebar-section { margin-top: 10px; }
+.projects-section { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--border-soft); }
 .section-heading { height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 0 7px; color: var(--muted); font-size: 13px; }
-.projects-heading > span { color: var(--grey-800); font-weight: 650; }
-.chats-heading > span { color: var(--grey-800); font-weight: 650; }
+.projects-heading > span, .chats-heading > span { color: var(--muted); font-weight: 650; }
 .projects-heading #new-project { opacity: 0; pointer-events: none; transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease; }
 .projects-heading:hover #new-project, .projects-heading:focus-within #new-project, #new-project:focus-visible { opacity: 1; pointer-events: auto; }
 .project-tree { display: grid; gap: 1px; }
