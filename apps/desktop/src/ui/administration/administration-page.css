@@ -27,6 +27,8 @@
 .host-startup-status { min-height: 50px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 11px; border-radius: var(--radius-lg); background: var(--grey-200); }
 .host-startup-status strong { font-size: 12px; font-weight: 520; }
 .host-startup-status span { color: var(--subtle); font-size: 10px; }
+.diagnostic-export-status { margin: -3px 0 10px; color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
+.diagnostic-export-status[data-state="error"] { color: var(--danger); }
 .admin-users { display: grid; gap: 8px; margin-top: 18px; }
 .admin-user { border-radius: var(--radius-lg); background: var(--grey-200); }
 .admin-user > summary { min-height: 62px; display: grid; grid-template-columns: minmax(0,1fr) 150px auto; align-items: center; gap: 12px; padding: 10px 13px; cursor: pointer; list-style: none; }

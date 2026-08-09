@@ -99,7 +99,7 @@ function setup(
     issuedPairingCode: node("strong"), issuedPairingExpiry: node("span"), copyPairingCode: node("button"),
     createUserForm: node("form"), createUserName: node("input"), createUserRole: node("select"), adminUsers: node("div"),
     toolPolicyForm: node("form"), toolPolicySubjectType: node("select"), toolPolicySubject: node("select"), toolPolicyName: node("input"), toolPolicyDecision: node("select"), toolPolicies: node("div"),
-    adminAuditEvents: node("div"), diagnosticGeneratedAt: node("p"), diagnosticSummary: node("div"), diagnosticMetrics: node("div"), diagnosticFailures: node("div"), exportDiagnostics: node("button"),
+    adminAuditEvents: node("div"), diagnosticGeneratedAt: node("p"), diagnosticSummary: node("div"), diagnosticMetrics: node("div"), diagnosticFailures: node("div"), diagnosticExportStatus: node("p"), exportDiagnostics: node("button"),
     adminTrash: node("div"), adminSnapshots: node("div"), adminToolActions: node("div"),
     emptyTrashButton: node("button"), gcRetentionButton: node("button"),
     emptyTrashConfirmation: node("div"), emptyTrashConfirmationText: node("span"), cancelEmptyTrash: node("button"), confirmEmptyTrash: node("button"),
@@ -385,12 +385,13 @@ describe("AdministrationPageController", () => {
   });
 
   it("exports the last diagnostics bundle through the bridge", async () => {
-    const { controller, elements, bridge, showToast } = setup();
+    const { controller, elements, bridge } = setup();
     await controller.load();
     bridge.saveDiagnostics.mockResolvedValue("C:\\Users\\me\\diagnostics.json");
     click(elements.exportDiagnostics);
     await vi.waitFor(() => expect(bridge.saveDiagnostics).toHaveBeenCalledWith(expect.stringContaining('"engine"')));
-    expect(showToast).toHaveBeenCalledWith("Diagnostics saved to C:\\Users\\me\\diagnostics.json");
+    expect(elements.diagnosticExportStatus.textContent).toBe("Saved to C:\\Users\\me\\diagnostics.json");
+    expect(elements.diagnosticExportStatus.getAttribute("role")).toBe("status");
   });
 
   it("collapses and expands administration sections from their header toggles", () => {
@@ -491,7 +492,7 @@ function setupWithSections(
     issuedPairingCode: node("strong"), issuedPairingExpiry: node("span"), copyPairingCode: node("button"),
     createUserForm: node("form"), createUserName: node("input"), createUserRole: node("select"), adminUsers: node("div"),
     toolPolicyForm: node("form"), toolPolicySubjectType: node("select"), toolPolicySubject: node("select"), toolPolicyName: node("input"), toolPolicyDecision: node("select"), toolPolicies: node("div"),
-    adminAuditEvents: node("div"), diagnosticGeneratedAt: node("p"), diagnosticSummary: node("div"), diagnosticMetrics: node("div"), diagnosticFailures: node("div"), exportDiagnostics: node("button"),
+    adminAuditEvents: node("div"), diagnosticGeneratedAt: node("p"), diagnosticSummary: node("div"), diagnosticMetrics: node("div"), diagnosticFailures: node("div"), diagnosticExportStatus: node("p"), exportDiagnostics: node("button"),
     adminTrash: node("div"), adminSnapshots: node("div"), adminToolActions: node("div"),
     emptyTrashButton: node("button"), gcRetentionButton: node("button"),
     emptyTrashConfirmation: node("div"), emptyTrashConfirmationText: node("span"), cancelEmptyTrash: node("button"), confirmEmptyTrash: node("button"),

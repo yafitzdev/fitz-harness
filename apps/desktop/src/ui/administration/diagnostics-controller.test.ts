@@ -5,12 +5,11 @@ import { DiagnosticsController, type DiagnosticsElements } from "./diagnostics-c
 function setup() {
   const elements: DiagnosticsElements = {
     generatedAt: document.createElement("p"), summary: document.createElement("div"), metrics: document.createElement("div"),
-    failures: document.createElement("div"), exportButton: document.createElement("button"),
+    failures: document.createElement("div"), exportStatus: document.createElement("p"), exportButton: document.createElement("button"),
   };
   const bridge = { saveDiagnostics: vi.fn(async () => "C:\\tmp\\diagnostics.json") };
-  const showToast = vi.fn();
-  const controller = new DiagnosticsController(elements, { bridge, showToast, errorMessage: (error) => String(error) });
-  return { controller, elements, bridge, showToast };
+  const controller = new DiagnosticsController(elements, { bridge, errorMessage: (error) => String(error) });
+  return { controller, elements, bridge };
 }
 
 beforeEach(() => document.body.replaceChildren());
@@ -33,11 +32,24 @@ describe("DiagnosticsController", () => {
   });
 
   it("exports the latest redacted bundle", async () => {
-    const { controller, elements, bridge, showToast } = setup();
+    const { controller, elements, bridge } = setup();
     controller.render({ generatedAt: "now", secret: "already-redacted-by-host" });
     elements.exportButton.click();
     await vi.waitFor(() => expect(bridge.saveDiagnostics).toHaveBeenCalledOnce());
     expect(String(bridge.saveDiagnostics.mock.calls[0]?.[0])).toContain("already-redacted-by-host");
-    expect(showToast).toHaveBeenCalledWith("Diagnostics saved to C:\\tmp\\diagnostics.json");
+    expect(elements.exportStatus.textContent).toBe("Saved to C:\\tmp\\diagnostics.json");
+    expect(elements.exportStatus.getAttribute("role")).toBe("status");
+  });
+
+  it("renders export failures inline", async () => {
+    const { controller, elements, bridge } = setup();
+    bridge.saveDiagnostics.mockRejectedValue(new Error("disk full"));
+    controller.render({ generatedAt: "now" });
+
+    elements.exportButton.click();
+
+    await vi.waitFor(() => expect(elements.exportStatus.textContent).toContain("disk full"));
+    expect(elements.exportStatus.getAttribute("role")).toBe("alert");
+    expect(elements.exportStatus.dataset.state).toBe("error");
   });
 });

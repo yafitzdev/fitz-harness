@@ -54,6 +54,7 @@ export interface AdministrationPageElements {
   diagnosticSummary: HTMLElement;
   diagnosticMetrics: HTMLElement;
   diagnosticFailures: HTMLElement;
+  diagnosticExportStatus: HTMLElement;
   exportDiagnostics: HTMLButtonElement;
   remoteAccessStatus: HTMLElement;
   remoteAccessConfirmation: HTMLElement;
@@ -132,10 +133,10 @@ export class AdministrationPageController {
       summary: elements.diagnosticSummary,
       metrics: elements.diagnosticMetrics,
       failures: elements.diagnosticFailures,
+      exportStatus: elements.diagnosticExportStatus,
       exportButton: elements.exportDiagnostics,
     }, {
       bridge: options.bridge,
-      showToast: options.showToast,
       errorMessage: options.errorMessage,
     });
     this.safetyRecovery = new SafetyRecoveryController({

@@ -9,12 +9,12 @@ export interface DiagnosticsElements {
   summary: HTMLElement;
   metrics: HTMLElement;
   failures: HTMLElement;
+  exportStatus: HTMLElement;
   exportButton: HTMLButtonElement;
 }
 
 export interface DiagnosticsOptions {
   bridge: DiagnosticsBridge;
-  showToast: (message: string) => void;
   errorMessage: (error: unknown) => string;
 }
 
@@ -71,11 +71,25 @@ export class DiagnosticsController {
   async #export(): Promise<void> {
     if (!this.#bundle) return;
     this.#elements.exportButton.disabled = true;
+    this.#elements.exportStatus.hidden = true;
+    this.#elements.exportStatus.removeAttribute("role");
+    delete this.#elements.exportStatus.dataset.state;
     try {
       const path = await this.#options.bridge.saveDiagnostics(JSON.stringify(this.#bundle, null, 2));
-      if (path) this.#options.showToast(`Diagnostics saved to ${path}`);
-    } catch (error) { this.#options.showToast(this.#options.errorMessage(error)); }
+      if (path) this.#showExportStatus(`Saved to ${path}`);
+    } catch (error) { this.#showExportStatus(this.#options.errorMessage(error), true); }
     finally { this.#elements.exportButton.disabled = false; }
+  }
+
+  #showExportStatus(message: string, error = false): void {
+    this.#elements.exportStatus.textContent = message;
+    this.#elements.exportStatus.hidden = false;
+    if (error) {
+      this.#elements.exportStatus.dataset.state = "error";
+      this.#elements.exportStatus.setAttribute("role", "alert");
+    } else {
+      this.#elements.exportStatus.setAttribute("role", "status");
+    }
   }
 }
 

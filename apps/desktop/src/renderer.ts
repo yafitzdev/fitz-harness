@@ -532,6 +532,7 @@ const administrationPageController = new AdministrationPageController({
   diagnosticSummary: element("diagnostic-summary"),
   diagnosticMetrics: element("diagnostic-metrics"),
   diagnosticFailures: element("diagnostic-failures"),
+  diagnosticExportStatus: element("diagnostic-export-status"),
   exportDiagnostics: element("export-diagnostics") as HTMLButtonElement,
   remoteAccessStatus: element("remote-access-status"),
   remoteAccessConfirmation: element("remote-access-confirmation"),
