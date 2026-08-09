@@ -21,6 +21,30 @@ describe("PiAgentRuntime", () => {
     expect(events).toEqual([{ type: "assistant.delta", text: "ready" }]);
   });
 
+  it("passes workspace mutation leasing through the session boundary", async () => {
+    const release = vi.fn();
+    const acquire = vi.fn(async () => release);
+    const runtime = new PiAgentRuntime({
+      cwd: "C:/project",
+      toolLease: acquire,
+      createSession: async (options) => {
+        let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+        return {
+        subscribe: (next) => { listener = next; return () => undefined; },
+        prompt: async () => {
+          const lease = await options.acquireToolLease!({ toolCallId: "edit-1", toolName: "edit", input: { path: "a.ts" } });
+          lease();
+          listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "done" } });
+        },
+        abort: async () => undefined,
+        dispose: () => undefined,
+      }; },
+    });
+    for await (const _event of runtime.run({ model: "fast", messages: [{ role: "user", content: "edit" }] }, undefined, { runId: "run-1" })) { /* consume */ }
+    expect(acquire).toHaveBeenCalledWith(expect.objectContaining({ cwd: "C:/project", runId: "run-1", toolName: "edit" }), expect.any(AbortSignal));
+    expect(release).toHaveBeenCalledOnce();
+  });
+
   it("resolves the context window per route when configured as a resolver", async () => {
     const seen: Array<{ routeId: string; contextWindow: number }> = [];
     const runtime = new PiAgentRuntime({

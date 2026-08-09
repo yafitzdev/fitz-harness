@@ -13,7 +13,7 @@ import {
 } from "@fitz/protocol";
 import { SecurityPolicyError, type AuthenticatedPrincipal, type SecurityService } from "@fitz/security";
 import type { ArtifactRepository, MediaJobEventEnvelope, SqliteStore } from "@fitz/storage";
-import { MediaJobAdmissionError, MediaJobCoordinator } from "./media-jobs.js";
+import { MediaCoordinatorClosedError, MediaJobAdmissionError, MediaJobCoordinator } from "./media-jobs.js";
 
 export interface RegisterMediaRoutesOptions {
   app: FastifyInstance;
@@ -357,7 +357,8 @@ function openAIError(error: unknown, type: string): OpenAIErrorResponse {
   return { error: { message: errorMessage(error), type } };
 }
 
-function mediaSubmissionStatus(error: unknown): 400 | 404 | 429 {
+function mediaSubmissionStatus(error: unknown): 400 | 404 | 429 | 503 {
+  if (error instanceof MediaCoordinatorClosedError) return 503;
   if (error instanceof RouteNotFoundError) return 404;
   if (error instanceof SecurityPolicyError || error instanceof MediaJobAdmissionError) return 429;
   return 400;

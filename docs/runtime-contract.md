@@ -25,15 +25,19 @@ The local GPU concurrency of one is a hard invariant, not a tuning default. A se
 cannot load or execute a model until the active request releases the lane. This protects a single-GPU
 host even when many devices or users submit concurrently.
 
-The outer native-agent queue is also bounded at 256 tasks. It serializes complete agent turns so tool
-effects from separate tasks do not interleave unexpectedly. Per-user security quotas are evaluated at
-admission. A full lane rejects synchronously with a retryable `429 resource_busy` response instead of
-returning an accepted stream that fails later or accepting unbounded work into memory. Capacity
-responses include `Retry-After` so clients can back off without inventing retry timing.
+The outer native-agent queue is also bounded at 256 tasks. It runs up to four independent Pi state
+machines concurrently, with one active state machine per authenticated owner by default. Their model
+subrequests still enter the single local-GPU lane. Mutating tools acquire a fair exclusive lease keyed
+by the canonical workspace root, so separate projects can progress concurrently while commands and
+edits against the same project never interleave. Read-only and media tools do not take this lease.
+Per-user security quotas are evaluated at admission. A full lane rejects synchronously with a retryable
+`429 resource_busy` response instead of returning an accepted stream that fails later or accepting
+unbounded work into memory. Capacity responses include `Retry-After` so clients can back off without
+inventing retry timing.
 
 Waiting work is owner-fair. Each lane preserves FIFO order within one authenticated owner, while
 round-robin selection across owners prevents one user's burst from monopolizing a shared host. The
-same policy applies to whole native-agent turns and to their underlying inference work. When
+same policy applies to agent state-machine admission and to underlying inference work. When
 authentication is disabled, local submissions intentionally share one owner bucket.
 
 Remote media never acquires a local lifecycle lease and cannot evict a resident local model. It uses a
@@ -50,8 +54,20 @@ but not local VRAM.
   owner-fair service order and every item includes its enqueue time.
 - Queued and active work can be cancelled. Cancellation requested during task startup is latched and
   applied as soon as the stream exists.
-- Host shutdown closes admission, cancels waiting work, aborts active work, and waits for both lanes
-  to settle before stopping the lifecycle manager.
+- Host shutdown closes admission, durably marks queued and active agent work interrupted/resumable,
+  cancels active media providers, awaits media event consumers and artifact finalizers, and only then
+  stops the scheduler, lifecycle manager, subscriptions, and SQLite. `SIGINT` and `SIGTERM` invoke this
+  same bounded close path.
+
+## Desktop host boundary
+
+- All Electron-main-to-host traffic uses one typed client. It validates request paths and methods,
+  reads the current device credential once per request, and distinguishes cancellation, retryable
+  timeout, and retryable network failure.
+- Ordinary API calls have a 30-second deadline, artifact materialization has 120 seconds, and explicit
+  cold-start recipe/media diagnostics have ten minutes. There are no unbounded desktop requests.
+- Destroying the renderer aborts its outstanding host call so a closed window cannot retain network,
+  memory, or host-side response work.
 
 ## Durability and recovery
 

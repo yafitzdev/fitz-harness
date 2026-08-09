@@ -5,10 +5,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { isAllowedExternalUrl, validateHostUrl, validateRequestPath } from "./security.js";
+import { isAllowedExternalUrl, validateHostUrl } from "./security.js";
 import { readProjectResource } from "./resource-preview.js";
 import electronUpdater from "electron-updater";
 import { HostStartupError, HostSupervisor } from "./host-supervisor.js";
+import { HostClient, hostRequestDeadline } from "./host-client.js";
 
 const { autoUpdater } = electronUpdater;
 const execFileAsync = promisify(execFile);
@@ -17,11 +18,30 @@ const directory = dirname(fileURLToPath(import.meta.url));
 const localHostPort = commandLineValue("host-port");
 const hostUrl = validateHostUrl(commandLineValue("host-url") ?? (localHostPort ? `http://127.0.0.1:${localHostPort}` : undefined) ?? process.env.FITZ_HOST_URL ?? "http://127.0.0.1:8787");
 let deviceToken = process.env.FITZ_DEVICE_TOKEN;
+const hostClient = new HostClient({ origin: hostUrl, getToken: () => deviceToken });
 interface DesktopUpdateStatus { state: "idle" | "checking" | "available" | "downloading" | "current" | "downloaded" | "error" | "development"; percent?: number; version?: string }
 let latestUpdateStatus: DesktopUpdateStatus = { state: app.isPackaged ? "idle" : "development" };
 interface StoredConsumerConnection { id: string; displayName: string; baseUrl: string; authType: "none" | "bearer"; apiKey?: string; template: string; models: Array<{ id: string; routeId: string; recipeId: string }>; mediaModels: Array<{ id: string; routeId: string; recipeId: string; modality: string; template: string }>; updatedAt: string }
 
-ipcMain.handle("fitz:request", async (_event, input: unknown) => { if (!isRecord(input)) throw new TypeError("Request must be an object"); const path = validateRequestPath(String(input.path ?? "")); const method = typeof input.method === "string" ? input.method.toUpperCase() : "GET"; if (!["GET", "POST", "PUT", "PATCH", "DELETE"].includes(method)) throw new Error("HTTP method is not allowed"); const responseType = input.responseType === "base64" ? "base64" : "text"; const response = await fetch(new URL(path, hostUrl), { method, headers: { accept: responseType === "base64" ? "*/*" : "application/json", ...(input.body !== undefined ? { "content-type": "application/json" } : {}), ...(deviceToken ? { authorization: `Bearer ${deviceToken}` } : {}) }, ...(input.body !== undefined ? { body: JSON.stringify(input.body) } : {}) }); return { status: response.status, body: responseType === "base64" ? Buffer.from(await response.arrayBuffer()).toString("base64") : await response.text() }; });
+ipcMain.handle("fitz:request", async (event, input: unknown) => {
+  if (!isRecord(input)) throw new TypeError("Request must be an object");
+  const path = String(input.path ?? "");
+  const responseType = input.responseType === "base64" ? "base64" : "text";
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  event.sender.once("destroyed", cancel);
+  try {
+    return await hostClient.request(path, {
+      ...(typeof input.method === "string" ? { method: input.method } : {}),
+      ...(input.body !== undefined ? { body: input.body } : {}),
+      responseType,
+      timeoutMs: hostRequestDeadline(path, responseType),
+      signal: controller.signal,
+    });
+  } finally {
+    event.sender.removeListener("destroyed", cancel);
+  }
+});
 ipcMain.handle("fitz:connection-info", () => ({ origin: new URL(hostUrl).origin }));
 ipcMain.handle("fitz:consumer-connections-list", () => loadConsumerConnections().map(publicConsumerConnection));
 ipcMain.handle("fitz:consumer-connection-save", async (_event, input: unknown) => {
@@ -83,7 +103,7 @@ ipcMain.handle("fitz:consumer-connections-sync", async () => {
 });
 ipcMain.handle("fitz:bootstrap-local-device", async () => {
   if (deviceToken || !isLoopbackHost(hostUrl) || !safeStorage.isEncryptionAvailable()) return false;
-  const response = await fetch(new URL("/api/v1/pairing/bootstrap", hostUrl), { method: "POST", headers: { accept: "application/json" } });
+  const response = await hostClient.fetch("/api/v1/pairing/bootstrap", { method: "POST", authenticated: false, timeoutMs: 15_000 });
   if (!response.ok) return false;
   const parsed = JSON.parse(await response.text()) as Record<string, unknown>;
   const data = isRecord(parsed.data) ? parsed.data : {};
@@ -93,7 +113,7 @@ ipcMain.handle("fitz:bootstrap-local-device", async () => {
   deviceToken = token;
   return true;
 });
-ipcMain.handle("fitz:pair-device", async (_event, input: unknown) => { if (!isRecord(input)) throw new TypeError("Pairing details must be an object"); const code = requireBoundedText(input.code, "Pairing code", 128); const displayName = requireBoundedText(input.displayName, "Display name", 100); const deviceName = requireBoundedText(input.deviceName, "Device name", 100); if (!safeStorage.isEncryptionAvailable()) return { status: 503, body: JSON.stringify({ error: "Secure credential storage is unavailable" }) }; const response = await fetch(new URL("/api/v1/pairing/redeem", hostUrl), { method: "POST", headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify({ code, displayName, deviceName }) }); const body = await response.text(); if (!response.ok) return { status: response.status, body }; const parsed = JSON.parse(body) as Record<string, unknown>; const data = isRecord(parsed.data) ? parsed.data : {}; const token = typeof data.token === "string" ? data.token : undefined; if (!token) return { status: 502, body: JSON.stringify({ error: "The host did not return a device credential" }) }; persistDeviceToken(token); deviceToken = token; const { token: _token, ...safeData } = data; return { status: response.status, body: JSON.stringify({ ...parsed, data: safeData }) }; });
+ipcMain.handle("fitz:pair-device", async (_event, input: unknown) => { if (!isRecord(input)) throw new TypeError("Pairing details must be an object"); const code = requireBoundedText(input.code, "Pairing code", 128); const displayName = requireBoundedText(input.displayName, "Display name", 100); const deviceName = requireBoundedText(input.deviceName, "Device name", 100); if (!safeStorage.isEncryptionAvailable()) return { status: 503, body: JSON.stringify({ error: "Secure credential storage is unavailable" }) }; const response = await hostClient.fetch("/api/v1/pairing/redeem", { method: "POST", authenticated: false, timeoutMs: 15_000, body: { code, displayName, deviceName } }); const body = await response.text(); if (!response.ok) return { status: response.status, body }; const parsed = JSON.parse(body) as Record<string, unknown>; const data = isRecord(parsed.data) ? parsed.data : {}; const token = typeof data.token === "string" ? data.token : undefined; if (!token) return { status: 502, body: JSON.stringify({ error: "The host did not return a device credential" }) }; persistDeviceToken(token); deviceToken = token; const { token: _token, ...safeData } = data; return { status: response.status, body: JSON.stringify({ ...parsed, data: safeData }) }; });
 ipcMain.handle("fitz:open-external", async (_event, url: unknown) => { if (typeof url !== "string" || !isAllowedExternalUrl(url)) throw new Error("External URL is not allowed"); await shell.openExternal(url); });
 ipcMain.handle("fitz:choose-folder", async () => { const result = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] }); return result.canceled ? undefined : result.filePaths[0]; });
 ipcMain.handle("fitz:open-path", async (_event, path: unknown) => { if (typeof path !== "string" || !isAbsolute(path)) throw new Error("A valid absolute path is required"); const error = await shell.openPath(path); if (error) throw new Error(error); });
@@ -171,7 +191,7 @@ function parseConsumerMediaModels(value: unknown): Array<{ id: string; routeId: 
 function requireConsumerTemplate(value: unknown): string { if (value === undefined) return "openai-compatible"; if (typeof value === "string" && (value === "openai-compatible" || value === "openai-media" || value === "fal" || value === "replicate")) return value; throw new Error("Template must be openai-compatible, openai-media, fal, or replicate"); }
 function requireModelIds(value: unknown): string[] { if (value === undefined) return []; if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !item.trim() || item.trim().length > 200)) throw new Error("Model IDs must be an array of strings"); return [...new Set(value.map((item) => (item as string).trim()).filter(Boolean))]; }
 function requireConsumerBaseUrl(value: unknown): string { const text = requireBoundedText(value, "Base URL", 2048); const url = new URL(text); if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Base URL must use HTTP or HTTPS"); if (url.username || url.password || url.search || url.hash) throw new Error("Base URL must not contain credentials, a query, or a fragment"); return url.toString().replace(/\/$/, ""); }
-async function trustedHostRequest(path: string, method: string, body?: unknown): Promise<Response> { return fetch(new URL(validateRequestPath(path), hostUrl), { method, headers: { accept: "application/json", ...(body !== undefined ? { "content-type": "application/json" } : {}), ...(deviceToken ? { authorization: `Bearer ${deviceToken}` } : {}) }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) }); }
+async function trustedHostRequest(path: string, method: string, body?: unknown): Promise<Response> { return hostClient.fetch(path, { method, ...(body !== undefined ? { body } : {}) }); }
 async function parseHostResponse(response: Response): Promise<Record<string, unknown>> { const content = await response.text(); if (!response.ok) throw new Error(hostError(content)); const parsed = content ? JSON.parse(content) as unknown : {}; if (!isRecord(parsed)) throw new Error("The Fitz host returned an invalid response"); return parsed; }
 function hostError(content: string): string { try { const parsed = JSON.parse(content) as unknown; if (isRecord(parsed) && isRecord(parsed.error) && typeof parsed.error.message === "string") return parsed.error.message; } catch {} return "The Fitz host returned an invalid error response"; }
 async function runGit(root: string, args: string[]): Promise<string> { const result = await execFileAsync("git", ["-C", root, ...args], { windowsHide: true, maxBuffer: 1_000_000 }); return result.stdout.trim(); }

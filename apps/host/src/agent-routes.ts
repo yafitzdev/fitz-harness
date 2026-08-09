@@ -4,7 +4,7 @@ import { parseChatCompletionRequest, PROTOCOL_VERSION, type AgentRunCheckpoint, 
 import { SecurityPolicyError, type AuthenticatedPrincipal, type SecurityService } from "@fitz/security";
 import type { SqliteStore } from "@fitz/storage";
 import type { ContextManager } from "@fitz/context";
-import { AgentQueueCapacityError, type AgentRunCoordinator } from "./agent-runs.js";
+import { AgentCoordinatorClosedError, AgentQueueCapacityError, type AgentRunCoordinator } from "./agent-runs.js";
 
 export interface RegisterAgentRoutesOptions {
   app: FastifyInstance;
@@ -72,7 +72,7 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
       });
     } catch (error) {
       if (error instanceof AgentQueueCapacityError) reply.header("retry-after", "2");
-      return reply.code(error instanceof SecurityPolicyError || error instanceof AgentQueueCapacityError ? 429 : error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) });
+      return reply.code(error instanceof AgentCoordinatorClosedError ? 503 : error instanceof SecurityPolicyError || error instanceof AgentQueueCapacityError ? 429 : error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) });
     }
   });
 
@@ -192,7 +192,7 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
       } catch (error) { store.setAgentRunResumable(sourceRunId, true); throw error; }
     } catch (error) {
       if (error instanceof AgentQueueCapacityError) reply.header("retry-after", "2");
-      return reply.code(error instanceof SecurityPolicyError || error instanceof AgentQueueCapacityError ? 429 : error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) });
+      return reply.code(error instanceof AgentCoordinatorClosedError ? 503 : error instanceof SecurityPolicyError || error instanceof AgentQueueCapacityError ? 429 : error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) });
     }
   });
 

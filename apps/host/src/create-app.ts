@@ -46,7 +46,7 @@ import { ArtifactRepository, MemoryBlobStore, SqliteStore, type StorageDurabilit
 import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
 import { DownloadNotFoundError, type ModelCatalogService } from "./model-catalog.js";
 import { AgentRunCoordinator } from "./agent-runs.js";
-import { MediaJobAdmissionError, MediaJobCoordinator } from "./media-jobs.js";
+import { MediaCoordinatorClosedError, MediaJobAdmissionError, MediaJobCoordinator } from "./media-jobs.js";
 import type { AgentRuntime } from "@fitz/agent-core";
 import type { PiPackageService } from "@fitz/agent-pi";
 import { ContextManager } from "@fitz/context";
@@ -127,6 +127,11 @@ export interface CreateHostOptions {
   agentRuntime?: AgentRuntime;
   /** Maximum number of whole agent turns admitted at once (running + queued). */
   agentQueueCapacity?: number;
+  /** Independent Pi state machines allowed at once. GPU inference remains
+   * serialized by the scheduler; this keeps tool and remote-model work moving. */
+  agentConcurrency?: number;
+  /** Prevent one authenticated user from occupying every agent state machine. */
+  agentConcurrencyPerOwner?: number;
   /** Bounded inference-lane capacities. Production defaults are intentionally
    * conservative; tests and managed deployments may lower them explicitly. */
   schedulerOptions?: InferenceSchedulerOptions;
@@ -251,8 +256,10 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     store,
     scheduler,
     options.agentRuntime,
-    options.safety ? (runId) => void options.safety!.collect().catch(() => undefined) : undefined,
+    options.safety ? () => options.safety!.collect().then(() => undefined) : undefined,
     options.agentQueueCapacity,
+    options.agentConcurrency,
+    options.agentConcurrencyPerOwner,
   );
   const mediaJobs = new MediaJobCoordinator({ store, artifacts, scheduler, routes, ...(security ? { security } : {}) });
   const mediaImageTimeoutMs = options.mediaImageTimeoutMs ?? 120_000;
@@ -873,7 +880,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         };
       } catch (error) {
         if (error instanceof MediaJobAdmissionError) reply.header("retry-after", "2");
-        const statusCode = error instanceof RecipeNotFoundError ? 404 : error instanceof MediaJobAdmissionError ? 429 : error instanceof TypeError ? 400 : error instanceof MediaGenerationTimeoutError ? 504 : 502;
+        const statusCode = error instanceof RecipeNotFoundError ? 404 : error instanceof MediaCoordinatorClosedError ? 503 : error instanceof MediaJobAdmissionError ? 429 : error instanceof TypeError ? 400 : error instanceof MediaGenerationTimeoutError ? 504 : 502;
         return reply.code(statusCode).send({ error: errorMessage(error) });
       }
     },
@@ -1001,6 +1008,8 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   app.get("/api/v1/management/tool-actions", { preHandler: administratorGuard }, async (request, reply) => { try { if (!safety) throw new Error("Safety layer is unavailable"); const query = request.query as { limit?: string }; return { data: safety.listToolActions(Math.min(toNonNegativeInteger(query.limit, 200), 1000)) }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
 
   app.addHook("onClose", async () => {
+    await agentRuns.shutdown();
+    await mediaJobs.shutdown();
     await lifecycle.cancelPreparations();
     await scheduler.shutdown();
     unsubscribeMetrics();

@@ -294,6 +294,19 @@ describe("Fitz host media jobs", () => {
     }
   });
 
+  it("drains in-flight provider cancellation before the host closes storage", async () => {
+    const mediaFake = new FakeMediaEngineAdapter({ progressPerPoll: 0.00001 });
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), mediaFake] });
+    await registerMediaRecipe(runtime, "shutdown-img", ["image"]);
+    await assignRoute(runtime, "image", "shutdown-img");
+    const submitted = await runtime.app.inject({ method: "POST", url: "/api/v1/media/jobs", payload: { routeId: "image", modality: "image", params: { prompt: "shutdown render" } } });
+    expect(submitted.statusCode, submitted.body).toBe(202);
+    await waitFor(() => mediaFake.submitted.length === 1);
+
+    await expect(runtime.app.close()).resolves.toBeUndefined();
+    expect(mediaFake.cancelled).toEqual([{ instanceId: expect.any(String), jobId: "provider-1" }]);
+  });
+
   it("replays job events as SSE and after a sequence", async () => {
     const runtime = createHost({ adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter()] });
     try {

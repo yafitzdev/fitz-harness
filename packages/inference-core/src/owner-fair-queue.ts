@@ -38,15 +38,30 @@ export class OwnerFairQueue<T> {
   }
 
   dequeue(): T | undefined {
-    const owner = this.#owners.shift();
-    if (owner === undefined) return undefined;
-    const bucket = this.#buckets.get(owner);
-    const item = bucket?.shift();
-    if (!bucket || item === undefined) throw new Error(`Fair queue bucket disappeared: ${owner}`);
-    this.#lastServedOwner = owner;
-    if (bucket.length > 0) this.#owners.push(owner);
-    else this.#buckets.delete(owner);
-    return item;
+    return this.dequeueWhere(() => true);
+  }
+
+  /** Dequeue the next fair item whose owner is currently eligible. Owners
+   * that cannot run yet retain their place in the round-robin order. */
+  dequeueWhere(predicate: (item: T) => boolean): T | undefined {
+    const ownersToInspect = this.#owners.length;
+    for (let inspected = 0; inspected < ownersToInspect; inspected += 1) {
+      const owner = this.#owners.shift();
+      if (owner === undefined) return undefined;
+      const bucket = this.#buckets.get(owner);
+      const item = bucket?.[0];
+      if (!bucket || item === undefined) throw new Error(`Fair queue bucket disappeared: ${owner}`);
+      if (!predicate(item)) {
+        this.#owners.push(owner);
+        continue;
+      }
+      bucket.shift();
+      this.#lastServedOwner = owner;
+      if (bucket.length > 0) this.#owners.push(owner);
+      else this.#buckets.delete(owner);
+      return item;
+    }
+    return undefined;
   }
 
   remove(item: T): boolean {

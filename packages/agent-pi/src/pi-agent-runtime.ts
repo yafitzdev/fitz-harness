@@ -7,6 +7,7 @@ import { Type } from "typebox";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { ToolLeaseAcquirer, ToolLeaseRelease } from "./workspace-mutation-leases.js";
 
 type PiEvent =
   | { type: "message_start"; message: { role?: string; content?: unknown } }
@@ -61,6 +62,8 @@ export type PiSessionFactory = (options: {
   sessionReader?: PiSessionReader;
   /** Deterministic policy evaluation. When present it runs before `approveTool` for every tool call. */
   evaluateTool?: (request: PiToolCall) => Promise<ToolEvaluation>;
+  /** Acquire an exclusive lease immediately before an allowed mutating tool executes. */
+  acquireToolLease?: (request: PiToolCall) => Promise<ToolLeaseRelease>;
   /** Post-execution redaction of tool results before the model sees them. */
   redactResult?: ToolResultRedactor;
   /** Extra tools registered per run (e.g. `fitz_trash`). */
@@ -83,6 +86,8 @@ export interface PiAgentRuntimeOptions {
   sessionReader?: PiSessionReader;
   /** Deterministic host policy engine; evaluated for every non-read-only tool call before any approval gate. */
   toolPolicy?: ToolEvaluator;
+  /** Coordinates workspace-mutating tools across concurrent agent runs. */
+  toolLease?: ToolLeaseAcquirer;
   /** Redacts secrets from tool results before the model reads them. */
   redactToolResult?: ToolResultRedactor;
   /** Extra tools to register for each run; called with the run's resolved working directory. */
@@ -119,6 +124,7 @@ export class PiAgentRuntime implements AgentRuntime {
   readonly #llmRoot: string;
   readonly #sessionReader: PiSessionReader | undefined;
   readonly #toolPolicy: ToolEvaluator | undefined;
+  readonly #toolLease: ToolLeaseAcquirer | undefined;
   readonly #redactToolResult: ToolResultRedactor | undefined;
   readonly #customTools: ((context: { cwd: string; runId?: string }) => ToolDefinition[]) | undefined;
   readonly #forwardWorkContext: boolean;
@@ -135,6 +141,7 @@ export class PiAgentRuntime implements AgentRuntime {
     this.#llmRoot = options.llmRoot ?? process.env.FITZ_LLM_ROOT ?? `${process.cwd()}/.llm`;
     this.#sessionReader = options.sessionReader;
     this.#toolPolicy = options.toolPolicy;
+    this.#toolLease = options.toolLease;
     this.#redactToolResult = options.redactToolResult;
     this.#customTools = options.customTools;
     this.#forwardWorkContext = options.forwardWorkContext ?? false;
@@ -161,6 +168,9 @@ export class PiAgentRuntime implements AgentRuntime {
         ...(this.#sessionReader ? { sessionReader: this.#sessionReader } : {}),
         ...(this.#toolPolicy || this.#requestToolApproval
           ? { evaluateTool: (toolCall) => this.#evaluateTool(cwd, request.accessMode ?? "full", request.sessionId, options?.runId, toolCall, controller.signal, channel) }
+          : {}),
+        ...(this.#toolLease
+          ? { acquireToolLease: (toolCall) => this.#toolLease!({ ...toolCall, cwd, ...(options?.runId ? { runId: options.runId } : {}) }, controller.signal) }
           : {}),
         ...(this.#redactToolResult ? { redactResult: this.#redactToolResult } : {}),
         ...(this.#customTools ? { customTools: this.#customTools({ cwd, ...(options?.runId ? { runId: options.runId } : {}) }) } : {}),
@@ -290,6 +300,7 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
       supportsStrictMode: true,
     },
   };
+  const activeToolLeases = new Map<string, ToolLeaseRelease>();
   const resourceLoader = new sdk.DefaultResourceLoader({
     cwd: options.cwd,
     agentDir: options.agentDir,
@@ -303,20 +314,28 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
       name: "fitz-tool-approval",
       hidden: true,
       factory: (pi) => {
+        const acquireLease = async (event: PiToolCall): Promise<undefined> => {
+          if (!options.acquireToolLease) return undefined;
+          activeToolLeases.get(event.toolCallId)?.();
+          activeToolLeases.set(event.toolCallId, await options.acquireToolLease(event));
+          return undefined;
+        };
         pi.on("tool_call", async (event) => {
           const unsafeReason = broadFilesystemScanReason(event.toolName, event.input);
           if (unsafeReason) return { block: true, reason: unsafeReason };
           if (options.evaluateTool) {
             const outcome = await options.evaluateTool({ toolCallId: event.toolCallId, toolName: event.toolName, input: event.input });
-            if (outcome.action === "allow") return undefined;
+            if (outcome.action === "allow") return acquireLease(event);
             if (outcome.action === "block") return { block: true, reason: outcome.reason };
-            if (outcome.action === "rewrite") { Object.assign(event.input, outcome.input); return undefined; }
+            if (outcome.action === "rewrite") { Object.assign(event.input, outcome.input); return acquireLease(event); }
             // "ask": fall through to the approval gate.
           }
           const decision = await options.approveTool({ toolCallId: event.toolCallId, toolName: event.toolName, input: event.input });
-          return decision.allowed ? undefined : { block: true, reason: decision.reason ?? "Tool execution denied" };
+          return decision.allowed ? acquireLease(event) : { block: true, reason: decision.reason ?? "Tool execution denied" };
         });
         pi.on("tool_result", (event) => {
+          activeToolLeases.get(event.toolCallId)?.();
+          activeToolLeases.delete(event.toolCallId);
           if (!options.redactResult) return undefined;
           const redacted = options.redactResult({ toolName: event.toolName, content: event.content });
           return redacted ? { content: redacted as typeof event.content } : undefined;
@@ -346,7 +365,18 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
       : {}),
     sessionManager: sdk.SessionManager.inMemory(options.cwd),
   });
-  return result.session as PiSession;
+  const session = result.session as PiSession;
+  return {
+    subscribe: (listener) => session.subscribe(listener),
+    prompt: (text) => session.prompt(text),
+    steer: (text) => session.steer(text),
+    abort: () => session.abort(),
+    dispose: () => {
+      for (const release of activeToolLeases.values()) release();
+      activeToolLeases.clear();
+      session.dispose();
+    },
+  };
 }
 
 function workContextHeaders(context: AgentRuntimeRunOptions): Record<string, string> {

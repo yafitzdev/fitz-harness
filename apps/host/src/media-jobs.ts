@@ -57,6 +57,13 @@ export class MediaJobAdmissionError extends Error {
   }
 }
 
+export class MediaCoordinatorClosedError extends Error {
+  constructor() {
+    super("Media generation is shutting down");
+    this.name = "MediaCoordinatorClosedError";
+  }
+}
+
 /** Durable media job service (§5.6): submit/poll/cancel over bounded resource lanes,
  *  sequenced event persistence (`media_job_events`), artifact write-back on
  *  completion, credit ledger append, quota enforcement, and restart recovery
@@ -68,7 +75,9 @@ export class MediaJobCoordinator {
   readonly #routes: RouteResolver;
   readonly #security: SecurityService | undefined;
   readonly #active = new Map<string, ScheduledMediaJob>();
+  readonly #consumers = new Map<string, Promise<void>>();
   readonly #listeners = new Map<string, Set<(event: MediaJobEventEnvelope) => void>>();
+  #accepting = true;
 
   constructor(options: MediaJobCoordinatorOptions) {
     this.#store = options.store;
@@ -82,6 +91,7 @@ export class MediaJobCoordinator {
    *  The job's id is the scheduler's job id, so the durable record and the queue
    *  slot always agree. Returns the freshly created queued record. */
   submit(input: MediaSubmitInput, principal?: AuthenticatedPrincipal): MediaJobRecord {
+    if (!this.#accepting) throw new MediaCoordinatorClosedError();
     const { route, recipe } = this.#routes.resolve(input.routeId); // throws RouteNotFoundError when missing or disabled
     const kind = route.kind ?? "chat";
     if (kind !== input.modality) {
@@ -137,7 +147,12 @@ export class MediaJobCoordinator {
     this.#active.set(id, scheduled);
     // The channel buffers everything pushed before this consumer attaches, so the
     // durable record always exists before any of its events are persisted.
-    void this.#consume(id, scheduled);
+    const consumer = this.#consume(id, scheduled);
+    this.#consumers.set(id, consumer);
+    void consumer.then(
+      () => this.#consumers.delete(id),
+      () => this.#consumers.delete(id),
+    );
     return this.#store.getMediaJob(id)!;
   }
 
@@ -170,6 +185,18 @@ export class MediaJobCoordinator {
     if (!scheduled) return false;
     scheduled.cancel();
     return true;
+  }
+
+  /** Stop admission, cancel provider work, and wait for every terminal event and
+   * artifact finalizer before the database or blob repository may close. */
+  async shutdown(): Promise<void> {
+    if (!this.#accepting) {
+      await Promise.allSettled([...this.#consumers.values()]);
+      return;
+    }
+    this.#accepting = false;
+    for (const scheduled of this.#active.values()) scheduled.cancel();
+    await Promise.allSettled([...this.#consumers.values()]);
   }
 
   async #consume(id: string, scheduled: ScheduledMediaJob): Promise<void> {

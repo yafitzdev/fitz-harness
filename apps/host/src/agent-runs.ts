@@ -11,24 +11,34 @@ interface AgentQueueJob {
   ownerUserId?: string;
   stream: AgentRuntimeRun | ScheduledStream | undefined;
   cancelRequested: boolean;
+  shutdownRequested: boolean;
 }
 
 export class AgentQueueCapacityError extends Error {
   constructor() { super("The agent request queue is at capacity"); this.name = "AgentQueueCapacityError"; }
 }
 
+export class AgentCoordinatorClosedError extends Error {
+  constructor() { super("The agent runtime is shutting down"); this.name = "AgentCoordinatorClosedError"; }
+}
+
 export class AgentRunCoordinator {
   readonly #queue = new OwnerFairQueue<AgentQueueJob>((job) => job.ownerUserId ?? "local");
   readonly #listeners = new Map<string, Set<(event: AgentEventEnvelope) => void>>();
-  #current: AgentQueueJob | undefined;
-  #processing = false;
+  readonly #active = new Map<string, AgentQueueJob>();
+  readonly #tasks = new Set<Promise<void>>();
+  readonly #completionTasks = new Set<Promise<void>>();
+  #accepting = true;
   /** Fired once per run after it reaches a terminal state, so the safety layer can sweep retention. */
-  constructor(private readonly store: SqliteStore, private readonly scheduler: InferenceScheduler, private readonly runtime?: AgentRuntime, private readonly onRunCompleted?: (runId: string) => void, private readonly maxDepth = 256) {
+  constructor(private readonly store: SqliteStore, private readonly scheduler: InferenceScheduler, private readonly runtime?: AgentRuntime, private readonly onRunCompleted?: (runId: string) => void | Promise<void>, private readonly maxDepth = 256, private readonly maxConcurrent = 4, private readonly maxConcurrentPerOwner = 1) {
     if (!Number.isInteger(maxDepth) || maxDepth < 1) throw new TypeError("Agent queue capacity must be a positive integer");
+    if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1) throw new TypeError("Agent concurrency must be a positive integer");
+    if (!Number.isInteger(maxConcurrentPerOwner) || maxConcurrentPerOwner < 1) throw new TypeError("Per-owner agent concurrency must be a positive integer");
   }
 
   start(request: AgentRunRequest, ownerUserId?: string, canonicalMessages = request.messages, durableRequest = request, resumeOfRunId?: string): AgentRunRecord {
-    if (this.#queue.length + (this.#current ? 1 : 0) >= this.maxDepth) throw new AgentQueueCapacityError();
+    if (!this.#accepting) throw new AgentCoordinatorClosedError();
+    if (this.#queue.length + this.#active.size >= this.maxDepth) throw new AgentQueueCapacityError();
     const id = randomUUID(); const now = new Date().toISOString();
     const run: AgentRunRecord = { id, routeId: request.model, status: "queued", createdAt: now, updatedAt: now, lastSequence: 0, ...(ownerUserId ? { ownerUserId } : {}), ...(request.sessionId ? { sessionId: request.sessionId } : {}) };
     // Claim the client request identity before adding canonical messages. A
@@ -44,7 +54,7 @@ export class AgentRunCoordinator {
       catch { this.store.updateAgentRun(id, "failed", message); /* the original storage failure remains primary */ }
       throw error;
     }
-    this.#queue.enqueue({ id, request, stream: undefined, cancelRequested: false, ...(ownerUserId ? { ownerUserId } : {}) }); this.#publishQueue(); void this.#pump();
+    this.#queue.enqueue({ id, request, stream: undefined, cancelRequested: false, shutdownRequested: false, ...(ownerUserId ? { ownerUserId } : {}) }); this.#publishQueue(); this.#pump();
     return this.store.getAgentRun(id)!;
   }
 
@@ -52,49 +62,88 @@ export class AgentRunCoordinator {
   getSessionRecovery(sessionId: string): AgentRunRecord | undefined { return this.store.latestSessionAgentRun(sessionId); }
   list(ownerUserId?: string, limit = 100): AgentRunRecord[] { return this.store.listAgentRuns(ownerUserId, limit); }
   queue(ownerUserId?: string): AgentQueueItem[] {
-    const jobs = [...(this.#current ? [this.#current] : []), ...this.#queue.values()]; const depth = jobs.length;
+    const active = [...this.#active.values()]; const queued = this.#queue.values(); const jobs = [...active, ...queued]; const depth = jobs.length;
     return jobs.map((job, index) => {
       const run = this.store.getAgentRun(job.id)!; const session = run.sessionId ? this.store.getSession(run.sessionId) : undefined; const project = session?.projectId ? this.store.getProject(session.projectId) : undefined;
-      const status: AgentQueueItem["status"] = job === this.#current ? "running" : "queued";
-      return { runId: job.id, routeId: run.routeId, status, position: job === this.#current ? 0 : index, depth, createdAt: run.createdAt, ...(run.ownerUserId ? { ownerUserId: run.ownerUserId } : {}), ...(run.sessionId ? { sessionId: run.sessionId } : {}), ...(session ? { sessionTitle: session.title } : {}), ...(project ? { projectName: project.name } : {}) };
+      const status: AgentQueueItem["status"] = this.#active.has(job.id) ? "running" : "queued";
+      return { runId: job.id, routeId: run.routeId, status, position: status === "running" ? 0 : index - active.length + 1, depth, createdAt: run.createdAt, ...(run.ownerUserId ? { ownerUserId: run.ownerUserId } : {}), ...(run.sessionId ? { sessionId: run.sessionId } : {}), ...(session ? { sessionTitle: session.title } : {}), ...(project ? { projectName: project.name } : {}) };
     }).filter((item) => !ownerUserId || item.ownerUserId === ownerUserId);
   }
   eventsAfter(id: string, after: number): AgentEventEnvelope[] { return this.store.agentEventsAfter(id, after); }
   subscribe(id: string, listener: (event: AgentEventEnvelope) => void): () => void { const listeners = this.#listeners.get(id) ?? new Set(); listeners.add(listener); this.#listeners.set(id, listeners); return () => { listeners.delete(listener); if (listeners.size === 0) this.#listeners.delete(id); }; }
   cancel(id: string): boolean {
-    if (this.#current?.id === id) {
-      this.#current.cancelRequested = true;
-      this.#current.stream?.cancel();
+    const active = this.#active.get(id);
+    if (active) {
+      active.cancelRequested = true;
+      active.stream?.cancel();
       return true;
     }
     const job = this.#queue.values().find((candidate) => candidate.id === id); if (!job || !this.#queue.remove(job)) return false;
-    this.#emit(id, "run.cancelled", { queued: true }); this.#publishQueue(); this.onRunCompleted?.(id); return true;
+    this.#emit(id, "run.cancelled", { queued: true }); this.#publishQueue(); this.#notifyCompletion(id); return true;
   }
   /** Queue a steering message into the currently running stream. The run must be actively streaming and its runtime must support steering. */
   async steer(runId: string, text: string): Promise<boolean> {
-    const job = this.#current;
-    if (!job || job.id !== runId) return false;
+    const job = this.#active.get(runId);
+    if (!job) return false;
     const stream = job.stream;
     if (!stream || typeof (stream as AgentRuntimeRun).steer !== "function") return false;
     await (stream as AgentRuntimeRun).steer!(text);
     return true;
   }
 
-  async #pump(): Promise<void> {
-    if (this.#processing) return; this.#processing = true;
+  /** Stop admission, mark queued work resumable, cancel active state machines,
+   * and wait until no run can write to storage anymore. */
+  async shutdown(): Promise<void> {
+    if (!this.#accepting) {
+      await Promise.allSettled([...this.#tasks]);
+      await Promise.allSettled([...this.#completionTasks]);
+      return;
+    }
+    this.#accepting = false;
+    for (let job = this.#queue.dequeue(); job; job = this.#queue.dequeue()) {
+      job.shutdownRequested = true;
+      this.#emit(job.id, "run.interrupted", { error: "host_shutdown", resumable: true, queued: true });
+      this.#notifyCompletion(job.id);
+    }
+    for (const job of this.#active.values()) {
+      job.shutdownRequested = true;
+      job.stream?.cancel();
+    }
+    this.#publishQueue();
+    await Promise.allSettled([...this.#tasks]);
+    await Promise.allSettled([...this.#completionTasks]);
+  }
+
+  #pump(): void {
+    while (this.#accepting && this.#active.size < this.maxConcurrent) {
+      const job = this.#queue.dequeueWhere((candidate) => this.#activeForOwner(candidate.ownerUserId) < this.maxConcurrentPerOwner);
+      if (!job) break;
+      this.#active.set(job.id, job);
+      this.#publishQueue();
+      const task = this.#runJob(job);
+      this.#tasks.add(task);
+      const settled = () => {
+        this.#tasks.delete(task);
+        this.#active.delete(job.id);
+        job.stream = undefined;
+        this.#publishQueue();
+        this.#pump();
+      };
+      void task.then(settled, settled);
+    }
+  }
+
+  async #runJob(job: AgentQueueJob): Promise<void> {
     try {
-      while (this.#queue.length > 0) {
-        const job = this.#queue.dequeue(); if (!job) continue; this.#current = job; this.#publishQueue();
-        try {
-          job.stream = this.#createStream(job.request, job.ownerUserId, job.id);
-          if (job.cancelRequested) job.stream.cancel();
-          await this.#consume(job.id, job.stream);
-          this.onRunCompleted?.(job.id);
-        }
-        catch (error) { const message = error instanceof Error ? error.message : String(error); this.#emit(job.id, "run.failed", { error: message }); this.onRunCompleted?.(job.id); }
-        finally { job.stream = undefined; this.#current = undefined; this.#publishQueue(); }
-      }
-    } finally { this.#processing = false; if (this.#queue.length > 0) void this.#pump(); }
+      job.stream = this.#createStream(job.request, job.ownerUserId, job.id);
+      if (job.cancelRequested || job.shutdownRequested) job.stream.cancel();
+      await this.#consume(job, job.stream);
+      this.#notifyCompletion(job.id);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.#emit(job.id, job.shutdownRequested ? "run.interrupted" : "run.failed", { error: job.shutdownRequested ? "host_shutdown" : message, ...(job.shutdownRequested ? { resumable: true } : {}) });
+      this.#notifyCompletion(job.id);
+    }
   }
 
   #createStream(request: AgentRunRequest, ownerUserId: string | undefined, runId: string): AgentRuntimeRun | ScheduledStream {
@@ -104,7 +153,8 @@ export class AgentRunCoordinator {
       ? this.runtime.run(request, undefined, { runId, ...(ownerUserId ? { ownerUserId } : {}), ...(request.sessionId ? { sessionId: request.sessionId } : {}) })
       : this.scheduler.enqueue(request.model, { messages: request.messages, ...(request.maxTokens !== undefined ? { maxTokens: request.maxTokens } : {}), ...(request.temperature !== undefined ? { temperature: request.temperature } : {}), ...(ownerUserId ? { userId: ownerUserId } : {}) }, undefined, { ...(ownerUserId ? { ownerUserId } : {}), ...(request.sessionId ? { sessionId: request.sessionId } : {}), runId, label: "Agent response" });
   }
-  async #consume(id: string, stream: AgentRuntimeRun | ScheduledStream): Promise<void> {
+  async #consume(job: AgentQueueJob, stream: AgentRuntimeRun | ScheduledStream): Promise<void> {
+    const id = job.id;
     this.#emit(id, "run.started", {});
     let assistantText = ""; let reasoningText = "";
     let assistantFrom = 0; let assistantThrough = 0; let reasoningFrom = 0; let reasoningThrough = 0;
@@ -121,12 +171,27 @@ export class AgentRunCoordinator {
         if (event.type === "user.steer") { const text = String(event.data.text ?? ""); const sessionId = this.store.getAgentRun(id)?.sessionId; if (sessionId && text) this.store.appendTranscriptEntry({ id: `agent-event:${id}:user-steer:${event.sequence}`, sessionId, kind: "message", role: "user", content: { text, runId: id, eventSequence: event.sequence }, createdAt: event.timestamp }); }
         this.#appendToolTranscript(id, event);
       }
-      flushAssistant("final"); flushReasoning(); this.#emit(id, "run.completed", {});
+      flushAssistant("final"); flushReasoning();
+      if (job.shutdownRequested) this.#emit(id, "run.interrupted", { error: "host_shutdown", resumable: true });
+      else if (job.cancelRequested) this.#emit(id, "run.cancelled", {});
+      else this.#emit(id, "run.completed", {});
     } catch (error) {
-      flushAssistant("final"); flushReasoning(); const cancelled = error instanceof Error && error.name === "AbortError"; const message = error instanceof Error ? error.message : String(error); this.#emit(id, cancelled ? "run.cancelled" : "run.failed", { error: message });
+      flushAssistant("final"); flushReasoning(); const cancelled = error instanceof Error && error.name === "AbortError"; const message = error instanceof Error ? error.message : String(error);
+      if (job.shutdownRequested) this.#emit(id, "run.interrupted", { error: "host_shutdown", resumable: true });
+      else this.#emit(id, cancelled || job.cancelRequested ? "run.cancelled" : "run.failed", { error: message });
     }
   }
-  #publishQueue(): void { const depth = this.#queue.length + (this.#current ? 1 : 0); if (this.#current) this.#emit(this.#current.id, "run.queue.updated", { status: "running", position: 0, depth }); this.#queue.values().forEach((job, index) => this.#emit(job.id, "run.queue.updated", { status: "queued", position: index + 1, depth })); }
+  #activeForOwner(ownerUserId: string | undefined): number { const owner = ownerUserId ?? "local"; return [...this.#active.values()].filter((job) => (job.ownerUserId ?? "local") === owner).length; }
+  #notifyCompletion(runId: string): void {
+    if (!this.onRunCompleted) return;
+    let task: Promise<void>;
+    try { task = Promise.resolve(this.onRunCompleted(runId)); }
+    catch { return; /* retention cleanup must never corrupt run state */ }
+    const guarded = task.catch(() => undefined);
+    this.#completionTasks.add(guarded);
+    void guarded.then(() => this.#completionTasks.delete(guarded));
+  }
+  #publishQueue(): void { const depth = this.#queue.length + this.#active.size; for (const job of this.#active.values()) this.#emit(job.id, "run.queue.updated", { status: "running", position: 0, depth }); this.#queue.values().forEach((job, index) => this.#emit(job.id, "run.queue.updated", { status: "queued", position: index + 1, depth })); }
   #emit(runId: string, type: AgentEventType, data: Record<string, unknown>): AgentEventEnvelope { const run = this.store.getAgentRun(runId); if (!run) throw new Error(`Agent run ${runId} disappeared`); const event: AgentEventEnvelope = { protocolVersion: AGENT_PROTOCOL_VERSION, runId, sequence: run.lastSequence + 1, timestamp: new Date().toISOString(), type, data }; this.store.appendAgentEvent(event); for (const listener of this.#listeners.get(runId) ?? []) listener(event); return event; }
   #appendAssistantTranscript(runId: string, text: string, phase: "commentary" | "final", fromSequence: number, eventSequence: number): void { const sessionId = this.store.getAgentRun(runId)?.sessionId; if (sessionId && text) this.store.appendTranscriptEntry({ id: `agent-event:${runId}:message:${fromSequence}-${eventSequence}`, sessionId, kind: "message", role: "assistant", content: { text, runId, phase, eventSequence }, createdAt: new Date().toISOString() }); }
   /** Reasoning is stored under its own transcript kind so it never round-trips into model context or renders as a chat message. */

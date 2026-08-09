@@ -39,4 +39,16 @@ describe("OwnerFairQueue", () => {
     expect(queue.remove(a1)).toBe(false);
     expect(queue.values().map((item) => item.id)).toEqual(["a2", "b1"]);
   });
+
+  it("skips temporarily ineligible owners without losing their queue position", () => {
+    const queue = new OwnerFairQueue<Item>((item) => item.owner);
+    queue.enqueue({ owner: "a", id: "a1" });
+    queue.enqueue({ owner: "a", id: "a2" });
+    queue.enqueue({ owner: "b", id: "b1" });
+
+    expect(queue.dequeueWhere((item) => item.owner !== "a")?.id).toBe("b1");
+    expect(queue.values().map((item) => item.id)).toEqual(["a1", "a2"]);
+    expect(queue.dequeueWhere(() => false)).toBeUndefined();
+    expect(queue.values().map((item) => item.id)).toEqual(["a1", "a2"]);
+  });
 });

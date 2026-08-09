@@ -15,7 +15,7 @@ import { createHost } from "./create-app.js";
 import { createMediaTools } from "./media-tools.js";
 import type { MediaJobCoordinator } from "./media-jobs.js";
 import { ModelCatalogService } from "./model-catalog.js";
-import { PiAgentRuntime, PiPackageService } from "@fitz/agent-pi";
+import { PiAgentRuntime, PiPackageService, WorkspaceMutationLeaseManager } from "@fitz/agent-pi";
 import { createNInferPlaybook } from "./ninfer-playbook.js";
 import { createComfyUIPlaybook } from "./comfyui-playbook.js";
 import { reconcileNInferConfiguration } from "./ninfer-reconcile.js";
@@ -28,6 +28,7 @@ import { AgentSafetyService } from "./agent-safety/index.js";
 import { localComfyUIPaths, localComfyUIRecipeIds, reconcileLocalComfyUIConfiguration } from "./comfyui-reconcile.js";
 import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
 import { HostInstanceLock } from "./host-instance-lock.js";
+import { installGracefulShutdown } from "./graceful-shutdown.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const runtimePaths = resolveRuntimePaths();
@@ -43,6 +44,8 @@ const reserveVramMiB = parseNonNegativeInteger(
 );
 const authMode = process.env.FITZ_AUTH_MODE === "disabled" ? "disabled" : "required";
 const agentRuntimeMode = process.env.FITZ_AGENT_RUNTIME ?? "pi";
+const agentConcurrency = parsePositiveInteger(process.env.FITZ_AGENT_CONCURRENCY ?? "4", "FITZ_AGENT_CONCURRENCY");
+const agentConcurrencyPerOwner = parsePositiveInteger(process.env.FITZ_AGENT_CONCURRENCY_PER_USER ?? "1", "FITZ_AGENT_CONCURRENCY_PER_USER");
 const agentBaseUrl = process.env.FITZ_AGENT_BASE_URL ?? `http://127.0.0.1:${port}/v1`;
 const internalAgentToken = agentRuntimeMode === "pi" && !process.env.FITZ_AGENT_BASE_URL ? randomBytes(32).toString("base64url") : undefined;
 
@@ -79,6 +82,7 @@ const safety = new AgentSafetyService({
 // Late-bound: the media coordinator is constructed inside createHost, but customTools
 // runs per agent run — after host startup — so the closure reads the assigned instance.
 let mediaJobs: MediaJobCoordinator | undefined;
+const workspaceMutationLeases = new WorkspaceMutationLeaseManager();
 const runtime = createHost({
   store,
   artifacts,
@@ -87,6 +91,8 @@ const runtime = createHost({
   resourcePolicy: { reserveVramMiB },
   authMode,
   safety,
+  agentConcurrency,
+  agentConcurrencyPerOwner,
   ...(security ? { security } : {}),
   ...(internalAgentToken ? { internalAgentToken } : {}),
   localPort: port,
@@ -121,6 +127,7 @@ const runtime = createHost({
       requestToolApproval: createToolApprovalRequester(store),
       sessionReader: createSessionReader(store),
       toolPolicy: safety.createToolEvaluator(),
+      toolLease: workspaceMutationLeases.acquire,
       redactToolResult: safety.createResultRedactor(),
       customTools: (context) => [
         ...safety.createCustomTools()(context),
@@ -135,7 +142,11 @@ const runtime = createHost({
   } : {}),
 });
 mediaJobs = runtime.mediaJobs;
-runtime.app.addHook("onClose", async () => hostInstanceLock.release());
+let removeSignalHandlers: () => void = () => undefined;
+runtime.app.addHook("onClose", async () => {
+  removeSignalHandlers();
+  await hostInstanceLock.release();
+});
 // On a fresh database createHost seeds the complete engine-mode recipe set first;
 // reconcile afterward so ComfyUI also gets its Playbooks registration without
 // suppressing the normal chat defaults.
@@ -143,6 +154,10 @@ if (storeInitiallyEmpty) reconcileLocalComfyUIConfiguration(store, runtimePaths)
 if (storeInitiallyEmpty) enforceModelResidency(store);
 
 await runtime.app.listen({ host, port });
+removeSignalHandlers = installGracefulShutdown(
+  () => runtime.app.close(),
+  { onError: (error) => runtime.app.log.error({ error }, "Graceful shutdown failed") },
+);
 
 function parsePort(value: string): number {
   const parsed = Number.parseInt(value, 10);
