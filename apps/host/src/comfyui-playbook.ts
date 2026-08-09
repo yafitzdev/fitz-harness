@@ -154,8 +154,8 @@ function recipe(input: {
     },
     lifecycle: {
       loadPolicy: "onDemand",
-      evictionPolicy: "idle-ttl",
-      idleTtlSeconds: 600,
+      evictionPolicy: "immediate",
+      idleTtlSeconds: 0,
       minimumResidencySeconds: 0,
     },
     configuration: input.configuration,

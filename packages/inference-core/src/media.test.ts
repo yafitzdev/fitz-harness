@@ -225,6 +225,7 @@ describe("InferenceScheduler media jobs", () => {
     const lifecycle = new LifecycleManager({
       adapters: new EngineAdapterRegistry([chatAdapter, mediaAdapter]),
       events,
+      thermalGuard: safeThermalGuard(),
     });
     const scheduler = new InferenceScheduler(
       new RouteResolver(
@@ -284,6 +285,7 @@ describe("InferenceScheduler media jobs", () => {
     const lifecycle = new LifecycleManager({
       adapters: new EngineAdapterRegistry([chatAdapter, mediaAdapter]),
       events,
+      thermalGuard: safeThermalGuard(),
     });
     const scheduler = new InferenceScheduler(
       new RouteResolver(
@@ -320,6 +322,7 @@ describe("InferenceScheduler media jobs", () => {
     const lifecycle = new LifecycleManager({
       adapters: new EngineAdapterRegistry([mediaAdapter]),
       events,
+      thermalGuard: safeThermalGuard(),
     });
     const scheduler = new InferenceScheduler(
       new RouteResolver([route("video", "media-recipe", "video")], [mediaRecipe("media-recipe", 60, "video")]),
@@ -332,10 +335,10 @@ describe("InferenceScheduler media jobs", () => {
     media.cancel();
 
     await expect(collectMedia(media.events)).rejects.toMatchObject({ name: "AbortError" });
-    await waitFor(() => lifecycle.snapshot().state === "READY");
+    await waitFor(() => lifecycle.snapshot().state === "UNLOADED");
 
     expect(mediaAdapter.cancelled).toEqual([{ instanceId: expect.any(String), jobId: "provider-1" }]);
-    expect(lifecycle.snapshot()).toMatchObject({ state: "READY", activeLeases: 0 });
+    expect(lifecycle.snapshot()).toMatchObject({ state: "UNLOADED", activeLeases: 0 });
   });
 
   it("marks the lifecycle FAILED on media failure and recovers on the next job", async () => {
@@ -344,6 +347,7 @@ describe("InferenceScheduler media jobs", () => {
     const lifecycle = new LifecycleManager({
       adapters: new EngineAdapterRegistry([mediaAdapter]),
       events,
+      thermalGuard: safeThermalGuard(),
     });
     const scheduler = new InferenceScheduler(
       new RouteResolver([route("video", "media-recipe", "video")], [mediaRecipe("media-recipe", 60, "video")]),
@@ -362,9 +366,12 @@ describe("InferenceScheduler media jobs", () => {
       scheduler.enqueueMedia("video", mediaInput("video", "recover")).events,
     );
     expect(recovered.some((event) => event.type === "completed")).toBe(true);
-    expect(lifecycle.snapshot().state).toBe("READY");
+    await waitFor(() => lifecycle.snapshot().state === "UNLOADED");
     expect(mediaAdapter.starts).toHaveLength(2);
-    expect(mediaAdapter.stops).toEqual([expect.objectContaining({ mode: "force" })]);
+    expect(mediaAdapter.stops).toEqual([
+      expect.objectContaining({ mode: "force" }),
+      expect.objectContaining({ mode: "graceful" }),
+    ]);
   });
 
   it("cancels and unloads a local media engine after a thermal safety failure", async () => {
@@ -406,12 +413,13 @@ describe("InferenceScheduler media jobs", () => {
     expect(lifecycle.snapshot()).toMatchObject({ state: "UNLOADED", activeLeases: 0 });
   });
 
-  it("holds the lease through the generation and evicts after the idle TTL", async () => {
+  it("evicts media immediately even when the recipe declares an idle TTL", async () => {
     const clock = new ManualClock(Date.UTC(2026, 6, 31));
     const mediaAdapter = new MediaFakeEngineAdapter();
     const lifecycle = new LifecycleManager({
       adapters: new EngineAdapterRegistry([mediaAdapter]),
       clock,
+      thermalGuard: safeThermalGuard(),
     });
     const scheduler = new InferenceScheduler(
       new RouteResolver([route("video", "media-recipe", "video")], [mediaRecipe("media-recipe", 5, "video")]),
@@ -425,9 +433,7 @@ describe("InferenceScheduler media jobs", () => {
     expect(lifecycle.snapshot()).toMatchObject({ state: "READY", activeLeases: 0 });
     expect(mediaAdapter.starts).toHaveLength(1);
 
-    await clock.advanceBy(4_999);
-    expect(lifecycle.snapshot().state).toBe("READY");
-    await clock.advanceBy(1);
+    await clock.advanceBy(0);
     expect(lifecycle.snapshot().state).toBe("UNLOADED");
     expect(mediaAdapter.stops).toHaveLength(1);
   });
@@ -438,6 +444,24 @@ function mediaResult(modality: MediaModality): MediaGenerationResult {
   const mimeType =
     modality === "image" ? "image/png" : modality === "video" ? "video/mp4" : "audio/wav";
   return { data, mimeType, byteSize: data.byteLength };
+}
+
+function safeThermalGuard(): GpuThermalGuard {
+  return new GpuThermalGuard({
+    snapshot: async () => ({
+      capturedAt: new Date(0).toISOString(),
+      totalRamMiB: 64_000,
+      freeRamMiB: 32_000,
+      totalVramMiB: 32_000,
+      usedVramMiB: 1_000,
+      freeVramMiB: 31_000,
+      gpuTemperatureC: 74,
+      gpuPowerLimitW: 400,
+      gpuMinPowerLimitW: 400,
+      gpuMaxPowerLimitW: 450,
+      gpuTelemetryAvailable: true,
+    }),
+  });
 }
 
 function mediaInput(modality: MediaModality, prompt: string): Omit<MediaGenerationRequest, "id" | "routeId"> {

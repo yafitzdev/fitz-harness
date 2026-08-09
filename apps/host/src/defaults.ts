@@ -21,7 +21,7 @@ export const DEFAULT_RECIPES: Recipe[] = [
     lifecycle: {
       loadPolicy: "onDemand",
       evictionPolicy: "idle-ttl",
-      idleTtlSeconds: 60,
+      idleTtlSeconds: 600,
       minimumResidencySeconds: 1,
     },
     configuration: {},
@@ -37,7 +37,7 @@ export const DEFAULT_RECIPES: Recipe[] = [
     lifecycle: {
       loadPolicy: "onDemand",
       evictionPolicy: "idle-ttl",
-      idleTtlSeconds: 30,
+      idleTtlSeconds: 600,
       minimumResidencySeconds: 1,
     },
     configuration: {},

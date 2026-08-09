@@ -59,7 +59,7 @@ if (engineMode === "ninfer") reconcileNInferConfiguration(store);
 // stores need an additive reconcile because seedDefaults is intentionally
 // create-only and must not reset user route assignments.
 if (!storeInitiallyEmpty) reconcileLocalComfyUIConfiguration(store, runtimePaths);
-extendLocalModelResidency(store);
+enforceModelResidency(store);
 // Safety layer: deterministic policy engine (trash-everything deletes, zone blocking),
 // per-run workspace snapshots, run trash, and secret redaction. Machine guarantees only.
 const safety = new AgentSafetyService({
@@ -127,6 +127,7 @@ mediaJobs = runtime.mediaJobs;
 // reconcile afterward so ComfyUI also gets its Playbooks registration without
 // suppressing the normal chat defaults.
 if (storeInitiallyEmpty) reconcileLocalComfyUIConfiguration(store, runtimePaths);
+if (storeInitiallyEmpty) enforceModelResidency(store);
 
 await runtime.app.listen({ host, port });
 
@@ -178,10 +179,26 @@ function installedLocalComfyUIPlaybook() {
   });
 }
 
-function extendLocalModelResidency(store: SqliteStore): void {
+function enforceModelResidency(store: SqliteStore): void {
   for (const recipe of store.listRecipes()) {
-    if (recipe.adapter === "openai-compatible" || recipe.lifecycle.evictionPolicy !== "idle-ttl" || recipe.lifecycle.idleTtlSeconds === 600) continue;
-    store.upsertRecipe({ ...recipe, lifecycle: { ...recipe.lifecycle, idleTtlSeconds: 600 } });
+    const isMedia = (recipe.capabilities.modalities?.output.length ?? 0) > 0;
+    if (isMedia) {
+      store.upsertRecipe({
+        ...recipe,
+        lifecycle: { ...recipe.lifecycle, evictionPolicy: "immediate", idleTtlSeconds: 0, minimumResidencySeconds: 0 },
+      });
+      continue;
+    }
+    if (recipe.adapter === "openai-compatible") continue;
+    store.upsertRecipe({
+      ...recipe,
+      lifecycle: {
+        ...recipe.lifecycle,
+        evictionPolicy: "idle-ttl",
+        idleTtlSeconds: 600,
+        minimumResidencySeconds: Math.min(recipe.lifecycle.minimumResidencySeconds, 600),
+      },
+    });
   }
 }
 

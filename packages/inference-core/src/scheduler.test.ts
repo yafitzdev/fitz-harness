@@ -43,6 +43,23 @@ describe("InferenceScheduler", () => {
     expect(adapter.stops).toHaveLength(1);
   });
 
+  it("caps text model residency at ten idle minutes", async () => {
+    const clock = new ManualClock(Date.UTC(2026, 6, 31));
+    const adapter = new FakeEngineAdapter();
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]), clock });
+    const scheduler = new InferenceScheduler(
+      new RouteResolver([route("default", "best")], [recipe("best", 3_600)]),
+      lifecycle,
+    );
+
+    await collect(scheduler.enqueue("default", { messages: [{ role: "user", content: "hello" }] }));
+    await clock.advanceBy(599_999);
+    expect(lifecycle.snapshot().state).toBe("READY");
+    await clock.advanceBy(1);
+    expect(lifecycle.snapshot().state).toBe("UNLOADED");
+    expect(adapter.stops).toHaveLength(1);
+  });
+
   it("shares a speculative warm-up load with the first generation", async () => {
     const adapter = new FakeEngineAdapter({ prepareDelayMs: 10, loadDelayMs: 10 });
     const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]) });

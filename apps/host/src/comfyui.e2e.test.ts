@@ -7,6 +7,7 @@ import { FakeEngineAdapter } from "@fitz/engine-fake";
 import { ComfyUIEngineAdapter } from "@fitz/engine-comfyui";
 import { createHost, type HostRuntime } from "./create-app.js";
 import { createComfyUIPlaybook } from "./comfyui-playbook.js";
+import { testThermalGuard } from "./test-thermal.js";
 
 const FIXTURE = fileURLToPath(new URL("../../../packages/engine-comfyui/src/fixtures/comfyui-server.mjs", import.meta.url));
 /** Matches the fixture's canonical video output bytes. */
@@ -60,6 +61,7 @@ describe("MiniMax H3 via ComfyUI (PR 7)", () => {
           gpuTelemetryAvailable: true,
         }),
       },
+      thermalGuard: testThermalGuard(),
     });
     try {
       await registerRecipe(runtime, h3VideoRecipe(`http://127.0.0.1:${fixturePort}`));

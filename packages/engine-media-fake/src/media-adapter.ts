@@ -92,6 +92,10 @@ export class FakeMediaEngineAdapter implements MediaEngineAdapter<FakeInstanceHa
   readonly #resultByteLength: number | undefined;
   readonly #jobs = new Map<string, { request: MediaGenerationRequest; progress: number }>();
 
+  /** The deterministic fake performs no host GPU work, so host thermal policy
+   *  must not invoke real NVIDIA controls during integration tests. */
+  executionLocation(): "remote" { return "remote"; }
+
   constructor(options: FakeMediaEngineOptions = {}) {
     this.#progressPerPoll = options.progressPerPoll ?? 0.25;
     this.#failWhenPromptIncludes = options.failWhenPromptIncludes;

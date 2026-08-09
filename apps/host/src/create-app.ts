@@ -11,6 +11,7 @@ import {
   InferenceScheduler,
   LifecycleEventBus,
   LifecycleManager,
+  GpuThermalGuard,
   RecipeNotFoundError,
   RouteNotFoundError,
   RouteResolver,
@@ -122,6 +123,7 @@ export interface CreateHostOptions {
   initialRoutes?: Route[];
   resourceMonitor?: ResourceMonitor;
   resourcePolicy?: Partial<ResourcePolicy>;
+  thermalGuard?: GpuThermalGuard;
   logger?: boolean;
   adminToken?: string;
   authMode?: "disabled" | "required";
@@ -236,7 +238,12 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     options.resourceMonitor ?? new SystemResourceMonitor(),
     options.resourcePolicy,
   );
-  const lifecycle = new LifecycleManager({ adapters, events, resources });
+  const lifecycle = new LifecycleManager({
+    adapters,
+    events,
+    resources,
+    ...(options.thermalGuard ? { thermalGuard: options.thermalGuard } : {}),
+  });
   const localRecipes = [...new Map(routes.listRoutes().filter((route) => PUBLIC_ROUTE_IDS.has(route.id)).map((route) => {
     const recipe = routes.resolve(route.id).recipe;
     return [recipe.id, recipe] as const;

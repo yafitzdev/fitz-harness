@@ -6,6 +6,7 @@ import { FakeMediaEngineAdapter, deterministicMediaBytes } from "@fitz/engine-me
 import { SqliteStore } from "@fitz/storage";
 import type { Recipe } from "@fitz/protocol";
 import { createHost, type HostRuntime } from "./create-app.js";
+import { testThermalGuard } from "./test-thermal.js";
 
 const fixturePath = (name: string): string =>
   fileURLToPath(new URL(`../../../fixtures/media/${name}`, import.meta.url));
@@ -21,7 +22,7 @@ describe("Fitz media provider templates", () => {
     const fixture = await startFixture("fake-openai-media-server.mjs", ["--api-key", "test-openai-key"]);
     // Production server modes always supply explicit engine adapters. Provider
     // templates must be composed with (not replaced by) that local adapter set.
-    const runtime = createHost({ adapters: [new FakeEngineAdapter()] });
+    const runtime = createHost({ adapters: [new FakeEngineAdapter()], thermalGuard: testThermalGuard() });
     try {
       const put = await runtime.app.inject({
         method: "PUT",
@@ -105,7 +106,7 @@ describe("Fitz media provider templates", () => {
 
   it("re-saves a fal connection, de-assigning a stale well-known image route", async () => {
     const fixture = await startFixture("fake-fal-server.mjs");
-    const runtime = createHost({});
+    const runtime = createHost({ thermalGuard: testThermalGuard() });
     try {
       const put = await runtime.app.inject({
         method: "PUT",
@@ -168,7 +169,7 @@ describe("Fitz media provider templates", () => {
 
   it("generates through a replicate connection via its consumer route", async () => {
     const fixture = await startFixture("fake-replicate-server.mjs");
-    const runtime = createHost({});
+    const runtime = createHost({ thermalGuard: testThermalGuard() });
     try {
       const put = await runtime.app.inject({
         method: "PUT",
@@ -205,7 +206,7 @@ describe("Fitz media provider templates", () => {
 
   it("media-tests a recipe via the management diagnostic endpoint", async () => {
     const fixture = await startFixture("fake-openai-media-server.mjs", ["--api-key", "test-openai-key"]);
-    const runtime = createHost({});
+    const runtime = createHost({ thermalGuard: testThermalGuard() });
     try {
       const put = await runtime.app.inject({
         method: "PUT",
@@ -334,7 +335,7 @@ describe("Fitz media provider templates", () => {
       providerJobId: "fal-req-77",
     });
 
-    const runtime = createHost({ store });
+    const runtime = createHost({ store, thermalGuard: testThermalGuard() });
     try {
       // Boot recovery marked the job interrupted; the fire-and-forget cancel
       // POSTs to the provider's cancel endpoint so billing stops (§5.3).

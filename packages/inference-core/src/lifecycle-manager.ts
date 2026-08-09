@@ -17,6 +17,8 @@ import { assertTransition } from "./state-machine.js";
 import { ResourceGovernor, SystemResourceMonitor } from "./resources.js";
 import { GpuThermalGuard, ThermalSafetyError } from "./thermal.js";
 
+const MAX_MODEL_IDLE_TTL_MS = 10 * 60 * 1_000;
+
 export interface LifecycleManagerOptions {
   adapters: EngineAdapterRegistry;
   events?: LifecycleEventBus;
@@ -106,9 +108,9 @@ export class LifecycleManager {
     }
   }
 
-  /** Job-oriented generation (submit/poll/cancel). Shares the load/lease/eviction
-   *  lifecycle with chat: a generation holds its lease to the terminal state, so
-   *  a multi-minute video keeps the instance resident (no eviction policy change). */
+  /** Job-oriented generation (submit/poll/cancel). A generation holds its lease
+   *  until its terminal state; local media engines are evicted immediately after
+   *  the lease ends so the next chat model can reclaim VRAM. */
   async *runMedia(
     recipe: Recipe,
     request: MediaGenerationRequest,
@@ -313,14 +315,16 @@ export class LifecycleManager {
 
   #scheduleEviction(): void {
     const recipe = this.#recipe;
-    if (!recipe || this.#state !== "READY") return;
+    if (!recipe || !this.#adapter || this.#state !== "READY") return;
     const policy = recipe.lifecycle.evictionPolicy;
-    if (policy === "never" || policy === "manual") return;
-
-    const idleDelay = policy === "immediate" ? 0 : recipe.lifecycle.idleTtlSeconds * 1_000;
+    const media = isMediaEngineAdapter(this.#adapter);
+    if (!media && (policy === "never" || policy === "manual")) return;
+    const idleDelay = media || policy === "immediate"
+      ? 0
+      : Math.min(recipe.lifecycle.idleTtlSeconds * 1_000, MAX_MODEL_IDLE_TTL_MS);
     const residencyRemaining = Math.max(
       0,
-      recipe.lifecycle.minimumResidencySeconds * 1_000 -
+      Math.min(recipe.lifecycle.minimumResidencySeconds * 1_000, MAX_MODEL_IDLE_TTL_MS) -
         (this.#clock.now() - (this.#startedAt ?? this.#clock.now())),
     );
     this.#evictionTask = this.#clock.schedule(Math.max(idleDelay, residencyRemaining), async () => {

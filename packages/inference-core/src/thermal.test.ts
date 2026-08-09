@@ -3,21 +3,21 @@ import type { ResourceSnapshot } from "./resources.js";
 import { GpuThermalGuard, ThermalSafetyError } from "./thermal.js";
 
 describe("GpuThermalGuard", () => {
-  it("does nothing below 75C", async () => {
+  it("enforces the reduced power envelope before media work and restores it", async () => {
     const power = { setPowerLimit: vi.fn(async () => undefined) };
     const guard = new GpuThermalGuard({ snapshot: async () => snapshot(74) }, power);
     const session = guard.start(true);
     await session.regulate();
     await session.close();
-    expect(power.setPowerLimit).not.toHaveBeenCalled();
+    expect(power.setPowerLimit).toHaveBeenNthCalledWith(1, 400);
+    expect(power.setPowerLimit).toHaveBeenNthCalledWith(2, 450);
   });
 
-  it("caps power at 75C and restores the original limit", async () => {
+  it("stops at 75C even after enforcing the reduced power envelope", async () => {
     const power = { setPowerLimit: vi.fn(async () => undefined) };
     const guard = new GpuThermalGuard({ snapshot: async () => snapshot(75) }, power);
     const session = guard.start(true);
-    await session.regulate();
-    await session.regulate();
+    await expect(session.regulate()).rejects.toThrow("despite the enforced GPU power cap");
     await session.close();
     expect(power.setPowerLimit).toHaveBeenNthCalledWith(1, 400);
     expect(power.setPowerLimit).toHaveBeenNthCalledWith(2, 450);
@@ -25,11 +25,20 @@ describe("GpuThermalGuard", () => {
 
   it("fails safe when the host cannot apply the thermal power cap", async () => {
     const power = { setPowerLimit: vi.fn(async () => { throw new Error("insufficient permissions"); }) };
-    const guard = new GpuThermalGuard({ snapshot: async () => snapshot(76) }, power);
+    const guard = new GpuThermalGuard({ snapshot: async () => snapshot(74) }, power);
     await expect(guard.start(true).regulate()).rejects.toMatchObject({
       name: "ThermalSafetyError",
-      message: expect.stringContaining("could not lower the GPU power limit"),
+      message: expect.stringContaining("could not enforce the GPU power cap"),
     });
+  });
+
+  it("does not rewrite a power limit that is already within the envelope", async () => {
+    const power = { setPowerLimit: vi.fn(async () => undefined) };
+    const guard = new GpuThermalGuard({ snapshot: async () => ({ ...snapshot(74), gpuPowerLimitW: 400 }) }, power);
+    const session = guard.start(true);
+    await session.regulate();
+    await session.close();
+    expect(power.setPowerLimit).not.toHaveBeenCalled();
   });
 
   it("hard-stops an overheated GPU even after throttling would be possible", async () => {

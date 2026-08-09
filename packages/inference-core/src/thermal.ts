@@ -13,7 +13,7 @@ export interface GpuThermalPolicy {
 export const DEFAULT_GPU_THERMAL_POLICY: GpuThermalPolicy = {
   throttleAtC: 75,
   hardStopAtC: 82,
-  powerLimitFraction: 0.8,
+  powerLimitFraction: 0.75,
 };
 
 export interface GpuPowerController {
@@ -65,24 +65,37 @@ export class GpuThermalSession {
     if (!this.enabled) return undefined;
     const snapshot = await this.guard.monitor.snapshot();
     const temperature = snapshot.gpuTemperatureC;
-    if (temperature === undefined) return snapshot;
-    if (temperature >= this.guard.policy.hardStopAtC) {
+    if (temperature !== undefined && temperature >= this.guard.policy.hardStopAtC) {
       throw new ThermalSafetyError(
         `Media generation stopped: GPU reached ${temperature}°C (hard limit ${this.guard.policy.hardStopAtC}°C)`,
         snapshot,
       );
     }
-    if (temperature < this.guard.policy.throttleAtC || this.#throttled) return snapshot;
-
-    const current = snapshot.gpuPowerLimitW;
-    const minimum = snapshot.gpuMinPowerLimitW;
-    if (current === undefined || minimum === undefined) {
+    if (!this.#throttled) await this.#acquirePowerCap(snapshot);
+    if (temperature !== undefined && temperature >= this.guard.policy.throttleAtC) {
       throw new ThermalSafetyError(
-        `Media generation stopped at ${temperature}°C because the GPU power-limit range is unavailable`,
+        `Media generation stopped at ${temperature}°C despite the enforced GPU power cap`,
         snapshot,
       );
     }
-    const target = Math.max(minimum, Math.floor(current * this.guard.policy.powerLimitFraction));
+    return snapshot;
+  }
+
+  async #acquirePowerCap(snapshot: ResourceSnapshot): Promise<void> {
+    const current = snapshot.gpuPowerLimitW;
+    const minimum = snapshot.gpuMinPowerLimitW;
+    const maximum = snapshot.gpuMaxPowerLimitW;
+    if (current === undefined || minimum === undefined || maximum === undefined) {
+      throw new ThermalSafetyError(
+        "Media generation refused because the GPU power-limit range is unavailable",
+        snapshot,
+      );
+    }
+    const target = Math.max(minimum, Math.floor(maximum * this.guard.policy.powerLimitFraction));
+    if (current <= target) {
+      this.#throttled = true;
+      return;
+    }
     this.#originalPowerLimitW = current;
     try {
       await this.guard.power.setPowerLimit(target);
@@ -91,11 +104,10 @@ export class GpuThermalSession {
       this.#originalPowerLimitW = undefined;
       const detail = error instanceof Error ? error.message : String(error);
       throw new ThermalSafetyError(
-        `Media generation stopped at ${temperature}°C: Fitz could not lower the GPU power limit (${detail})`,
+        `Media generation refused because Fitz could not enforce the GPU power cap (${detail})`,
         snapshot,
       );
     }
-    return snapshot;
   }
 
   async close(): Promise<void> {
