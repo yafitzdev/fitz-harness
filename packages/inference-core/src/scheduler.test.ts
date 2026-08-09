@@ -126,6 +126,33 @@ describe("InferenceScheduler", () => {
     expect(events.after(0).some((event) => event.type === "queue.updated")).toBe(true);
   });
 
+  it("round-robins queued GPU work across users without reordering either user", async () => {
+    const adapter = new FakeEngineAdapter({ tokenDelayMs: 15 });
+    const events = new LifecycleEventBus();
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]), events });
+    const scheduler = new InferenceScheduler(
+      new RouteResolver([route("default", "default")], [recipe("default", 60)]),
+      lifecycle,
+      events,
+    );
+    const submit = (ownerUserId: string, content: string) => scheduler.enqueue(
+      "default",
+      { messages: [{ role: "user", content }] },
+      undefined,
+      { ownerUserId, label: content },
+    );
+
+    const a0 = submit("a", "a0");
+    await waitFor(() => lifecycle.snapshot().state === "BUSY");
+    const streams = [submit("a", "a1"), submit("a", "a2"), submit("b", "b1"), submit("b", "b2")];
+    await Promise.all([collect(a0), ...streams.map(collect)]);
+
+    const started = events.after(0)
+      .filter((event) => event.type === "queue.updated" && event.data.status === "started")
+      .map((event) => event.data.label);
+    expect(started).toEqual(["a0", "b1", "a1", "b2", "a2"]);
+  });
+
   it("queues model activation behind active generation instead of bypassing the GPU slot", async () => {
     const adapter = new FakeEngineAdapter({ tokenDelayMs: 10, loadDelayMs: 5 });
     const events = new LifecycleEventBus();

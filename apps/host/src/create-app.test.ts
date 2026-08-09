@@ -70,6 +70,7 @@ describe("Fitz host", () => {
         payload: { model: "default", stream: false, messages: [{ role: "user", content: "overflow" }] },
       });
       expect(response.statusCode, response.body).toBe(429);
+      expect(response.headers["retry-after"]).toBe("2");
       expect(response.json().error).toEqual(expect.objectContaining({ type: "resource_busy", message: expect.stringContaining("queue is at capacity") }));
     } finally {
       active.cancel();
@@ -737,6 +738,7 @@ describe("Fitz host", () => {
     expect(first.statusCode).toBe(202);
     expect(second.statusCode).toBe(202);
     expect(overflow.statusCode).toBe(429);
+    expect(overflow.headers["retry-after"]).toBe("2");
     expect(overflow.json().error).toMatchObject({ code: "resource_busy", retryable: true });
     expect(overflow.json().error.message).toContain("capacity");
     expect(runtime.agentRuns.list()).toHaveLength(2);

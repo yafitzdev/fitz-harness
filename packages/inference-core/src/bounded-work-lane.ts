@@ -1,3 +1,5 @@
+import { OwnerFairQueue } from "./owner-fair-queue.js";
+
 export type WorkLaneStatus = "queued" | "started" | "cancelled" | "completed" | "failed";
 
 export interface LaneWorkItem {
@@ -16,14 +18,15 @@ export interface BoundedWorkLaneOptions<T extends LaneWorkItem> {
   execute(item: T): Promise<void>;
   settleQueuedCancellation(item: T): void;
   onStateChange(item: T, status: WorkLaneStatus, position: number, depth: number): void;
+  ownerOf?(item: T): string;
 }
 
 export type WorkLaneEnqueueResult = "accepted" | "full" | "closed";
 
-/** A bounded, cancellation-aware FIFO. The concurrency limit is the resource
- * contract: the GPU lane uses one; remote-provider work uses a small bound. */
+/** A bounded, cancellation-aware, owner-fair lane. The concurrency limit is
+ * the resource contract: the GPU lane uses one; cloud work uses a small bound. */
 export class BoundedWorkLane<T extends LaneWorkItem> {
-  readonly #queued: T[] = [];
+  readonly #queued: OwnerFairQueue<T>;
   readonly #active = new Set<T>();
   readonly #idleWaiters: Array<() => void> = [];
   readonly #options: BoundedWorkLaneOptions<T>;
@@ -37,6 +40,7 @@ export class BoundedWorkLane<T extends LaneWorkItem> {
       throw new TypeError("Work-lane queue capacity must be a positive integer");
     }
     this.#options = options;
+    this.#queued = new OwnerFairQueue(options.ownerOf ?? (() => "shared"));
   }
 
   get depth(): number {
@@ -46,7 +50,7 @@ export class BoundedWorkLane<T extends LaneWorkItem> {
   enqueue(item: T): WorkLaneEnqueueResult {
     if (!this.#accepting) return "closed";
     if (this.#queued.length >= this.#options.maxQueued && this.#active.size >= this.#options.concurrency) return "full";
-    this.#queued.push(item);
+    this.#queued.enqueue(item);
     this.#publishQueuedPositions();
     this.#pump();
     return "accepted";
@@ -55,9 +59,7 @@ export class BoundedWorkLane<T extends LaneWorkItem> {
   cancel(item: T): boolean {
     if (item.controller.signal.aborted) return false;
     item.controller.abort();
-    const index = this.#queued.indexOf(item);
-    if (index >= 0) {
-      this.#queued.splice(index, 1);
+    if (this.#queued.remove(item)) {
       this.#options.settleQueuedCancellation(item);
       this.#options.onStateChange(item, "cancelled", 0, this.depth);
       this.#publishQueuedPositions();
@@ -68,19 +70,19 @@ export class BoundedWorkLane<T extends LaneWorkItem> {
   }
 
   snapshot(): WorkLaneSnapshot<T> {
-    return { active: [...this.#active], queued: [...this.#queued] };
+    return { active: [...this.#active], queued: this.#queued.values() };
   }
 
   async shutdown(): Promise<void> {
     this.#accepting = false;
-    for (const item of [...this.#queued]) this.cancel(item);
+    for (const item of this.#queued.values()) this.cancel(item);
     for (const item of this.#active) item.controller.abort();
     if (this.depth > 0) await new Promise<void>((resolve) => this.#idleWaiters.push(resolve));
   }
 
   #pump(): void {
     while (this.#active.size < this.#options.concurrency) {
-      const item = this.#queued.shift();
+      const item = this.#queued.dequeue();
       if (!item) break;
       if (item.controller.signal.aborted) continue;
       this.#active.add(item);
@@ -104,7 +106,7 @@ export class BoundedWorkLane<T extends LaneWorkItem> {
   }
 
   #publishQueuedPositions(): void {
-    this.#queued.forEach((item, index) => this.#options.onStateChange(item, "queued", index + 1, this.depth));
+    this.#queued.values().forEach((item, index) => this.#options.onStateChange(item, "queued", index + 1, this.depth));
   }
 
   #resolveIdleIfNeeded(): void {

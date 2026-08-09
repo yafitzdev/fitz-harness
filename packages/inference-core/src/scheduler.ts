@@ -18,6 +18,7 @@ interface JobBase {
   id: string;
   routeId: string;
   lane: InferenceLane;
+  enqueuedAt: string;
   context: WorkContext;
   controller: AbortController;
   detachExternalAbort?: () => void;
@@ -41,6 +42,7 @@ export interface InferenceQueueItem {
   lane: InferenceLane;
   status: "running" | "queued";
   position: number;
+  enqueuedAt: string;
   context: WorkContext;
 }
 
@@ -108,7 +110,7 @@ export class InferenceScheduler {
     const id = options.jobId;
     if (!id.trim()) throw new TypeError("Media scheduler jobId must not be empty");
     const output = new AsyncChannel<MediaJobEvent>();
-    const job: QueueJob = { kind: "media", id, routeId, lane, context: options.context ?? {}, mediaRequest: { ...input, id, routeId }, output, controller: new AbortController() };
+    const job: QueueJob = { kind: "media", id, routeId, lane, enqueuedAt: new Date().toISOString(), context: options.context ?? {}, mediaRequest: { ...input, id, routeId }, output, controller: new AbortController() };
     this.#attachAbort(job, externalSignal);
     this.#submit(job);
     return { jobId: id, events: output, cancel: () => this.#lane(lane).cancel(job) };
@@ -117,7 +119,7 @@ export class InferenceScheduler {
   enqueueWarm(routeId: string, externalSignal?: AbortSignal, context: WorkContext = {}): ScheduledWarmup {
     const id = randomUUID();
     const result = deferred<InstanceSnapshot>();
-    const job: QueueJob = { kind: "warm", id, routeId, lane: "gpu", context, result, controller: new AbortController() };
+    const job: QueueJob = { kind: "warm", id, routeId, lane: "gpu", enqueuedAt: new Date().toISOString(), context, result, controller: new AbortController() };
     this.#attachAbort(job, externalSignal);
     this.#submit(job);
     return { requestId: id, result: result.promise, cancel: () => this.#gpuLane.cancel(job) };
@@ -144,7 +146,7 @@ export class InferenceScheduler {
   #enqueue(routeId: string, input: Omit<InferenceRequest, "id" | "routeId">, externalSignal: AbortSignal | undefined, recipeId: string | undefined, unloadAfterCompletion: boolean | undefined, context: WorkContext): ScheduledStream {
     const id = randomUUID();
     const output = new AsyncChannel<InferenceDelta>();
-    const job: QueueJob = { kind: "chat", id, routeId, lane: "gpu", context, request: { ...input, id, routeId }, output, controller: new AbortController(), ...(recipeId ? { recipeId } : {}), ...(unloadAfterCompletion ? { unloadAfterCompletion: true } : {}) };
+    const job: QueueJob = { kind: "chat", id, routeId, lane: "gpu", enqueuedAt: new Date().toISOString(), context, request: { ...input, id, routeId }, output, controller: new AbortController(), ...(recipeId ? { recipeId } : {}), ...(unloadAfterCompletion ? { unloadAfterCompletion: true } : {}) };
     this.#attachAbort(job, externalSignal);
     this.#submit(job);
     return Object.assign(output, { requestId: id, cancel: () => this.#gpuLane.cancel(job) });
@@ -157,6 +159,7 @@ export class InferenceScheduler {
       execute: (job) => this.#execute(job),
       settleQueuedCancellation: (job) => { failJob(job, abortError()); job.detachExternalAbort?.(); },
       onStateChange: (job, status, position, depth) => this.#publishQueue(job, status, position, depth),
+      ownerOf: (job) => job.context.ownerUserId ?? "local",
     });
   }
 
@@ -227,4 +230,4 @@ function deferred<T>(): Deferred<T> { let resolve!: (value: T) => void; let reje
 function failJob(job: QueueJob, error: unknown): void { if (job.kind === "warm") job.result.reject(error); else job.output.fail(error) }
 function closeJob(job: QueueJob): void { if (job.kind !== "warm") job.output.close() }
 function abortError(): Error { const error = new Error("Inference request was cancelled"); error.name = "AbortError"; return error }
-function queueItem(job: QueueJob, status: "running" | "queued", position: number): InferenceQueueItem { return { id: job.id, routeId: job.routeId, kind: job.kind, lane: job.lane, status, position, context: job.context } }
+function queueItem(job: QueueJob, status: "running" | "queued", position: number): InferenceQueueItem { return { id: job.id, routeId: job.routeId, kind: job.kind, lane: job.lane, status, position, enqueuedAt: job.enqueuedAt, context: job.context } }

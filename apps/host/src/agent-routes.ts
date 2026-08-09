@@ -71,6 +71,7 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
         },
       });
     } catch (error) {
+      if (error instanceof AgentQueueCapacityError) reply.header("retry-after", "2");
       return reply.code(error instanceof SecurityPolicyError || error instanceof AgentQueueCapacityError ? 429 : error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) });
     }
   });
@@ -91,11 +92,11 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
     const principal = principals.get(request);
     const administrator = principal?.user.role === "administrator";
     const ownerUserId = administrator ? undefined : principal?.user.id;
-    const tasks = agentRuns.queue(ownerUserId).map((item) => ({ id: item.runId, kind: "agent" as const, lane: "gpu" as const, routeId: item.routeId, status: item.status, position: item.position, depth: item.depth, ...(item.ownerUserId ? { ownerUserId: item.ownerUserId } : {}), ...(item.sessionId ? { sessionId: item.sessionId } : {}), ...(item.sessionTitle ? { label: item.sessionTitle } : {}), ...(item.projectName ? { projectName: item.projectName } : {}) }));
+    const tasks = agentRuns.queue(ownerUserId).map((item) => ({ id: item.runId, kind: "agent" as const, lane: "gpu" as const, routeId: item.routeId, status: item.status, position: item.position, depth: item.depth, enqueuedAt: item.createdAt, ...(item.ownerUserId ? { ownerUserId: item.ownerUserId } : {}), ...(item.sessionId ? { sessionId: item.sessionId } : {}), ...(item.sessionTitle ? { label: item.sessionTitle } : {}), ...(item.projectName ? { projectName: item.projectName } : {}) }));
       const inference = scheduler.snapshot()
         .filter((item) => !item.context.runId)
         .filter((item) => administrator || !item.context.ownerUserId || item.context.ownerUserId === ownerUserId)
-        .map((item) => ({ id: item.id, kind: item.kind, lane: item.lane, routeId: item.routeId, status: item.status, position: item.position, ...item.context }));
+        .map((item) => ({ id: item.id, kind: item.kind, lane: item.lane, routeId: item.routeId, status: item.status, position: item.position, enqueuedAt: item.enqueuedAt, ...item.context }));
     return {
       protocolVersion: PROTOCOL_VERSION,
       data: [...tasks, ...inference],
@@ -190,6 +191,7 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
         return reply.code(202).send({ protocolVersion: PROTOCOL_VERSION, data: run, resumedFrom: sourceRunId, checkpoint: source.checkpoint });
       } catch (error) { store.setAgentRunResumable(sourceRunId, true); throw error; }
     } catch (error) {
+      if (error instanceof AgentQueueCapacityError) reply.header("retry-after", "2");
       return reply.code(error instanceof SecurityPolicyError || error instanceof AgentQueueCapacityError ? 429 : error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) });
     }
   });

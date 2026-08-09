@@ -1,6 +1,6 @@
 import type { AgentEventEnvelope, AgentEventType, AgentQueueItem, AgentRunRecord, AgentRunRequest } from "@fitz/protocol";
 import { AGENT_PROTOCOL_VERSION } from "@fitz/protocol";
-import type { InferenceScheduler, ScheduledStream } from "@fitz/inference-core";
+import { OwnerFairQueue, type InferenceScheduler, type ScheduledStream } from "@fitz/inference-core";
 import type { AgentRuntime, AgentRuntimeEvent, AgentRuntimeRun } from "@fitz/agent-core";
 import { randomUUID } from "node:crypto";
 import type { SqliteStore } from "@fitz/storage";
@@ -18,7 +18,7 @@ export class AgentQueueCapacityError extends Error {
 }
 
 export class AgentRunCoordinator {
-  readonly #queue: AgentQueueJob[] = [];
+  readonly #queue = new OwnerFairQueue<AgentQueueJob>((job) => job.ownerUserId ?? "local");
   readonly #listeners = new Map<string, Set<(event: AgentEventEnvelope) => void>>();
   #current: AgentQueueJob | undefined;
   #processing = false;
@@ -44,7 +44,7 @@ export class AgentRunCoordinator {
       catch { this.store.updateAgentRun(id, "failed", message); /* the original storage failure remains primary */ }
       throw error;
     }
-    this.#queue.push({ id, request, stream: undefined, cancelRequested: false, ...(ownerUserId ? { ownerUserId } : {}) }); this.#publishQueue(); void this.#pump();
+    this.#queue.enqueue({ id, request, stream: undefined, cancelRequested: false, ...(ownerUserId ? { ownerUserId } : {}) }); this.#publishQueue(); void this.#pump();
     return this.store.getAgentRun(id)!;
   }
 
@@ -52,7 +52,7 @@ export class AgentRunCoordinator {
   getSessionRecovery(sessionId: string): AgentRunRecord | undefined { return this.store.latestSessionAgentRun(sessionId); }
   list(ownerUserId?: string, limit = 100): AgentRunRecord[] { return this.store.listAgentRuns(ownerUserId, limit); }
   queue(ownerUserId?: string): AgentQueueItem[] {
-    const jobs = [...(this.#current ? [this.#current] : []), ...this.#queue]; const depth = jobs.length;
+    const jobs = [...(this.#current ? [this.#current] : []), ...this.#queue.values()]; const depth = jobs.length;
     return jobs.map((job, index) => {
       const run = this.store.getAgentRun(job.id)!; const session = run.sessionId ? this.store.getSession(run.sessionId) : undefined; const project = session?.projectId ? this.store.getProject(session.projectId) : undefined;
       const status: AgentQueueItem["status"] = job === this.#current ? "running" : "queued";
@@ -67,8 +67,8 @@ export class AgentRunCoordinator {
       this.#current.stream?.cancel();
       return true;
     }
-    const index = this.#queue.findIndex((job) => job.id === id); if (index < 0) return false;
-    this.#queue.splice(index, 1); this.#emit(id, "run.cancelled", { queued: true }); this.#publishQueue(); this.onRunCompleted?.(id); return true;
+    const job = this.#queue.values().find((candidate) => candidate.id === id); if (!job || !this.#queue.remove(job)) return false;
+    this.#emit(id, "run.cancelled", { queued: true }); this.#publishQueue(); this.onRunCompleted?.(id); return true;
   }
   /** Queue a steering message into the currently running stream. The run must be actively streaming and its runtime must support steering. */
   async steer(runId: string, text: string): Promise<boolean> {
@@ -84,7 +84,7 @@ export class AgentRunCoordinator {
     if (this.#processing) return; this.#processing = true;
     try {
       while (this.#queue.length > 0) {
-        const job = this.#queue.shift(); if (!job) continue; this.#current = job; this.#publishQueue();
+        const job = this.#queue.dequeue(); if (!job) continue; this.#current = job; this.#publishQueue();
         try {
           job.stream = this.#createStream(job.request, job.ownerUserId, job.id);
           if (job.cancelRequested) job.stream.cancel();
@@ -126,7 +126,7 @@ export class AgentRunCoordinator {
       flushAssistant("final"); flushReasoning(); const cancelled = error instanceof Error && error.name === "AbortError"; const message = error instanceof Error ? error.message : String(error); this.#emit(id, cancelled ? "run.cancelled" : "run.failed", { error: message });
     }
   }
-  #publishQueue(): void { const depth = this.#queue.length + (this.#current ? 1 : 0); if (this.#current) this.#emit(this.#current.id, "run.queue.updated", { status: "running", position: 0, depth }); this.#queue.forEach((job, index) => this.#emit(job.id, "run.queue.updated", { status: "queued", position: index + 1, depth })); }
+  #publishQueue(): void { const depth = this.#queue.length + (this.#current ? 1 : 0); if (this.#current) this.#emit(this.#current.id, "run.queue.updated", { status: "running", position: 0, depth }); this.#queue.values().forEach((job, index) => this.#emit(job.id, "run.queue.updated", { status: "queued", position: index + 1, depth })); }
   #emit(runId: string, type: AgentEventType, data: Record<string, unknown>): AgentEventEnvelope { const run = this.store.getAgentRun(runId); if (!run) throw new Error(`Agent run ${runId} disappeared`); const event: AgentEventEnvelope = { protocolVersion: AGENT_PROTOCOL_VERSION, runId, sequence: run.lastSequence + 1, timestamp: new Date().toISOString(), type, data }; this.store.appendAgentEvent(event); for (const listener of this.#listeners.get(runId) ?? []) listener(event); return event; }
   #appendAssistantTranscript(runId: string, text: string, phase: "commentary" | "final", fromSequence: number, eventSequence: number): void { const sessionId = this.store.getAgentRun(runId)?.sessionId; if (sessionId && text) this.store.appendTranscriptEntry({ id: `agent-event:${runId}:message:${fromSequence}-${eventSequence}`, sessionId, kind: "message", role: "assistant", content: { text, runId, phase, eventSequence }, createdAt: new Date().toISOString() }); }
   /** Reasoning is stored under its own transcript kind so it never round-trips into model context or renders as a chat message. */

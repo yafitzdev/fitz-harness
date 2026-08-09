@@ -46,6 +46,7 @@ export function registerMediaRoutes(options: RegisterMediaRoutesOptions): void {
       return reply.code(202).send({ data: job });
     } catch (error) {
       const statusCode = mediaSubmissionStatus(error);
+      if (error instanceof MediaJobAdmissionError) reply.header("retry-after", "2");
       return reply.code(statusCode).send({ error: errorMessage(error), ...(error instanceof MediaJobAdmissionError ? { data: { jobId: error.jobId } } : {}) });
     }
   });
@@ -101,6 +102,7 @@ export function registerMediaRoutes(options: RegisterMediaRoutesOptions): void {
       return reply.code(202).send({ data: retried });
     } catch (error) {
       const statusCode = mediaSubmissionStatus(error);
+      if (error instanceof MediaJobAdmissionError) reply.header("retry-after", "2");
       return reply.code(statusCode).send({ error: errorMessage(error), ...(error instanceof MediaJobAdmissionError ? { data: { jobId: error.jobId } } : {}) });
     }
   });
@@ -176,6 +178,7 @@ export function registerMediaRoutes(options: RegisterMediaRoutesOptions): void {
         return reply.code(504).send({ error: { message: `Image generation timed out; resume polling GET /api/v1/media/jobs/${error.jobId}`, type: "media_generation_timeout", param: error.jobId, code: "media_generation_timeout" } });
       }
       const statusCode = mediaSubmissionStatus(error);
+      if (error instanceof MediaJobAdmissionError) reply.header("retry-after", "2");
       return reply.code(statusCode).send(error instanceof MediaJobAdmissionError
         ? { error: { message: error.message, type: "resource_busy", param: error.jobId, code: error.admission.reason } }
         : openAIError(error, "invalid_request_error"));
@@ -208,6 +211,7 @@ export function registerMediaRoutes(options: RegisterMediaRoutesOptions): void {
       return reply.code(202).send(response);
     } catch (error) {
       const statusCode = mediaSubmissionStatus(error);
+      if (error instanceof MediaJobAdmissionError) reply.header("retry-after", "2");
       return reply.code(statusCode).send(error instanceof MediaJobAdmissionError
         ? { error: { message: error.message, type: "resource_busy", param: error.jobId, code: error.admission.reason } }
         : openAIError(error, "invalid_request_error"));

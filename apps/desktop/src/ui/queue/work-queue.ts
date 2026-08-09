@@ -22,7 +22,7 @@ export class WorkQueueController {
     const state = document.createElement("span"); state.className = "queue-state"; if (item.status === "queued") state.textContent = String(item.position);
     const copy = document.createElement("span"); copy.className = "queue-copy";
     const title = document.createElement("strong"); title.textContent = item.label ?? `${item.routeId} ${item.kind === "agent" ? "task" : item.kind}`;
-    const detail = document.createElement("small"); const location = item.lane === "cloud" ? "Cloud" : "GPU"; detail.textContent = item.status === "running" ? `${item.projectName ?? location} · Running` : `${item.projectName ?? location} · Position ${item.position}`;
+    const detail = document.createElement("small"); const location = item.lane === "cloud" ? "Cloud" : "Shared GPU"; const wait = Number(item.position) <= 1 ? "Next" : `${Number(item.position) - 1} ahead`; detail.textContent = item.status === "running" ? `${item.projectName ?? location} · Running` : `${item.projectName ?? location} · ${wait}`;
     const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "queue-cancel"; cancel.title = item.status === "running" ? "Stop request" : "Remove from queue"; cancel.setAttribute("aria-label", cancel.title); cancel.append(svgIcon('<path d="m5 5 10 10M15 5 5 15"></path>')); cancel.addEventListener("click", () => void this.#cancel(String(item.id), cancel));
     copy.append(title, detail); row.append(state, copy, cancel); return row;
   }

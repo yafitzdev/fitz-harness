@@ -331,6 +331,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       const warmup = scheduler.enqueueWarm(publicRouteId, undefined, { ...(principal ? { ownerUserId: principal.user.id } : {}), label: `${publicRouteId} warmup` });
       return { data: await warmup.result };
     } catch (error) {
+      if (error instanceof InferenceAdmissionError) reply.header("retry-after", "2");
       return reply.code(error instanceof RouteNotFoundError ? 404 : error instanceof InferenceAdmissionError ? 429 : 400).send({ error: errorMessage(error) });
     }
   });
@@ -406,6 +407,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         ...(principal ? { userId: principal.user.id } : internalContext?.ownerUserId ? { userId: internalContext.ownerUserId } : body.user !== undefined ? { userId: body.user } : {}),
       }, undefined, { ...(principal ? { ownerUserId: principal.user.id } : {}), ...internalContext, label: `${model} completion` });
     } catch (error) {
+      if (error instanceof InferenceAdmissionError) reply.header("retry-after", "2");
       return reply.code(error instanceof InferenceAdmissionError ? 429 : 502).send(openAIError(
         error,
         error instanceof InferenceAdmissionError ? "resource_busy" : "server_error",
@@ -831,6 +833,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         }
         return { data: { recipeId, working: true, unloaded: true, output: output.trim().slice(0, 500) } };
       } catch (error) {
+        if (error instanceof InferenceAdmissionError) reply.header("retry-after", "2");
         const statusCode = error instanceof RecipeNotFoundError ? 404 : error instanceof InferenceAdmissionError ? 429 : 502;
         return reply.code(statusCode).send({ error: errorMessage(error) });
       }
@@ -869,6 +872,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
           },
         };
       } catch (error) {
+        if (error instanceof MediaJobAdmissionError) reply.header("retry-after", "2");
         const statusCode = error instanceof RecipeNotFoundError ? 404 : error instanceof MediaJobAdmissionError ? 429 : error instanceof TypeError ? 400 : error instanceof MediaGenerationTimeoutError ? 504 : 502;
         return reply.code(statusCode).send({ error: errorMessage(error) });
       }

@@ -28,7 +28,13 @@ host even when many devices or users submit concurrently.
 The outer native-agent queue is also bounded at 256 tasks. It serializes complete agent turns so tool
 effects from separate tasks do not interleave unexpectedly. Per-user security quotas are evaluated at
 admission. A full lane rejects synchronously with a retryable `429 resource_busy` response instead of
-returning an accepted stream that fails later or accepting unbounded work into memory.
+returning an accepted stream that fails later or accepting unbounded work into memory. Capacity
+responses include `Retry-After` so clients can back off without inventing retry timing.
+
+Waiting work is owner-fair. Each lane preserves FIFO order within one authenticated owner, while
+round-robin selection across owners prevents one user's burst from monopolizing a shared host. The
+same policy applies to whole native-agent turns and to their underlying inference work. When
+authentication is disabled, local submissions intentionally share one owner bucket.
 
 Remote media never acquires a local lifecycle lease and cannot evict a resident local model. It uses a
 separate bounded lane because provider requests consume network connections and paid-provider capacity,
@@ -40,7 +46,8 @@ but not local VRAM.
 - Internal Pi model calls carry that context through authenticated localhost-only headers. External
   agent endpoints never receive these headers.
 - `GET /api/v1/work/queue` is the single user-facing queue view. Internal Pi model calls are folded
-  into their parent agent task instead of appearing as duplicate rows.
+  into their parent agent task instead of appearing as duplicate rows. Positions reflect the current
+  owner-fair service order and every item includes its enqueue time.
 - Queued and active work can be cancelled. Cancellation requested during task startup is latched and
   applied as soon as the stream exists.
 - Host shutdown closes admission, cancels waiting work, aborts active work, and waits for both lanes

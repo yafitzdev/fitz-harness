@@ -89,6 +89,7 @@ describe("Fitz host media jobs", () => {
 
       const overflow = await runtime.app.inject({ method: "POST", url: "/api/v1/media/jobs", payload: { routeId: "image", modality: "image", params: { prompt: "overflow" } } });
       expect(overflow.statusCode, overflow.body).toBe(429);
+      expect(overflow.headers["retry-after"]).toBe("2");
       expect(overflow.json().error).toEqual(expect.objectContaining({ code: "resource_busy", retryable: true }));
       const rejectedId = overflow.json().data.jobId as string;
       expect(runtime.store.getMediaJob(rejectedId)).toEqual(expect.objectContaining({ status: "failed", errorCode: "queue_capacity" }));

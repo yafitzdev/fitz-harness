@@ -4,6 +4,7 @@ export * from "./async-channel.js";
 export * from "./clock.js";
 export * from "./event-bus.js";
 export * from "./lifecycle-manager.js";
+export * from "./owner-fair-queue.js";
 export * from "./route-resolver.js";
 export * from "./resources.js";
 export * from "./remote-media-executor.js";
