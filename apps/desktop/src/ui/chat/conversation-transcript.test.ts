@@ -54,4 +54,29 @@ describe("ConversationTranscript", () => {
     expect(view.eventSequenceForRun("run-1")).toBe(7);
     expect(view.eventSequenceForRun("run-2")).toBe(3);
   });
+
+  it("hydrates long transcripts in bounded turn-aligned windows", () => {
+    const messages = document.createElement("main");
+    const appendMessage = vi.fn(() => document.createElement("div"));
+    const view = new ConversationTranscript({ messages, activity: { clear: vi.fn(), appendTool: vi.fn(() => document.createElement("div")), completeTool: vi.fn(), appendReasoning: vi.fn(() => document.createElement("div")), appendReasoningDelta: vi.fn(), completeReasoning: vi.fn(), appendContext: vi.fn() }, appendMessage, appendCommentary: vi.fn(), rebuildHistory: vi.fn() });
+    view.restore(Array.from({ length: 600 }, (_, index) => ({ kind: "message", role: index % 3 === 0 ? "user" : "assistant", content: { text: String(index) } })));
+    expect(appendMessage.mock.calls.length).toBeLessThanOrEqual(252);
+    expect(messages.querySelector(".transcript-load-earlier")?.textContent).toContain("earlier events");
+  });
+
+  it("loads older server pages lazily while preserving recent prompt history", async () => {
+    const messages = document.createElement("main");
+    const rebuildHistory = vi.fn();
+    const loadEarlier = vi.fn(async () => ({ data: [{ sequence: 1, kind: "message", role: "user", content: { text: "old prompt" } }], page: { hasEarlier: false } }));
+    const view = new ConversationTranscript({
+      messages,
+      activity: { clear: vi.fn(), appendTool: vi.fn(() => document.createElement("div")), completeTool: vi.fn(), appendReasoning: vi.fn(() => document.createElement("div")), appendReasoningDelta: vi.fn(), completeReasoning: vi.fn(), appendContext: vi.fn() },
+      appendMessage: vi.fn(() => document.createElement("div")), appendCommentary: vi.fn(), rebuildHistory, loadEarlier,
+    });
+    expect(view.restore([{ sequence: 2, kind: "message", role: "user", content: { text: "recent prompt" } }], { hasEarlier: true, estimatedContextTokens: 999 })).toBe(999);
+    (messages.querySelector(".transcript-load-earlier") as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(loadEarlier).toHaveBeenCalledWith(2));
+    expect(rebuildHistory).toHaveBeenLastCalledWith(["old prompt", "recent prompt"]);
+    expect(messages.querySelector(".transcript-load-earlier")).toBeNull();
+  });
 });

@@ -1,4 +1,5 @@
 import { estimateTranscriptContext } from "../../context-estimate.js";
+import { TranscriptWindow } from "./transcript-window.js";
 
 type Json = Record<string, any>;
 
@@ -18,33 +19,83 @@ export interface ConversationTranscriptOptions {
   appendMessage: (role: string, text: string, createdAt?: string) => HTMLElement;
   appendCommentary: (text: string, createdAt?: string) => HTMLElement;
   rebuildHistory: (messages: string[]) => void;
+  loadEarlier?: (beforeSequence: number) => Promise<{ data: Json[]; page?: TranscriptPageState }>;
 }
+
+export interface TranscriptPageState { hasEarlier?: boolean; estimatedContextTokens?: number }
 
 /** Restores a persisted transcript into the conversation feed. */
 export class ConversationTranscript {
   readonly #options: ConversationTranscriptOptions;
   readonly #runSequences = new Map<string, number>();
+  readonly #window = new TranscriptWindow();
+  #hasServerHistory = false;
+  #estimatedContextTokens: number | undefined;
 
   constructor(options: ConversationTranscriptOptions) { this.#options = options; }
 
-  restore(entries: Json[]): number {
+  restore(entries: Json[], page: TranscriptPageState = {}): number {
     this.#runSequences.clear();
-    this.#options.rebuildHistory(entries
-      .filter((entry) => entry.kind === "message" && entry.role === "user" && typeof entry.content?.text === "string" && entry.content.text.length > 0)
-      .map((entry) => entry.content.text as string));
-    this.#options.messages.replaceChildren();
-    this.#options.activity.clear();
+    this.#hasServerHistory = page.hasEarlier === true;
+    this.#estimatedContextTokens = Number.isFinite(Number(page.estimatedContextTokens)) ? Number(page.estimatedContextTokens) : undefined;
+    this.#recordSequences(entries);
+    this.#render(this.#window.reset(entries));
+    this.#rebuildHistory();
+    return this.#estimatedContextTokens ?? estimateTranscriptContext(entries);
+  }
+
+  #render(entries: readonly Json[]): void {
+    this.#options.messages.replaceChildren(); this.#options.activity.clear();
     const tools = new Map<string, { row: HTMLElement; toolName: string; input: unknown }>();
+    for (const entry of entries) {
+      this.#restoreEntry(entry, tools);
+    }
+    if (this.#window.hiddenCount > 0 || this.#hasServerHistory) this.#options.messages.prepend(this.#earlierButton());
+  }
+
+  eventSequenceForRun(runId: string): number { return this.#runSequences.get(runId) ?? 0; }
+
+  #earlierButton(): HTMLButtonElement {
+    const button = document.createElement("button"); button.type = "button"; button.className = "transcript-load-earlier"; button.textContent = "Show earlier events";
+    button.addEventListener("click", () => { void this.#expandEarlier(button) });
+    return button;
+  }
+
+  async #expandEarlier(button: HTMLButtonElement): Promise<void> {
+    if (button.disabled) return;
+    button.disabled = true;
+    const oldHeight = this.#options.messages.scrollHeight;
+    const oldTop = this.#options.messages.scrollTop;
+    try {
+      if (this.#window.hiddenCount > 0) {
+        this.#render(this.#window.expand());
+      } else if (this.#hasServerHistory && this.#options.loadEarlier && this.#window.oldestSequence !== undefined) {
+        const response = await this.#options.loadEarlier(this.#window.oldestSequence);
+        this.#hasServerHistory = response.page?.hasEarlier === true;
+        this.#recordSequences(response.data);
+        this.#render(this.#window.prepend(response.data));
+      }
+      this.#rebuildHistory();
+      this.#options.messages.scrollTop = oldTop + this.#options.messages.scrollHeight - oldHeight;
+    } catch {
+      button.textContent = "Could not load earlier events";
+      button.disabled = false;
+    }
+  }
+
+  #recordSequences(entries: readonly Json[]): void {
     for (const entry of entries) {
       const runId = typeof entry.content?.runId === "string" ? entry.content.runId : undefined;
       const eventSequence = Number(entry.content?.eventSequence);
       if (runId && Number.isFinite(eventSequence)) this.#runSequences.set(runId, Math.max(this.#runSequences.get(runId) ?? 0, eventSequence));
-      this.#restoreEntry(entry, tools);
     }
-    return estimateTranscriptContext(entries);
   }
 
-  eventSequenceForRun(runId: string): number { return this.#runSequences.get(runId) ?? 0; }
+  #rebuildHistory(): void {
+    this.#options.rebuildHistory(this.#window.visible
+      .filter((entry) => entry.kind === "message" && entry.role === "user" && typeof entry.content?.text === "string" && entry.content.text.length > 0)
+      .map((entry) => entry.content.text as string));
+  }
 
   #restoreEntry(entry: Json, tools: Map<string, { row: HTMLElement; toolName: string; input: unknown }>): void {
     if (entry.kind === "message") {

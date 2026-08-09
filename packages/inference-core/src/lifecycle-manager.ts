@@ -32,7 +32,7 @@ export class LifecycleManager {
   readonly events: LifecycleEventBus;
   readonly resources: ResourceGovernor;
   readonly thermalGuard: GpuThermalGuard;
-  readonly #adapters: EngineAdapterRegistry;
+  readonly adapters: EngineAdapterRegistry;
   readonly #clock: Clock;
   readonly #allocatePort: () => number;
   #state: InstanceState = "UNLOADED";
@@ -49,7 +49,7 @@ export class LifecycleManager {
   readonly #preparationTasks = new Map<string, { promise: Promise<void>; controller: AbortController }>();
 
   constructor(options: LifecycleManagerOptions) {
-    this.#adapters = options.adapters;
+    this.adapters = options.adapters;
     this.events = options.events ?? new LifecycleEventBus();
     this.#clock = options.clock ?? new SystemClock();
     this.#allocatePort = options.allocatePort ?? (() => 19_000);
@@ -218,7 +218,7 @@ export class LifecycleManager {
 
   /** Media recipes must resolve to a MediaEngineAdapter; used only by runMedia. */
   #mediaAdapter(recipe: Recipe): MediaEngineAdapter {
-    const adapter = this.#adapters.get(recipe.adapter);
+    const adapter = this.adapters.get(recipe.adapter);
     if (!isMediaEngineAdapter(adapter)) {
       throw new Error(`Recipe ${recipe.id} does not use a media engine adapter (${recipe.adapter})`);
     }
@@ -254,7 +254,7 @@ export class LifecycleManager {
     }
 
     this.#recipe = recipe;
-    this.#adapter = this.#adapters.get(recipe.adapter);
+    this.#adapter = this.adapters.get(recipe.adapter);
     this.#instanceId = randomUUID();
     this.#failureReason = undefined;
     this.#transition("PREPARING", "load-requested");
@@ -288,7 +288,7 @@ export class LifecycleManager {
   }
 
   async #prepareRecipe(recipe: Recipe, signal: AbortSignal): Promise<void> {
-    const adapter = this.#adapters.get(recipe.adapter);
+    const adapter = this.adapters.get(recipe.adapter);
     const validation = await adapter.validateRecipe(recipe);
     if (!validation.valid) throw new Error(validation.issues.map((issue) => issue.message).join("; "));
     await adapter.prepare?.(recipe, signal);

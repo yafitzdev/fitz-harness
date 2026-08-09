@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PlaybookWorkspaceController, type PlaybookWorkspaceElements } from "./playbook-workspace.js";
+import { RecipeConfigurationEditor } from "./recipe-configuration-editor.js";
 
 function memoryStorage(initial: Record<string, string> = {}): Storage {
   const values = new Map(Object.entries(initial));
@@ -72,7 +73,7 @@ function setup(
     engineManagedFields: node("div"), engineRuntimeField: node("div"), engineBaseUrlField: node("div"), engineWslField: node("div"),
     engineEditorTitle: node("h1"),
     recipeForm: node("form"), recipePlaybookId: node("input"), recipeId: node("input"), recipeDisplayName: node("input"),
-    recipeAdapter: node("input"), recipeModelId: node("input"), recipeContextTokens: node("input"), recipeConfiguration: node("textarea"),
+    recipeAdapter: node("input"), recipeModelId: node("input"), recipeContextTokens: node("input"), recipeConfiguration: node("section"),
     recipeEditorTitle: node("h1"),
   };
   elements.editor.hidden = true;
@@ -257,7 +258,8 @@ describe("PlaybookWorkspaceController", () => {
     expect(elements.recipePlaybookId.value).toBe("ninfer");
     expect(elements.recipePlaybookId.readOnly).toBe(true);
     expect(elements.recipeAdapter.value).toBe("openai-managed");
-    expect(elements.recipeConfiguration.value).toContain('"enginePath"');
+    expect(elements.recipeConfiguration.textContent).toContain("Engine folder");
+    expect(elements.recipeConfiguration.querySelector<HTMLInputElement>('input[data-label="Engine folder"]')?.value).toContain("ninfer");
 
     elements.recipeId.value = "ninfer-extra";
     elements.recipeDisplayName.value = "Extra model";
@@ -272,17 +274,25 @@ describe("PlaybookWorkspaceController", () => {
     expect(showStatus).toHaveBeenCalledWith("Recipe saved", "success");
   });
 
-  it("rejects recipe configuration that is not valid JSON", async () => {
-    const { controller, elements, showStatus, api } = setup();
+  it("uses typed recipe fields instead of exposing raw configuration JSON", async () => {
+    const { controller, elements, api } = setup();
     controller.render();
     click([...elements.list.querySelectorAll<HTMLButtonElement>(".collapsible-actions button")].find((button) => button.textContent === "Add recipe")!);
 
     elements.recipeId.value = "ninfer-extra";
-    elements.recipeConfiguration.value = "{oops";
+    const enginePath = elements.recipeConfiguration.querySelector<HTMLInputElement>('input[data-label="Engine folder"]')!;
+    enginePath.value = "C:\\engines\\ninfer";
     submit(elements.recipeForm);
 
-    expect(showStatus).toHaveBeenCalledWith("Configuration must be valid JSON", "error");
-    expect(api).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/recipes/ninfer-extra", "PUT", expect.objectContaining({
+      configuration: expect.objectContaining({ enginePath: "C:\\engines\\ninfer" }),
+    })));
+    expect(elements.recipeConfiguration.querySelector("textarea:not([data-field-type])")).toBeNull();
+  });
+
+  it("rejects an unknown adapter instead of silently applying another adapter's fields", () => {
+    const editor = new RecipeConfigurationEditor(document.createElement("section"));
+    expect(() => editor.load("unknown-adapter", {})).toThrow("Unsupported recipe adapter: unknown-adapter");
   });
 
   it("refreshes from the page header and closes the editor with the back surface", () => {

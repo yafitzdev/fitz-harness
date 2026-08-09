@@ -19,10 +19,11 @@ export type InstanceStateChangedEvent = EventEnvelope<
   }
 >;
 
-/** Every operation that may activate or use an inference engine. `warm` is
- * deliberately part of the same queue: loading a model into VRAM must never
- * race an active chat or media generation. */
+/** Every operation admitted to an inference resource lane. `warm` always uses
+ * the local GPU lane, so loading a model into VRAM cannot race local chat or
+ * local media generation; remote media occupies the independent cloud lane. */
 export type QueueJobKind = "chat" | "media" | "warm";
+export type InferenceLane = "gpu" | "cloud";
 
 export type QueueUpdatedEvent = EventEnvelope<
   "queue.updated",
@@ -31,6 +32,11 @@ export type QueueUpdatedEvent = EventEnvelope<
     routeId: string;
     /** Discriminator: media jobs must not persist to `inference_requests` (§5.5). */
     kind: QueueJobKind;
+    lane: InferenceLane;
+    ownerUserId?: string;
+    sessionId?: string;
+    runId?: string;
+    label?: string;
     position: number;
     depth: number;
     status: "queued" | "started" | "cancelled" | "completed" | "failed";

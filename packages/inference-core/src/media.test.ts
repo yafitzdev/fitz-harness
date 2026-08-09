@@ -41,6 +41,7 @@ interface MediaFakeEngineOptions {
   progressPerPoll?: number;
   failStart?: boolean;
   failWhenPromptIncludes?: string;
+  remote?: boolean;
 }
 
 /** Test double implementing `MediaEngineAdapter`: deterministic submit/poll/cancel
@@ -54,7 +55,8 @@ class MediaFakeEngineAdapter implements MediaEngineAdapter<FakeInstanceHandle> {
   readonly stops: Array<{ instanceId: string; mode: StopMode }> = [];
   readonly submitted: MediaGenerationRequest[] = [];
   readonly cancelled: Array<{ instanceId: string; jobId: string }> = [];
-  readonly #options: { progressPerPoll: number; failStart?: boolean; failWhenPromptIncludes?: string };
+  maximumActiveJobs = 0;
+  readonly #options: { progressPerPoll: number; failStart?: boolean; failWhenPromptIncludes?: string; remote?: boolean };
   readonly #jobs = new Map<
     string,
     { instance: FakeInstanceHandle; request: MediaGenerationRequest; progress: number }
@@ -67,8 +69,11 @@ class MediaFakeEngineAdapter implements MediaEngineAdapter<FakeInstanceHandle> {
       ...(options.failWhenPromptIncludes
         ? { failWhenPromptIncludes: options.failWhenPromptIncludes }
         : {}),
+      ...(options.remote !== undefined ? { remote: options.remote } : {}),
     };
   }
+
+  executionLocation(): "local" | "remote" { return this.#options.remote ? "remote" : "local"; }
 
   async prepare(recipe: Recipe, _signal: AbortSignal): Promise<void> {
     this.preparations.push(recipe.id);
@@ -136,6 +141,7 @@ class MediaFakeEngineAdapter implements MediaEngineAdapter<FakeInstanceHandle> {
     this.submitted.push(structuredClone(request));
     const jobId = `provider-${this.submitted.length}`;
     this.#jobs.set(jobId, { instance, request, progress: 0 });
+    this.maximumActiveJobs = Math.max(this.maximumActiveJobs, this.#jobs.size);
     return { id: jobId, modality: request.modality };
   }
 
@@ -212,7 +218,7 @@ describe("InferenceScheduler media jobs", () => {
     const scheduler = new InferenceScheduler(routes, lifecycle);
 
     await expect(
-      collectMedia(scheduler.enqueueMedia("off", mediaInput("video", "nope")).events),
+      collectMedia(scheduler.enqueueMedia("off", mediaInput("video", "nope"), undefined, mediaOptions()).events),
     ).rejects.toBeInstanceOf(RouteNotFoundError);
     expect(mediaAdapter.starts).toHaveLength(0);
     expect(mediaAdapter.submitted).toHaveLength(0);
@@ -238,7 +244,7 @@ describe("InferenceScheduler media jobs", () => {
 
     const chat1 = scheduler.enqueue("chat", { messages: [{ role: "user", content: "one" }] });
     const warm = scheduler.enqueueWarm("chat");
-    const media = scheduler.enqueueMedia("video", mediaInput("video", "a cat"));
+    const media = scheduler.enqueueMedia("video", mediaInput("video", "a cat"), undefined, mediaOptions());
     const chat2 = scheduler.enqueue("chat", { messages: [{ role: "user", content: "two" }] });
 
     const [chat1Text, warmed, mediaEvents, chat2Text] = await Promise.all([
@@ -285,6 +291,71 @@ describe("InferenceScheduler media jobs", () => {
     expect(startedKinds).toEqual(["chat", "warm", "media", "chat"]);
   });
 
+  it("keeps remote media off the GPU lane and bounds cloud concurrency", async () => {
+    const chatAdapter = new FakeEngineAdapter({ tokenDelayMs: 40 });
+    const mediaAdapter = new MediaFakeEngineAdapter({ remote: true, progressPerPoll: 0.1 });
+    const events = new LifecycleEventBus();
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([chatAdapter, mediaAdapter]), events });
+    const scheduler = new InferenceScheduler(
+      new RouteResolver(
+        [route("chat", "chat-recipe"), route("video", "media-recipe", "video")],
+        [recipe("chat-recipe", 60), mediaRecipe("media-recipe", 60, "video")],
+      ),
+      lifecycle,
+      events,
+      { cloudConcurrency: 2 },
+    );
+
+    const chat = scheduler.enqueue("chat", { messages: [{ role: "user", content: "keep the GPU occupied" }] });
+    await waitFor(() => lifecycle.snapshot().state === "BUSY");
+    const media = ["one", "two", "three"].map((prompt) => scheduler.enqueueMedia("video", mediaInput("video", prompt), undefined, mediaOptions()));
+    await Promise.all(media.map((job) => collectMedia(job.events)));
+
+    expect(lifecycle.snapshot().state).toBe("BUSY");
+    expect(mediaAdapter.maximumActiveJobs).toBe(2);
+    expect(events.after(0).filter((event): event is QueueUpdatedEvent => event.type === "queue.updated" && event.data.kind === "media").every((event) => event.data.lane === "cloud")).toBe(true);
+    expect(await collect(chat)).toContain("keep the GPU occupied");
+    expect(chatAdapter.starts).toHaveLength(1);
+  });
+
+  it("cancels accepted remote work when provider polling fails", async () => {
+    const mediaAdapter = new MediaFakeEngineAdapter({
+      remote: true,
+      failWhenPromptIncludes: "explode",
+    });
+    const events = new LifecycleEventBus();
+    const lifecycle = new LifecycleManager({
+      adapters: new EngineAdapterRegistry([mediaAdapter]),
+      events,
+    });
+    const scheduler = new InferenceScheduler(
+      new RouteResolver(
+        [route("video", "media-recipe", "video")],
+        [mediaRecipe("media-recipe", 60, "video")],
+      ),
+      lifecycle,
+      events,
+    );
+
+    const job = scheduler.enqueueMedia(
+      "video",
+      mediaInput("video", "please explode"),
+      undefined,
+      mediaOptions(),
+    );
+
+    await expect(collectMedia(job.events)).rejects.toThrow(
+      "Fake media engine configured request failure",
+    );
+    expect(mediaAdapter.cancelled).toEqual([
+      { instanceId: expect.any(String), jobId: "provider-1" },
+    ]);
+    expect(mediaAdapter.stops).toEqual([
+      { instanceId: expect.any(String), mode: "graceful" },
+    ]);
+    expect(lifecycle.snapshot().state).toBe("UNLOADED");
+  });
+
   it("cancels a queued media job before it is submitted", async () => {
     const chatAdapter = new FakeEngineAdapter({ tokenDelayMs: 40 });
     const mediaAdapter = new MediaFakeEngineAdapter();
@@ -305,7 +376,7 @@ describe("InferenceScheduler media jobs", () => {
 
     const chat = scheduler.enqueue("chat", { messages: [{ role: "user", content: "hold" }] });
     await waitFor(() => lifecycle.snapshot().state === "BUSY");
-    const media = scheduler.enqueueMedia("video", mediaInput("video", "never"));
+    const media = scheduler.enqueueMedia("video", mediaInput("video", "never"), undefined, mediaOptions());
     media.cancel();
 
     await expect(collectMedia(media.events)).rejects.toMatchObject({ name: "AbortError" });
@@ -337,7 +408,7 @@ describe("InferenceScheduler media jobs", () => {
       events,
     );
 
-    const media = scheduler.enqueueMedia("video", mediaInput("video", "long render"));
+    const media = scheduler.enqueueMedia("video", mediaInput("video", "long render"), undefined, mediaOptions());
     await waitFor(() => lifecycle.snapshot().state === "BUSY" && mediaAdapter.submitted.length === 1);
     media.cancel();
 
@@ -364,13 +435,13 @@ describe("InferenceScheduler media jobs", () => {
 
     await expect(
       collectMedia(
-        scheduler.enqueueMedia("video", mediaInput("video", "please explode now")).events,
+        scheduler.enqueueMedia("video", mediaInput("video", "please explode now"), undefined, mediaOptions()).events,
       ),
     ).rejects.toThrow("Fake media engine configured request failure");
     expect(lifecycle.snapshot().state).toBe("FAILED");
 
     const recovered = await collectMedia(
-      scheduler.enqueueMedia("video", mediaInput("video", "recover")).events,
+      scheduler.enqueueMedia("video", mediaInput("video", "recover"), undefined, mediaOptions()).events,
     );
     expect(recovered.some((event) => event.type === "completed")).toBe(true);
     await waitFor(() => lifecycle.snapshot().state === "UNLOADED");
@@ -412,7 +483,7 @@ describe("InferenceScheduler media jobs", () => {
     );
 
     await expect(
-      collectMedia(scheduler.enqueueMedia("video", mediaInput("video", "hot render")).events),
+      collectMedia(scheduler.enqueueMedia("video", mediaInput("video", "hot render"), undefined, mediaOptions()).events),
     ).rejects.toThrow("hard limit");
 
     expect(mediaAdapter.cancelled).toEqual([{ instanceId: expect.any(String), jobId: "provider-1" }]);
@@ -434,7 +505,7 @@ describe("InferenceScheduler media jobs", () => {
     );
 
     const events = await collectMedia(
-      scheduler.enqueueMedia("video", mediaInput("video", "steady")).events,
+      scheduler.enqueueMedia("video", mediaInput("video", "steady"), undefined, mediaOptions()).events,
     );
     expect(events.some((event) => event.type === "completed")).toBe(true);
     expect(lifecycle.snapshot()).toMatchObject({ state: "READY", activeLeases: 0 });
@@ -473,6 +544,10 @@ function safeThermalGuard(): GpuThermalGuard {
 
 function mediaInput(modality: MediaModality, prompt: string): Omit<MediaGenerationRequest, "id" | "routeId"> {
   return { modality, params: { prompt } };
+}
+
+function mediaOptions(): { jobId: string } {
+  return { jobId: randomUUID() };
 }
 
 async function collect(stream: AsyncIterable<InferenceDelta>): Promise<string> {

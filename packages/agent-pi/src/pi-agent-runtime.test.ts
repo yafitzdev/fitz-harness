@@ -103,6 +103,25 @@ describe("PiAgentRuntime", () => {
     expect(events).toEqual([{ type: "assistant.delta", text: "hello" }, { type: "tool.started", toolCallId: "call-1", toolName: "read", input: { path: "README.md" } }, { type: "tool.completed", toolCallId: "call-1", toolName: "read", result: "done" }]); expect(disposed).toBe(true);
   });
 
+  it("forwards trusted task correlation only when the localhost gateway enables it", async () => {
+    const seen: unknown[] = [];
+    const createSession = async (options: Parameters<NonNullable<ConstructorParameters<typeof PiAgentRuntime>[0]["createSession"]>>[0]) => {
+      seen.push(options.workContext);
+      let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+      return {
+        subscribe: (next: Parameters<PiSession["subscribe"]>[0]) => { listener = next; return () => undefined; },
+        prompt: async () => { listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "ok" } }); },
+        steer: async () => undefined,
+        abort: async () => undefined,
+        dispose: () => undefined,
+      };
+    };
+    const context = { runId: "run-1", ownerUserId: "user-1", sessionId: "session-1" };
+    for await (const _ of new PiAgentRuntime({ forwardWorkContext: true, createSession }).run({ model: "fast", messages: [{ role: "user", content: "hi" }] }, undefined, context)) { /* consume */ }
+    for await (const _ of new PiAgentRuntime({ createSession }).run({ model: "fast", messages: [{ role: "user", content: "hi" }] }, undefined, context)) { /* consume */ }
+    expect(seen).toEqual([context, undefined]);
+  });
+
   it("forwards steering messages to the live session and emits user.steer at delivery", async () => {
     let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
     let releasePrompt!: () => void;

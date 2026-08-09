@@ -30,8 +30,9 @@ import { AdministrationPageController } from "./ui/administration/administration
 import { PlaybookWorkspaceController } from "./ui/playbooks/playbook-workspace.js";
 import { ProjectsController } from "./ui/projects/projects.js";
 import { ProjectSidebarController } from "./ui/sidebar/project-sidebar.js";
-import { AgentQueueController } from "./ui/queue/agent-queue.js";
+import { WorkQueueController } from "./ui/queue/work-queue.js";
 import { ArtifactController } from "./ui/artifacts/artifact-controller.js";
+import { assertHostContract, HostRequestError, parseHostError } from "./client-error.js";
 
 type Json = Record<string, any>;
 
@@ -246,7 +247,7 @@ const projects = new ProjectsController({
     try {
       const transcript = await api(`/api/v1/sessions/${sessionId}/transcript`);
       if (!isCurrent()) return;
-      sessionTokenEstimate = conversationTranscript.restore(transcript.data ?? []);
+      sessionTokenEstimate = conversationTranscript.restore(transcript.data ?? [], transcript.page ?? {});
       const pendingApprovals = await api(`/api/v1/sessions/${sessionId}/tool-approvals?status=pending`);
       if (!isCurrent()) return;
       for (const approval of pendingApprovals.data ?? []) activityTimeline.appendApproval(approval);
@@ -299,6 +300,12 @@ const conversationTranscript = new ConversationTranscript({
   appendMessage,
   appendCommentary,
   rebuildHistory: (history) => composer.rebuildHistory(history),
+  loadEarlier: async (beforeSequence) => {
+    const sessionId = projects.currentSessionId;
+    if (!sessionId) return { data: [], page: { hasEarlier: false } };
+    const response = await api(`/api/v1/sessions/${sessionId}/transcript?before=${beforeSequence}&limit=250`);
+    return { data: Array.isArray(response.data) ? response.data : [], page: response.page ?? {} };
+  },
 });
 const conversationLanding = new ConversationLanding({
   messages,
@@ -311,7 +318,7 @@ const conversationLanding = new ConversationLanding({
   retryConnection: () => initialize(),
   updateTitles,
 });
-const agentQueue = new AgentQueueController({
+const agentQueue = new WorkQueueController({
   list: element("request-queue"),
   count: element("queue-count"),
   api,
@@ -372,7 +379,7 @@ const agentRuns = new AgentRunController({
   refreshQueue: () => agentQueue.refresh(),
   showStatus,
   errorMessage,
-  terminalReplayError: (error) => error instanceof HttpError,
+  terminalReplayError: (error) => error instanceof HostRequestError,
   onMediaJobSubmitted: (jobId, toolName) => {
     const modality = toolName === "generate_image" ? "image" : toolName === "generate_audio" ? "audio" : "video";
     mediaJobFeed.render({ id: jobId, modality, status: "queued" });
@@ -452,7 +459,7 @@ const playbookWorkspace = new PlaybookWorkspaceController({
   recipeAdapter: element("recipe-adapter") as HTMLInputElement,
   recipeModelId: element("recipe-model-id") as HTMLInputElement,
   recipeContextTokens: element("recipe-context-tokens") as HTMLInputElement,
-  recipeConfiguration: element("recipe-configuration") as HTMLTextAreaElement,
+  recipeConfiguration: element("recipe-configuration"),
   recipeEditorTitle: element("recipe-editor-title"),
 }, {
   api,
@@ -661,7 +668,9 @@ async function initialize(): Promise<void> {
     setConnection("Connecting…", "loading");
     setStatus("Connecting", "loading");
     await connectionWorkspace.sync(false);
-    const [health, connection, identity] = await Promise.all([api("/health"), window.fitz.connectionInfo(), api("/api/v1/me")]); configuredHostOrigin = connection.origin; currentUserId = identity.data?.user?.id; administrator = identity.data?.authMode === "disabled" || identity.data?.user?.role === "administrator";
+    const [health, connection, identity] = await Promise.all([api("/health"), window.fitz.connectionInfo(), api("/api/v1/me")]);
+    assertHostContract(health);
+    configuredHostOrigin = connection.origin; currentUserId = identity.data?.user?.id; administrator = identity.data?.authMode === "disabled" || identity.data?.user?.role === "administrator";
     applyNavigation();
     await loadModels();
     engineState.textContent = health.engine?.state ?? "UNLOADED";
@@ -672,7 +681,7 @@ async function initialize(): Promise<void> {
     await projects.load();
     void loadManagementConfiguration(false);
   } catch (error) {
-    if (error instanceof HttpError && error.status === 401) {
+    if (error instanceof HostRequestError && error.status === 401) {
       const bootstrapped = await window.fitz.bootstrapLocalDevice().catch(() => false);
       if (bootstrapped) { await initialize(); return; }
       currentUserId = undefined; administrator = false; administrationButton.hidden = true; configuredHostOrigin = (await window.fitz.connectionInfo()).origin; setConnection("Pair device", "error"); setStatus("Pairing required", "error"); showPairingPage(`Enter a one-time code to connect to ${configuredHostOrigin}.`);
@@ -808,7 +817,7 @@ async function pairDevice(): Promise<void> {
   try {
     const response = await window.fitz.pairDevice({ code: pairingCode.value.trim(), displayName: pairingDisplayName.value.trim(), deviceName: pairingDeviceName.value.trim() }); let parsed: Json;
     try { parsed = JSON.parse(response.body) as Json; } catch { parsed = { error: response.body }; }
-    if (response.status >= 400) throw new HttpError(parsed.error?.message ?? parsed.error ?? `Pairing failed (${response.status})`, response.status);
+    if (response.status >= 400) throw parseHostError(parsed, response.status);
     pairingCode.value = ""; await initialize();
   } catch (error) { pairingError.textContent = errorMessage(error); pairingError.hidden = false; }
   finally { setFormBusy(pairingForm, false); }
@@ -985,11 +994,10 @@ async function api(path: string, method = "GET", body?: unknown): Promise<Json> 
   const response = await window.fitz.request({ path, method, ...(body !== undefined ? { body } : {}) });
   let parsed: Json;
   try { parsed = JSON.parse(response.body) as Json; } catch { parsed = { error: response.body }; }
-  if (response.status >= 400) throw new HttpError(parsed.error?.message ?? parsed.error ?? `Request failed (${response.status})`, response.status);
+  if (response.status >= 400) throw parseHostError(parsed, response.status);
   return parsed;
 }
 
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
 function formatTokenCount(value: number): string { return value >= 1000 ? `${Math.round(value / 1000)}k` : String(Math.round(value)); }
-class HttpError extends Error { constructor(message: string, readonly status: number) { super(message); } }

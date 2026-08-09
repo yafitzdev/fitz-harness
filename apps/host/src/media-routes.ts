@@ -13,7 +13,7 @@ import {
 } from "@fitz/protocol";
 import { SecurityPolicyError, type AuthenticatedPrincipal, type SecurityService } from "@fitz/security";
 import type { ArtifactRepository, MediaJobEventEnvelope, SqliteStore } from "@fitz/storage";
-import { MediaJobCoordinator } from "./media-jobs.js";
+import { MediaJobAdmissionError, MediaJobCoordinator } from "./media-jobs.js";
 
 export interface RegisterMediaRoutesOptions {
   app: FastifyInstance;
@@ -45,8 +45,8 @@ export function registerMediaRoutes(options: RegisterMediaRoutesOptions): void {
       security?.audit("media-job.created", principal?.user.id, "media-job", job.id, { routeId, modality, status: job.status });
       return reply.code(202).send({ data: job });
     } catch (error) {
-      const statusCode = error instanceof RouteNotFoundError ? 404 : error instanceof SecurityPolicyError ? 429 : 400;
-      return reply.code(statusCode).send({ error: errorMessage(error) });
+      const statusCode = mediaSubmissionStatus(error);
+      return reply.code(statusCode).send({ error: errorMessage(error), ...(error instanceof MediaJobAdmissionError ? { data: { jobId: error.jobId } } : {}) });
     }
   });
 
@@ -100,8 +100,8 @@ export function registerMediaRoutes(options: RegisterMediaRoutesOptions): void {
       security?.audit("media-job.retried", principal?.user.id, "media-job", retried.id, { originalJobId: original.id, routeId: original.routeId, modality: original.modality });
       return reply.code(202).send({ data: retried });
     } catch (error) {
-      const statusCode = error instanceof RouteNotFoundError ? 404 : error instanceof SecurityPolicyError ? 429 : 400;
-      return reply.code(statusCode).send({ error: errorMessage(error) });
+      const statusCode = mediaSubmissionStatus(error);
+      return reply.code(statusCode).send({ error: errorMessage(error), ...(error instanceof MediaJobAdmissionError ? { data: { jobId: error.jobId } } : {}) });
     }
   });
 
@@ -175,8 +175,10 @@ export function registerMediaRoutes(options: RegisterMediaRoutesOptions): void {
       if (error instanceof MediaGenerationTimeoutError) {
         return reply.code(504).send({ error: { message: `Image generation timed out; resume polling GET /api/v1/media/jobs/${error.jobId}`, type: "media_generation_timeout", param: error.jobId, code: "media_generation_timeout" } });
       }
-      const statusCode = error instanceof RouteNotFoundError ? 404 : error instanceof SecurityPolicyError ? 429 : 400;
-      return reply.code(statusCode).send(openAIError(error, "invalid_request_error"));
+      const statusCode = mediaSubmissionStatus(error);
+      return reply.code(statusCode).send(error instanceof MediaJobAdmissionError
+        ? { error: { message: error.message, type: "resource_busy", param: error.jobId, code: error.admission.reason } }
+        : openAIError(error, "invalid_request_error"));
     }
   });
 
@@ -205,8 +207,10 @@ export function registerMediaRoutes(options: RegisterMediaRoutesOptions): void {
       };
       return reply.code(202).send(response);
     } catch (error) {
-      const statusCode = error instanceof RouteNotFoundError ? 404 : error instanceof SecurityPolicyError ? 429 : 400;
-      return reply.code(statusCode).send(openAIError(error, "invalid_request_error"));
+      const statusCode = mediaSubmissionStatus(error);
+      return reply.code(statusCode).send(error instanceof MediaJobAdmissionError
+        ? { error: { message: error.message, type: "resource_busy", param: error.jobId, code: error.admission.reason } }
+        : openAIError(error, "invalid_request_error"));
     }
   });
 
@@ -347,6 +351,12 @@ function parseVideoGenerationRequest(value: unknown): VideoGenerationRequest {
 
 function openAIError(error: unknown, type: string): OpenAIErrorResponse {
   return { error: { message: errorMessage(error), type } };
+}
+
+function mediaSubmissionStatus(error: unknown): 400 | 404 | 429 {
+  if (error instanceof RouteNotFoundError) return 404;
+  if (error instanceof SecurityPolicyError || error instanceof MediaJobAdmissionError) return 429;
+  return 400;
 }
 
 function requireRecord(value: unknown): Record<string, unknown> {

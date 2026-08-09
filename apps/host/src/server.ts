@@ -108,6 +108,7 @@ const runtime = createHost({
     agentRuntime: new PiAgentRuntime({
       baseUrl: agentBaseUrl,
       apiKey: process.env.FITZ_AGENT_API_KEY ?? internalAgentToken ?? "fitz-local",
+      forwardWorkContext: Boolean(internalAgentToken),
       // The pi session's context window must match the recipe the route resolves to
       // (e.g. 131072 for consumer/DeepSeek routes, 100000 for ninfer), not a fixed default.
       contextWindow: (request) => contextTokensForRoute(store, request.model),

@@ -199,6 +199,27 @@ describe("InferenceScheduler", () => {
     expect(lifecycle.snapshot()).toMatchObject({ state: "READY", activeLeases: 0 });
   });
 
+  it("applies finite backpressure and settles already-aborted submissions", async () => {
+    const adapter = new FakeEngineAdapter({ tokenDelayMs: 30 });
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]) });
+    const scheduler = new InferenceScheduler(
+      new RouteResolver([route("default", "default")], [recipe("default", 60)]),
+      lifecycle,
+      undefined,
+      { gpuQueueCapacity: 1 },
+    );
+    const active = scheduler.enqueue("default", { messages: [{ role: "user", content: "active" }] });
+    const queued = scheduler.enqueue("default", { messages: [{ role: "user", content: "queued" }] });
+    expect(() => scheduler.enqueue("default", { messages: [{ role: "user", content: "overflow" }] })).toThrowError(
+      expect.objectContaining({ name: "InferenceAdmissionError", lane: "gpu", reason: "queue_capacity", retryable: true }),
+    );
+    const controller = new AbortController(); controller.abort();
+    await expect(collect(scheduler.enqueue("default", { messages: [{ role: "user", content: "aborted" }] }, controller.signal))).rejects.toMatchObject({ name: "AbortError" });
+    active.cancel(); queued.cancel();
+    await expect(collect(active)).rejects.toMatchObject({ name: "AbortError" });
+    await expect(collect(queued)).rejects.toMatchObject({ name: "AbortError" });
+  });
+
   it("recovers from a generation failure by replacing the failed instance", async () => {
     const adapter = new FakeEngineAdapter({ failWhenPromptIncludes: "explode" });
     const events = new LifecycleEventBus();

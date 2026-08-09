@@ -139,7 +139,7 @@
             <form id="recipe-form" class="management-editor-form" hidden>
               <div class="editor-heading"><small>Playbook configuration</small><h1 id="recipe-editor-title">Create recipe</h1><p>Configure the runtime definition used by a playbook.</p></div>
               <div class="configuration-grid"><label>Playbook ID<input id="recipe-playbook-id" required placeholder="my-playbook"></label><label>Recipe ID<input id="recipe-id" required placeholder="my-model"></label><label>Display name<input id="recipe-display-name" required placeholder="My Model"></label><label>Adapter<input id="recipe-adapter" required placeholder="llama-cpp"></label><label>Model ID<input id="recipe-model-id" required placeholder="model-file.gguf"></label><label>Context tokens<input id="recipe-context-tokens" type="number" min="1" required value="131072"></label></div>
-              <label>Configuration JSON<textarea id="recipe-configuration" rows="7" spellcheck="false">{}</textarea></label>
+              <section id="recipe-configuration" class="recipe-configuration" aria-label="Recipe runtime settings"></section>
               <div class="editor-actions"><button class="quiet-button" type="button" data-close-management-editor>Cancel</button><button class="primary-button" type="submit">Save recipe</button></div>
             </form>
           </section>

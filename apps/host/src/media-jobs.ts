@@ -10,7 +10,7 @@ import type {
   MediaModality,
   Recipe,
 } from "@fitz/protocol";
-import type { InferenceScheduler, RouteResolver, ScheduledMediaJob } from "@fitz/inference-core";
+import { InferenceAdmissionError, type InferenceScheduler, type RouteResolver, type ScheduledMediaJob } from "@fitz/inference-core";
 import { SecurityPolicyError, type AuthenticatedPrincipal, type SecurityService } from "@fitz/security";
 import { ArtifactQuotaExceededError, BlobSizeLimitError, type ArtifactRepository, type BlobSource, type MediaJobEventEnvelope, type SqliteStore } from "@fitz/storage";
 import { classifyArtifact, normalizeMimeType } from "@fitz/media";
@@ -48,7 +48,16 @@ export class ArtifactTooLargeError extends Error {
   }
 }
 
-/** Durable media job service (§5.6): submit/poll/cancel over the shared FIFO,
+/** The durable media record was created, but its bounded execution lane could
+ * not admit it. The job id lets clients inspect or retry the recorded failure. */
+export class MediaJobAdmissionError extends Error {
+  constructor(readonly jobId: string, readonly admission: InferenceAdmissionError) {
+    super(admission.message, { cause: admission });
+    this.name = "MediaJobAdmissionError";
+  }
+}
+
+/** Durable media job service (§5.6): submit/poll/cancel over bounded resource lanes,
  *  sequenced event persistence (`media_job_events`), artifact write-back on
  *  completion, credit ledger append, quota enforcement, and restart recovery
  *  (recoverInterruptedMediaJobs runs at host boot, outside this class). */
@@ -93,12 +102,7 @@ export class MediaJobCoordinator {
     }
 
     const params = constrainMediaParams(input.params, recipe);
-    const scheduled = this.#scheduler.enqueueMedia(route.id, {
-      modality: input.modality,
-      params,
-      ...(principal ? { userId: principal.user.id } : input.userId ? { userId: input.userId } : {}),
-    });
-    const id = scheduled.jobId;
+    const id = randomUUID();
     const now = new Date().toISOString();
     const record: MediaJobRecord = {
       id,
@@ -112,6 +116,24 @@ export class MediaJobCoordinator {
       ...(creditCostCents !== undefined ? { creditCostCents } : {}),
     };
     this.#store.createMediaJob(record);
+    let scheduled: ScheduledMediaJob;
+    try {
+      scheduled = this.#scheduler.enqueueMedia(route.id, {
+        modality: input.modality,
+        params,
+        ...(principal ? { userId: principal.user.id } : input.userId ? { userId: input.userId } : {}),
+      }, undefined, {
+        jobId: id,
+        context: { ...(principal ? { ownerUserId: principal.user.id } : input.userId ? { ownerUserId: input.userId } : {}), ...(input.sessionId ? { sessionId: input.sessionId } : {}), label: `${input.modality} generation` },
+      });
+    } catch (error) {
+      if (error instanceof InferenceAdmissionError) {
+        this.#fail(id, error.message, error.reason);
+        throw new MediaJobAdmissionError(id, error);
+      }
+      this.#fail(id, errorMessage(error), "scheduler_admission_failed");
+      throw error;
+    }
     this.#active.set(id, scheduled);
     // The channel buffers everything pushed before this consumer attaches, so the
     // durable record always exists before any of its events are persisted.

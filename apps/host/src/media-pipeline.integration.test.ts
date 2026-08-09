@@ -45,25 +45,11 @@ describe("Fitz media generation pipeline", () => {
       expect(queueEvents.some((event) => event.data.status === "started")).toBe(true);
       expect(queueEvents.at(-1)?.data.status).toBe("completed");
       expect(queueEvents.every((event) => event.data.kind === "media")).toBe(true);
+      expect(queueEvents.every((event) => event.data.lane === "cloud")).toBe(true);
 
-      // The lifecycle took the media lease path: BUSY until the job is done.
-      const busy = seen.filter(
-        (event) =>
-          event.type === "instance.state.changed" && event.data.reason === "media-generation-started",
-      );
-      expect(busy).toContainEqual(
-        expect.objectContaining({
-          data: expect.objectContaining({ state: "BUSY", recipeId: "h3-img" }),
-        }),
-      );
-      expect(
-        seen.some(
-          (event) =>
-            event.type === "instance.state.changed" &&
-            event.data.state === "READY" &&
-            event.data.reason === "generation-completed",
-        ),
-      ).toBe(true);
+      // Remote providers use the independent cloud lane and never occupy the
+      // local GPU lifecycle.
+      expect(seen.some((event) => event.type === "instance.state.changed")).toBe(false);
 
       // The artifact is the fake engine's canonical PNG, classified as an image.
       const artifact = runtime.store.getArtifact(job!.artifactId!);

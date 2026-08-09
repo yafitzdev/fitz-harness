@@ -82,7 +82,7 @@ The single biggest hidden cost is that **cloud media APIs are not OpenAI-compati
 | KD-6 | **Audio deferred as a user-facing route/tool**, but capability model + job DTOs include audio now (H3 natively outputs stereo audio). | Schema must not need a later refactor. |
 | KD-7 | **Access control**: media tools default **Ask first** in *every* access mode, including Full access — Full access never auto-allows media tools (the policy engine returns `ask`/`block` for them, and the legacy no-policy gates escalate too; Read only keeps blocking non-read-only tools) — plus per-user media quotas (job count + credit budget). Generation costs money. | Money + minutes-long GPU/cloud work justifies stronger-than-default gating. |
 | KD-8 | **Jobs, not streams**: generation is submit + poll with a durable job record, long leases, progress events, restart recovery. | Local engines (ComfyUI `/prompt` → `/history`) and clouds both expose async job ids; there is no token stream to stream. |
-| KD-9 | **One shared FIFO scheduler** for chat, media, recipe tests, and VRAM-bearing warmup. A video job blocks chat on the same GPU (documented policy note in the UI). | Single GPU, single queue; uniform queue position/cancel semantics. Cloud jobs also route through the queue in v1 (see §5.5 trade-off) — including the acknowledged side effect that a cloud media job's lifecycle **recipe-switch** evicts whatever local engine is resident while the no-op cloud instance holds the lease (see §5.5). |
+| KD-9 | **Explicit bounded resource lanes**: one strict FIFO lane with concurrency one for every local GPU operation, plus a bounded concurrent lane for remote provider media. | A single GPU can never process two requests concurrently. Remote media does not consume VRAM, block local chat, or switch the local lifecycle recipe. Both lanes retain queue visibility and cancellation. |
 | KD-10 | **Separate `MediaEngineAdapter` interface** rather than adding generation methods to `EngineAdapter`. | `streamChat` and `submit/poll/cancel` have different shapes, lifetimes, and error semantics; one interface per job kind keeps the registry and lifecycle type-safe. |
 | KD-11 | **Provider templates** (`packages/media-providers`), not a chat-shaped adapter, for cloud media. | Cloud media APIs are not OpenAI-compatible chat — this is the biggest hidden cost; templates are the containment boundary (same argument as engine adapters). |
 | KD-12 | Media tool calls **never block the agent turn on job completion**. The tool submits and returns a `mediaJobId`; completion lands in the artifact repo and event stream. | The agent's own chat *is* a scheduler queue job; blocking on a queued media job behind it would deadlock the turn. |
@@ -238,7 +238,7 @@ export type MediaJobEvent =
 
 Semantics:
 
-- **Submit** creates the durable record (`queued`) and enqueues on the shared FIFO. **Poll** is driven by the host's per-job poll loop (the queue slot), yielding `progress` events. **Cancel** works at both queue position (removes a queued job, mirroring `InferenceScheduler.#cancel`) and in-flight boundaries (engine/provider cancel API, mirroring ComfyUI `/queue` or Replicate `/v1/predictions/{id}/cancel`). Jobs **never** stream tokens.
+- **Submit** creates the durable record (`queued`) before scheduler admission, then enters the lane selected from the adapter execution location. **Poll** is driven by the lane's per-job loop, yielding `progress` events. **Cancel** works at both queue position and in-flight boundaries (engine/provider cancel API, mirroring ComfyUI `/queue` or Replicate `/v1/predictions/{id}/cancel`). Jobs **never** stream tokens.
 - **v1 desktop consumption is HTTP polling**: the Inspector polls `GET /api/v1/media/jobs/:id` (optionally `?status=` to filter), exactly as the desktop consumes agent runs today. The job SSE stream (`GET /api/v1/media/jobs/:id/events`) is for **external clients and event replay**, not the desktop renderer: `window.fitz.request` (apps/desktop/src/main.ts) is a single-response `fetch` that buffers the full response body in both `text` and `base64` modes and cannot consume `text/event-stream`, and the renderer CSP is `connect-src 'none'`. Live push progress in the Inspector would require an IPC streaming bridge; that is a later, separately budgeted change, not a v1 requirement.
 - **Restart recovery**: on host boot, `store.recoverInterruptedMediaJobs()` marks `queued|started|progressing` → `interrupted` (errorCode `host_restarted`), matching `recoverInterruptedRequests()` in `sqlite-store.ts`. Because `providerJobId` is persisted, a follow-up can issue provider-side cancels for orphaned cloud jobs.
 
@@ -289,7 +289,7 @@ export function isMediaEngineAdapter(adapter: EngineAdapter | MediaEngineAdapter
 
 ### 5.5 Scheduler + lifecycle integration
 
-`packages/inference-core/src/scheduler.ts` is the one shared FIFO queue. Its media and warmup entry points join the same one-slot pump:
+`packages/inference-core/src/scheduler.ts` owns two bounded resource lanes. Chat, warmup, recipe tests, and local media enter the permanent one-slot GPU lane. Remote media enters the bounded cloud lane:
 
 ```ts
 // packages/inference-core/src/scheduler.ts
@@ -303,12 +303,13 @@ export class InferenceScheduler {
   enqueueMedia(
     routeId: string,
     input: Omit<MediaGenerationRequest, "id" | "routeId">,
-    externalSignal?: AbortSignal,
+    externalSignal: AbortSignal | undefined,
+    options: { jobId: string; context?: WorkContext },
   ): ScheduledMediaJob;
 }
 ```
 
-- `QueueJob` is a discriminated union of chat, media, and warmup admissions. The pump (`#pump()`) branches on `job.kind`; queue position, cancellation, `queue.updated` events, shutdown behavior, and the single active slot are shared. Recipe tests use chat admissions with forced post-test unload.
+- `QueueJob` is a discriminated union of chat, media, and warmup admissions. `BoundedWorkLane` supplies queue position, cancellation, shutdown, and backpressure uniformly; the scheduler selects GPU or cloud before admission. Recipe tests use chat admissions with forced post-test unload.
 - `LifecycleManager` gains:
 
 ```ts
@@ -341,9 +342,9 @@ async *runMedia(recipe: Recipe, request: MediaGenerationRequest, signal: AbortSi
 ```
 
 - **Lease semantics need no policy changes**: `#scheduleEviction()` fires only when `activeLeases === 0` and the instance is READY, so a 5-minute video holds its lease to the terminal state — exactly the existing behavior exercised harder. Media recipes declare `evictionPolicy: "immediate"`, releasing media VRAM as soon as generation ends so the queued text model can load for refinement.
-- **Policy note (documented in the UI)**: a video job holds the queue slot and the GPU; chat jobs wait behind it ("Video generating — chat queued"). In v1 cloud provider jobs also take a queue slot even though they do not touch the GPU — a deliberate simplification (uniform queue position and cancel semantics) with a known cost (a cloud video job delays local chat). A later change may run provider jobs in a GPU-free side lane; see Open Questions OQ-3.
-- **Cloud jobs force a lifecycle recipe-switch (acknowledged side effect)**: `runMedia` calls `#ensureReady(recipe)` unconditionally, and `#ensureReady` switches instances whenever `recipe.id` differs (lifecycle-manager.ts:146–153). A cloud media job therefore calls `stop("recipe-switch")` on whatever local engine is resident (evicting a warm model), loads the no-op cloud media "instance", holds BUSY for the whole cloud generation, and then chat must cold-reload the local engine afterward. This is a real cost beyond "a cloud video job delays local chat", and it interacts with the advice below to give media recipes generous idle TTLs — a generous TTL would instead keep the useless no-op cloud instance resident and delay the next chat load. Two mitigations: (1) cloud media recipes (adapter = a provider template id) declare `lifecycle.evictionPolicy: "immediate"` so the no-op instance releases the moment its job ends — `evictionPolicy: "immediate"` already exists in `parseRecipe` (create-app.ts) — and (2) OQ-3 (GPU-free side lane) is prioritized after v1 partly *because* it removes this eviction entirely. The chat-side cold-reload cost is surfaced in the UI alongside the queue note.
-- **`queue.updated` must not leak non-chat jobs into `inference_requests`**: its job-kind discriminator is `"chat" | "media" | "warm"`. Only chat events enter the legacy `inference_requests` ledger; all three kinds enter `gpu_work_items`, while media retains its richer `media_jobs` record and event stream. This prevents duplicate recovery and makes warmup admission observable without pretending it is a chat request.
+- **Local policy**: a local video job holds the only GPU lane; local chat, warmup, tests, and other local media wait behind it. This is the hard single-GPU safety contract.
+- **Remote-provider policy**: remote media uses a bounded cloud lane. It never calls the local lifecycle manager, never evicts a resident model, and does not delay the local GPU queue. Its provider handle remains cancellable and its durable job uses the same visible queue identity.
+- **`queue.updated` must not leak non-chat jobs into `inference_requests`**: its job-kind discriminator is `"chat" | "media" | "warm"` and its lane is `"gpu" | "cloud"`. Only GPU-lane events enter `gpu_work_items`; media retains its richer `media_jobs` record and event stream. This prevents duplicate recovery, keeps cloud work out of the GPU ledger, and makes warmup admission observable without pretending it is a chat request.
 
 ### 5.6 Host media job service — `apps/host/src/media-jobs.ts`
 
@@ -516,7 +517,7 @@ sequenceDiagram
     participant U as User / Desktop
     participant P as Pi agent (host)
     participant H as MediaJobCoordinator (host)
-    participant S as InferenceScheduler (shared FIFO)
+    participant S as InferenceScheduler (bounded lanes)
     participant L as LifecycleManager
     participant E as Media engine / cloud provider
     participant A as Artifact store (SQLite)
@@ -573,7 +574,7 @@ flowchart LR
     FAL --> FALA
     REP --> REPA
     RT --> RW[image / video / audio well-known routes]
-    RW --> MC[MediaJobCoordinator + shared FIFO]
+    RW --> MC[MediaJobCoordinator + bounded lanes]
     MC --> FAKE
     MC --> CF
     MC --> OMA
@@ -670,7 +671,7 @@ Notes:
 **Chosen: separate interface (KD-10).** Extending `EngineAdapter` with `submit/poll/cancel` would force every chat adapter to implement dead methods, weaken the `streamChat` contract, and let `run()` accidentally call a media adapter. A separate interface + `isMediaEngineAdapter` guard keeps both worlds type-safe, and the shared lifecycle primitives (`start`/`waitUntilReady`/`stop`/`inspect`) are duplicated intentionally — the same shape as today's `OpenAICompatibleEngineAdapter` vs. `FakeEngineAdapter` split.
 
 ### A2. Separate media queue vs. shared FIFO
-**Chosen: shared FIFO (KD-9).** A separate queue would double the queue-position/cancel/persistence machinery and make "video job while chat waits" opaque. The single queue costs one trade-off — cloud provider jobs also take a slot even though they don't touch the GPU — which is documented in the UI and addressable later (OQ-3). The queue union keeps `queue.updated` events, cancellation, and shutdown behavior untouched for chat.
+**Chosen: bounded resource lanes (KD-9).** The local GPU lane is FIFO with concurrency one. Remote provider media uses a bounded cloud lane because it does not touch local VRAM. Both lanes emit the same typed queue events and share cancellation and shutdown contracts, while execution remains isolated by resource class.
 
 ### A3. Jobs-as-streams vs. submit/poll
 **Chosen: submit/poll (KD-8).** Neither ComfyUI nor fal nor Replicate expose a token stream; they expose job ids and status. Forcing generation into an `AsyncIterable<InferenceDelta>` would invent fake deltas, lose progress semantics, and complicate cancellation. The poll loop is one function (`lifecycle.runMedia`), the lease holds naturally for minutes, and `providerJobId` persistence gives a restart story.
@@ -732,7 +733,7 @@ Notes:
 
 - **OQ-1 — RESOLVED (v1, KD-13)**: H3 weights live under `.llm/models/comfyui`; the upstream checkout remains clean under `.llm/engines/ComfyUI`, its venv is `.llm/runtimes/comfyui`, and an external YAML points ComfyUI at the model registry. `ModelCatalogService` remains GGUF/text-generation-only for now.
 - **OQ-2**: Content moderation policy for local-engine output. Cloud providers have terms; local H3 is unmoderated. Options: none (admin owns it), post-generation classifier hook, or provider-side moderation flags. Not required for v1.
-- **OQ-3**: Cloud jobs in the GPU-free side lane. v1 routes all media through the shared FIFO (KD-9); a follow-up could run provider jobs off-queue (they never acquire the lifecycle lease) while keeping queue-position reporting. This is also the *primary* mitigation for the recipe-switch eviction side effect (§5.5) — deprioritizing it would leave chat cold-reloading after every cloud media job. Decide after real usage data.
+- **OQ-3 resolved**: remote provider media runs in the bounded GPU-free cloud lane and never acquires a local lifecycle lease.
 - **OQ-4 — RESOLVED**: payloads use the content-addressed local blob backend; SQLite stores metadata and opaque references. The backend interface is intentionally compatible with a future S3 implementation.
 - **OQ-5**: Ship `media_job_status` read-only tool in v1 or defer? It improves agent UX (the agent can report "your video is 60% done") at the cost of one more tool to gate; default defer unless the UX pass demands it.
 - **OQ-6**: Audio route timing — H3 natively outputs audio, but audio as a user-facing route/tool is deferred (KD-6). Revisit after video ships.

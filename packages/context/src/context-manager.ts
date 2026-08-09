@@ -30,8 +30,9 @@ export class ContextManager {
     }
     return total;
   }
+  estimateSession(sessionId: string): number { return this.estimateSessionActivity(sessionContextEntries(this.store, sessionId)); }
   async prepare(request: AgentRunRequest, contextTokens: number): Promise<ContextPreparation> {
-    const entries = request.sessionId ? allTranscriptEntries(this.store, request.sessionId) : [];
+    const entries = request.sessionId ? sessionContextEntries(this.store, request.sessionId) : [];
     const canonical = request.sessionId ? [...sessionContextMessages(entries), ...request.messages] : [...request.messages];
     const outputReserve = Math.max(request.maxTokens ?? this.#policy.reserveOutputTokens, this.#policy.reserveOutputTokens); const budgetTokens = Math.max(128, Math.floor(contextTokens * this.#policy.compactionThreshold) - outputReserve); const estimatedInputTokens = this.estimate(request.messages) + (request.sessionId ? this.estimateSessionActivity(entries) : 0);
     if (estimatedInputTokens <= budgetTokens) return { request: { ...request, messages: canonical }, compacted: false, estimatedInputTokens, budgetTokens, originalMessageCount: canonical.length, estimatedContextTokens: estimatedInputTokens };
@@ -68,6 +69,20 @@ function contentCharLength(content: string | ChatContentPart[]): number {
 }
 function transcriptMessages(entries: readonly TranscriptEntryRecord[]): ChatMessage[] { return entries.filter((entry) => entry.kind === "message" && entry.role && typeof entry.content.text === "string").map((entry) => ({ role: entry.role!, content: entry.content.text as string })); }
 function allTranscriptEntries(store: SqliteStore, sessionId: string): TranscriptEntryRecord[] { const entries: TranscriptEntryRecord[] = []; let after = 0; while (true) { const page = store.transcriptAfter(sessionId, after, 1000); entries.push(...page); if (page.length < 1000) return entries; after = page.at(-1)!.sequence; } }
+function sessionContextEntries(store: SqliteStore, sessionId: string): TranscriptEntryRecord[] {
+  const checkpoint = store.latestTranscriptCompaction(sessionId);
+  if (!checkpoint) return allTranscriptEntries(store, sessionId);
+  const throughSequence = Number(checkpoint.content.throughSequence);
+  if (!Number.isFinite(throughSequence)) return allTranscriptEntries(store, sessionId);
+  const entries: TranscriptEntryRecord[] = [checkpoint];
+  let after = throughSequence;
+  while (true) {
+    const page = store.transcriptAfter(sessionId, after, 1000);
+    entries.push(...page.filter((entry) => entry.id !== checkpoint.id));
+    if (page.length < 1000) return entries;
+    after = page.at(-1)!.sequence;
+  }
+}
 function sessionContextMessages(entries: readonly TranscriptEntryRecord[]): ChatMessage[] {
   const checkpoint = findCheckpoint(entries);
   if (!checkpoint) return transcriptMessages(entries);

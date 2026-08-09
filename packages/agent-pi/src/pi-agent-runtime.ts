@@ -65,6 +65,8 @@ export type PiSessionFactory = (options: {
   redactResult?: ToolResultRedactor;
   /** Extra tools registered per run (e.g. `fitz_trash`). */
   customTools?: ToolDefinition[];
+  /** Trusted localhost-only correlation propagated to the Fitz completion gateway. */
+  workContext?: AgentRuntimeRunOptions;
 }) => Promise<PiSession>;
 export interface PiAgentRuntimeOptions {
   cwd?: string | ((request: AgentRunRequest) => string);
@@ -85,6 +87,8 @@ export interface PiAgentRuntimeOptions {
   redactToolResult?: ToolResultRedactor;
   /** Extra tools to register for each run; called with the run's resolved working directory. */
   customTools?: (context: { cwd: string; runId?: string }) => ToolDefinition[];
+  /** Forward task correlation headers to the model endpoint. Enable only for Fitz's bundled localhost gateway. */
+  forwardWorkContext?: boolean;
 }
 
 const CODING_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"] as const;
@@ -117,6 +121,7 @@ export class PiAgentRuntime implements AgentRuntime {
   readonly #toolPolicy: ToolEvaluator | undefined;
   readonly #redactToolResult: ToolResultRedactor | undefined;
   readonly #customTools: ((context: { cwd: string; runId?: string }) => ToolDefinition[]) | undefined;
+  readonly #forwardWorkContext: boolean;
   constructor(options: PiAgentRuntimeOptions = {}) {
     this.#cwd = options.cwd ?? process.cwd();
     this.#tools = options.tools ?? CODING_TOOLS;
@@ -132,6 +137,7 @@ export class PiAgentRuntime implements AgentRuntime {
     this.#toolPolicy = options.toolPolicy;
     this.#redactToolResult = options.redactToolResult;
     this.#customTools = options.customTools;
+    this.#forwardWorkContext = options.forwardWorkContext ?? false;
   }
   run(request: AgentRunRequest, signal?: AbortSignal, options?: AgentRuntimeRunOptions): AgentRuntimeRun {
     const channel = new EventChannel(); let session: PiSession | undefined; const controller = new AbortController();
@@ -158,6 +164,7 @@ export class PiAgentRuntime implements AgentRuntime {
           : {}),
         ...(this.#redactToolResult ? { redactResult: this.#redactToolResult } : {}),
         ...(this.#customTools ? { customTools: this.#customTools({ cwd, ...(options?.runId ? { runId: options.runId } : {}) }) } : {}),
+        ...(this.#forwardWorkContext && options ? { workContext: options } : {}),
       }); session = created; if (controller.signal.aborted) { await created.abort(); throw abortError(); }
       return created;
     })();
@@ -273,6 +280,7 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: options.contextWindow,
     maxTokens: options.maxTokens,
+    ...(options.workContext ? { headers: workContextHeaders(options.workContext) } : {}),
     compat: {
       supportsStore: false,
       supportsDeveloperRole: false,
@@ -339,6 +347,14 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
     sessionManager: sdk.SessionManager.inMemory(options.cwd),
   });
   return result.session as PiSession;
+}
+
+function workContextHeaders(context: AgentRuntimeRunOptions): Record<string, string> {
+  return {
+    ...(context.runId ? { "x-fitz-run-id": context.runId } : {}),
+    ...(context.ownerUserId ? { "x-fitz-owner-user-id": context.ownerUserId } : {}),
+    ...(context.sessionId ? { "x-fitz-session-id": context.sessionId } : {}),
+  };
 }
 
 /**

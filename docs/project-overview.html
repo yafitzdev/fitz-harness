@@ -248,7 +248,7 @@
 <tr><td><span class="method post">POST</span></td><td class="route">/api/v1/pairing/redeem</td></tr>
 <tr><td><span class="method post">POST</span></td><td class="route">/api/v1/agent/runs</td></tr>
 <tr><td><span class="method get">GET</span></td><td class="route">/api/v1/agent/runs</td></tr>
-<tr><td><span class="method get">GET</span></td><td class="route">/api/v1/agent/queue</td></tr>
+<tr><td><span class="method get">GET</span></td><td class="route">/api/v1/work/queue</td></tr>
 <tr><td><span class="method get">GET</span></td><td class="route">/api/v1/agent/runs/:runId</td></tr>
 <tr><td><span class="method delete">DELETE</span></td><td class="route">/api/v1/agent/runs/:runId</td></tr>
 <tr><td><span class="method post">POST</span></td><td class="route">/api/v1/agent/runs/:runId/steer</td></tr>
@@ -336,7 +336,7 @@
     <div class="section-sub">Feature bullets from <span class="chip">docs/implementation-status.md</span> — 27 implemented, 7 deferred.</div>
     <div class="grid">
       <div class="card"><span class="mono">shipped</span><h5>Implemented</h5><ul><li>pnpm TypeScript monorepo with build, typecheck, and test commands.</li><li>Versioned protocol types for recipes, routes, lifecycle state, events, and initial Chat Completions requests.</li><li>Engine adapter contract and registry.</li><li>Route resolver.</li><li>Single-generation FIFO scheduler with cancellation and queue events.</li><li>Lifecycle state machine with on-demand loading, recipe switching, leases, minimum residency, and idle TTL eviction.</li><li>Deterministic fake engine adapter.</li><li>Opt-in direct NInfer adapter with validated launch specs, generated per-instance credentials,</li><li>Spawned-process NInfer adapter integration coverage using an authenticated HTTP/SSE simulator.</li><li>SQLite migrations and repositories for recipes, routes, lifecycle events, settings, and inference-request groundwork.</li><li>Durable inference request status, administrator request history, and startup recovery that marks</li><li>Pre-launch RAM/VRAM resource policy with NVIDIA telemetry and a configurable 2,048 MiB default</li></ul></div>
-      <div class="card"><span class="mono">next</span><h5>Deferred</h5><ul><li>Full JSON Schema/OpenAPI generation and exhaustive request compatibility.</li><li>Persistent/distributed rate windows.</li><li>Pi tool execution gating against the durable approval service and model-assisted summary quality.</li><li>Tailscale installation/onboarding on the target machine and live tailnet validation.</li><li>Desktop UX refinement, richer event rendering, and accessibility polish.</li><li>OS-backed secret storage.</li><li>Backpressure limits and retained stream replay for active completions.</li></ul></div>
+      <div class="card"><span class="mono">next</span><h5>Deferred</h5><ul><li>Full JSON Schema/OpenAPI generation and exhaustive request compatibility.</li><li>Persistent/distributed rate windows.</li><li>Pi tool execution gating against the durable approval service and model-assisted summary quality.</li><li>Tailscale installation/onboarding on the target machine and live tailnet validation.</li><li>Desktop UX refinement, richer event rendering, and accessibility polish.</li><li>OS-backed secret storage.</li><li>Retained stream replay for active OpenAI-shaped completions.</li></ul></div>
     </div>
     <h4>Conventions</h4>
     <ul>

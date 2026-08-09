@@ -33,6 +33,18 @@ describe("ContextManager", () => {
     expect(prepared.request.messages.map((message) => message.content)).toEqual([expect.stringContaining("Conversation summary"), "after checkpoint", "next turn"]); store.close();
   });
 
+  it("uses only the latest checkpoint and post-checkpoint activity for subsequent context", async () => {
+    const store = SqliteStore.memory(); const now = new Date(0).toISOString(); store.createProject({ id: "p", name: "P", createdAt: now, updatedAt: now }); store.createSession({ id: "s", projectId: "p", title: "S", status: "active", createdAt: now, updatedAt: now });
+    store.appendTranscriptEntry({ id: "old-user", sessionId: "s", kind: "message", role: "user", content: { text: "old question that must not be replayed" }, createdAt: now });
+    store.appendTranscriptEntry({ id: "old-tool", sessionId: "s", kind: "tool-result", role: "tool", content: { result: "old tool output that must not be recounted" }, createdAt: now });
+    store.appendTranscriptEntry({ id: "checkpoint", sessionId: "s", kind: "compaction", role: "system", content: { summary: "durable summary", throughSequence: 2, manual: true }, createdAt: now });
+    store.appendTranscriptEntry({ id: "recent", sessionId: "s", kind: "message", role: "assistant", content: { text: "recent answer" }, createdAt: now });
+    const manager = new ContextManager(store); const prepared = await manager.prepare({ model: "fast", sessionId: "s", messages: [{ role: "user", content: "next turn" }] }, 10_000);
+    expect(prepared.request.messages.map((message) => message.content)).toEqual(["Conversation summary:\ndurable summary", "recent answer", "next turn"]);
+    expect(manager.estimateSession("s")).toBe(manager.estimateSessionActivity(store.transcriptAfter("s", 2)));
+    store.close();
+  });
+
   it("compacts transcripts beyond one storage page", async () => {
     const store = SqliteStore.memory(); const now = new Date(0).toISOString(); store.createProject({ id: "p", name: "P", createdAt: now, updatedAt: now }); store.createSession({ id: "s", projectId: "p", title: "S", status: "active", createdAt: now, updatedAt: now });
     for (let index = 0; index < 1_001; index += 1) store.appendTranscriptEntry({ id: `e-${index}`, sessionId: "s", kind: "message", role: "user", content: { text: String(index) }, createdAt: now });

@@ -4,6 +4,9 @@ Fitz Codex is a local-first agent application and inference control plane. The r
 
 Current work is tracked in [TODO.html](./TODO.html).
 
+The exact desktop/host handshake, bounded work lanes, single-GPU invariant, recovery behavior, and
+long-session contract are documented in [docs/runtime-contract.md](./docs/runtime-contract.md).
+
 ## Development
 
 Prerequisites:

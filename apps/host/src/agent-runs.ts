@@ -5,7 +5,17 @@ import type { AgentRuntime, AgentRuntimeEvent, AgentRuntimeRun } from "@fitz/age
 import { randomUUID } from "node:crypto";
 import type { SqliteStore } from "@fitz/storage";
 
-interface AgentQueueJob { id: string; request: AgentRunRequest; ownerUserId?: string; stream: AgentRuntimeRun | ScheduledStream | undefined }
+interface AgentQueueJob {
+  id: string;
+  request: AgentRunRequest;
+  ownerUserId?: string;
+  stream: AgentRuntimeRun | ScheduledStream | undefined;
+  cancelRequested: boolean;
+}
+
+export class AgentQueueCapacityError extends Error {
+  constructor() { super("The agent request queue is at capacity"); this.name = "AgentQueueCapacityError"; }
+}
 
 export class AgentRunCoordinator {
   readonly #queue: AgentQueueJob[] = [];
@@ -13,9 +23,12 @@ export class AgentRunCoordinator {
   #current: AgentQueueJob | undefined;
   #processing = false;
   /** Fired once per run after it reaches a terminal state, so the safety layer can sweep retention. */
-  constructor(private readonly store: SqliteStore, private readonly scheduler: InferenceScheduler, private readonly runtime?: AgentRuntime, private readonly onRunCompleted?: (runId: string) => void) {}
+  constructor(private readonly store: SqliteStore, private readonly scheduler: InferenceScheduler, private readonly runtime?: AgentRuntime, private readonly onRunCompleted?: (runId: string) => void, private readonly maxDepth = 256) {
+    if (!Number.isInteger(maxDepth) || maxDepth < 1) throw new TypeError("Agent queue capacity must be a positive integer");
+  }
 
   start(request: AgentRunRequest, ownerUserId?: string, canonicalMessages = request.messages, durableRequest = request, resumeOfRunId?: string): AgentRunRecord {
+    if (this.#queue.length + (this.#current ? 1 : 0) >= this.maxDepth) throw new AgentQueueCapacityError();
     const id = randomUUID(); const now = new Date().toISOString();
     const run: AgentRunRecord = { id, routeId: request.model, status: "queued", createdAt: now, updatedAt: now, lastSequence: 0, ...(ownerUserId ? { ownerUserId } : {}), ...(request.sessionId ? { sessionId: request.sessionId } : {}) };
     // Claim the client request identity before adding canonical messages. A
@@ -31,7 +44,7 @@ export class AgentRunCoordinator {
       catch { this.store.updateAgentRun(id, "failed", message); /* the original storage failure remains primary */ }
       throw error;
     }
-    this.#queue.push({ id, request, stream: undefined, ...(ownerUserId ? { ownerUserId } : {}) }); this.#publishQueue(); void this.#pump();
+    this.#queue.push({ id, request, stream: undefined, cancelRequested: false, ...(ownerUserId ? { ownerUserId } : {}) }); this.#publishQueue(); void this.#pump();
     return this.store.getAgentRun(id)!;
   }
 
@@ -49,7 +62,11 @@ export class AgentRunCoordinator {
   eventsAfter(id: string, after: number): AgentEventEnvelope[] { return this.store.agentEventsAfter(id, after); }
   subscribe(id: string, listener: (event: AgentEventEnvelope) => void): () => void { const listeners = this.#listeners.get(id) ?? new Set(); listeners.add(listener); this.#listeners.set(id, listeners); return () => { listeners.delete(listener); if (listeners.size === 0) this.#listeners.delete(id); }; }
   cancel(id: string): boolean {
-    if (this.#current?.id === id && this.#current.stream) { this.#current.stream.cancel(); return true; }
+    if (this.#current?.id === id) {
+      this.#current.cancelRequested = true;
+      this.#current.stream?.cancel();
+      return true;
+    }
     const index = this.#queue.findIndex((job) => job.id === id); if (index < 0) return false;
     this.#queue.splice(index, 1); this.#emit(id, "run.cancelled", { queued: true }); this.#publishQueue(); this.onRunCompleted?.(id); return true;
   }
@@ -68,7 +85,12 @@ export class AgentRunCoordinator {
     try {
       while (this.#queue.length > 0) {
         const job = this.#queue.shift(); if (!job) continue; this.#current = job; this.#publishQueue();
-        try { job.stream = this.#createStream(job.request, job.ownerUserId, job.id); await this.#consume(job.id, job.stream); this.onRunCompleted?.(job.id); }
+        try {
+          job.stream = this.#createStream(job.request, job.ownerUserId, job.id);
+          if (job.cancelRequested) job.stream.cancel();
+          await this.#consume(job.id, job.stream);
+          this.onRunCompleted?.(job.id);
+        }
         catch (error) { const message = error instanceof Error ? error.message : String(error); this.#emit(job.id, "run.failed", { error: message }); this.onRunCompleted?.(job.id); }
         finally { job.stream = undefined; this.#current = undefined; this.#publishQueue(); }
       }
@@ -78,7 +100,9 @@ export class AgentRunCoordinator {
   #createStream(request: AgentRunRequest, ownerUserId: string | undefined, runId: string): AgentRuntimeRun | ScheduledStream {
     // The runId is threaded into the runtime so the safety layer can scope its trash,
     // snapshots and action log to this exact run.
-    return this.runtime ? this.runtime.run(request, undefined, { runId }) : this.scheduler.enqueue(request.model, { messages: request.messages, ...(request.maxTokens !== undefined ? { maxTokens: request.maxTokens } : {}), ...(request.temperature !== undefined ? { temperature: request.temperature } : {}), ...(ownerUserId ? { userId: ownerUserId } : {}) });
+    return this.runtime
+      ? this.runtime.run(request, undefined, { runId, ...(ownerUserId ? { ownerUserId } : {}), ...(request.sessionId ? { sessionId: request.sessionId } : {}) })
+      : this.scheduler.enqueue(request.model, { messages: request.messages, ...(request.maxTokens !== undefined ? { maxTokens: request.maxTokens } : {}), ...(request.temperature !== undefined ? { temperature: request.temperature } : {}), ...(ownerUserId ? { userId: ownerUserId } : {}) }, undefined, { ...(ownerUserId ? { ownerUserId } : {}), ...(request.sessionId ? { sessionId: request.sessionId } : {}), runId, label: "Agent response" });
   }
   async #consume(id: string, stream: AgentRuntimeRun | ScheduledStream): Promise<void> {
     this.#emit(id, "run.started", {});

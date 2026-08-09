@@ -8,6 +8,7 @@ import {
   type EngineAdapter,
   type MediaEngineAdapter,
   EngineAdapterRegistry,
+  InferenceAdmissionError,
   InferenceScheduler,
   LifecycleEventBus,
   LifecycleManager,
@@ -17,11 +18,13 @@ import {
   RouteResolver,
   ResourceGovernor,
   SystemResourceMonitor,
+  type InferenceSchedulerOptions,
   type ResourceMonitor,
   type ResourcePolicy,
 } from "@fitz/inference-core";
 import {
   parseChatCompletionRequest,
+  HOST_CONTRACT_VERSION,
   PROTOCOL_VERSION,
   type InferenceDelta,
   type ModelListResponse,
@@ -43,7 +46,7 @@ import { ArtifactRepository, MemoryBlobStore, SqliteStore, type StorageDurabilit
 import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
 import { DownloadNotFoundError, type ModelCatalogService } from "./model-catalog.js";
 import { AgentRunCoordinator } from "./agent-runs.js";
-import { MediaJobCoordinator } from "./media-jobs.js";
+import { MediaJobAdmissionError, MediaJobCoordinator } from "./media-jobs.js";
 import type { AgentRuntime } from "@fitz/agent-core";
 import type { PiPackageService } from "@fitz/agent-pi";
 import { ContextManager } from "@fitz/context";
@@ -63,6 +66,7 @@ import type { AgentSafetyService } from "./agent-safety/index.js";
 import { registerAgentRoutes } from "./agent-routes.js";
 import { awaitMediaJob, MediaGenerationTimeoutError, mediaJobFailureMessage, registerMediaRoutes, requestOrigin } from "./media-routes.js";
 import { registerWorkspaceRoutes } from "./workspace-routes.js";
+import { classifyHostError } from "./host-error.js";
 
 interface ConsumerModelRegistration { modelId: string; routeId: string; recipeId: string }
 interface ConsumerMediaModelRegistration { modelId: string; recipeId: string; routeId: string; modality: MediaModality; template: string }
@@ -121,6 +125,11 @@ export interface CreateHostOptions {
   internalAgentToken?: string;
   security?: SecurityService;
   agentRuntime?: AgentRuntime;
+  /** Maximum number of whole agent turns admitted at once (running + queued). */
+  agentQueueCapacity?: number;
+  /** Bounded inference-lane capacities. Production defaults are intentionally
+   * conservative; tests and managed deployments may lower them explicitly. */
+  schedulerOptions?: InferenceSchedulerOptions;
   contextManager?: ContextManager;
   tailscaleMonitor?: TailscaleMonitor;
   tailscaleServeManager?: TailscaleServeManager;
@@ -190,18 +199,8 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     options.initialRecipes ?? DEFAULT_RECIPES,
     options.initialRoutes ?? DEFAULT_ROUTES,
   );
-  const storedEngineRoot = store.getSetting<string>("engineRoot");
-  const legacyEngineRoot = join(homedir(), "Fitz", "engines");
-  const previousEngineRoot = join(homedir(), "engines");
-  const configuredEngineRoot = options.engineRoot ?? (
-    !storedEngineRoot
-      || resolve(storedEngineRoot) === resolve(legacyEngineRoot)
-      || resolve(storedEngineRoot) === resolve(previousEngineRoot)
-      ? join(homedir(), "llm", "engines")
-      : storedEngineRoot
-  );
+  const configuredEngineRoot = options.engineRoot ?? store.getSetting<string>("engineRoot") ?? join(homedir(), ".llm", "engines");
   store.setSetting("engineRoot", configuredEngineRoot);
-  migrateLegacyEngineRegistry(store);
   const routes = new RouteResolver(store.listRoutes(), store.listRecipes());
   ensureMediaRoutes(store, routes);
   const events = new LifecycleEventBus(1_000, store.latestLifecycleSequence());
@@ -247,8 +246,14 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     return [recipe.id, recipe] as const;
   })).values()].filter((recipe) => recipe.adapter !== "openai-compatible");
   void Promise.allSettled(localRecipes.map((recipe) => lifecycle.prepare(recipe)));
-  const scheduler = new InferenceScheduler(routes, lifecycle, events);
-  const agentRuns = new AgentRunCoordinator(store, scheduler, options.agentRuntime, options.safety ? (runId) => void options.safety!.collect().catch(() => undefined) : undefined);
+  const scheduler = new InferenceScheduler(routes, lifecycle, events, options.schedulerOptions);
+  const agentRuns = new AgentRunCoordinator(
+    store,
+    scheduler,
+    options.agentRuntime,
+    options.safety ? (runId) => void options.safety!.collect().catch(() => undefined) : undefined,
+    options.agentQueueCapacity,
+  );
   const mediaJobs = new MediaJobCoordinator({ store, artifacts, scheduler, routes, ...(security ? { security } : {}) });
   const mediaImageTimeoutMs = options.mediaImageTimeoutMs ?? 120_000;
   const context = options.contextManager ?? new ContextManager(store);
@@ -261,7 +266,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const metrics = new MetricsRegistry();
   const unsubscribePersistence = events.subscribe((event) => {
     store.appendLifecycleEvent(event);
-    if (event.type === "queue.updated") store.recordGpuQueueEvent(event);
+    if (event.type === "queue.updated" && event.data.lane === "gpu") store.recordGpuQueueEvent(event);
     // Media jobs never persist to `inference_requests` — they have their own
     // `media_jobs` records and event stream (§5.5).
     if (event.type === "queue.updated" && event.data.kind === "chat") store.recordQueueEvent(event);
@@ -269,31 +274,22 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const unsubscribeMetrics = events.subscribe((event) => metrics.observeLifecycleEvent(event));
   const requestStarts = new WeakMap<object, number>();
   const principals = new WeakMap<object, AuthenticatedPrincipal>();
+  const internalWorkContexts = new WeakMap<object, { runId?: string; ownerUserId?: string; sessionId?: string }>();
   const consumerConnections = (): ConsumerConnectionRegistration[] => store.getSetting<ConsumerConnectionRegistration[]>("consumerConnections") ?? [];
   const activeRoutes = (): Route[] => routes.listRoutes();
   const publicRoutes = (): Route[] => activeRoutes().filter((route) => PUBLIC_ROUTE_IDS.has(route.id));
   const resolveActiveRoute = (routeId: string) => routes.resolve(routeId);
-  // Routes are global: exactly one fast/default/smart slot, each pointing at a single
-  // recipe from any connection (local or cloud). Sessions may still carry a connectionId
-  // from before this model, but resolution never depends on it. Legacy scoped route ids
-  // (consumer--<connection>--route--<class> and consumer--<class>) collapse to the class.
-  const normalizePublicRouteId = (routeId: string): string => {
-    if (PUBLIC_ROUTE_IDS.has(routeId)) return routeId;
-    const scoped = /^consumer--.+--route--(fast|default|smart)$/.exec(routeId);
-    if (scoped) return scoped[1]!;
-    const legacy = /^consumer--(fast|default|smart)$/.exec(routeId);
-    if (legacy) return legacy[1]!;
-    return routeId;
-  };
+  // Routes are global: exactly one fast/default/smart slot, each pointing at a single recipe.
   app.addHook("onRequest", async (request, reply) => {
     requestStarts.set(request, performance.now());
     const publicPath = request.url.split("?")[0];
+    const internalAgent = publicPath === "/v1/chat/completions" && validBearerToken(request.headers.authorization, options.internalAgentToken);
     if (authMode === "required" && publicPath !== "/health" && publicPath !== "/api/v1/pairing/redeem" && publicPath !== "/api/v1/pairing/bootstrap") {
       const principal = security?.authenticate(request.headers.authorization);
-      const internalAgent = publicPath === "/v1/chat/completions" && validBearerToken(request.headers.authorization, options.internalAgentToken);
       if (!principal && !internalAgent) return reply.code(401).send({ error: "Valid device bearer token required" });
       if (principal) principals.set(request, principal);
     }
+    if (internalAgent) internalWorkContexts.set(request, trustedInternalWorkContext(request.headers));
   });
   app.addHook("onResponse", async (request, reply) => {
     const startedAt = requestStarts.get(request);
@@ -301,12 +297,23 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     metrics.increment("http_requests_total");
     metrics.increment(`http_responses_${reply.statusCode}_total`);
   });
+  app.addHook("onSend", async (request, reply, payload) => {
+    const path = request.url.split("?")[0];
+    if (reply.statusCode < 400 || !path?.startsWith("/api/v1/") || typeof payload !== "string") return payload;
+    try {
+      const body = JSON.parse(payload) as Record<string, unknown>;
+      if (typeof body.error !== "string") return payload;
+      reply.header("content-type", "application/json; charset=utf-8");
+      return JSON.stringify({ ...body, error: classifyHostError(body.error, reply.statusCode) });
+    } catch { return payload; }
+  });
 
   app.get("/health", async () => {
     const resourceSnapshot = await resources.snapshot();
     return {
       status: "ok",
       protocolVersion: PROTOCOL_VERSION,
+      hostContractVersion: HOST_CONTRACT_VERSION,
       engine: lifecycle.snapshot(),
       queueDepth: scheduler.queueDepth,
       resources: { ...resourceSnapshot, policy: resources.policy },
@@ -321,9 +328,11 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       const principal = principals.get(request);
       if (principal && !security?.authorizeRoute(principal, publicRouteId)) return reply.code(403).send({ error: "Route access denied" });
       resolveActiveRoute(publicRouteId);
-      const warmup = scheduler.enqueueWarm(publicRouteId);
+      const warmup = scheduler.enqueueWarm(publicRouteId, undefined, { ...(principal ? { ownerUserId: principal.user.id } : {}), label: `${publicRouteId} warmup` });
       return { data: await warmup.result };
-    } catch (error) { return reply.code(error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) }); }
+    } catch (error) {
+      return reply.code(error instanceof RouteNotFoundError ? 404 : error instanceof InferenceAdmissionError ? 429 : 400).send({ error: errorMessage(error) });
+    }
   });
 
   app.post("/api/v1/pairing/bootstrap", async (request, reply) => {
@@ -357,7 +366,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     let model: string;
     try {
       body = parseChatCompletionRequest(request.body);
-      model = normalizePublicRouteId(body.model);
+      model = body.model;
       const resolved = resolveActiveRoute(model);
       const principal = principals.get(request);
       if (principal && !security?.authorizeRoute(principal, model)) {
@@ -365,7 +374,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       }
       if (principal) {
         const promptChars = body.messages.reduce((total, message) => total + contentTextLength(message.content), 0);
-        security?.enforceQuota(principal, promptChars, body.max_tokens ?? principal.quota.maxOutputTokens, scheduler.queueDepth);
+        security?.enforceQuota(principal, promptChars, body.max_tokens ?? principal.quota.maxOutputTokens, scheduler.snapshot().filter((item) => item.context.ownerUserId === principal.user.id).length);
       }
       if (!resolved.recipe.capabilities.chatCompletions) {
         throw new TypeError(`Route ${model} does not support chat completions`);
@@ -381,17 +390,27 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       return reply.code(statusCode).send(openAIError(error, "invalid_request_error"));
     }
 
-    const stream = scheduler.enqueue(model, {
-      messages: body.messages,
-      ...(body.max_tokens !== undefined ? { maxTokens: body.max_tokens } : {}),
-      ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),
-      ...(body.top_p !== undefined ? { topP: body.top_p } : {}),
-      ...(body.stop !== undefined ? { stop: body.stop } : {}),
-      ...(body.tools !== undefined ? { tools: body.tools } : {}),
-      ...(body.tool_choice !== undefined ? { toolChoice: body.tool_choice } : {}),
-      ...(body.parallel_tool_calls !== undefined ? { parallelToolCalls: body.parallel_tool_calls } : {}),
-      ...(principals.get(request) ? { userId: principals.get(request)!.user.id } : body.user !== undefined ? { userId: body.user } : {}),
-    });
+    const principal = principals.get(request);
+    const internalContext = internalWorkContexts.get(request);
+    let stream: ReturnType<InferenceScheduler["enqueue"]>;
+    try {
+      stream = scheduler.enqueue(model, {
+        messages: body.messages,
+        ...(body.max_tokens !== undefined ? { maxTokens: body.max_tokens } : {}),
+        ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),
+        ...(body.top_p !== undefined ? { topP: body.top_p } : {}),
+        ...(body.stop !== undefined ? { stop: body.stop } : {}),
+        ...(body.tools !== undefined ? { tools: body.tools } : {}),
+        ...(body.tool_choice !== undefined ? { toolChoice: body.tool_choice } : {}),
+        ...(body.parallel_tool_calls !== undefined ? { parallelToolCalls: body.parallel_tool_calls } : {}),
+        ...(principal ? { userId: principal.user.id } : internalContext?.ownerUserId ? { userId: internalContext.ownerUserId } : body.user !== undefined ? { userId: body.user } : {}),
+      }, undefined, { ...(principal ? { ownerUserId: principal.user.id } : {}), ...internalContext, label: `${model} completion` });
+    } catch (error) {
+      return reply.code(error instanceof InferenceAdmissionError ? 429 : 502).send(openAIError(
+        error,
+        error instanceof InferenceAdmissionError ? "resource_busy" : "server_error",
+      ));
+    }
 
     if (body.stream === false) {
       try {
@@ -461,10 +480,10 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     app,
     store,
     agentRuns,
+    scheduler,
     context,
     principals,
     ...(security ? { security } : {}),
-    normalizeRouteId: normalizePublicRouteId,
     contextTokensForRoute: (routeId) => resolveActiveRoute(routeId).recipe.contextTokens,
   });
 
@@ -486,7 +505,6 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     context,
     ...(security ? { security } : {}),
     principals,
-    normalizeRouteId: normalizePublicRouteId,
   });
   app.get(
     "/api/v1/management/status",
@@ -788,7 +806,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         const stream = scheduler.enqueueRecipe(recipeId, {
           messages: [{ role: "user", content: "Say hi." }],
           maxTokens: 1024,
-        }, controller.signal, { unloadAfterCompletion: true });
+        }, controller.signal, { unloadAfterCompletion: true, context: { ...(principals.get(request) ? { ownerUserId: principals.get(request)!.user.id } : {}), label: `${recipe.displayName} test` } });
         let output = "";
         let reasoningLength = 0;
         let finishReason: string | undefined;
@@ -813,7 +831,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         }
         return { data: { recipeId, working: true, unloaded: true, output: output.trim().slice(0, 500) } };
       } catch (error) {
-        const statusCode = error instanceof RecipeNotFoundError ? 404 : 502;
+        const statusCode = error instanceof RecipeNotFoundError ? 404 : error instanceof InferenceAdmissionError ? 429 : 502;
         return reply.code(statusCode).send({ error: errorMessage(error) });
       }
     },
@@ -851,7 +869,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
           },
         };
       } catch (error) {
-        const statusCode = error instanceof RecipeNotFoundError ? 404 : error instanceof TypeError ? 400 : error instanceof MediaGenerationTimeoutError ? 504 : 502;
+        const statusCode = error instanceof RecipeNotFoundError ? 404 : error instanceof MediaJobAdmissionError ? 429 : error instanceof TypeError ? 400 : error instanceof MediaGenerationTimeoutError ? 504 : 502;
         return reply.code(statusCode).send({ error: errorMessage(error) });
       }
     },
@@ -1024,12 +1042,6 @@ export function ensureMediaRoutes(store: SqliteStore, routes: RouteResolver): vo
     store.upsertRoute(route);
     routes.upsertRoute(route);
   }
-}
-
-function migrateLegacyEngineRegistry(store: SqliteStore): void {
-  if (store.getSetting<number>("engineRegistrySchema") === 2) return;
-  for (const engine of store.listEngines()) store.deleteEngine(engine.id);
-  store.setSetting("engineRegistrySchema", 2);
 }
 
 function scanEngineFolders(engineRoot: string, engines: EngineRegistration[]): Array<Record<string, unknown>> {
@@ -1384,6 +1396,17 @@ function validBearerToken(authorization: string | undefined, expected: string | 
   const actualHash = createHash("sha256").update(authorization.slice(7)).digest();
   const expectedHash = createHash("sha256").update(expected).digest();
   return timingSafeEqual(actualHash, expectedHash);
+}
+
+function trustedInternalWorkContext(headers: Record<string, string | string[] | undefined>): { runId?: string; ownerUserId?: string; sessionId?: string } {
+  const value = (name: string): string | undefined => {
+    const candidate = headers[name];
+    return typeof candidate === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(candidate) ? candidate : undefined;
+  };
+  const runId = value("x-fitz-run-id");
+  const ownerUserId = value("x-fitz-owner-user-id");
+  const sessionId = value("x-fitz-session-id");
+  return { ...(runId ? { runId } : {}), ...(ownerUserId ? { ownerUserId } : {}), ...(sessionId ? { sessionId } : {}) };
 }
 
 function adminGuard(expectedToken: string | undefined, authMode: "disabled" | "required", principals: WeakMap<object, AuthenticatedPrincipal>) {

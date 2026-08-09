@@ -1,5 +1,12 @@
 # Handoff to Codex — fitz-codex media generation (PRs 1–8 complete)
 
+> **Current architecture (2026-08-09):** this historical media handoff is retained for implementation
+> context, but its commit, deployment, test-count, monolithic-file, and shared-queue notes are obsolete.
+> The executable contract is [runtime-contract.md](./runtime-contract.md). In particular, local GPU
+> work is bounded and permanently single-slot, remote media uses a separate bounded cloud lane, host
+> routes and desktop controllers are decomposed, artifact payloads live outside SQLite, and desktop and
+> host require an exact version handshake.
+
 > Written 2026-08-08 from a Grok Build session. Read this file first, then continue from
 > [Where to pick up](#where-to-pick-up). The design doc `docs/media-generation.md` is the
 > normative spec; this file is the operational snapshot.

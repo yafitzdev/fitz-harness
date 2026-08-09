@@ -10,6 +10,7 @@ import { ModelCatalogService } from "./model-catalog.js";
 import { TailscaleMonitor, TailscaleServeManager, WindowsStartupManager } from "@fitz/connectivity";
 import { SecurityService } from "@fitz/security";
 import { ArtifactRepository, LocalBlobStore, SqliteStore, StorageDurabilityService } from "@fitz/storage";
+import { FakeEngineAdapter } from "@fitz/engine-fake";
 
 describe("Fitz host", () => {
   it("boots idle and exposes consumer routes instead of recipes", async () => {
@@ -53,6 +54,31 @@ describe("Fitz host", () => {
     } finally { await runtime.app.close(); }
   });
 
+  it("returns an immediate OpenAI-compatible 429 when the GPU lane is saturated", async () => {
+    const runtime = createHost({
+      fakeAdapter: new FakeEngineAdapter({ tokenDelayMs: 100 }),
+      schedulerOptions: { gpuQueueCapacity: 1 },
+    });
+    const active = runtime.scheduler.enqueue("default", { messages: [{ role: "user", content: "active" }] });
+    const queued = runtime.scheduler.enqueue("default", { messages: [{ role: "user", content: "queued" }] });
+    const drain = (async () => { try { for await (const _delta of active) { /* drain */ } } catch { /* cancelled below */ } })();
+    const drainQueued = (async () => { try { for await (const _delta of queued) { /* drain */ } } catch { /* cancelled below */ } })();
+    try {
+      const response = await runtime.app.inject({
+        method: "POST",
+        url: "/v1/chat/completions",
+        payload: { model: "default", stream: false, messages: [{ role: "user", content: "overflow" }] },
+      });
+      expect(response.statusCode, response.body).toBe(429);
+      expect(response.json().error).toEqual(expect.objectContaining({ type: "resource_busy", message: expect.stringContaining("queue is at capacity") }));
+    } finally {
+      active.cancel();
+      queued.cancel();
+      await Promise.all([drain, drainQueued]);
+      await runtime.app.close();
+    }
+  });
+
   it("keeps internal connection routes out of the public model contract", async () => {
     const runtime = createHost();
     try {
@@ -92,8 +118,8 @@ describe("Fitz host", () => {
       expect(run.statusCode, run.body).toBe(202);
       // A session's connectionId no longer scopes resolution: the run uses the global default class.
       expect(run.json().data.routeId).toBe("default");
-      // Legacy scoped ids collapse to the class, so they resolve to the same global route.
-      const scopedCompletion = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "consumer--test-api--route--default", stream: false, messages: [{ role: "user", content: "hello" }] } });
+      // The public class remains the sole routing contract after connection refresh.
+      const scopedCompletion = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "default", stream: false, messages: [{ role: "user", content: "hello" }] } });
       expect(scopedCompletion.statusCode, scopedCompletion.body).toBe(200);
       expect(scopedCompletion.json().choices[0].message.content).toContain("upstream ok");
       await runtime.app.inject({ method: "PUT", url: "/api/v1/management/connections/test-api", payload: { displayName: "Test API", baseUrl: `http://127.0.0.1:${address.port}/v1`, authType: "none" } });
@@ -123,8 +149,8 @@ describe("Fitz host", () => {
       const recipeId = saved.json().data.models[0].recipeId;
       const test = await runtime.app.inject({ method: "POST", url: `/api/v1/management/recipes/${recipeId}/test` });
       expect(test.statusCode).toBe(502);
-      expect(test.json().error).toContain("produced reasoning");
-      expect(test.json().error).toContain("length");
+      expect(test.json().error.message).toContain("produced reasoning");
+      expect(test.json().error.message).toContain("length");
     } finally { await runtime.app.close(); await new Promise<void>((resolve) => reasoningUpstream.close(() => resolve())); }
   });
 
@@ -679,17 +705,44 @@ describe("Fitz host", () => {
     const first = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", messages: [{ role: "user", content: "first" }] } });
     const second = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "smart", messages: [{ role: "user", content: "second" }] } });
     expect(started).toEqual(["first"]);
-    const initial = await runtime.app.inject({ method: "GET", url: "/api/v1/agent/queue" });
+    const initial = await runtime.app.inject({ method: "GET", url: "/api/v1/work/queue" });
     expect(initial.json().data).toEqual([
-      expect.objectContaining({ runId: first.json().data.id, status: "running", position: 0, depth: 2 }),
-      expect.objectContaining({ runId: second.json().data.id, status: "queued", position: 1, depth: 2 }),
+      expect.objectContaining({ id: first.json().data.id, kind: "agent", lane: "gpu", status: "running", position: 0, depth: 2 }),
+      expect.objectContaining({ id: second.json().data.id, kind: "agent", lane: "gpu", status: "queued", position: 1, depth: 2 }),
     ]);
     const cancelled = await runtime.app.inject({ method: "DELETE", url: `/api/v1/agent/runs/${second.json().data.id}` }); expect(cancelled.statusCode).toBe(202); expect(runtime.agentRuns.get(second.json().data.id)?.status).toBe("cancelled"); expect(started).toEqual(["first"]);
     const third = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", messages: [{ role: "user", content: "third" }] } });
-    expect((await runtime.app.inject({ method: "GET", url: "/api/v1/agent/queue" })).json().data.at(-1)).toEqual(expect.objectContaining({ runId: third.json().data.id, status: "queued", position: 1 }));
+    expect((await runtime.app.inject({ method: "GET", url: "/api/v1/work/queue" })).json().data.at(-1)).toEqual(expect.objectContaining({ id: third.json().data.id, status: "queued", position: 1 }));
     releases.get("first")?.(); for (let attempt = 0; attempt < 50 && !started.includes("third"); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5)); expect(started).toEqual(["first", "third"]);
-    expect((await runtime.app.inject({ method: "GET", url: "/api/v1/agent/queue" })).json().data).toEqual([expect.objectContaining({ runId: third.json().data.id, status: "running", position: 0, depth: 1 })]);
+    expect((await runtime.app.inject({ method: "GET", url: "/api/v1/work/queue" })).json().data).toEqual([expect.objectContaining({ id: third.json().data.id, status: "running", position: 0, depth: 1 })]);
     releases.get("third")?.(); for (let attempt = 0; attempt < 50 && runtime.agentRuns.get(third.json().data.id)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5)); await runtime.app.close();
+  });
+
+  it("rejects excess agent turns with bounded backpressure before creating durable state", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const runtime = createHost({
+      agentQueueCapacity: 2,
+      agentRuntime: {
+        id: "bounded-agent",
+        run: () => {
+          const events = (async function* () { await gate; yield { type: "assistant.delta" as const, text: "done" }; })();
+          return Object.assign(events, { cancel: () => release() });
+        },
+      },
+    });
+    const first = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", messages: [{ role: "user", content: "first" }] } });
+    const second = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "smart", messages: [{ role: "user", content: "second" }] } });
+    const overflow = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", messages: [{ role: "user", content: "overflow" }] } });
+    expect(first.statusCode).toBe(202);
+    expect(second.statusCode).toBe(202);
+    expect(overflow.statusCode).toBe(429);
+    expect(overflow.json().error).toMatchObject({ code: "resource_busy", retryable: true });
+    expect(overflow.json().error.message).toContain("capacity");
+    expect(runtime.agentRuns.list()).toHaveLength(2);
+    release();
+    for (let attempt = 0; attempt < 50 && runtime.agentRuns.list().some((run) => run.status === "queued" || run.status === "running"); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+    await runtime.app.close();
   });
 
   it("creates projects and sessions and records a canonical run transcript", async () => {
@@ -697,6 +750,24 @@ describe("Fitz host", () => {
     const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${projectId}/sessions`, payload: { title: "Infrastructure" } }); const sessionId = session.json().data.id;
     const run = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", sessionId, messages: [{ role: "user", content: "persist this turn" }] } }); const runId = run.json().data.id; for (let attempt = 0; attempt < 50 && runtime.agentRuns.get(runId)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
     const transcript = await runtime.app.inject({ method: "GET", url: `/api/v1/sessions/${sessionId}/transcript` }); expect(transcript.json().data).toEqual([expect.objectContaining({ sequence: 1, role: "user", content: expect.objectContaining({ text: "persist this turn" }) }), expect.objectContaining({ sequence: 2, role: "assistant", content: expect.objectContaining({ runId }) })]); await runtime.app.close();
+  });
+
+  it("opens long conversations at the latest page and pages backward in sequence order", async () => {
+    const runtime = createHost();
+    const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Long transcript" } });
+    const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "Long" } });
+    const sessionId = session.json().data.id as string;
+    for (let index = 1; index <= 620; index += 1) runtime.store.appendTranscriptEntry({ id: `page-${index}`, sessionId, kind: "message", role: index % 2 ? "user" : "assistant", content: { text: `message-${index}` }, createdAt: new Date(index).toISOString() });
+    const latest = (await runtime.app.inject({ method: "GET", url: `/api/v1/sessions/${sessionId}/transcript?limit=250` })).json();
+    expect(latest.data).toHaveLength(250);
+    expect(latest.data.at(0).sequence).toBe(371);
+    expect(latest.data.at(-1).sequence).toBe(620);
+    expect(latest.page).toEqual(expect.objectContaining({ hasEarlier: true, oldestSequence: 371, newestSequence: 620 }));
+    const earlier = (await runtime.app.inject({ method: "GET", url: `/api/v1/sessions/${sessionId}/transcript?before=371&limit=250` })).json();
+    expect(earlier.data.at(0).sequence).toBe(121);
+    expect(earlier.data.at(-1).sequence).toBe(370);
+    expect(earlier.page.hasEarlier).toBe(true);
+    await runtime.app.close();
   });
 
   it("creates and lists standalone chats with no project attached", async () => {
@@ -775,7 +846,7 @@ describe("Fitz host", () => {
 
   it("accepts artifacts up to the 5 MB bound and rejects larger ones", async () => { const runtime = createHost(); const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Limits" } }); const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "Limits" } }); const sessionId = session.json().data.id;
     const accepted = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/artifacts`, payload: { name: "medium.pdf", mimeType: "application/pdf", contentBase64: Buffer.alloc(2_000_000, 1).toString("base64") } }); expect(accepted.statusCode).toBe(201); expect(accepted.json().data).toEqual(expect.objectContaining({ kind: "pdf", byteSize: 2_000_000 }));
-    const rejected = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/artifacts`, payload: { name: "big.pdf", mimeType: "application/pdf", contentBase64: Buffer.alloc(5_000_001, 1).toString("base64") } }); expect(rejected.statusCode).toBe(400); expect(String(rejected.json().error)).toContain("byte limit"); await runtime.app.close(); });
+    const rejected = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/artifacts`, payload: { name: "big.pdf", mimeType: "application/pdf", contentBase64: Buffer.alloc(5_000_001, 1).toString("base64") } }); expect(rejected.statusCode).toBe(400); expect(String(rejected.json().error.message)).toContain("byte limit"); await runtime.app.close(); });
 
   it("serves artifact content with single-range byte support", async () => { const runtime = createHost(); const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Range" } }); const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "Range" } }); const body = "0123456789abcdef"; const created = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${session.json().data.id}/artifacts`, payload: { name: "range.bin", mimeType: "application/octet-stream", contentBase64: Buffer.from(body).toString("base64") } }); const artifactId = created.json().data.id as string; const url = `/api/v1/artifacts/${artifactId}/content`;
     const full = await runtime.app.inject({ method: "GET", url }); expect(full.statusCode).toBe(200); expect(full.body).toBe(body); expect(full.headers["accept-ranges"]).toBe("bytes"); expect(full.headers["x-content-type-options"]).toBe("nosniff"); expect(full.headers["content-disposition"]).toContain("attachment");

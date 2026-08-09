@@ -72,8 +72,10 @@
   durable submit/poll/cancel jobs, sequenced replayable events, queue/lifecycle leases, crash recovery,
   cancellation, progress, and per-kind artifact size limits.
 - OpenAI-shaped image and video gateways plus connection templates for OpenAI-compatible media, fal,
-  and Replicate. Provider jobs run through the same scheduler as local engines, provider URLs are
-  downloaded into Fitz-owned artifacts, and orphaned paid jobs are cancelled best-effort on restart.
+  and Replicate. Local GPU work is permanently single-slot; remote provider jobs use an independent
+  bounded cloud lane and never acquire a local lifecycle lease or evict a resident local model.
+  Provider URLs are downloaded into Fitz-owned artifacts, and orphaned paid jobs are cancelled
+  best-effort on restart.
 - Local media engines include a deterministic GPU-free fake adapter and a ComfyUI adapter/playbook for
   manually provisioned MiniMax H3 video generation (with experimental image generation). Agent media
   tools enforce route grants, Ask-first approval, and job/credit quotas without waiting inside the
@@ -132,4 +134,4 @@
   MiniMax H3/ComfyUI generation after the engine, weights, and required custom nodes are provisioned.
 - Desktop UX refinement, richer event rendering, and accessibility polish.
 - OS-backed secret storage.
-- Backpressure limits and retained stream replay for active completions.
+- Retained stream replay for OpenAI-shaped active completions.

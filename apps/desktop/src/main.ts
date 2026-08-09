@@ -1,5 +1,5 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from "electron";
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { isAllowedExternalUrl, validateHostUrl, validateRequestPath } from "./security.js";
 import { readProjectResource } from "./resource-preview.js";
 import electronUpdater from "electron-updater";
+import { HostStartupError, HostSupervisor } from "./host-supervisor.js";
 
 const { autoUpdater } = electronUpdater;
 const execFileAsync = promisify(execFile);
@@ -130,23 +131,25 @@ if (process.env.FITZ_DESKTOP_SMOKE === "1") {
   }
   app.quit();
 } else {
-  await ensureBundledLocalHost();
+  if (isLoopbackHost(hostUrl) && !(await ensureLocalHost())) {
+    app.quit();
+  } else {
   createWindow();
   if (app.isPackaged) void autoUpdater.checkForUpdates().catch(() => undefined);
+  }
 }
 app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); }); app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
-async function ensureBundledLocalHost(): Promise<void> {
-  if (!app.isPackaged || !isLoopbackHost(hostUrl)) return;
-  try { const response = await fetch(new URL("/health", hostUrl), { signal: AbortSignal.timeout(800) }); if (response.ok) return; } catch {}
-  const hostRoot = join(process.resourcesPath, "host");
-  const executable = join(hostRoot, "runtime", "node.exe");
-  const server = join(hostRoot, "dist", "server.js");
-  if (!existsSync(executable) || !existsSync(server)) return;
-  const child = spawn(executable, [server], { cwd: hostRoot, detached: true, windowsHide: true, stdio: "ignore", env: { ...process.env, FITZ_HOST: "127.0.0.1", FITZ_PORT: String(new URL(hostUrl).port || 8787) } });
-  child.unref();
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    try { const response = await fetch(new URL("/health", hostUrl), { signal: AbortSignal.timeout(500) }); if (response.ok) return; } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 200));
+async function ensureLocalHost(): Promise<boolean> {
+  const supervisor = new HostSupervisor({ origin: hostUrl, packaged: app.isPackaged, resourcesPath: process.resourcesPath });
+  for (;;) {
+    try {
+      await supervisor.ensureReady();
+      return true;
+    } catch (error) {
+      const startup = error instanceof HostStartupError ? error : new HostStartupError("Fitz could not start", error instanceof Error ? error.message : String(error));
+      const result = await dialog.showMessageBox({ type: "error", title: startup.message, message: startup.message, detail: startup.detail, buttons: ["Retry", "Quit"], defaultId: 0, cancelId: 1 });
+      if (result.response !== 0) return false;
+    }
   }
 }
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
@@ -170,6 +173,6 @@ function requireModelIds(value: unknown): string[] { if (value === undefined) re
 function requireConsumerBaseUrl(value: unknown): string { const text = requireBoundedText(value, "Base URL", 2048); const url = new URL(text); if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Base URL must use HTTP or HTTPS"); if (url.username || url.password || url.search || url.hash) throw new Error("Base URL must not contain credentials, a query, or a fragment"); return url.toString().replace(/\/$/, ""); }
 async function trustedHostRequest(path: string, method: string, body?: unknown): Promise<Response> { return fetch(new URL(validateRequestPath(path), hostUrl), { method, headers: { accept: "application/json", ...(body !== undefined ? { "content-type": "application/json" } : {}), ...(deviceToken ? { authorization: `Bearer ${deviceToken}` } : {}) }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) }); }
 async function parseHostResponse(response: Response): Promise<Record<string, unknown>> { const content = await response.text(); if (!response.ok) throw new Error(hostError(content)); const parsed = content ? JSON.parse(content) as unknown : {}; if (!isRecord(parsed)) throw new Error("The Fitz host returned an invalid response"); return parsed; }
-function hostError(content: string): string { try { const parsed = JSON.parse(content) as unknown; if (isRecord(parsed) && typeof parsed.error === "string") return parsed.error; } catch {} return content || "The Fitz host rejected the request"; }
+function hostError(content: string): string { try { const parsed = JSON.parse(content) as unknown; if (isRecord(parsed) && isRecord(parsed.error) && typeof parsed.error.message === "string") return parsed.error.message; } catch {} return "The Fitz host returned an invalid error response"; }
 async function runGit(root: string, args: string[]): Promise<string> { const result = await execFileAsync("git", ["-C", root, ...args], { windowsHide: true, maxBuffer: 1_000_000 }); return result.stdout.trim(); }
 async function gitBranchState(root: string): Promise<{ current: string; branches: string[] }> { const [current, listing] = await Promise.all([runGit(root, ["branch", "--show-current"]), runGit(root, ["branch", "--format=%(refname:short)"])]); return { current, branches: listing.split(/\r?\n/).map((value) => value.trim()).filter(Boolean) }; }

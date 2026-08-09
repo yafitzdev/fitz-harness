@@ -19,7 +19,6 @@ export interface WorkspaceRouteOptions {
   context: ContextManager;
   security?: SecurityService;
   principals: WeakMap<object, AuthenticatedPrincipal>;
-  normalizeRouteId(routeId: string): string;
 }
 
 export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
@@ -170,8 +169,21 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
     const session = sessionFor((request.params as { sessionId: string }).sessionId);
     if (!session) return reply.code(404).send({ error: "Session not found" });
     if (!canAccess(session.ownerUserId, request)) return reply.code(403).send({ error: "Session access denied" });
-    const query = request.query as { after?: string; limit?: string };
-    return { data: store.transcriptAfter(session.id, toNonNegativeInteger(query.after, 0), Math.min(toNonNegativeInteger(query.limit, 1000), 1000)) };
+    const query = request.query as { after?: string; before?: string; limit?: string };
+    const limit = Math.min(Math.max(toNonNegativeInteger(query.limit, 250), 1), 500);
+    const after = query.after === undefined ? undefined : toNonNegativeInteger(query.after, 0);
+    const before = query.before === undefined ? Number.MAX_SAFE_INTEGER : Math.max(1, toNonNegativeInteger(query.before, Number.MAX_SAFE_INTEGER));
+    const data = after === undefined ? store.transcriptBefore(session.id, before, limit) : store.transcriptAfter(session.id, after, limit);
+    const oldestSequence = data.at(0)?.sequence ?? before;
+    return {
+      data,
+      page: {
+        hasEarlier: store.hasTranscriptBefore(session.id, oldestSequence),
+        oldestSequence: data.at(0)?.sequence ?? null,
+        newestSequence: data.at(-1)?.sequence ?? null,
+        estimatedContextTokens: context.estimateSession(session.id),
+      },
+    };
   });
 
   app.post("/api/v1/sessions/:sessionId/compact", async (request, reply) => {
@@ -182,7 +194,7 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
       if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" });
       const body = isRecord(request.body) ? request.body : {};
       const publicRouteId = typeof body.model === "string" ? requireString(body.model, "model") : session.routeId ?? "default";
-      const routeId = options.normalizeRouteId(publicRouteId);
+      const routeId = publicRouteId;
       const resolved = routes.resolve(routeId);
       const result = await context.compactSession(session.id, resolved.recipe.contextTokens);
       security?.audit("session.compacted", principal?.user.id, "session", session.id, {

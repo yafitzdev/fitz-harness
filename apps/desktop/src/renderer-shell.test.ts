@@ -22,7 +22,7 @@ const conversationMessageFeed = readFileSync(new URL("./ui/chat/conversation-mes
 const conversationLanding = readFileSync(new URL("./ui/chat/conversation-landing.ts", import.meta.url), "utf8");
 const conversationTranscript = readFileSync(new URL("./ui/chat/conversation-transcript.ts", import.meta.url), "utf8");
 const promptSubmission = readFileSync(new URL("./ui/chat/prompt-submission.ts", import.meta.url), "utf8");
-const agentQueue = readFileSync(new URL("./ui/queue/agent-queue.ts", import.meta.url), "utf8");
+const agentQueue = readFileSync(new URL("./ui/queue/work-queue.ts", import.meta.url), "utf8");
 const artifactController = readFileSync(new URL("./ui/artifacts/artifact-controller.ts", import.meta.url), "utf8");
 const navigationHistory = readFileSync(new URL("./ui/navigation/navigation-history.ts", import.meta.url), "utf8");
 const applicationMenu = readFileSync(new URL("./ui/navigation/application-menu.ts", import.meta.url), "utf8");
@@ -267,8 +267,8 @@ describe("desktop renderer shell", () => {
     expect(pluginCatalog).toContain('entry.links.homepage ?? entry.links.repository ?? entry.links.npm');
     expect(pluginCatalog).toContain('this.options.openExternal(website)');
     expect(pluginCatalog).toContain('Pi packages can run code with the same access as Fitz');
-    expect(main).toContain('ensureBundledLocalHost');
-    expect(main).toContain('join(process.resourcesPath, "host")');
+    expect(main).toContain('new HostSupervisor({ origin: hostUrl');
+    expect(main).toContain('resourcesPath: process.resourcesPath');
   });
 
   it("opens Playbooks as a first-class searchable workspace page", () => {
@@ -567,7 +567,7 @@ describe("desktop renderer shell", () => {
     expect(composer).toContain("rebuildHistory(texts: string[])");
     expect(conversationTranscript).toContain('entry.kind === "message" && entry.role === "user"');
     expect(composer).toContain("this.promptHistory.push(text)");
-    expect(renderer).toContain("conversationTranscript.restore(transcript.data ?? [])");
+    expect(renderer).toContain("conversationTranscript.restore(transcript.data ?? [], transcript.page ?? {})");
   });
 
   it("keeps every dropdown and overflow surface at the compact Codex menu density", () => {
@@ -693,9 +693,9 @@ describe("desktop renderer shell", () => {
   it("shows and controls the serialized native-agent request queue", () => {
     expect(html).toContain('id="request-queue"');
     expect(html).toContain('id="queue-count"');
-    expect(agentQueue).toContain('this.#options.api("/api/v1/agent/queue")');
+    expect(agentQueue).toContain('this.options.api("/api/v1/work/queue")');
     expect(agentRunController).toContain('event.type === "run.queue.updated"');
-    expect(agentQueue).toContain('this.#cancel(String(item.runId), cancel)');
+    expect(agentQueue).toContain('this.#cancel(String(item.id), cancel)');
     expect(renderer).toContain('setTimeout(scheduleQueueRefresh, 1_000)');
     expect(styles).toContain(".queue-item");
     expect(styles).toContain(".queue-cancel");

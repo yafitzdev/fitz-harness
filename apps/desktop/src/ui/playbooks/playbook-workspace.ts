@@ -1,6 +1,7 @@
 import { CollapsibleSection } from "../layout/collapsible-section.js";
 import { recipeMetadata } from "../recipes/recipe-metadata.js";
 import type { ActionFeedback } from "../primitives/action-status.js";
+import { RecipeConfigurationEditor } from "./recipe-configuration-editor.js";
 
 type Json = Record<string, any>;
 
@@ -37,7 +38,7 @@ export interface PlaybookWorkspaceElements {
   recipeAdapter: HTMLInputElement;
   recipeModelId: HTMLInputElement;
   recipeContextTokens: HTMLInputElement;
-  recipeConfiguration: HTMLTextAreaElement;
+  recipeConfiguration: HTMLElement;
   recipeEditorTitle: HTMLElement;
 }
 
@@ -54,10 +55,12 @@ export class PlaybookWorkspaceController {
   private configuration: Json | undefined;
   private readonly recipeTestStates = new Map<string, { state: "testing" | "passed" | "failed"; detail: string }>();
   private editingRecipe: Json | undefined;
+  private readonly configurationEditor: RecipeConfigurationEditor;
 
   constructor(elements: PlaybookWorkspaceElements, options: PlaybookWorkspaceOptions) {
     this.elements = elements;
     this.options = options;
+    this.configurationEditor = new RecipeConfigurationEditor(elements.recipeConfiguration);
     this.bind();
   }
 
@@ -162,7 +165,7 @@ export class PlaybookWorkspaceController {
     const defaultConfiguration = playbook?.connectionMode === "managed"
       ? { enginePath: playbook.rootPath, runtime: playbook.runtime, command: playbook.launchCommand, args: playbook.launchArguments, workingDirectory: playbook.workingDirectory ?? ".", healthPath: playbook.healthPath, readinessTimeoutMs: 120_000, ...(playbook.wslDistribution ? { wslDistribution: playbook.wslDistribution } : {}) }
       : playbook ? { baseUrl: playbook.baseUrl, healthPath: playbook.healthPath, allowInsecureRemote: false } : {};
-    this.elements.recipeConfiguration.value = JSON.stringify(recipe?.configuration ?? defaultConfiguration, null, 2);
+    this.configurationEditor.load(adapter, recipe?.configuration ?? defaultConfiguration);
     this.showEditor("recipe"); this.elements.recipeId.focus();
   }
 
@@ -284,8 +287,8 @@ export class PlaybookWorkspaceController {
 
   private async saveRecipe(): Promise<void> {
     let configuration: Json;
-    try { configuration = JSON.parse(this.elements.recipeConfiguration.value || "{}"); }
-    catch { this.options.showStatus("Configuration must be valid JSON", "error"); return; }
+    try { configuration = this.configurationEditor.value(); }
+    catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); return; }
     const id = this.elements.recipeId.value.trim(); if (!id) return;
     setFormBusy(this.elements.recipeForm, true);
     try {

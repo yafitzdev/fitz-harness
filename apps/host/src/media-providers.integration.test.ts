@@ -13,7 +13,7 @@ const fixturePath = (name: string): string =>
 
 /** PR 4 end-to-end for provider templates (§5.7): connection save runs media
  *  discovery and writes per-model recipes + per-modality consumer routes;
- *  generation flows through the same queue/lease pipeline as local engines with
+ *  generation flows through the bounded remote-provider lane without a local lifecycle lease, with
  *  URL results downloaded host-side; re-saves revalidate well-known media route
  *  assignments; deletes clean up recipes/routes; and boot recovery cancels
  *  provider-side jobs orphaned by a crash (§5.3). */
@@ -259,7 +259,7 @@ describe("Fitz media provider templates", () => {
         url: `/api/v1/management/recipes/${chatModel.recipeId}/media-test`,
       });
       expect(chatTest.statusCode, chatTest.body).toBe(400);
-      expect(chatTest.json().error).toContain("does not generate media");
+      expect(chatTest.json().error.message).toContain("does not generate media");
 
       // A media recipe with no enabled route is rejected with a readable error.
       const raw = await runtime.app.inject({
@@ -290,7 +290,7 @@ describe("Fitz media provider templates", () => {
         url: "/api/v1/management/recipes/unassigned-media/media-test",
       });
       expect(unassigned.statusCode, unassigned.body).toBe(400);
-      expect(unassigned.json().error).toContain("not assigned to an enabled media route");
+      expect(unassigned.json().error.message).toContain("not assigned to an enabled media route");
     } finally {
       await runtime.app.close();
       await fixture.stop();

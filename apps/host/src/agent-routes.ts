@@ -1,26 +1,26 @@
 import type { FastifyInstance } from "fastify";
-import { RouteNotFoundError } from "@fitz/inference-core";
+import { RouteNotFoundError, type InferenceScheduler } from "@fitz/inference-core";
 import { parseChatCompletionRequest, PROTOCOL_VERSION, type AgentRunCheckpoint, type AgentRunRequest } from "@fitz/protocol";
 import { SecurityPolicyError, type AuthenticatedPrincipal, type SecurityService } from "@fitz/security";
 import type { SqliteStore } from "@fitz/storage";
 import type { ContextManager } from "@fitz/context";
-import type { AgentRunCoordinator } from "./agent-runs.js";
+import { AgentQueueCapacityError, type AgentRunCoordinator } from "./agent-runs.js";
 
 export interface RegisterAgentRoutesOptions {
   app: FastifyInstance;
   store: SqliteStore;
   agentRuns: AgentRunCoordinator;
+  scheduler: InferenceScheduler;
   context: ContextManager;
   principals: WeakMap<object, AuthenticatedPrincipal>;
   security?: SecurityService;
-  normalizeRouteId(routeId: string): string;
   contextTokensForRoute(routeId: string): number;
 }
 
 /** Owns durable agent-run creation, queue visibility, steering, cancellation,
  * replay, and live SSE delivery. */
 export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
-  const { app, store, agentRuns, context, principals, security, normalizeRouteId, contextTokensForRoute } = options;
+  const { app, store, agentRuns, scheduler, context, principals, security, contextTokensForRoute } = options;
 
   app.post("/api/v1/agent/runs", async (request, reply) => {
     try {
@@ -41,9 +41,9 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
       }
       if (principal) {
         const promptChars = body.messages.reduce((total, message) => total + contentTextLength(message.content), 0);
-        security?.enforceQuota(principal, promptChars, body.maxTokens ?? principal.quota.maxOutputTokens, agentRuns.queue().length);
+        security?.enforceQuota(principal, promptChars, body.maxTokens ?? principal.quota.maxOutputTokens, agentRuns.queue(principal.user.id).length);
       }
-      const executionRouteId = normalizeRouteId(body.model);
+      const executionRouteId = body.model;
       const durableRequest = { ...body, model: executionRouteId };
       const prepared = await context.prepare(durableRequest, contextTokensForRoute(executionRouteId));
       let run;
@@ -71,7 +71,7 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
         },
       });
     } catch (error) {
-      return reply.code(error instanceof SecurityPolicyError ? 429 : error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) });
+      return reply.code(error instanceof SecurityPolicyError || error instanceof AgentQueueCapacityError ? 429 : error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) });
     }
   });
 
@@ -87,12 +87,31 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
     };
   });
 
-  app.get("/api/v1/agent/queue", async (request) => {
+  app.get("/api/v1/work/queue", async (request) => {
     const principal = principals.get(request);
+    const administrator = principal?.user.role === "administrator";
+    const ownerUserId = administrator ? undefined : principal?.user.id;
+    const tasks = agentRuns.queue(ownerUserId).map((item) => ({ id: item.runId, kind: "agent" as const, lane: "gpu" as const, routeId: item.routeId, status: item.status, position: item.position, depth: item.depth, ...(item.ownerUserId ? { ownerUserId: item.ownerUserId } : {}), ...(item.sessionId ? { sessionId: item.sessionId } : {}), ...(item.sessionTitle ? { label: item.sessionTitle } : {}), ...(item.projectName ? { projectName: item.projectName } : {}) }));
+      const inference = scheduler.snapshot()
+        .filter((item) => !item.context.runId)
+        .filter((item) => administrator || !item.context.ownerUserId || item.context.ownerUserId === ownerUserId)
+        .map((item) => ({ id: item.id, kind: item.kind, lane: item.lane, routeId: item.routeId, status: item.status, position: item.position, ...item.context }));
     return {
       protocolVersion: PROTOCOL_VERSION,
-      data: agentRuns.queue(principal?.user.role === "administrator" ? undefined : principal?.user.id),
+      data: [...tasks, ...inference],
     };
+  });
+
+  app.delete("/api/v1/work/queue/:workId", async (request, reply) => {
+    const workId = (request.params as { workId: string }).workId;
+    const principal = principals.get(request);
+    const run = agentRuns.get(workId);
+    if (run && !canAccessOwner(principal, run.ownerUserId)) return reply.code(403).send({ error: "Queue item access denied" });
+    const scheduled = scheduler.snapshot().find((item) => item.id === workId);
+    if (scheduled?.context.ownerUserId && !canAccessOwner(principal, scheduled.context.ownerUserId)) return reply.code(403).send({ error: "Queue item access denied" });
+    const cancelled = run ? agentRuns.cancel(workId) : scheduler.cancel(workId);
+    if (!cancelled) return reply.code(404).send({ error: "Queue item not found" });
+    return reply.code(204).send();
   });
 
   app.get("/api/v1/sessions/:sessionId/agent-run-state", async (request, reply) => {
@@ -158,7 +177,7 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
     const resumeRequest: AgentRunRequest = { ...resumeBase, sessionId: source.sessionId, messages: [{ role: "system", content: recoveryInstruction }] };
     try {
       if (principal && !security?.authorizeRoute(principal, resumeRequest.model)) return reply.code(403).send({ error: "Route access denied" });
-      if (principal) security?.enforceQuota(principal, recoveryInstruction.length, resumeRequest.maxTokens ?? principal.quota.maxOutputTokens, agentRuns.queue().length);
+      if (principal) security?.enforceQuota(principal, recoveryInstruction.length, resumeRequest.maxTokens ?? principal.quota.maxOutputTokens, agentRuns.queue(principal.user.id).length);
       const prepared = await context.prepare(resumeRequest, contextTokensForRoute(resumeRequest.model));
       if (!store.claimAgentRunResume(sourceRunId)) {
         const concurrentResume = store.agentRunResumedFrom(sourceRunId);
@@ -171,7 +190,7 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
         return reply.code(202).send({ protocolVersion: PROTOCOL_VERSION, data: run, resumedFrom: sourceRunId, checkpoint: source.checkpoint });
       } catch (error) { store.setAgentRunResumable(sourceRunId, true); throw error; }
     } catch (error) {
-      return reply.code(error instanceof SecurityPolicyError ? 429 : error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) });
+      return reply.code(error instanceof SecurityPolicyError || error instanceof AgentQueueCapacityError ? 429 : error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) });
     }
   });
 

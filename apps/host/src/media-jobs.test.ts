@@ -73,6 +73,34 @@ describe("Fitz host media jobs", () => {
     }
   });
 
+  it("rejects saturated media admission immediately while preserving a durable failed job", async () => {
+    const runtime = createHost({
+      adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter({ progressPerPoll: 0.00001 })],
+      schedulerOptions: { cloudConcurrency: 1, cloudQueueCapacity: 1 },
+    });
+    try {
+      await registerMediaRecipe(runtime, "h3-img", ["image"]);
+      await assignRoute(runtime, "image", "h3-img");
+
+      const first = await runtime.app.inject({ method: "POST", url: "/api/v1/media/jobs", payload: { routeId: "image", modality: "image", params: { prompt: "first" } } });
+      const second = await runtime.app.inject({ method: "POST", url: "/api/v1/media/jobs", payload: { routeId: "image", modality: "image", params: { prompt: "second" } } });
+      expect(first.statusCode).toBe(202);
+      expect(second.statusCode).toBe(202);
+
+      const overflow = await runtime.app.inject({ method: "POST", url: "/api/v1/media/jobs", payload: { routeId: "image", modality: "image", params: { prompt: "overflow" } } });
+      expect(overflow.statusCode, overflow.body).toBe(429);
+      expect(overflow.json().error).toEqual(expect.objectContaining({ code: "resource_busy", retryable: true }));
+      const rejectedId = overflow.json().data.jobId as string;
+      expect(runtime.store.getMediaJob(rejectedId)).toEqual(expect.objectContaining({ status: "failed", errorCode: "queue_capacity" }));
+      expect(runtime.store.mediaJobEventsAfter(rejectedId, 0).at(-1)?.event).toEqual(expect.objectContaining({ type: "failed" }));
+
+      runtime.mediaJobs.cancel(first.json().data.id);
+      runtime.mediaJobs.cancel(second.json().data.id);
+    } finally {
+      await runtime.app.close();
+    }
+  });
+
   it("fails a job whose artifact exceeds the kind-aware size cap without writing it", async () => {
     const runtime = createHost({ adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter({ resultByteLength: 25 * 1024 * 1024 + 1 })] });
     try {
@@ -155,7 +183,7 @@ describe("Fitz host media jobs", () => {
 
       const submitted = await runtime.app.inject({ method: "POST", url: "/api/v1/media/jobs", payload: { routeId: "video", modality: "image", params: { prompt: "wrong modality" } } });
       expect(submitted.statusCode).toBe(400);
-      expect(String(submitted.json().error)).toContain("cannot generate image");
+      expect(String(submitted.json().error.message)).toContain("cannot generate image");
     } finally {
       await runtime.app.close();
     }
@@ -212,7 +240,7 @@ describe("Fitz host media jobs", () => {
     try {
       const assigned = await runtime.app.inject({ method: "PUT", url: "/api/v1/management/routes/image", payload: { displayName: "Image generation", recipeId: "fake-best", enabled: true } });
       expect(assigned.statusCode, assigned.body).toBe(400);
-      expect(String(assigned.json().error)).toContain("does not generate image");
+      expect(String(assigned.json().error.message)).toContain("does not generate image");
     } finally {
       await runtime.app.close();
     }
