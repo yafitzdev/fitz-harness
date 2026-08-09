@@ -887,7 +887,10 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("if (!artifact.metadata?.mediaJobId)");
     expect(renderer).toContain("activityTimeline.finishWork(job.completedAt)");
     expect(renderer).toContain("activityTimeline.appendWork(row)");
+    expect(renderer).toContain('appendMessage("assistant", `Here is your ${job.modality}!`, job.completedAt)');
+    expect(renderer).toContain('answer.classList.add("media-result-message")');
     expect(styles).toContain("animation: run-activity-spinner 900ms linear infinite");
+    expect(styles).toContain(".media-result-message > .media-job-notice { margin: 0; }");
     expect(styles).not.toContain("animation: spin 900ms linear infinite");
   });
 

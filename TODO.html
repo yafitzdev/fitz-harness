@@ -99,7 +99,8 @@
             "pass", "Media approvals use structured controls instead of editable JSON. Prompt text is editable independently from duration, resolution, FPS, seed, size, and negative prompt; the host validates the amended fields, preserves routing and billing metadata, and executes the approved revision.",
             "pass", "Media approvals now remain inside the run's Worked for disclosure. A successful asynchronous media-tool handoff ends the Pi turn immediately instead of waiting behind the GPU render and surfacing a false terminated failure. Generated artifact chips detach without deleting durable task media, completed events store a lightweight artifact reference instead of a duplicate byte-array JSON payload, and the two previously deleted H3 videos were recovered into their original task artifact records.",
             "pass", "Generated image, video, and audio outputs now remain in the durable artifact repository and never become composer attachments. The outer work disclosure stays active across the asynchronous GPU handoff, closes from the media job's real terminal timestamp, and the shared media progress ring now uses the actual animated activity spinner.",
-            "pass", "Every local media adapter is protected by the shared inference lifecycle thermal guard. At 75°C Fitz attempts an NVIDIA power-limit throttle bounded by the card's reported minimum, cancels safely if the host lacks permission, cancels unconditionally at 82°C, and restores the original limit after completion. Remote media providers are explicitly excluded because their compute is not on the host GPU."
+            "pass", "Every local media adapter is protected by the shared inference lifecycle thermal guard. At 75°C Fitz attempts an NVIDIA power-limit throttle bounded by the card's reported minimum, cancels safely if the host lacks permission, cancels unconditionally at 82°C, and restores the original limit after completion. Remote media providers are explicitly excluded because their compute is not on the host GPU.",
+            "pass", "Successful media output is promoted out of the reasoning stream into a final assistant response: Here is your video/image/audio, followed by the durable ready card. Approval and in-progress generation remain inside Worked for."
           ],
           scope: "Generate media through one durable host pipeline and inspect the resulting Fitz-owned artifact without leaking provider URLs.",
           tests: [
@@ -107,6 +108,7 @@
             "Ask Pi to generate a short video and approve the media tool; confirm a queued media job appears and the finished MP4 opens from the chat artifact list.",
             "After completion, collapse and expand Worked for; confirm the resolved generate_video approval stays inside it and no terminated error appears below the result.",
             "Confirm the generated video never appears as a composer attachment, reopen the task, and confirm the durable MP4 returns and still opens in the Inspector.",
+            "After a media job completes, confirm Worked for collapses first and a final Here is your video response with the ready card appears below it.",
             "Before approving a video, edit its prompt and adjust duration, resolution, or FPS; confirm the generated job uses the revised values without exposing editable JSON.",
             "Reopen a chat whose media job failed and confirm the exact durable failure appears in the conversation.",
             "Run pnpm smoke:h3 with the GPU free and confirm an H.264/AAC MP4 is written to the Fitz cache.",

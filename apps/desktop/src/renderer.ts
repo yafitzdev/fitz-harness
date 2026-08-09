@@ -970,15 +970,17 @@ async function loadMediaJobs(sessionId: string, sessionArtifacts: Json[]): Promi
 
 function renderMediaJob(job: MediaJobSummary, failure?: string, artifact?: Json): void {
   if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
+  const completed = job.status === "completed";
+  const label = `${job.modality[0]!.toUpperCase()}${job.modality.slice(1)}`;
   let row = mediaJobRows.get(job.id);
   if (!row) {
     row = document.createElement("article");
     row.className = "message media-job-notice";
     row.dataset.mediaJobId = job.id;
     mediaJobRows.set(job.id, row);
-    // Media progress and its terminal result are part of the agent's work,
-    // alongside the approval and tool activity that launched the job.
-    activityTimeline.appendWork(row);
+    // Progress belongs to the agent's work disclosure. A completed artifact is
+    // promoted below into a final assistant response instead.
+    if (!completed) activityTimeline.appendWork(row);
   }
   row.className = `message media-job-notice ${job.status}`;
   row.replaceChildren();
@@ -992,8 +994,7 @@ function renderMediaJob(job: MediaJobSummary, failure?: string, artifact?: Json)
   const copy = document.createElement("span");
   copy.className = "media-job-copy";
   const title = document.createElement("strong");
-  const label = `${job.modality[0]!.toUpperCase()}${job.modality.slice(1)}`;
-  title.textContent = job.status === "completed" ? `${label} ready`
+  title.textContent = completed ? `${label} ready`
     : job.status === "failed" || job.status === "interrupted" ? `${label} generation failed`
       : job.status === "cancelled" ? `${label} generation cancelled`
         : `${label} generation in progress`;
@@ -1015,6 +1016,18 @@ function renderMediaJob(job: MediaJobSummary, failure?: string, artifact?: Json)
     retry.textContent = "Retry";
     retry.addEventListener("click", () => void retryMediaJob(job, retry));
     row.append(retry);
+  }
+  if (completed && !row.closest(".media-result-message")) {
+    // The durable media result is the assistant's final answer, not hidden
+    // reasoning. appendMessage closes the active Worked-for disclosure before
+    // adding this response, then the card is placed above its hover actions.
+    const content = appendMessage("assistant", `Here is your ${job.modality}!`, job.completedAt);
+    const answer = content.closest<HTMLElement>(".message.assistant");
+    if (answer) {
+      answer.classList.add("media-result-message");
+      const actions = answer.querySelector<HTMLElement>(":scope > .message-actions");
+      answer.insertBefore(row, actions);
+    }
   }
   messages.scrollTop = messages.scrollHeight;
 }

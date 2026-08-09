@@ -178,6 +178,8 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .markdown-table td:last-child { border-right: 0; }
 .message.system { padding: 10px 12px; border-left: 2px solid var(--danger); background: var(--danger-tint); color: var(--danger-soft); }
 .media-job-notice { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 52px; padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: var(--radius-lg); background: var(--tint-2); color: var(--muted); }
+.media-result-message > .message-body { margin-bottom: 9px; }
+.media-result-message > .media-job-notice { margin: 0; }
 .media-job-notice.failed, .media-job-notice.interrupted { border-color: var(--danger); background: var(--danger-tint); }
 .media-job-icon { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: var(--tint-5); color: var(--subtle); }
 .media-job-icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
