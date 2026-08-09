@@ -277,6 +277,11 @@ describe("InspectorPanel", () => {
   it("previews a pasted PDF from its data URL in its own tab", () => {
     const host = mount();
     const view = panel(host);
+    // Keep the preview tree detached while asserting the iframe contract.
+    // Happy DOM tries to navigate connected blob: iframes even though it does
+    // not implement the blob: URL scheme, which otherwise prints a false
+    // fetch failure after this passing test.
+    host.remove();
     const createObjectURL = vi.fn(() => "blob:test-pdf");
     const revokeObjectURL = vi.fn();
     Object.assign(URL, { createObjectURL, revokeObjectURL });
@@ -336,6 +341,9 @@ describe("InspectorPanel", () => {
     const view = new InspectorPanel(options(host, {
       getProjectRoot: () => "/project",
     }));
+    // See the pasted-PDF test above: detaching prevents Happy DOM from trying
+    // to fetch a blob URL that only Chromium's embedded PDF viewer consumes.
+    host.remove();
     const createObjectURL = vi.fn(() => "blob:inspected-pdf");
     const revokeObjectURL = vi.fn();
     Object.assign(URL, { createObjectURL, revokeObjectURL });
