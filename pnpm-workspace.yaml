@@ -4,6 +4,14 @@ packages:
 
 injectWorkspacePackages: true
 
+# Keep vulnerable transitive production ranges on their patched, API-compatible
+# release lines without forcing unrelated framework or agent upgrades.
+overrides:
+  'undici@>=8.0.0 <8.9.0': 8.9.0
+  'fast-uri@>=3.0.0 <3.1.5': 3.1.5
+  'fast-uri@>=4.0.0 <4.1.2': 4.1.2
+  'js-yaml@>=4.0.0 <4.3.1': 4.3.1
+
 onlyBuiltDependencies:
   - esbuild
   - '@google/genai'
