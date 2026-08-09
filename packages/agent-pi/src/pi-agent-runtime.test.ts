@@ -230,9 +230,11 @@ describe("PiAgentRuntime", () => {
     expect(events).toEqual([{ type: "assistant.delta", text: "blocked" }]);
   });
 
-  it("ends the agent turn cleanly after a durable asynchronous media handoff", async () => {
+  it.each(["generate_image", "generate_video", "generate_audio"])("ends the agent turn cleanly after a durable %s handoff", async (toolName) => {
     let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
     let rejectPrompt: ((error: Error) => void) | undefined;
+    const toolCallId = `${toolName}-1`;
+    const jobId = `job-${toolName}-1`;
     const abort = vi.fn(async () => {
       listener({ type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "terminated" } });
       rejectPrompt?.(new Error("terminated"));
@@ -241,8 +243,8 @@ describe("PiAgentRuntime", () => {
       createSession: async () => ({
         subscribe: (next) => { listener = next; return () => undefined; },
         prompt: async () => {
-          listener({ type: "tool_execution_start", toolCallId: "video-1", toolName: "generate_video", args: { prompt: "a swimming dog" } });
-          listener({ type: "tool_execution_end", toolCallId: "video-1", toolName: "generate_video", result: { content: [], details: { mediaJobId: "job-video-1", status: "queued" } } });
+          listener({ type: "tool_execution_start", toolCallId, toolName, args: { prompt: "a swimming dog" } });
+          listener({ type: "tool_execution_end", toolCallId, toolName, result: { content: [], details: { mediaJobId: jobId, status: "queued" } } });
           await new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
         },
         steer: async () => undefined,
@@ -253,8 +255,8 @@ describe("PiAgentRuntime", () => {
     const events = [];
     for await (const event of runtime.run({ model: "smart", messages: [{ role: "user", content: "make a video" }] })) events.push(event);
     expect(events).toEqual([
-      { type: "tool.started", toolCallId: "video-1", toolName: "generate_video", input: { prompt: "a swimming dog" } },
-      { type: "tool.completed", toolCallId: "video-1", toolName: "generate_video", result: { content: [], details: { mediaJobId: "job-video-1", status: "queued" } } },
+      { type: "tool.started", toolCallId, toolName, input: { prompt: "a swimming dog" } },
+      { type: "tool.completed", toolCallId, toolName, result: { content: [], details: { mediaJobId: jobId, status: "queued" } } },
     ]);
     expect(abort).toHaveBeenCalledOnce();
   });

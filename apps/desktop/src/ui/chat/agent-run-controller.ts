@@ -265,7 +265,10 @@ export class AgentRunController {
           this.#options.setEngineState(success || event.type === "run.cancelled" ? "READY" : event.type.slice(4).toUpperCase());
           activity.remove();
           if (!success && event.data?.error && event.type !== "run.cancelled") this.#options.appendSystem(String(event.data.error));
-          if (success && !assistant) this.#options.appendSystem("The model completed without returning a response.");
+          // A media tool deliberately ends the Pi turn as soon as its durable
+          // background job exists. No assistant text is expected at this point:
+          // MediaJobTracker owns the eventual final answer/artifact card.
+          if (success && !assistant && !mediaHandedOff) this.#options.appendSystem("The model completed without returning a response.");
           // Show change summary if files were modified
           if (success && changedFiles.size > 0) {
             this.#options.appendChangeSummary([...changedFiles.entries()].map(([path, action]) => ({ path, action })));

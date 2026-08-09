@@ -57,7 +57,8 @@ export class GpuThermalGuard {
 
 export class GpuThermalSession {
   #originalPowerLimitW: number | undefined;
-  #throttled = false;
+  #powerCapAttempted = false;
+  #powerCapActive = false;
 
   constructor(readonly guard: GpuThermalGuard, readonly enabled: boolean) {}
 
@@ -71,10 +72,12 @@ export class GpuThermalSession {
         snapshot,
       );
     }
-    if (!this.#throttled) await this.#acquirePowerCap(snapshot);
+    if (!this.#powerCapAttempted) await this.#acquirePowerCap(snapshot);
     if (temperature !== undefined && temperature >= this.guard.policy.throttleAtC) {
       throw new ThermalSafetyError(
-        `Media generation stopped at ${temperature}°C despite the enforced GPU power cap`,
+        this.#powerCapActive
+          ? `Media generation stopped at ${temperature}°C despite the enforced GPU power cap`
+          : `Media generation stopped at ${temperature}°C because the optional GPU power cap could not be applied`,
         snapshot,
       );
     }
@@ -86,34 +89,37 @@ export class GpuThermalSession {
     const minimum = snapshot.gpuMinPowerLimitW;
     const maximum = snapshot.gpuMaxPowerLimitW;
     if (current === undefined || minimum === undefined || maximum === undefined) {
-      throw new ThermalSafetyError(
-        "Media generation refused because the GPU power-limit range is unavailable",
-        snapshot,
-      );
+      // Temperature monitoring is still a hard safety boundary on systems that
+      // do not expose board power controls (common on laptops and containers).
+      this.#powerCapAttempted = true;
+      return;
     }
     const target = Math.max(minimum, Math.floor(maximum * this.guard.policy.powerLimitFraction));
     if (current <= target) {
-      this.#throttled = true;
+      this.#powerCapAttempted = true;
+      this.#powerCapActive = true;
       return;
     }
     this.#originalPowerLimitW = current;
     try {
       await this.guard.power.setPowerLimit(target);
-      this.#throttled = true;
+      this.#powerCapAttempted = true;
+      this.#powerCapActive = true;
     } catch (error) {
+      // Changing the board power limit requires administrator privileges on
+      // many Windows drivers. Refusing all local media in that common setup is
+      // worse than retaining the independent 75/82°C stop boundaries.
       this.#originalPowerLimitW = undefined;
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new ThermalSafetyError(
-        `Media generation refused because Fitz could not enforce the GPU power cap (${detail})`,
-        snapshot,
-      );
+      this.#powerCapAttempted = true;
+      this.#powerCapActive = false;
     }
   }
 
   async close(): Promise<void> {
     const original = this.#originalPowerLimitW;
     this.#originalPowerLimitW = undefined;
-    this.#throttled = false;
+    this.#powerCapAttempted = false;
+    this.#powerCapActive = false;
     if (original === undefined) return;
     try { await this.guard.power.setPowerLimit(original); }
     catch { /* Restoration is best-effort; never hide the generation result. */ }

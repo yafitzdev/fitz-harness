@@ -118,15 +118,16 @@ describe("AgentRunController", () => {
       ? { data: { id: "run-media" } }
       : { events: [
         { sequence: 1, type: "run.started", data: {} },
-        { sequence: 2, type: "tool.started", data: { toolName: "generate_video", toolCallId: "tool-media", input: { prompt: "robot" } } },
-        { sequence: 3, type: "tool.completed", data: { toolCallId: "tool-media", result: { content: [], details: { mediaJobId: "job-video" } } } },
+        { sequence: 2, type: "tool.started", data: { toolName: "generate_image", toolCallId: "tool-media", input: { prompt: "dog" } } },
+        { sequence: 3, type: "tool.completed", data: { toolCallId: "tool-media", result: { content: [], details: { mediaJobId: "job-image" } } } },
         { sequence: 4, type: "run.completed", data: {} },
       ] });
     const onMediaJobSubmitted = vi.fn();
+    const appendSystem = vi.fn();
     const activity = activityMock();
     const replacement = new AgentRunController({
       messages: document.createElement("main"), activity: activity.timeline, api,
-      appendAssistant: () => document.createElement("div"), appendAssistantDelta: vi.fn(), appendSystem: vi.fn(), appendChangeSummary: vi.fn(),
+      appendAssistant: () => document.createElement("div"), appendAssistantDelta: vi.fn(), appendSystem, appendChangeSummary: vi.fn(),
       addTokenEstimate: vi.fn(), recalibrateEstimate: vi.fn(), setStatus: vi.fn(), setEngineState: vi.fn(), refreshControls: vi.fn(),
       queueVisible: () => false, refreshQueue: vi.fn(), showToast: vi.fn(), errorMessage: String, terminalReplayError: () => false,
       onMediaJobSubmitted,
@@ -134,7 +135,8 @@ describe("AgentRunController", () => {
 
     await replacement.start(request());
 
-    expect(onMediaJobSubmitted).toHaveBeenCalledWith("job-video", "generate_video");
+    expect(onMediaJobSubmitted).toHaveBeenCalledWith("job-image", "generate_image");
+    expect(appendSystem).not.toHaveBeenCalled();
     expect(activity.timeline.finishWork).not.toHaveBeenCalled();
   });
 
