@@ -185,7 +185,7 @@ export class ModelCatalogController {
     for (const entry of visible) {
       const card = this.modelCard(modelName(entry.id), catalogMeta(entry), entry.id, {
         title: "Open on Hugging Face",
-        action: () => this.options.openExternal(`https://huggingface.co/${entry.id}`),
+        action: () => this.openExternal(`https://huggingface.co/${entry.id}`),
       });
       const actions = card.querySelector(".model-actions") as HTMLElement;
       if (this.downloads.has(entry.id)) {
@@ -207,11 +207,11 @@ export class ModelCatalogController {
     for (const entry of this.downloaded) {
       const card = this.modelCard(modelName(entry.repoId), `${entry.fileName} · ${formatBytes(entry.size)}`, entry.repoId, {
         title: "Show in folder",
-        action: () => this.options.openPath(parentDirectory(entry.path)),
+        action: () => this.openPath(parentDirectory(entry.path)),
       });
       const actions = card.querySelector(".model-actions") as HTMLElement;
       actions.append(createActionMenu([
-        { label: "Show in folder", action: () => this.options.openPath(parentDirectory(entry.path)) },
+        { label: "Show in folder", action: () => this.openPath(parentDirectory(entry.path)) },
         { label: "Delete", action: () => this.removeDownloaded(entry), danger: true, confirm: true },
       ], `Actions for ${modelName(entry.repoId)}`));
       this.elements.downloadedList.append(card);
@@ -248,6 +248,16 @@ export class ModelCatalogController {
     actions.className = "model-actions";
     card.append(icon, copy, actions);
     return card;
+  }
+
+  private async openExternal(url: string): Promise<void> {
+    try { await this.options.openExternal(url); }
+    catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
+  }
+
+  private async openPath(path: string): Promise<void> {
+    try { await this.options.openPath(path); }
+    catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
   }
 
   private downloadAction(repoId: string): HTMLButtonElement {

@@ -1,4 +1,5 @@
 import { svgIcon } from "../primitives/dom.js";
+import type { ActionFeedback } from "../primitives/action-status.js";
 
 type EditCommand = "undo" | "redo" | "cut" | "copy" | "paste" | "select-all" | "reload" | "devtools";
 
@@ -11,6 +12,8 @@ export interface ApplicationMenuOptions {
   editCommand: (command: EditCommand) => void | Promise<void>;
   windowAction: (action: "close") => void | Promise<void>;
   openExternal: (url: string) => void | Promise<void>;
+  showStatus: ActionFeedback;
+  errorMessage: (error: unknown) => string;
   closeOthers: () => void;
 }
 
@@ -49,12 +52,12 @@ export class ApplicationMenuController {
   }
 
   #render(name: string): void {
-    const edit = (command: EditCommand) => () => void this.#options.editCommand(command);
+    const edit = (command: EditCommand) => () => this.#options.editCommand(command);
     if (name === "File") {
       this.#item("New chat", '<path d="M4 4h12v12H4z"></path><path d="M7 10h6M10 7v6"></path>', this.#options.newChat, "Ctrl+N");
       this.#item("New project", '<path d="M3 6h5l1.5 2H17v8H3z"></path><path d="M3 6V4h5l1.5 2"></path>', this.#options.newProject);
       this.#separator();
-      this.#item("Close window", '<path d="m5 5 10 10M15 5 5 15"></path>', () => void this.#options.windowAction("close"));
+      this.#item("Close window", '<path d="m5 5 10 10M15 5 5 15"></path>', () => this.#options.windowAction("close"));
     } else if (name === "Edit") {
       this.#item("Undo", '<path d="M7 7H3V3"></path><path d="M3 7c2-3 5-4 8-3 3 1 5 4 5 7"></path>', edit("undo"), "Ctrl+Z");
       this.#item("Redo", '<path d="M13 7h4V3"></path><path d="M17 7c-2-3-5-4-8-3-3 1-5 4-5 7"></path>', edit("redo"), "Ctrl+Y");
@@ -68,11 +71,11 @@ export class ApplicationMenuController {
       this.#item("Reload", '<path d="M16 7V3l-2 2a6 6 0 1 0 1 8"></path>', edit("reload"), "Ctrl+R");
       this.#item("Developer tools", '<path d="m7 6-4 4 4 4M13 6l4 4-4 4M11 4 9 16"></path>', edit("devtools"));
     } else if (name === "Help") {
-      this.#item("Fitz Codex on GitHub", '<circle cx="10" cy="10" r="7"></circle><path d="M8 8a2 2 0 1 1 3 1.7c-.7.4-1 .8-1 1.5M10 14h.01"></path>', () => void this.#options.openExternal("https://github.com/yafitzdev/fitz-codex"));
+      this.#item("Fitz Codex on GitHub", '<circle cx="10" cy="10" r="7"></circle><path d="M8 8a2 2 0 1 1 3 1.7c-.7.4-1 .8-1 1.5M10 14h.01"></path>', () => this.#options.openExternal("https://github.com/yafitzdev/fitz-codex"));
     }
   }
 
-  #item(label: string, icon: string, action: () => void, shortcut = ""): void {
+  #item(label: string, icon: string, action: () => void | Promise<void>, shortcut = ""): void {
     const button = document.createElement("button");
     button.type = "button";
     const text = document.createElement("span");
@@ -87,7 +90,11 @@ export class ApplicationMenuController {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
       this.close();
-      action();
+      try {
+        void Promise.resolve(action()).catch((error) => this.#options.showStatus(this.#options.errorMessage(error), "error"));
+      } catch (error) {
+        this.#options.showStatus(this.#options.errorMessage(error), "error");
+      }
     });
     this.#options.popover.append(button);
   }

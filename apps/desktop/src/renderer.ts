@@ -577,6 +577,8 @@ const appMenus = new ApplicationMenuController({
   editCommand: (command) => window.fitz.editCommand(command),
   windowAction: (action) => window.fitz.windowAction(action),
   openExternal: (url) => window.fitz.openExternal(url),
+  showStatus,
+  errorMessage,
   closeOthers: () => {
     customSelects.close();
     composer.closePopovers();
@@ -603,7 +605,12 @@ pluginsButton.addEventListener("click", () => void openPluginsPage());
 modelsButton.addEventListener("click", () => void openModelsPage());
 administrationButton.addEventListener("click", () => void openAdministrationPage());
 element("sidebar-menu").addEventListener("click", toggleSidebar);
-for (const windowButton of document.querySelectorAll<HTMLButtonElement>("[data-window-action]")) windowButton.addEventListener("click", () => void window.fitz.windowAction(windowButton.dataset.windowAction as "minimize" | "maximize" | "close"));
+for (const windowButton of document.querySelectorAll<HTMLButtonElement>("[data-window-action]")) {
+  windowButton.addEventListener("click", () => {
+    void window.fitz.windowAction(windowButton.dataset.windowAction as "minimize" | "maximize" | "close")
+      .catch((error) => showStatus(errorMessage(error), "error"));
+  });
+}
 connectionStatus.addEventListener("click", () => void initialize());
 inspectorArtifacts.addEventListener("click", () => inspectorPanel.toggle());
 window.addEventListener("fitz:open-resource", (event) => {
@@ -718,7 +725,10 @@ function showNewChatLanding(): void {
 
 function openProjectWorktreeSetup(id: string): void { openNewChatForProject(id); composer.openWorktreeSetup(); }
 
-async function copyValue(value: string, message: string): Promise<void> { await window.fitz.copyText(value); showStatus(message, "success"); }
+async function copyValue(value: string, message: string): Promise<void> {
+  try { await window.fitz.copyText(value); showStatus(message, "success"); }
+  catch (error) { showStatus(errorMessage(error), "error"); }
+}
 
 async function openPlaybookPage(): Promise<void> {
   if (!canOpenManagementView("playbooks", administrator) || !pairingPage.hidden) { if (!pairingPage.hidden) pairingCode.focus(); return; }

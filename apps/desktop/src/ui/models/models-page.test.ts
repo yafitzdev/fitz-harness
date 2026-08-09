@@ -117,6 +117,20 @@ describe("ModelsPageController", () => {
     expect(calls.openExternal).toHaveBeenCalledWith("https://huggingface.co/org/extra");
   });
 
+  it("reports rejected website bridge calls inline", async () => {
+    const api = vi.fn(async (path: string) => {
+      if (path === "/api/v1/management/models/downloaded" || path === "/api/v1/management/models/downloads") return { data: [] };
+      return { data: { total: 1, models: [{ id: "org/extra", downloads: 1, likes: 0 }] } };
+    });
+    const { controller, page, calls } = setup(api);
+    calls.openExternal.mockRejectedValueOnce(new Error("Browser unavailable"));
+    await controller.load();
+
+    click(page.querySelector("#model-catalog .model-card")!);
+
+    await vi.waitFor(() => expect(calls.showStatus).toHaveBeenCalledWith("Browser unavailable", "error"));
+  });
+
   it("re-queries the catalog with the shared sort when the filter bar changes", async () => {
     const api = vi.fn(async (path: string) => {
       if (path === "/api/v1/management/models/downloaded" || path === "/api/v1/management/models/downloads") return { data: [] };
@@ -343,6 +357,23 @@ describe("ModelsPageController", () => {
     click(show);
 
     expect(calls.openPath).toHaveBeenCalledWith("/models/org/model/");
+  });
+
+  it("reports rejected folder bridge calls inline", async () => {
+    const api = vi.fn(async (path: string) => {
+      if (path === "/api/v1/management/models/downloaded") {
+        return { data: [{ repoId: "org/model", fileName: "model.Q4_K_M.gguf", path: "/models/org/model/model.Q4_K_M.gguf", size: 100 }] };
+      }
+      if (path === "/api/v1/management/models/downloads") return { data: [] };
+      return { data: { total: 0, models: [] } };
+    });
+    const { controller, page, calls } = setup(api);
+    calls.openPath.mockRejectedValueOnce(new Error("Folder unavailable"));
+    await controller.load();
+
+    click(page.querySelector("#downloaded-models .model-card")!);
+
+    await vi.waitFor(() => expect(calls.showStatus).toHaveBeenCalledWith("Folder unavailable", "error"));
   });
 
   it("removes a downloaded model after confirming", async () => {

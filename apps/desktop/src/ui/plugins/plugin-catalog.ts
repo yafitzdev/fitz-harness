@@ -227,12 +227,12 @@ export class PluginCatalogController {
       card.setAttribute("role", "link");
       card.title = "Open plugin website";
       card.addEventListener("click", (event) => {
-        if (!(event.target as HTMLElement).closest(".plugin-actions")) void this.options.openExternal(website);
+        if (!(event.target as HTMLElement).closest(".plugin-actions")) void this.openWebsite(website);
       });
       card.addEventListener("keydown", (event) => {
         if ((event.key === "Enter" || event.key === " ") && !(event.target as HTMLElement).closest(".plugin-actions")) {
           event.preventDefault();
-          void this.options.openExternal(website);
+          void this.openWebsite(website);
         }
       });
     }
@@ -251,6 +251,11 @@ export class PluginCatalogController {
     actions.className = "plugin-actions";
     card.append(icon, copy, actions);
     return card;
+  }
+
+  private async openWebsite(website: string): Promise<void> {
+    try { await this.options.openExternal(website); }
+    catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
   }
 
   private action(label: string, action: () => Promise<void>, danger = false): HTMLButtonElement {

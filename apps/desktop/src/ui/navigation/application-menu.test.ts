@@ -9,7 +9,8 @@ function setup() {
   toggle.dataset.appMenu = "File";
   const actions = {
     newChat: vi.fn(), newProject: vi.fn(), toggleSidebar: vi.fn(), editCommand: vi.fn(),
-    windowAction: vi.fn(), openExternal: vi.fn(), closeOthers: vi.fn(),
+    windowAction: vi.fn(), openExternal: vi.fn(), closeOthers: vi.fn(), showStatus: vi.fn(),
+    errorMessage: vi.fn((error: unknown) => error instanceof Error ? error.message : String(error)),
   };
   const controller = new ApplicationMenuController({ popover, toggles: [toggle], ...actions });
   document.body.append(toggle, popover);
@@ -36,5 +37,16 @@ describe("ApplicationMenuController", () => {
     toggle.click();
     expect(popover.hidden).toBe(true);
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("reports rejected bridge actions instead of leaking them", async () => {
+    const { controller, popover, toggle, actions } = setup();
+    actions.openExternal.mockRejectedValueOnce(new Error("Browser unavailable"));
+    toggle.dataset.appMenu = "Help";
+
+    controller.open("Help", toggle, new MouseEvent("click"));
+    popover.querySelector<HTMLButtonElement>("button")!.click();
+
+    await vi.waitFor(() => expect(actions.showStatus).toHaveBeenCalledWith("Browser unavailable", "error"));
   });
 });

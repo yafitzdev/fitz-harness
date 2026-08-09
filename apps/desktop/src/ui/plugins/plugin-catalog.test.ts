@@ -123,6 +123,20 @@ describe("PluginCatalogController", () => {
     expect(calls.openExternal).toHaveBeenCalledWith("https://www.npmjs.com/package/pi-extra");
   });
 
+  it("reports a rejected website bridge call without leaking it", async () => {
+    const api = vi.fn(async (path: string) => {
+      if (path === "/api/v1/management/pi/packages" || path === "/api/v1/management/pi/skills") return { data: [] };
+      return { data: { total: 1, packages: [{ name: "pi-extra", description: "Extra", version: "2.0.0", links: {} }] } };
+    });
+    const { controller, elements, calls } = setup(api);
+    calls.openExternal.mockRejectedValueOnce(new Error("Browser unavailable"));
+    await controller.load();
+
+    click(elements.pluginCatalog.querySelector(".plugin-card-linked")!);
+
+    await vi.waitFor(() => expect(calls.showStatus).toHaveBeenCalledWith("Browser unavailable", "error"));
+  });
+
   it("requires confirmation before installing and refreshes the shared package state", async () => {
     const api = vi.fn(async (path: string) => {
       if (path === "/api/v1/management/pi/packages") return { data: [] };

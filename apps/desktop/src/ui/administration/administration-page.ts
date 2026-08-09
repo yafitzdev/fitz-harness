@@ -202,7 +202,7 @@ export class AdministrationPageController {
     this.elements.refresh.addEventListener("click", () => void this.load());
     this.elements.pairingCodeForm.addEventListener("submit", (event) => { event.preventDefault(); void this.issuePairingCode(); });
     const copyPairingCode = createCopyButton({
-      copyText: (text) => void this.options.bridge.copyText(text),
+      copyText: (text) => this.options.bridge.copyText(text),
       value: () => this.elements.issuedPairingCode.textContent ?? "",
       title: "Copy pairing code",
       className: "pairing-code-copy",
