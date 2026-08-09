@@ -239,6 +239,7 @@ export class AdministrationPageController {
       });
       this.elements.createUserName.value = "";
       await this.load();
+      this.options.showStatus("User created", "success");
     } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
     finally { setFormBusy(this.elements.createUserForm, false); }
   }
@@ -413,6 +414,7 @@ export class AdministrationPageController {
       });
       this.elements.toolPolicyName.value = "";
       await this.load();
+      this.options.showStatus("Tool policy saved", "success");
     } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
     finally { setFormBusy(this.elements.toolPolicyForm, false); }
   }
@@ -421,6 +423,7 @@ export class AdministrationPageController {
     try {
       await this.options.api(`/api/v1/management/users/${userId}`, "PATCH", update);
       await this.load();
+      this.options.showStatus("User updated", "success");
     } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
   }
 
@@ -428,6 +431,7 @@ export class AdministrationPageController {
     try {
       await this.options.api(`/api/v1/management/devices/${deviceId}`, "DELETE");
       await this.load();
+      this.options.showStatus("Device revoked", "success");
     } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
   }
 

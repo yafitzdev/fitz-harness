@@ -241,13 +241,14 @@ describe("AdministrationPageController", () => {
   });
 
   it("creates a user and saves tool policies and access updates", async () => {
-    const { controller, elements, api } = setup();
+    const { controller, elements, api, showStatus } = setup();
     await controller.load();
 
     elements.createUserName.value = "Linus";
     elements.createUserRole.value = "agent";
     submit(elements.createUserForm);
     await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/users", "POST", { displayName: "Linus", role: "agent" }));
+    await vi.waitFor(() => expect(showStatus).toHaveBeenCalledWith("User created", "success"));
 
     elements.toolPolicySubjectType.value = "user";
     elements.toolPolicySubjectType.dispatchEvent(new Event("change", { bubbles: true }));
@@ -256,6 +257,7 @@ describe("AdministrationPageController", () => {
     elements.toolPolicyDecision.value = "deny";
     submit(elements.toolPolicyForm);
     await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/tool-policies/user/user-2/edit", "PUT", { decision: "deny" }));
+    await vi.waitFor(() => expect(showStatus).toHaveBeenCalledWith("Tool policy saved", "success"));
 
     // Change a consumer's role and save their route + quota access.
     const card = elements.adminUsers.querySelectorAll(".admin-user")[1] as HTMLElement;
@@ -263,6 +265,7 @@ describe("AdministrationPageController", () => {
     role.value = "agent";
     role.dispatchEvent(new Event("change", { bubbles: true }));
     await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/users/user-2", "PATCH", { role: "agent" }));
+    await vi.waitFor(() => expect(showStatus).toHaveBeenCalledWith("User updated", "success"));
 
     (card.querySelector(".admin-route input") as HTMLInputElement).checked = true;
     click(card.querySelector(".admin-user-actions button")!);
@@ -271,13 +274,14 @@ describe("AdministrationPageController", () => {
   });
 
   it("revokes a non-current device", async () => {
-    const { controller, elements, api } = setup();
+    const { controller, elements, api, showStatus } = setup();
     await controller.load();
     const card = elements.adminUsers.querySelectorAll(".admin-user")[1] as HTMLElement;
     const revoke = [...card.querySelectorAll<HTMLButtonElement>(".admin-device button")].find((button) => button.title.includes("Old laptop"));
     expect(revoke).toBeDefined();
     click(revoke!);
     await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/devices/device-8", "DELETE"));
+    await vi.waitFor(() => expect(showStatus).toHaveBeenCalledWith("Device revoked", "success"));
   });
 
   it("stages and applies remote access and host startup confirmations", async () => {
