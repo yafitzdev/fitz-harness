@@ -218,7 +218,7 @@ describe("InferenceScheduler media jobs", () => {
     expect(mediaAdapter.submitted).toHaveLength(0);
   });
 
-  it("interleaves chat and media jobs on the shared FIFO with kind-tagged events", async () => {
+  it("serializes chat, activation, and media jobs on one kind-tagged FIFO", async () => {
     const chatAdapter = new FakeEngineAdapter();
     const mediaAdapter = new MediaFakeEngineAdapter();
     const events = new LifecycleEventBus();
@@ -237,16 +237,19 @@ describe("InferenceScheduler media jobs", () => {
     );
 
     const chat1 = scheduler.enqueue("chat", { messages: [{ role: "user", content: "one" }] });
+    const warm = scheduler.enqueueWarm("chat");
     const media = scheduler.enqueueMedia("video", mediaInput("video", "a cat"));
     const chat2 = scheduler.enqueue("chat", { messages: [{ role: "user", content: "two" }] });
 
-    const [chat1Text, mediaEvents, chat2Text] = await Promise.all([
+    const [chat1Text, warmed, mediaEvents, chat2Text] = await Promise.all([
       collect(chat1),
+      warm.result,
       collectMedia(media.events),
       collect(chat2),
     ]);
 
     expect(chat1Text).toContain("one");
+    expect(warmed.recipeId).toBe("chat-recipe");
     expect(chat2Text).toContain("two");
     expect(mediaEvents.some((event) => event.type === "progress")).toBe(true);
     expect(mediaEvents.find((event) => event.type === "completed")).toMatchObject({
@@ -271,11 +274,15 @@ describe("InferenceScheduler media jobs", () => {
     expect(mediaJobEvents.length).toBeGreaterThan(0);
     for (const event of mediaJobEvents) expect(event.data.kind).toBe("media");
 
-    // started events are emitted in FIFO order: chat, media, chat.
+    const warmEvents = queueUpdated.filter((event) => event.data.requestId === warm.requestId);
+    expect(warmEvents.length).toBeGreaterThan(0);
+    for (const event of warmEvents) expect(event.data.kind).toBe("warm");
+
+    // Every VRAM-touching entry point starts in FIFO order, never concurrently.
     const startedKinds = queueUpdated
       .filter((event) => event.data.status === "started")
       .map((event) => event.data.kind);
-    expect(startedKinds).toEqual(["chat", "media", "chat"]);
+    expect(startedKinds).toEqual(["chat", "warm", "media", "chat"]);
   });
 
   it("cancels a queued media job before it is submitted", async () => {

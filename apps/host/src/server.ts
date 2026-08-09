@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NInferEngineAdapter } from "@fitz/engine-ninfer";
 import { FakeEngineAdapter } from "@fitz/engine-fake";
@@ -27,6 +27,7 @@ import { resolveRuntimePaths } from "./runtime-paths.js";
 import { AgentSafetyService } from "./agent-safety/index.js";
 import { localComfyUIPaths, localComfyUIRecipeIds, reconcileLocalComfyUIConfiguration } from "./comfyui-reconcile.js";
 import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
+import { HostInstanceLock } from "./host-instance-lock.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const runtimePaths = resolveRuntimePaths();
@@ -45,6 +46,8 @@ const agentRuntimeMode = process.env.FITZ_AGENT_RUNTIME ?? "pi";
 const agentBaseUrl = process.env.FITZ_AGENT_BASE_URL ?? `http://127.0.0.1:${port}/v1`;
 const internalAgentToken = agentRuntimeMode === "pi" && !process.env.FITZ_AGENT_BASE_URL ? randomBytes(32).toString("base64url") : undefined;
 
+mkdirSync(runtimePaths.dataRoot, { recursive: true });
+const hostInstanceLock = HostInstanceLock.acquire(join(runtimePaths.dataRoot, "host.lock"));
 const restoredStorage = await applyPendingStorageRestore(runtimePaths);
 if (restoredStorage) console.info("Scheduled storage restore applied", restoredStorage);
 mkdirSync(dirname(databasePath), { recursive: true });
@@ -131,6 +134,7 @@ const runtime = createHost({
   } : {}),
 });
 mediaJobs = runtime.mediaJobs;
+runtime.app.addHook("onClose", async () => hostInstanceLock.release());
 // On a fresh database createHost seeds the complete engine-mode recipe set first;
 // reconcile afterward so ComfyUI also gets its Playbooks registration without
 // suppressing the normal chat defaults.

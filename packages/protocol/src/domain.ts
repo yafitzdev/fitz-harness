@@ -143,3 +143,27 @@ export interface InferenceRequestRecord {
   completedAt?: string;
   errorCode?: string;
 }
+
+export type GpuWorkStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
+
+/** Durable admission ledger for the host's single GPU worker. The live queue
+ * owns executable closures; SQLite owns enough state to prove ordering and to
+ * turn unfinished work into an explicit interrupted record after restart. */
+export interface GpuWorkRecord {
+  id: string;
+  routeId: string;
+  kind: "chat" | "media" | "warm";
+  status: GpuWorkStatus;
+  position: number;
+  depth: number;
+  enqueuedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  errorCode?: string;
+}

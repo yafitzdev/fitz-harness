@@ -126,6 +126,32 @@ describe("InferenceScheduler", () => {
     expect(events.after(0).some((event) => event.type === "queue.updated")).toBe(true);
   });
 
+  it("queues model activation behind active generation instead of bypassing the GPU slot", async () => {
+    const adapter = new FakeEngineAdapter({ tokenDelayMs: 10, loadDelayMs: 5 });
+    const events = new LifecycleEventBus();
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]), events });
+    const scheduler = new InferenceScheduler(
+      new RouteResolver(
+        [route("default", "default"), route("smart", "smart")],
+        [recipe("default", 60), recipe("smart", 60)],
+      ),
+      lifecycle,
+      events,
+    );
+
+    const chat = scheduler.enqueue("default", { messages: [{ role: "user", content: "first" }] });
+    await waitFor(() => lifecycle.snapshot().state === "BUSY");
+    const warm = scheduler.enqueueWarm("smart");
+    const next = scheduler.enqueue("smart", { messages: [{ role: "user", content: "second" }] });
+    const [, warmed, nextText] = await Promise.all([collect(chat), warm.result, collect(next)]);
+
+    expect(warmed.recipeId).toBe("smart");
+    expect(nextText).toContain("second");
+    expect(events.after(0)
+      .filter((event) => event.type === "queue.updated" && event.data.status === "started")
+      .map((event) => event.data.kind)).toEqual(["chat", "warm", "chat"]);
+  });
+
   it("tests an exact recipe without assigning it to a consumer route", async () => {
     const adapter = new FakeEngineAdapter();
     const events = new LifecycleEventBus();

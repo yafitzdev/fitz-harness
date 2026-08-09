@@ -6,7 +6,13 @@
 - Versioned protocol types for recipes, routes, lifecycle state, events, and initial Chat Completions requests.
 - Engine adapter contract and registry.
 - Route resolver.
-- Single-generation FIFO scheduler with cancellation and queue events.
+- Strict single-GPU FIFO scheduler shared by chat generation, media generation,
+  recipe tests, and VRAM-bearing model activation/warmup. Queue admission,
+  cancellation, failure, and completion are persisted in one GPU-work ledger;
+  unfinished work is marked interrupted after host restart. A per-data-root host
+  ownership lock prevents a second Fitz host process from creating an independent
+  GPU queue. CPU/RAM-only preparation may remain concurrent because it cannot
+  activate a model or consume model VRAM.
 - Lifecycle state machine with on-demand loading, recipe switching, leases, minimum residency, and idle TTL eviction.
 - Deterministic fake engine adapter.
 - Opt-in direct NInfer adapter with validated launch specs, generated per-instance credentials,

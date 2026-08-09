@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { InferenceDelta, InferenceRequest, MediaGenerationRequest, MediaJobEvent } from "@fitz/protocol";
+import type { InferenceDelta, InferenceRequest, InstanceSnapshot, MediaGenerationRequest, MediaJobEvent } from "@fitz/protocol";
 import { AsyncChannel } from "./async-channel.js";
 import { LifecycleEventBus } from "./event-bus.js";
 import { LifecycleManager } from "./lifecycle-manager.js";
@@ -25,6 +25,14 @@ type QueueJob =
       output: AsyncChannel<MediaJobEvent>;
       controller: AbortController;
       detachExternalAbort?: () => void;
+    }
+  | {
+      kind: "warm";
+      id: string;
+      routeId: string;
+      result: Deferred<InstanceSnapshot>;
+      controller: AbortController;
+      detachExternalAbort?: () => void;
     };
 
 export interface ScheduledStream extends AsyncIterable<InferenceDelta> {
@@ -35,6 +43,12 @@ export interface ScheduledStream extends AsyncIterable<InferenceDelta> {
 export interface ScheduledMediaJob {
   jobId: string;
   events: AsyncIterable<MediaJobEvent>;
+  cancel(): void;
+}
+
+export interface ScheduledWarmup {
+  requestId: string;
+  result: Promise<InstanceSnapshot>;
   cancel(): void;
 }
 
@@ -121,6 +135,42 @@ export class InferenceScheduler {
     return { jobId: id, events: output, cancel: () => this.#cancel(job) };
   }
 
+  /** Activate a recipe through the same one-slot FIFO used by generation.
+   * Preparation that cannot touch VRAM may still happen outside this queue;
+   * activation and readiness never may. */
+  enqueueWarm(
+    routeId: string,
+    externalSignal?: AbortSignal,
+  ): ScheduledWarmup {
+    const id = randomUUID();
+    const result = deferred<InstanceSnapshot>();
+    const controller = new AbortController();
+    const job: QueueJob = { kind: "warm", id, routeId, result, controller };
+
+    if (!this.#accepting) {
+      result.reject(new Error("Inference scheduler is shutting down"));
+      return { requestId: id, result: result.promise, cancel: () => undefined };
+    }
+
+    if (externalSignal) {
+      const abort = () => this.#cancel(job);
+      if (externalSignal.aborted) abort();
+      else {
+        externalSignal.addEventListener("abort", abort, { once: true });
+        job.detachExternalAbort = () => externalSignal.removeEventListener("abort", abort);
+      }
+    }
+
+    if (!controller.signal.aborted) {
+      this.#queue.push(job);
+      this.#publishQueue(job, "queued", this.#queue.length);
+      this.#publishQueuedPositions();
+      void this.#pump();
+    }
+
+    return { requestId: id, result: result.promise, cancel: () => this.#cancel(job) };
+  }
+
   #enqueue(
     routeId: string,
     input: Omit<InferenceRequest, "id" | "routeId">,
@@ -185,12 +235,12 @@ export class InferenceScheduler {
     if (index >= 0) {
       this.#queue.splice(index, 1);
       const error = abortError();
-      job.output.fail(error);
+      failJob(job, error);
       job.detachExternalAbort?.();
       this.#publishQueue(job, "cancelled", 0);
       this.#publishQueuedPositions();
     } else if (this.#active !== job) {
-      job.output.fail(abortError());
+      failJob(job, abortError());
       job.detachExternalAbort?.();
       this.#publishQueue(job, "cancelled", 0);
     }
@@ -215,16 +265,19 @@ export class InferenceScheduler {
               job.output.push(delta);
             }
             if (job.unloadAfterCompletion) await this.lifecycle.stop(`recipe-test:${recipe.id}`, "graceful");
-          } else {
+          } else if (job.kind === "media") {
             const recipe = this.routes.resolve(job.routeId).recipe;
             for await (const event of this.lifecycle.runMedia(recipe, job.mediaRequest, job.controller.signal)) {
               job.output.push(event);
             }
+          } else {
+            const recipe = this.routes.resolve(job.routeId).recipe;
+            job.result.resolve(await this.lifecycle.warm(recipe, job.controller.signal));
           }
-          job.output.close();
+          closeJob(job);
           this.#publishQueue(job, "completed", 0);
         } catch (error) {
-          job.output.fail(error);
+          failJob(job, error);
           this.#publishQueue(job, job.controller.signal.aborted ? "cancelled" : "failed", 0);
         } finally {
           job.detachExternalAbort?.();
@@ -261,6 +314,31 @@ export class InferenceScheduler {
       status,
     });
   }
+}
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve(value: T): void;
+  reject(reason: unknown): void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function failJob(job: QueueJob, error: unknown): void {
+  if (job.kind === "warm") job.result.reject(error);
+  else job.output.fail(error);
+}
+
+function closeJob(job: QueueJob): void {
+  if (job.kind !== "warm") job.output.close();
 }
 
 function abortError(): Error {

@@ -32,6 +32,7 @@ import type {
   MediaJobRecord,
   MediaJobStatus,
   MediaModality,
+  GpuWorkRecord,
 } from "@fitz/protocol";
 import { MIGRATIONS } from "./migrations.js";
 
@@ -94,6 +95,19 @@ interface InferenceRequestRow {
   id: string;
   route_id: string;
   status: InferenceRequestRecord["status"];
+  enqueued_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  error_code: string | null;
+}
+
+interface GpuWorkRow {
+  id: string;
+  route_id: string;
+  kind: GpuWorkRecord["kind"];
+  status: GpuWorkRecord["status"];
+  position: number;
+  depth: number;
   enqueued_at: string;
   started_at: string | null;
   completed_at: string | null;
@@ -366,6 +380,67 @@ export class SqliteStore {
         event.data.status === "failed" ? "inference_failed" : null,
         event.data.requestId,
       );
+  }
+
+  /** Persist the unified one-slot GPU queue independently from the legacy
+   * chat-only inference request ledger and the richer media job records. */
+  recordGpuQueueEvent(event: QueueUpdatedEvent): void {
+    const status = event.data.status === "started" ? "running" : event.data.status;
+    this.#database.prepare(
+      `INSERT INTO gpu_work_items (
+         id, route_id, kind, status, position, depth, enqueued_at,
+         started_at, completed_at, error_code
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         status = excluded.status,
+         position = excluded.position,
+         depth = excluded.depth,
+         started_at = COALESCE(gpu_work_items.started_at, excluded.started_at),
+         completed_at = COALESCE(excluded.completed_at, gpu_work_items.completed_at),
+         error_code = excluded.error_code`,
+    ).run(
+      event.data.requestId,
+      event.data.routeId,
+      event.data.kind,
+      status,
+      event.data.position,
+      event.data.depth,
+      event.timestamp,
+      status === "running" ? event.timestamp : null,
+      ["completed", "failed", "cancelled"].includes(status) ? event.timestamp : null,
+      status === "failed" ? "gpu_work_failed" : null,
+    );
+  }
+
+  recoverInterruptedGpuWork(): number {
+    const now = new Date().toISOString();
+    const result = this.#database.prepare(
+      `UPDATE gpu_work_items
+       SET status = 'interrupted', position = 0, depth = 0,
+           completed_at = ?, error_code = 'host_restarted'
+       WHERE status IN ('queued', 'running')`,
+    ).run(now);
+    return Number(result.changes);
+  }
+
+  listGpuWork(limit = 100): GpuWorkRecord[] {
+    const rows = this.#database.prepare(
+      `SELECT id, route_id, kind, status, position, depth, enqueued_at,
+              started_at, completed_at, error_code
+       FROM gpu_work_items ORDER BY enqueued_at DESC LIMIT ?`,
+    ).all(limit) as unknown as GpuWorkRow[];
+    return rows.map((row) => ({
+      id: row.id,
+      routeId: row.route_id,
+      kind: row.kind,
+      status: row.status,
+      position: row.position,
+      depth: row.depth,
+      enqueuedAt: row.enqueued_at,
+      ...(row.started_at ? { startedAt: row.started_at } : {}),
+      ...(row.completed_at ? { completedAt: row.completed_at } : {}),
+      ...(row.error_code ? { errorCode: row.error_code } : {}),
+    }));
   }
 
   recoverInterruptedRequests(): number {

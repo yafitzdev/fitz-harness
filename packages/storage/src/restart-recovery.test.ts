@@ -15,10 +15,14 @@ describe("inference request restart recovery", () => {
       first.recordQueueEvent(queueEvent(3, "started-request", "started"));
       first.recordQueueEvent(queueEvent(4, "completed-request", "queued"));
       first.recordQueueEvent(queueEvent(5, "completed-request", "completed"));
+      first.recordGpuQueueEvent(queueEvent(6, "gpu-chat", "queued"));
+      first.recordGpuQueueEvent({ ...queueEvent(7, "gpu-warm", "started"), data: { ...queueEvent(7, "gpu-warm", "started").data, kind: "warm" as const } });
+      first.recordGpuQueueEvent({ ...queueEvent(8, "gpu-media", "completed"), data: { ...queueEvent(8, "gpu-media", "completed").data, kind: "media" as const } });
       first.close();
 
       const restarted = new SqliteStore(path);
       expect(restarted.recoverInterruptedRequests()).toBe(2);
+      expect(restarted.recoverInterruptedGpuWork()).toBe(2);
       expect(restarted.listInferenceRequests()).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -34,6 +38,11 @@ describe("inference request restart recovery", () => {
           expect.objectContaining({ id: "completed-request", status: "completed" }),
         ]),
       );
+      expect(restarted.listGpuWork()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: "gpu-chat", kind: "chat", status: "interrupted", errorCode: "host_restarted" }),
+        expect.objectContaining({ id: "gpu-warm", kind: "warm", status: "interrupted", errorCode: "host_restarted" }),
+        expect.objectContaining({ id: "gpu-media", kind: "media", status: "completed" }),
+      ]));
       restarted.close();
     } finally {
       rmSync(directory, { recursive: true, force: true });
@@ -54,6 +63,7 @@ function queueEvent(
     data: {
       requestId,
       routeId: "default-agent",
+      kind: "chat" as const,
       position: status === "queued" ? 1 : 0,
       depth: 1,
       status,

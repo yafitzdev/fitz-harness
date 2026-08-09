@@ -70,6 +70,7 @@ describe("SqliteStore", () => {
       data: {
         requestId: "request-1",
         routeId: "default-agent",
+        kind: "chat",
         position: 1,
         depth: 1,
         status: "queued",
@@ -83,6 +84,7 @@ describe("SqliteStore", () => {
       data: {
         requestId: "request-1",
         routeId: "default-agent",
+        kind: "chat",
         position: 0,
         depth: 1,
         status: "completed",

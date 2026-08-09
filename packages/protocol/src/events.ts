@@ -19,7 +19,10 @@ export type InstanceStateChangedEvent = EventEnvelope<
   }
 >;
 
-export type QueueJobKind = "chat" | "media";
+/** Every operation that may activate or use an inference engine. `warm` is
+ * deliberately part of the same queue: loading a model into VRAM must never
+ * race an active chat or media generation. */
+export type QueueJobKind = "chat" | "media" | "warm";
 
 export type QueueUpdatedEvent = EventEnvelope<
   "queue.updated",

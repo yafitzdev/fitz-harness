@@ -171,8 +171,8 @@ export class LifecycleManager {
     }
   }
 
-  async warm(recipe: Recipe): Promise<InstanceSnapshot> {
-    await this.#ensureReady(recipe, new AbortController().signal);
+  async warm(recipe: Recipe, signal: AbortSignal = new AbortController().signal): Promise<InstanceSnapshot> {
+    await this.#ensureReady(recipe, signal);
     this.#scheduleEviction();
     return this.snapshot();
   }

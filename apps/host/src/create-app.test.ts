@@ -36,6 +36,20 @@ describe("Fitz host", () => {
       expect(response.statusCode, response.body).toBe(200);
       expect(response.json().data).toEqual(expect.objectContaining({ state: "READY", recipeId: "fake-best" }));
       expect(runtime.lifecycle.snapshot()).toEqual(expect.objectContaining({ state: "READY", activeLeases: 0 }));
+      expect(runtime.store.listGpuWork()).toEqual([
+        expect.objectContaining({
+          routeId: "default",
+          kind: "warm",
+          status: "completed",
+          position: 0,
+        }),
+      ]);
+      expect(runtime.store.listInferenceRequests()).toEqual([]);
+      const gpuWork = await runtime.app.inject({ method: "GET", url: "/api/v1/management/gpu-work" });
+      expect(gpuWork.statusCode, gpuWork.body).toBe(200);
+      expect(gpuWork.json().data).toEqual([
+        expect.objectContaining({ routeId: "default", kind: "warm", status: "completed" }),
+      ]);
     } finally { await runtime.app.close(); }
   });
 
@@ -402,6 +416,7 @@ describe("Fitz host", () => {
         versions: expect.objectContaining({ protocol: "1" }),
         metrics: expect.any(Object),
         recentRequests: [expect.objectContaining({ status: "completed" })],
+        recentGpuWork: [expect.objectContaining({ kind: "chat", status: "completed" })],
       }),
     );
     expect(diagnostics.body).not.toContain("diagnostic-test-token");

@@ -181,6 +181,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const authMode = options.authMode ?? "disabled";
   const security = options.security ?? (authMode === "required" ? new SecurityService(store, options.authPepper ?? "") : undefined);
   const recoveredInterruptedRequests = store.recoverInterruptedRequests();
+  const recoveredGpuWork = store.recoverInterruptedGpuWork();
   const recoveredAgentRuns = store.recoverInterruptedAgentRuns();
   const recoveredToolApprovals = store.recoverInterruptedToolApprovals();
   const recoveredMediaJobs = store.recoverInterruptedMediaJobs();
@@ -260,9 +261,10 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const metrics = new MetricsRegistry();
   const unsubscribePersistence = events.subscribe((event) => {
     store.appendLifecycleEvent(event);
+    if (event.type === "queue.updated") store.recordGpuQueueEvent(event);
     // Media jobs never persist to `inference_requests` — they have their own
     // `media_jobs` records and event stream (§5.5).
-    if (event.type === "queue.updated" && event.data.kind !== "media") store.recordQueueEvent(event);
+    if (event.type === "queue.updated" && event.data.kind === "chat") store.recordQueueEvent(event);
   });
   const unsubscribeMetrics = events.subscribe((event) => metrics.observeLifecycleEvent(event));
   const requestStarts = new WeakMap<object, number>();
@@ -308,7 +310,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       engine: lifecycle.snapshot(),
       queueDepth: scheduler.queueDepth,
       resources: { ...resourceSnapshot, policy: resources.policy },
-      recovery: { interruptedRequests: recoveredInterruptedRequests, interruptedAgentRuns: recoveredAgentRuns, interruptedToolApprovals: recoveredToolApprovals, interruptedMediaJobs: recoveredMediaJobs },
+      recovery: { interruptedGpuWork: recoveredGpuWork, interruptedRequests: recoveredInterruptedRequests, interruptedAgentRuns: recoveredAgentRuns, interruptedToolApprovals: recoveredToolApprovals, interruptedMediaJobs: recoveredMediaJobs },
     };
   });
   app.get("/api/v1/me", async (request) => { const principal = principals.get(request); return { data: principal ? { authMode: "required", user: principal.user, device: principal.device, routeIds: principal.routeGrants, quota: principal.quota } : { authMode: "disabled" } }; });
@@ -318,8 +320,9 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       const publicRouteId = requirePublicRouteId(body.model);
       const principal = principals.get(request);
       if (principal && !security?.authorizeRoute(principal, publicRouteId)) return reply.code(403).send({ error: "Route access denied" });
-      const resolved = resolveActiveRoute(publicRouteId);
-      return { data: await lifecycle.warm(resolved.recipe) };
+      resolveActiveRoute(publicRouteId);
+      const warmup = scheduler.enqueueWarm(publicRouteId);
+      return { data: await warmup.result };
     } catch (error) { return reply.code(error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) }); }
   });
 
@@ -633,6 +636,15 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   );
 
   app.get(
+    "/api/v1/management/gpu-work",
+    { preHandler: adminGuard(options.adminToken, authMode, principals) },
+    async (request) => {
+      const query = request.query as { limit?: string };
+      return { data: store.listGpuWork(Math.min(toNonNegativeInteger(query.limit, 100), 1_000)) };
+    },
+  );
+
+  app.get(
     "/api/v1/management/metrics",
     { preHandler: adminGuard(options.adminToken, authMode, principals) },
     async () => metrics.snapshot(),
@@ -658,6 +670,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         routes: routes.listRoutes(),
         recipes: routes.listRecipes(),
         recentRequests: store.listInferenceRequests(100),
+        recentGpuWork: store.listGpuWork(100),
         recentLifecycleEvents: store.lifecycleEventsAfter(
           Math.max(0, store.latestLifecycleSequence() - 100),
           100,

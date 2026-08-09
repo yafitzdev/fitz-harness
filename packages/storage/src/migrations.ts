@@ -389,4 +389,27 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX idx_artifacts_object ON artifacts(storage_backend, object_key);
     `,
   },
+  {
+    version: 13,
+    // One durable admission ledger for every operation that can activate or
+    // consume the host GPU. Executable streams remain in memory; unfinished
+    // admissions become explicit interrupted records after a restart while
+    // native agent/media request state supplies request-level continuation.
+    sql: `
+      CREATE TABLE IF NOT EXISTS gpu_work_items (
+        id TEXT PRIMARY KEY,
+        route_id TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('chat', 'media', 'warm')),
+        status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted')),
+        position INTEGER NOT NULL DEFAULT 0,
+        depth INTEGER NOT NULL DEFAULT 0,
+        enqueued_at TEXT NOT NULL,
+        started_at TEXT,
+        completed_at TEXT,
+        error_code TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_gpu_work_status
+        ON gpu_work_items(status, enqueued_at);
+    `,
+  },
 ] as const;
