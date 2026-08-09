@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { once } from "node:events";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -228,6 +228,35 @@ describe("PiAgentRuntime", () => {
     }, abort: async () => undefined, dispose: () => undefined }) });
     const events = []; for await (const event of runtime.run({ model: "fast", sessionId: "session-1", accessMode: "full", messages: [{ role: "user", content: "make media" }] })) events.push(event);
     expect(events).toEqual([{ type: "assistant.delta", text: "blocked" }]);
+  });
+
+  it("ends the agent turn cleanly after a durable asynchronous media handoff", async () => {
+    let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+    let rejectPrompt: ((error: Error) => void) | undefined;
+    const abort = vi.fn(async () => {
+      listener({ type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "terminated" } });
+      rejectPrompt?.(new Error("terminated"));
+    });
+    const runtime = new PiAgentRuntime({
+      createSession: async () => ({
+        subscribe: (next) => { listener = next; return () => undefined; },
+        prompt: async () => {
+          listener({ type: "tool_execution_start", toolCallId: "video-1", toolName: "generate_video", args: { prompt: "a swimming dog" } });
+          listener({ type: "tool_execution_end", toolCallId: "video-1", toolName: "generate_video", result: { content: [], details: { mediaJobId: "job-video-1", status: "queued" } } });
+          await new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
+        },
+        steer: async () => undefined,
+        abort,
+        dispose: () => undefined,
+      }),
+    });
+    const events = [];
+    for await (const event of runtime.run({ model: "smart", messages: [{ role: "user", content: "make a video" }] })) events.push(event);
+    expect(events).toEqual([
+      { type: "tool.started", toolCallId: "video-1", toolName: "generate_video", input: { prompt: "a swimming dog" } },
+      { type: "tool.completed", toolCallId: "video-1", toolName: "generate_video", result: { content: [], details: { mediaJobId: "job-video-1", status: "queued" } } },
+    ]);
+    expect(abort).toHaveBeenCalledOnce();
   });
 
   it("blocks media generation tools in Read only mode without reaching the approval gate", async () => {

@@ -306,7 +306,8 @@ describe("desktop renderer shell", () => {
     expect(composer).toContain('event.key === "Enter"');
     expect(renderer).toContain('connectionStatus.addEventListener("click"');
     expect(renderer).toContain("artifactFile.click()");
-    expect(renderer).toContain('api(`/api/v1/artifacts/${artifact.id}`, "DELETE")');
+    expect(renderer).not.toContain('api(`/api/v1/artifacts/${artifact.id}`, "DELETE")');
+    expect(composer).toContain("chip.remove()");
     expect(projectSidebar).toContain("this.#options.chooseFolder()");
     expect(projects).toContain("this.options.bridge.openPath(path)");
     expect(renderer).toContain("window.fitz.copyText(value)");

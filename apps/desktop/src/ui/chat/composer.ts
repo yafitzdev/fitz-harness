@@ -274,7 +274,15 @@ export class Composer {
     const chipName = document.createElement("span"); chipName.textContent = name;
     const chipSize = document.createElement("small"); chipSize.textContent = sizeLabel;
     const remove = document.createElement("button"); remove.type = "button"; remove.className = "attachment-remove"; remove.title = `Remove ${name}`; remove.setAttribute("aria-label", `Remove ${name}`); remove.textContent = "×";
-    chipPreview.append(chipName, chipSize); chipPreview.addEventListener("click", () => onPreview()); remove.addEventListener("click", () => onRemove()); chip.append(chipPreview, remove);
+    chipPreview.append(chipName, chipSize); chipPreview.addEventListener("click", () => onPreview());
+    remove.addEventListener("click", () => {
+      // The chip is an attachment to the composer, not the durable artifact
+      // itself. Closing it must never delete generated media from the task.
+      chip.remove();
+      this.refreshAttachments();
+      onRemove();
+    });
+    chip.append(chipPreview, remove);
     this.composerAttachments.append(chip);
     this.refreshAttachments();
     return chip;

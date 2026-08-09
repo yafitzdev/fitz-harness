@@ -30,6 +30,7 @@ describe("ActivityTimeline", () => {
     const decideApproval = vi.fn(async () => "approved" as const);
     const timeline = new ActivityTimeline({ messages, inspectResource: vi.fn(), decideApproval, showToast: vi.fn() });
     const row = timeline.appendApproval({ id: "approval-video", toolName: "generate_video", request: { prompt: "agent draft", duration_seconds: 8, resolution: "1344x768", fps: 24 }, status: "pending" });
+    expect(row.parentElement?.classList.contains("work-summary-details")).toBe(true);
     expect(row.querySelector("pre.tool-approval-request")).toBeNull();
     const prompt = row.querySelector<HTMLTextAreaElement>('[data-approval-field="prompt"]')!;
     const duration = row.querySelector<HTMLInputElement>('[data-approval-field="duration_seconds"]')!;

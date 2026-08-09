@@ -210,7 +210,10 @@ export class ActivityTimeline {
     status.className = "tool-approval-status";
     actions.append(deny, approve);
     row.append(heading, request, actions, status);
-    this.#options.messages.append(row);
+    // Approvals are part of the agent's work, not a peer chat message. Keeping
+    // the row in the active work disclosure also means the resolved approval is
+    // hidden with the rest of the tool activity once the run completes.
+    this.appendWork(row);
     this.#scroll();
     if (approval.status === "approved" || approval.status === "denied") this.resolveApproval(row, approval.status);
     return row;

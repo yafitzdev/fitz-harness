@@ -937,7 +937,7 @@ async function loadArtifacts(): Promise<Json[]> {
     const name = document.createElement("span"); name.textContent = artifact.name;
     const size = document.createElement("small"); size.textContent = formatBytes(artifact.byteSize);
     value.append(name, size); value.addEventListener("click", () => void inspectorPanel.previewArtifact(artifact, value, artifacts)); artifacts.append(value);
-    composer.addArtifactChip(artifact.name, formatBytes(artifact.byteSize), () => void inspectorPanel.previewArtifact(artifact, value, artifacts), () => void removeArtifact(artifact));
+    composer.addArtifactChip(artifact.name, formatBytes(artifact.byteSize), () => void inspectorPanel.previewArtifact(artifact, value, artifacts), () => undefined);
   }
   return sessionArtifacts;
 }
@@ -1049,11 +1049,6 @@ function scheduleQueueRefresh(): void {
   if (queueRefreshTimer) clearTimeout(queueRefreshTimer); queueRefreshTimer = undefined;
   if (!inspectorPanel.isOpen) return;
   void loadAgentQueue().finally(() => { if (inspectorPanel.isOpen) queueRefreshTimer = setTimeout(scheduleQueueRefresh, 1_000); });
-}
-
-async function removeArtifact(artifact: Json): Promise<void> {
-  try { await api(`/api/v1/artifacts/${artifact.id}`, "DELETE"); await loadArtifacts(); showToast(`Removed ${artifact.name}`); }
-  catch (error) { showToast(errorMessage(error)); }
 }
 
 function chooseArtifact(): void {

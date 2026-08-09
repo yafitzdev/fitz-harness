@@ -179,7 +179,16 @@ export class MediaJobCoordinator {
               artifactId: artifact.id,
               completedAt: now,
             });
-            this.#appendEvent(id, event);
+            // Persist completion metadata, not a second JSON expansion of the
+            // complete media byte array. The artifact BLOB is the sole durable
+            // content copy; replay only needs the terminal state and artifact id.
+            this.#appendEvent(id, {
+              type: "completed",
+              result: {
+                ...event.result,
+                data: { url: `artifact:${artifact.id}` },
+              },
+            });
             this.#credit(id);
           } catch (error) {
             this.#fail(id, errorMessage(error), error instanceof ArtifactTooLargeError ? "artifact_too_large" : undefined);

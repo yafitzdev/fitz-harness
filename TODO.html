@@ -96,12 +96,15 @@
             "pass", "Media requests are constrained at the durable queue boundary to the selected recipe's advertised duration, reference, and resolution limits. A generic 1920×1080 request therefore uses H3's supported 1344×768 ceiling instead of silently exceeding the recipe contract.",
             "pass", "The installed ComfyUI checkout is reconciled as a configured Playbook engine as well as an H3 recipe, so its management card no longer falsely offers Set up while video generation is already operational.",
             "pass", "Connections now presents chat and media recipes as one continuous model list without a redundant Media generation divider; chat rows carry the same explicit Text capability badge used for Image, Video, and Audio.",
-            "pass", "Media approvals use structured controls instead of editable JSON. Prompt text is editable independently from duration, resolution, FPS, seed, size, and negative prompt; the host validates the amended fields, preserves routing and billing metadata, and executes the approved revision."
+            "pass", "Media approvals use structured controls instead of editable JSON. Prompt text is editable independently from duration, resolution, FPS, seed, size, and negative prompt; the host validates the amended fields, preserves routing and billing metadata, and executes the approved revision.",
+            "pass", "Media approvals now remain inside the run's Worked for disclosure. A successful asynchronous media-tool handoff ends the Pi turn immediately instead of waiting behind the GPU render and surfacing a false terminated failure. Generated artifact chips detach without deleting durable task media, completed events store a lightweight artifact reference instead of a duplicate byte-array JSON payload, and the two previously deleted H3 videos were recovered into their original task artifact records."
           ],
           scope: "Generate media through one durable host pipeline and inspect the resulting Fitz-owned artifact without leaking provider URLs.",
           tests: [
             "Restart Fitz, open Playbooks or Connections, and confirm MiniMax H3 appears under the local ComfyUI host with the Video route assigned unless another valid video provider was already selected.",
             "Ask Pi to generate a short video and approve the media tool; confirm a queued media job appears and the finished MP4 opens from the chat artifact list.",
+            "After completion, collapse and expand Worked for; confirm the resolved generate_video approval stays inside it and no terminated error appears below the result.",
+            "Close the generated video's composer chip, reopen the task, and confirm the durable MP4 returns and still opens in the Inspector.",
             "Before approving a video, edit its prompt and adjust duration, resolution, or FPS; confirm the generated job uses the revised values without exposing editable JSON.",
             "Reopen a chat whose media job failed and confirm the exact durable failure appears in the conversation.",
             "Run pnpm smoke:h3 with the GPU free and confirm an H.264/AAC MP4 is written to the Fitz cache.",

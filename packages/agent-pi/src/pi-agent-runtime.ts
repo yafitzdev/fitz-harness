@@ -135,6 +135,7 @@ export class PiAgentRuntime implements AgentRuntime {
   }
   run(request: AgentRunRequest, signal?: AbortSignal, options?: AgentRuntimeRunOptions): AgentRuntimeRun {
     const channel = new EventChannel(); let session: PiSession | undefined; const controller = new AbortController();
+    let completedMediaHandoff = false;
     const cancel = () => { controller.abort(); void session?.abort(); }; if (signal) { if (signal.aborted) cancel(); else signal.addEventListener("abort", cancel, { once: true }); }
     const cwd = typeof this.#cwd === "function" ? this.#cwd(request) : this.#cwd;
     const contextWindow = typeof this.#contextWindow === "function" ? this.#contextWindow(request) : this.#contextWindow;
@@ -169,7 +170,7 @@ export class PiAgentRuntime implements AgentRuntime {
       let sawInitialUserMessage = false;
       const unsubscribe = activeSession.subscribe((event) => {
         const failure = piFailure(event);
-        if (failure) { channel.fail(failure); return; }
+        if (failure) { if (!completedMediaHandoff) channel.fail(failure); return; }
         if (event.type === "message_start" && event.message?.role === "user") {
           if (!sawInitialUserMessage) { sawInitialUserMessage = true; return; }
           const text = extractTextFromMessageContent(event.message.content);
@@ -178,13 +179,23 @@ export class PiAgentRuntime implements AgentRuntime {
         }
         const translated = translateEvent(event);
         if (translated) { if (translated.type === "assistant.delta") sawAssistant = true; channel.push(translated); }
+        if (isCompletedMediaHandoff(event)) {
+          // Media generation is an asynchronous handoff. Letting Pi request one
+          // more text completion here makes that request sit behind the several-
+          // minute GPU media job and eventually fail as `terminated`. The media
+          // tracker owns the rest of the lifecycle, so end this agent turn cleanly
+          // as soon as the durable media job id has been returned.
+          completedMediaHandoff = true;
+          queueMicrotask(() => void activeSession.abort());
+        }
       }); try {
         await activeSession.prompt(formatPrompt(request));
+        if (completedMediaHandoff) { channel.close(); return; }
         if (controller.signal.aborted) throw abortError();
         if (!sawAssistant) throw new Error("Pi agent completed without an assistant response");
         channel.close();
       } finally { unsubscribe(); activeSession.dispose(); }
-    } catch (error) { channel.fail(error); } })();
+    } catch (error) { if (completedMediaHandoff) channel.close(); else channel.fail(error); } })();
     const steer = async (text: string): Promise<void> => {
       if (controller.signal.aborted) throw abortError();
       const activeSession = await sessionTask;
@@ -473,6 +484,12 @@ export function broadFilesystemScanReason(toolName: string, input: unknown): str
     : undefined;
 }
 function translateEvent(event: PiEvent): AgentRuntimeEvent | undefined { if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta" && event.assistantMessageEvent.delta) return { type: "assistant.delta", text: event.assistantMessageEvent.delta }; if (event.type === "message_update" && event.assistantMessageEvent.type === "thinking_delta" && event.assistantMessageEvent.delta) return { type: "reasoning.delta", text: event.assistantMessageEvent.delta }; if (event.type === "message_update" && event.assistantMessageEvent.type === "thinking_end") return { type: "reasoning.completed" }; if (event.type === "tool_execution_start") return { type: "tool.started", toolCallId: event.toolCallId, toolName: event.toolName, ...(event.args !== undefined ? { input: event.args } : {}) }; if (event.type === "tool_execution_end") return { type: "tool.completed", toolCallId: event.toolCallId, toolName: event.toolName, result: event.result, ...(event.isError !== undefined ? { isError: event.isError } : {}) }; return undefined; }
+function isCompletedMediaHandoff(event: PiEvent): boolean {
+  if (event.type !== "tool_execution_end" || event.isError || !MEDIA_TOOLS.has(event.toolName)) return false;
+  if (!event.result || typeof event.result !== "object") return false;
+  const details = "details" in event.result ? event.result.details : undefined;
+  return Boolean(details && typeof details === "object" && "mediaJobId" in details && typeof details.mediaJobId === "string" && details.mediaJobId);
+}
 function piFailure(event: PiEvent): Error | undefined { return event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason === "error" ? new Error(event.message.errorMessage ?? "Pi model request failed") : undefined; }
 function formatPrompt(request: AgentRunRequest): string { return request.messages.map((message) => `${message.role.toUpperCase()}: ${extractTextFromContent(message.content)}`).join("\n\n"); }
 function extractTextFromContent(content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>): string {

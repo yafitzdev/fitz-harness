@@ -59,6 +59,9 @@ describe("Fitz host media jobs", () => {
       expect(events[0]?.event.type).toBe("started");
       expect((events[0]?.event as { providerJobId: string }).providerJobId).toEqual(expect.any(String));
       expect(events.at(-1)?.event.type).toBe("completed");
+      expect(events.at(-1)?.event).toEqual(expect.objectContaining({
+        result: expect.objectContaining({ data: { url: `artifact:${job.artifactId}` } }),
+      }));
       const sequences = events.map((event) => event.sequence);
       expect(sequences).toEqual([...sequences].sort((a, b) => a - b));
 

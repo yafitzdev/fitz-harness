@@ -247,6 +247,10 @@ describe("Composer", () => {
     pasteFiles(composer, [{ bytes: ["x"], name: "shot.png", mimeType: "image/png" }]);
     await vi.waitFor(() => expect(composer.root.querySelectorAll(".attachment-chip").length).toBe(3));
 
+    composer.root.querySelector<HTMLButtonElement>('.attachment-remove[aria-label="Remove notes.md"]')!.click();
+    expect(onRemove).toHaveBeenCalledTimes(1);
+    expect(composer.root.querySelectorAll(".attachment-chip").length).toBe(2);
+
     composer.clearArtifactChips();
     const chips = [...composer.root.querySelectorAll(".attachment-chip")];
     expect(chips).toHaveLength(1);
