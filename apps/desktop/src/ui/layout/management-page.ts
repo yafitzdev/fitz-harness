@@ -41,7 +41,7 @@ export interface ManagementPageContentOptions {
 /**
  * Shared chrome for every management tab (Connections, Playbooks, Plugins,
  * Administration). Each page is a `.management-page` section built from the
- * same pieces: a 50px header with tabs on the left and actions on the right,
+ * same pieces: a shared compact header with tabs on the left and actions on the right,
  * followed by one or more `.management-page-content` columns that own the
  * heading, description, search pill, and body. Because every tab renders the
  * identical structure, switching between them never shifts the layout.

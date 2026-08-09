@@ -17,8 +17,8 @@
   --grey-500: #6b6e69;   /* focus rings, strong borders */
   --grey-450: #5a5e58;   /* input borders, scrollbar rails */
   --grey-400: #4a4d49;   /* dividers, chip borders, spinner tracks */
-  --grey-300: #303030;   /* control surfaces: menus, search bars */
-  --grey-250: #292b29;   /* hover/active surfaces: composer, active bubble, hovered rows */
+  --grey-300: #303030;   /* control surfaces: menus, search bars, code blocks */
+  --grey-250: #303030;   /* composer and matching active surfaces intentionally share the code-block tone */
   --grey-200: #212121;   /* raised surfaces: inputs, artifact bubbles */
   --grey-100: #181818;   /* inputs and the app background */
   --grey-50: #0d0d0d;    /* deepest background, dark button text */
@@ -58,6 +58,8 @@
   --radius-xl: 15px;
   --radius-2xl: 20px;
   --radius-3xl: 25px;
+  --sidebar-item-radius: 7px;
+  --workspace-header-height: 44px;
   --control-size: 28px;
   --elevation-stroke: 0 0 0 .5px var(--border);
   --elevation-prominent: var(--elevation-stroke), 0 3px 7.5px rgba(0,0,0,.04), 0 0 20px rgba(0,0,0,.05);

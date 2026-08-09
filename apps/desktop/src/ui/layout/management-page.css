@@ -2,7 +2,7 @@
    tabs. Every management page renders the same header and content column so
    switching between tabs never shifts the layout. */
 .management-page { --management-content-width: 900px; position: absolute; z-index: 8; inset: 0; overflow-y: auto; scrollbar-gutter: stable both-edges; background: var(--bg); }
-.management-page-header { height: 50px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid var(--border-soft); }
+.management-page-header { height: var(--workspace-header-height); display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid var(--border-soft); }
 .management-page-tabs { display: flex; gap: 4px; }
 .management-page-tabs button { height: 30px; padding: 0 11px; border: 0; border-radius: 9px; color: var(--muted); background: transparent; cursor: pointer; }
 .management-page-tabs button.active { color: var(--text); background: var(--tint-5); }

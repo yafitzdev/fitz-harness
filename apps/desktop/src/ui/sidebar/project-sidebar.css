@@ -11,7 +11,7 @@
 .project-children-inner { min-height: 0; display: grid; gap: 0; overflow: hidden; }
 .project-group.expanded > .project-children { grid-template-rows: 1fr; opacity: 1; transform: translateY(0); }
 .tree-item { position: relative; min-width: 0; }
-.project-row, .task-row, .chat-row { width: 100%; display: flex; align-items: center; gap: 8px; min-width: 0; background: transparent; color: var(--muted); border-radius: var(--radius-lg); cursor: pointer; text-align: left; }
+.project-row, .task-row, .chat-row { width: 100%; display: flex; align-items: center; gap: 8px; min-width: 0; background: transparent; color: var(--muted); border-radius: var(--sidebar-item-radius); cursor: pointer; text-align: left; }
 .project-row { padding: 5px 8px; color: var(--grey-800); font-weight: 500; }
 .task-row { padding: 4px 34px 4px 30px; font-size: 13.5px; }
 .chat-row { padding: 4px 34px 4px 9px; font-size: 13.5px; }
