@@ -44,7 +44,7 @@ function setup(api: (path: string, method?: string, body?: unknown) => Promise<R
   const page = buildPage();
   const calls = {
     openExternal: vi.fn(),
-    showToast: vi.fn(),
+    showStatus: vi.fn(),
     errorMessage: vi.fn((error: unknown) => error instanceof Error ? error.message : String(error)),
   };
   const controller = new PluginsPageController({ page, api, ...calls });
@@ -167,7 +167,7 @@ describe("PluginsPageController", () => {
   it("fails loudly when the page is missing a required catalog control", () => {
     const page = document.createElement("section");
     page.id = "plugins-page";
-    expect(() => new PluginsPageController({ page, api: vi.fn(), openExternal: vi.fn(), showToast: vi.fn(), errorMessage: vi.fn() } satisfies PluginsPageOptions))
+    expect(() => new PluginsPageController({ page, api: vi.fn(), openExternal: vi.fn(), showStatus: vi.fn(), errorMessage: vi.fn() } satisfies PluginsPageOptions))
       .toThrow("Plugins page is missing type tabs");
   });
 });

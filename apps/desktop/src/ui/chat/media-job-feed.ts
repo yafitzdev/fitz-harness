@@ -1,4 +1,5 @@
 import { svgIcon } from "../primitives/dom.js";
+import type { ActionFeedback } from "../primitives/action-status.js";
 import type { MediaJobSummary } from "./media-job-tracker.js";
 import { scrollToLatestIfFollowing } from "./conversation-scroll.js";
 
@@ -12,7 +13,7 @@ export interface MediaJobFeedOptions {
   openArtifact: (artifact: Json) => void | Promise<void>;
   retry: (job: MediaJobSummary) => Promise<MediaJobSummary>;
   watch: (jobId: string) => void;
-  showToast: (message: string) => void;
+  showStatus: ActionFeedback;
   errorMessage: (error: unknown) => string;
 }
 
@@ -93,7 +94,7 @@ export class MediaJobFeed {
       this.#options.watch(retried.id);
     } catch (error) {
       button.disabled = false;
-      this.#options.showToast(this.#options.errorMessage(error));
+      this.#options.showStatus(this.#options.errorMessage(error), "error");
     }
   }
 }

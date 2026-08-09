@@ -68,7 +68,7 @@ function setup(initial?: { projects: Json[]; sessions: Record<string, Json[]>; c
       hasExpandedProjects: vi.fn(() => false),
       removeProjectState: vi.fn(),
     },
-    showToast: vi.fn(),
+    showStatus: vi.fn(),
     errorMessage: vi.fn((error: unknown) => error instanceof Error ? error.message : String(error)),
     closePopovers: vi.fn(),
     showConversationWorkspace: vi.fn(),
@@ -146,7 +146,7 @@ describe("ProjectsController", () => {
 
     expect(created).toBe(true);
     expect(api).toHaveBeenCalledWith("/api/v1/projects", "POST", { name: "My Project", rootPath: "/home/user/my-project" });
-    expect(calls.showToast).toHaveBeenCalledWith("Created My Project");
+    expect(calls.showStatus).toHaveBeenCalledWith("Created My Project", "success");
     expect(controller.currentProjectId).toBe("project-new");
     expect(controller.activeProject()?.name).toBe("My Project");
   });
@@ -158,7 +158,7 @@ describe("ProjectsController", () => {
     const created = await controller.createProject("My Project");
 
     expect(created).toBe(false);
-    expect(calls.showToast).toHaveBeenCalledWith("boom");
+    expect(calls.showStatus).toHaveBeenCalledWith("boom", "error");
   });
 
   it("renames a session and reloads it into the tree", async () => {
@@ -171,7 +171,7 @@ describe("ProjectsController", () => {
     await controller.renameSession("session-1", "project-a", "Renamed title");
 
     expect(api).toHaveBeenCalledWith("/api/v1/sessions/session-1", "PATCH", { title: "Renamed title" });
-    expect(calls.showToast).toHaveBeenCalledWith("Renamed to Renamed title");
+    expect(calls.showStatus).toHaveBeenCalledWith("Renamed to Renamed title", "success");
     expect(controller.currentSessionRecord()?.title).toBe("Renamed title");
   });
 
@@ -200,7 +200,7 @@ describe("ProjectsController", () => {
 
     expect(api).toHaveBeenCalledWith("/api/v1/sessions/session-1", "PATCH", { status: "archived" });
     expect(controller.currentSessionId).toBeUndefined();
-    expect(calls.showToast).toHaveBeenCalledWith("Archived Old chat");
+    expect(calls.showStatus).toHaveBeenCalledWith("Archived Old chat", "success");
     expect(calls.onNoSession).toHaveBeenCalled();
   });
 
@@ -216,7 +216,7 @@ describe("ProjectsController", () => {
     expect(api).toHaveBeenCalledWith("/api/v1/projects/project-a", "DELETE");
     expect(calls.sidebar.removeProjectState).toHaveBeenCalledWith("project-a");
     expect(controller.currentProjectId).toBeUndefined();
-    expect(calls.showToast).toHaveBeenCalledWith("Project removed");
+    expect(calls.showStatus).toHaveBeenCalledWith("Project removed", "success");
   });
 
   it("creates a continuation chat for a session", async () => {
@@ -230,7 +230,7 @@ describe("ProjectsController", () => {
 
     expect(api).toHaveBeenCalledWith("/api/v1/projects/project-a/sessions", "POST", { title: "Continue: Chat" });
     expect(controller.currentSessionId).toBe("session-new");
-    expect(calls.showToast).toHaveBeenCalledWith("Created continuation chat");
+    expect(calls.showStatus).toHaveBeenCalledWith("Created continuation chat", "success");
   });
 
   it("registers a composer-created session in the current project", async () => {
@@ -321,7 +321,7 @@ describe("ProjectsController", () => {
 
     expect(api).toHaveBeenCalledWith("/api/v1/sessions/chat-1", "PATCH", { status: "archived" });
     expect(controller.currentSessionId).toBe("chat-2");
-    expect(calls.showToast).toHaveBeenCalledWith("Archived Standalone");
+    expect(calls.showStatus).toHaveBeenCalledWith("Archived Standalone", "success");
   });
 
   it("creates a continuation standalone chat when no project is attached", async () => {
@@ -336,7 +336,7 @@ describe("ProjectsController", () => {
 
     expect(api).toHaveBeenCalledWith("/api/v1/chats", "POST", { title: "Continue: Standalone" });
     expect(controller.currentSessionId).toBe("chat-new");
-    expect(calls.showToast).toHaveBeenCalledWith("Created continuation chat");
+    expect(calls.showStatus).toHaveBeenCalledWith("Created continuation chat", "success");
   });
 
   it("renames a standalone chat and reloads it into the Chats tree", async () => {

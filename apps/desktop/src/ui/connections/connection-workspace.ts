@@ -1,5 +1,6 @@
 import type { ConsumerConnectionInput, ConsumerConnectionSummary } from "../../preload.js";
 import { ManagementPageLayout, managementRefreshIcon } from "../layout/management-page.js";
+import type { ActionFeedback } from "../primitives/action-status.js";
 import { CollapsibleSection } from "../layout/collapsible-section.js";
 import { svgIcon } from "../primitives/dom.js";
 import { recipeMetadata, type RecipeModality } from "../recipes/recipe-metadata.js";
@@ -107,7 +108,7 @@ export interface ConnectionWorkspaceOptions {
   testRecipe: (recipe: Json, card: HTMLElement, button: HTMLButtonElement) => Promise<void>;
   renderRecipeTestState: (recipeId: string, card: HTMLElement, button: HTMLButtonElement) => void;
   closePopovers: () => void;
-  showToast: (message: string) => void;
+  showStatus: ActionFeedback;
   errorMessage: (error: unknown) => string;
 }
 
@@ -195,7 +196,7 @@ export class ConnectionWorkspaceController {
     this.configuration = await this.options.reloadConfiguration();
     this.render();
     const failed = results.filter((item) => !item.connected);
-    if (reportFailure && failed.length) this.options.showToast(failed[0]?.error ?? "Connection failed");
+    if (reportFailure && failed.length) this.options.showStatus(failed[0]?.error ?? "Connection failed", "error");
   }
 
   render(): void {
@@ -446,7 +447,7 @@ export class ConnectionWorkspaceController {
       try {
         await this.options.bridge.removeConsumerConnection(id);
         await this.refreshRecordsAndConfiguration();
-      } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
+      } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
     });
     button.classList.add("danger");
     return button;
@@ -475,7 +476,7 @@ export class ConnectionWorkspaceController {
       this.render();
     } catch (error) {
       button.disabled = false;
-      this.options.showToast(this.options.errorMessage(error));
+      this.options.showStatus(this.options.errorMessage(error), "error");
     }
   }
 
@@ -495,7 +496,7 @@ export class ConnectionWorkspaceController {
       this.render();
     } catch (error) {
       button.disabled = false;
-      this.options.showToast(this.options.errorMessage(error));
+      this.options.showStatus(this.options.errorMessage(error), "error");
     }
   }
 

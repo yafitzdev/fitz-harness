@@ -1,6 +1,7 @@
 import { svgIcon, textBlock } from "../primitives/dom.js";
 import { projectRelativePath } from "../chat/tool-activity.js";
 import { ResizablePane } from "../primitives/resizable-pane.js";
+import type { ActionFeedback } from "../primitives/action-status.js";
 import { ArtifactRepository } from "./artifact-repository.js";
 import { ResourceInspector } from "./resource-inspector.js";
 
@@ -16,7 +17,7 @@ export interface InspectorPanelOptions {
   tabMount: HTMLElement;
   getProjectRoot: () => string;
   getSearchRoots: () => string[];
-  showToast: (message: string) => void;
+  showStatus: ActionFeedback;
   /**
    * The header's raw↔rendered toggle. Optional: it is wired to whichever
    * tab is active, and hidden unless a markdown or HTML doc is open.
@@ -326,7 +327,7 @@ export class InspectorPanel {
       openPanel: () => this.open(),
       getProjectRoot: this.#options.getProjectRoot,
       getSearchRoots: this.#options.getSearchRoots,
-      showToast: this.#options.showToast,
+      showStatus: this.#options.showStatus,
       ...(this.#options.renderToggle ? { renderToggle: this.#options.renderToggle } : {}),
       onFileInspected: (path, name, reference) => this.#onFileInspected(tab.id, path, name, reference),
     });

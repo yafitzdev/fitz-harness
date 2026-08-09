@@ -1,4 +1,5 @@
 import { svgIcon } from "../primitives/dom.js";
+import type { ActionFeedback } from "../primitives/action-status.js";
 import { ReasoningView } from "./reasoning-view.js";
 import { activityKind, burstIconPath, describeTool, iconPathFor, summarizeBurst, toolPath } from "./tool-activity.js";
 import { scrollToLatestIfFollowing } from "./conversation-scroll.js";
@@ -21,7 +22,7 @@ export interface ActivityTimelineOptions {
   messages: HTMLElement;
   inspectResource: (reference: string) => void | Promise<void>;
   decideApproval: (approvalId: string, decision: "approved" | "denied", request?: Json) => Promise<"approved" | "denied">;
-  showToast: (message: string) => void;
+  showStatus: ActionFeedback;
 }
 
 function isMediaTool(toolName: string | undefined): boolean {
@@ -324,7 +325,7 @@ export class ActivityTimeline {
     if (status) status.textContent = decision === "approved" ? "Approving…" : "Denying…";
     const request = decision === "approved" && isMediaTool(row.dataset.toolName) ? this.#readMediaApproval(row) : undefined;
     try { this.resolveApproval(row, await this.#options.decideApproval(id, decision, request)); }
-    catch (error) { for (const button of row.querySelectorAll<HTMLButtonElement>("button")) button.disabled = false; if (status) status.textContent = ""; this.#options.showToast(error instanceof Error ? error.message : String(error)); }
+    catch (error) { for (const button of row.querySelectorAll<HTMLButtonElement>("button")) button.disabled = false; if (status) status.textContent = ""; this.#options.showStatus(error instanceof Error ? error.message : String(error), "error"); }
   }
 
   #mediaApprovalForm(toolName: string, request: Json): HTMLElement {

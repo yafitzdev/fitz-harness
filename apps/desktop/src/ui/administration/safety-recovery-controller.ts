@@ -1,4 +1,5 @@
 import { textBlock } from "../primitives/dom.js";
+import type { ActionFeedback } from "../primitives/action-status.js";
 
 type Json = Record<string, any>;
 
@@ -17,7 +18,7 @@ export interface SafetyRecoveryElements {
 export interface SafetyRecoveryOptions {
   api: (path: string, method?: string, body?: unknown) => Promise<Json>;
   reload: () => Promise<void>;
-  showToast: (message: string) => void;
+  showStatus: ActionFeedback;
   errorMessage: (error: unknown) => string;
 }
 
@@ -97,8 +98,8 @@ export class SafetyRecoveryController {
       const response = await this.#options.api("/api/v1/management/trash", "DELETE");
       this.#hideEmptyTrashConfirmation();
       await this.#options.reload();
-      this.#options.showToast(`Trash emptied (${response.data?.removed ?? 0} file${response.data?.removed === 1 ? "" : "s"} removed)`);
-    } catch (error) { this.#options.showToast(this.#options.errorMessage(error)); }
+      this.#options.showStatus(`Trash emptied (${response.data?.removed ?? 0} file${response.data?.removed === 1 ? "" : "s"} removed)`, "success");
+    } catch (error) { this.#options.showStatus(this.#options.errorMessage(error), "error"); }
     finally { this.#elements.confirmEmptyTrash.disabled = false; }
   }
 
@@ -108,8 +109,8 @@ export class SafetyRecoveryController {
       const response = await this.#options.api("/api/v1/management/trash/gc", "POST", { maxAgeDays: 30 });
       await this.#options.reload();
       const result = response.data ?? {};
-      this.#options.showToast(`Retention swept ${Number(result.trash ?? 0)} trashed file${Number(result.trash) === 1 ? "" : "s"} and ${Number(result.snapshots ?? 0)} snapshot${Number(result.snapshots) === 1 ? "" : "s"}`);
-    } catch (error) { this.#options.showToast(this.#options.errorMessage(error)); }
+      this.#options.showStatus(`Retention swept ${Number(result.trash ?? 0)} trashed file${Number(result.trash) === 1 ? "" : "s"} and ${Number(result.snapshots ?? 0)} snapshot${Number(result.snapshots) === 1 ? "" : "s"}`, "success");
+    } catch (error) { this.#options.showStatus(this.#options.errorMessage(error), "error"); }
     finally { this.#elements.runRetention.disabled = false; }
   }
 
@@ -117,16 +118,16 @@ export class SafetyRecoveryController {
     try {
       await this.#options.api(`/api/v1/management/trash/${encodeURIComponent(id)}/restore`, "POST");
       await this.#options.reload();
-      this.#options.showToast("File restored");
-    } catch (error) { this.#options.showToast(this.#options.errorMessage(error)); }
+      this.#options.showStatus("File restored", "success");
+    } catch (error) { this.#options.showStatus(this.#options.errorMessage(error), "error"); }
   }
 
   async #restoreSnapshot(runId: string): Promise<void> {
     try {
       await this.#options.api(`/api/v1/management/snapshots/${encodeURIComponent(runId)}/restore`, "POST");
       await this.#options.reload();
-      this.#options.showToast(`Workspace restored from run ${runId}`);
-    } catch (error) { this.#options.showToast(this.#options.errorMessage(error)); }
+      this.#options.showStatus(`Workspace restored from run ${runId}`, "success");
+    } catch (error) { this.#options.showStatus(this.#options.errorMessage(error), "error"); }
   }
 }
 

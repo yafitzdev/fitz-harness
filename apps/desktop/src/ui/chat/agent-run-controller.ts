@@ -1,4 +1,5 @@
 import { reconnectDelay } from "@fitz/connectivity/reconnect";
+import type { ActionFeedback } from "../primitives/action-status.js";
 
 import { mediaJobIdFromToolResult } from "./media-job-tracker.js";
 import { scrollToLatestIfFollowing } from "./conversation-scroll.js";
@@ -45,7 +46,7 @@ export interface AgentRunControllerOptions {
   refreshControls: () => void;
   queueVisible: () => boolean;
   refreshQueue: () => void | Promise<void>;
-  showToast: (message: string) => void;
+  showStatus: ActionFeedback;
   errorMessage: (error: unknown) => string;
   terminalReplayError: (error: unknown) => boolean;
   /** Start following an asynchronous image/audio/video job submitted by an agent tool. */
@@ -131,7 +132,7 @@ export class AgentRunController {
       await this.#options.api(`/api/v1/agent/runs/${this.#runId}`, "DELETE");
     } catch (error) {
       this.#cancelPending = false;
-      this.#options.showToast(this.#options.errorMessage(error));
+      this.#options.showStatus(this.#options.errorMessage(error), "error");
       this.#options.refreshControls();
     }
   }

@@ -3,6 +3,7 @@ import { svgIcon } from "../primitives/dom.js";
 import { CatalogFilterBar } from "../catalog/catalog-filter-bar.js";
 import { catalogQueryString, type CatalogNumericFilter, type CatalogSortOption } from "../catalog/catalog-filters.js";
 import { createActionMenu } from "../primitives/action-menu.js";
+import type { ActionFeedback } from "../primitives/action-status.js";
 
 export type ModelCatalogApi = (path: string, method?: string, body?: unknown) => Promise<Record<string, any>>;
 
@@ -50,7 +51,7 @@ export interface ModelCatalogOptions {
   api: ModelCatalogApi;
   openExternal: (url: string) => void | Promise<void>;
   openPath: (path: string) => void | Promise<void>;
-  showToast: (message: string) => void;
+  showStatus: ActionFeedback;
   errorMessage: (error: unknown) => string;
   searchDelayMs?: number;
   pollIntervalMs?: number;
@@ -146,7 +147,7 @@ export class ModelCatalogController {
       const message = this.options.errorMessage(error);
       this.elements.downloadedList.replaceChildren(emptyState(message));
       this.elements.catalogList.replaceChildren();
-      this.options.showToast(message);
+      this.options.showStatus(message, "error");
     }
   }
 
@@ -270,7 +271,7 @@ export class ModelCatalogController {
         this.poll(record.id, repoId);
         this.renderCatalog();
       } catch (error) {
-        this.options.showToast(this.options.errorMessage(error));
+        this.options.showStatus(this.options.errorMessage(error), "error");
       } finally {
         button.disabled = false;
         button.dataset.confirm = "false";
@@ -325,14 +326,14 @@ export class ModelCatalogController {
         }
         this.pollTimers.delete(repoId);
         if (record.status === "done") {
-          this.options.showToast(`Downloaded ${record.fileName}`);
+          this.options.showStatus(`Downloaded ${record.fileName}`, "success");
           await this.load(false);
         } else if (record.status === "failed") {
-          this.options.showToast(record.error ?? "Download failed");
+          this.options.showStatus(record.error ?? "Download failed", "error");
         }
       } catch (error) {
         this.pollTimers.delete(repoId);
-        this.options.showToast(this.options.errorMessage(error));
+        this.options.showStatus(this.options.errorMessage(error), "error");
       }
     }, this.pollIntervalMs);
     this.pollTimers.set(repoId, timer);
@@ -347,7 +348,7 @@ export class ModelCatalogController {
       this.pollTimers.delete(repoId);
       this.renderCatalog();
     } catch (error) {
-      this.options.showToast(this.options.errorMessage(error));
+      this.options.showStatus(this.options.errorMessage(error), "error");
     }
   }
 
@@ -355,9 +356,9 @@ export class ModelCatalogController {
     try {
       await this.options.api("/api/v1/management/models/downloaded", "DELETE", { repoId: entry.repoId, fileName: entry.fileName });
       await this.load(false);
-      this.options.showToast(`Removed ${entry.fileName}`);
+      this.options.showStatus(`Removed ${entry.fileName}`, "success");
     } catch (error) {
-      this.options.showToast(this.options.errorMessage(error));
+      this.options.showStatus(this.options.errorMessage(error), "error");
     }
   }
 

@@ -1,4 +1,5 @@
 import type { ProjectSidebarProject, ProjectSidebarSession } from "../sidebar/project-sidebar.js";
+import type { ActionFeedback } from "../primitives/action-status.js";
 
 type Json = Record<string, any>;
 
@@ -30,7 +31,7 @@ export interface ProjectsOptions {
   api: ProjectsApi;
   bridge: ProjectsBridge;
   sidebar: ProjectsSidebarView;
-  showToast: (message: string) => void;
+  showStatus: ActionFeedback;
   errorMessage: (error: unknown) => string;
   closePopovers: () => void;
   showConversationWorkspace: () => void;
@@ -163,10 +164,10 @@ export class ProjectsController {
     try {
       const response = await this.options.api("/api/v1/projects", "POST", { name, ...(rootPath ? { rootPath } : {}) });
       await this.load(response.data.id);
-      this.options.showToast(`Created ${name}`);
+      this.options.showStatus(`Created ${name}`, "success");
       return true;
     } catch (error) {
-      this.options.showToast(this.options.errorMessage(error));
+      this.options.showStatus(this.options.errorMessage(error), "error");
       return false;
     }
   }
@@ -176,9 +177,9 @@ export class ProjectsController {
     try {
       await this.options.api(`/api/v1/sessions/${id}`, "PATCH", { title });
       await this.load(projectId, id);
-      this.options.showToast(`Renamed to ${title}`);
+      this.options.showStatus(`Renamed to ${title}`, "success");
     } catch (error) {
-      this.options.showToast(this.options.errorMessage(error));
+      this.options.showStatus(this.options.errorMessage(error), "error");
     }
   }
 
@@ -187,9 +188,9 @@ export class ProjectsController {
     try {
       await this.options.api(`/api/v1/projects/${id}`, "PATCH", { name });
       await this.load(id, this.currentSessionIdValue);
-      this.options.showToast(`Renamed to ${name}`);
+      this.options.showStatus(`Renamed to ${name}`, "success");
     } catch (error) {
-      this.options.showToast(this.options.errorMessage(error));
+      this.options.showStatus(this.options.errorMessage(error), "error");
     }
   }
 
@@ -201,9 +202,9 @@ export class ProjectsController {
       this.currentProjectIdValue = this.currentProjectIdValue === id ? undefined : this.currentProjectIdValue;
       this.currentSessionIdValue = undefined;
       await this.load(this.currentProjectIdValue);
-      this.options.showToast("Project removed");
+      this.options.showStatus("Project removed", "success");
     } catch (error) {
-      this.options.showToast(this.options.errorMessage(error));
+      this.options.showStatus(this.options.errorMessage(error), "error");
     }
   }
 
@@ -215,12 +216,12 @@ export class ProjectsController {
       await this.options.api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" });
       this.currentSessionIdValue = undefined;
       await this.load(this.currentProjectIdValue);
-      this.options.showToast(`Archived ${session.title}`);
-    } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
+      this.options.showStatus(`Archived ${session.title}`, "success");
+    } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
   }
 
   async openProjectPath(path: string): Promise<void> {
-    try { await this.options.bridge.openPath(path); } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
+    try { await this.options.bridge.openPath(path); } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
   }
 
   async archiveProjectChats(id: string): Promise<void> {
@@ -229,8 +230,8 @@ export class ProjectsController {
       await Promise.all(active.map((session) => this.options.api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" })));
       this.currentSessionIdValue = undefined;
       await this.load(id);
-      this.options.showToast(`Archived ${active.length} chat${active.length === 1 ? "" : "s"}`);
-    } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
+      this.options.showStatus(`Archived ${active.length} chat${active.length === 1 ? "" : "s"}`, "success");
+    } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
   }
 
   async continueInNewChat(session: ProjectSidebarSession, projectId?: string): Promise<void> {
@@ -240,7 +241,7 @@ export class ProjectsController {
         ? await this.options.api(`/api/v1/projects/${this.currentProjectIdValue}/sessions`, "POST", { title: `Continue: ${session.title}` })
         : await this.options.api("/api/v1/chats", "POST", { title: `Continue: ${session.title}` });
       await this.load(this.currentProjectIdValue, response.data.id);
-      this.options.showToast("Created continuation chat");
-    } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
+      this.options.showStatus("Created continuation chat", "success");
+    } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
   }
 }

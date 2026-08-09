@@ -71,7 +71,7 @@ function setup(api: PluginCatalogApi, searchDelayMs = 250) {
     installedPlugins, pluginCatalog, installedSkills, loadMorePlugins, refresh: node("button"),
     typeTabs,
   };
-  const calls = { openExternal: vi.fn(), showToast: vi.fn(), errorMessage: vi.fn((error: unknown) => error instanceof Error ? error.message : String(error)) };
+  const calls = { openExternal: vi.fn(), showStatus: vi.fn(), errorMessage: vi.fn((error: unknown) => error instanceof Error ? error.message : String(error)) };
   const controller = new PluginCatalogController(elements, { api, ...calls, searchDelayMs });
   return { controller, elements, calls };
 }
@@ -140,7 +140,7 @@ describe("PluginCatalogController", () => {
 
     click(install);
     await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/pi/packages/install", "POST", { source: "npm:pi-extra" }));
-    await vi.waitFor(() => expect(calls.showToast).toHaveBeenCalledWith("Plugin configuration updated"));
+    await vi.waitFor(() => expect(calls.showStatus).toHaveBeenCalledWith("Plugin configuration updated", "success"));
   });
 
   it("debounces catalog search and appends the next catalog page", async () => {

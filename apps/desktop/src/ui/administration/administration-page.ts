@@ -2,6 +2,7 @@ import { FIXED_ROUTES } from "../connections/connection-workspace.js";
 import { CollapsibleSection } from "../layout/collapsible-section.js";
 import { createCopyButton } from "../primitives/copy-button.js";
 import { textBlock } from "../primitives/dom.js";
+import type { ActionFeedback } from "../primitives/action-status.js";
 import { DesktopUpdateController, type DesktopUpdateBridge } from "./desktop-update-controller.js";
 import { DiagnosticsController, type DiagnosticsBridge } from "./diagnostics-controller.js";
 import { HostLifecycleController } from "./host-lifecycle-controller.js";
@@ -81,7 +82,7 @@ export interface AdministrationPageOptions {
   bridge: AdministrationPageBridge;
   isAdministrator: () => boolean;
   currentUserId: () => string | undefined;
-  showToast: (message: string) => void;
+  showStatus: ActionFeedback;
   errorMessage: (error: unknown) => string;
 }
 
@@ -152,7 +153,7 @@ export class AdministrationPageController {
     }, {
       api: options.api,
       reload: () => this.load(),
-      showToast: options.showToast,
+      showStatus: options.showStatus,
       errorMessage: options.errorMessage,
     });
     this.bind();
@@ -225,7 +226,7 @@ export class AdministrationPageController {
       this.elements.issuedPairingCode.textContent = response.data.code;
       this.elements.issuedPairingExpiry.textContent = `Expires ${new Date(response.data.expiresAt).toLocaleString()}`;
       this.elements.pairingCodeResult.hidden = false;
-    } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
+    } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
     finally { setFormBusy(this.elements.pairingCodeForm, false); }
   }
 
@@ -238,7 +239,7 @@ export class AdministrationPageController {
       });
       this.elements.createUserName.value = "";
       await this.load();
-    } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
+    } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
     finally { setFormBusy(this.elements.createUserForm, false); }
   }
 
@@ -412,7 +413,7 @@ export class AdministrationPageController {
       });
       this.elements.toolPolicyName.value = "";
       await this.load();
-    } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
+    } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
     finally { setFormBusy(this.elements.toolPolicyForm, false); }
   }
 
@@ -420,14 +421,14 @@ export class AdministrationPageController {
     try {
       await this.options.api(`/api/v1/management/users/${userId}`, "PATCH", update);
       await this.load();
-    } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
+    } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
   }
 
   private async revokeAdminDevice(deviceId: string): Promise<void> {
     try {
       await this.options.api(`/api/v1/management/devices/${deviceId}`, "DELETE");
       await this.load();
-    } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
+    } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
   }
 
   private async saveAdminAccess(userId: string, card: HTMLElement, button: HTMLButtonElement): Promise<void> {
@@ -440,8 +441,8 @@ export class AdministrationPageController {
         this.options.api(`/api/v1/management/users/${userId}/routes`, "PUT", { routeIds }),
         this.options.api(`/api/v1/management/users/${userId}/quota`, "PUT", quota),
       ]);
-      this.options.showToast("Access saved");
-    } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
+      this.options.showStatus("Access saved", "success");
+    } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
     finally { button.disabled = false; }
   }
 }

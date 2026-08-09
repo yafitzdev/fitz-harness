@@ -1,4 +1,5 @@
 import { textBlock } from "../primitives/dom.js";
+import type { ActionFeedback } from "../primitives/action-status.js";
 
 type Json = Record<string, any>;
 
@@ -15,7 +16,7 @@ export interface ArtifactControllerOptions {
   clearChips: () => void;
   addChip: (name: string, detail: string, preview: () => void, remove: () => void) => void;
   stageFile: (file: File) => void;
-  showToast: (message: string) => void;
+  showStatus: ActionFeedback;
   errorMessage: (error: unknown) => string;
 }
 
@@ -33,7 +34,7 @@ export class ArtifactController {
 
   choose(): void {
     if (!this.#options.getSessionId() && !this.#options.isNewChat()) {
-      this.#options.showToast("Create or select a task before attaching a file");
+      this.#options.showStatus("Create or select a task before attaching a file", "error");
       return;
     }
     this.#options.fileInput.click();
@@ -67,13 +68,13 @@ export class ArtifactController {
     this.#options.fileInput.value = "";
     if (!file) return;
     if (file.size > 5_000_000) {
-      this.#options.showToast("Artifacts are currently limited to 5 MB");
+      this.#options.showStatus("Artifacts are currently limited to 5 MB", "error");
       return;
     }
     const sessionId = this.#options.getSessionId();
     if (!sessionId) {
       if (this.#options.isNewChat()) this.#options.stageFile(file);
-      else this.#options.showToast("Create or select a task before attaching a file");
+      else this.#options.showStatus("Create or select a task before attaching a file", "error");
       return;
     }
     try {
@@ -84,9 +85,9 @@ export class ArtifactController {
       });
       await this.load();
       this.#options.openInspector();
-      this.#options.showToast(`Attached ${file.name}`);
+      this.#options.showStatus(`Attached ${file.name}`, "success");
     } catch (error) {
-      this.#options.showToast(this.#options.errorMessage(error));
+      this.#options.showStatus(this.#options.errorMessage(error), "error");
     }
   }
 

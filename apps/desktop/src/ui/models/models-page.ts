@@ -1,4 +1,5 @@
 import { ModelCatalogController, type ModelCatalogApi } from "./model-catalog.js";
+import type { ActionFeedback } from "../primitives/action-status.js";
 
 export interface ModelsPageOptions {
   /** The <section id="models-page"> element from the shell markup. */
@@ -6,7 +7,7 @@ export interface ModelsPageOptions {
   api: ModelCatalogApi;
   openExternal: (url: string) => void | Promise<void>;
   openPath: (path: string) => void | Promise<void>;
-  showToast: (message: string) => void;
+  showStatus: ActionFeedback;
   errorMessage: (error: unknown) => string;
 }
 
@@ -40,7 +41,7 @@ export class ModelsPageController {
       api: options.api,
       openExternal: options.openExternal,
       openPath: options.openPath,
-      showToast: options.showToast,
+      showStatus: options.showStatus,
       errorMessage: options.errorMessage,
     });
   }

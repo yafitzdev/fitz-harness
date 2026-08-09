@@ -23,7 +23,7 @@ function setup() {
     openArtifact: vi.fn(),
     retry: vi.fn(async () => ({ id: "job-2", modality: "video" as const, status: "queued" })),
     watch: vi.fn(),
-    showToast: vi.fn(),
+    showStatus: vi.fn(),
     errorMessage: vi.fn((error: unknown) => String(error)),
   };
   return { feed: new MediaJobFeed({ messages, ...calls }), messages, calls };

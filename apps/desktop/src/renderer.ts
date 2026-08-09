@@ -150,7 +150,7 @@ const inspectorPanel = new InspectorPanel({
   tabMount: workspaceHeader,
   getProjectRoot: () => String(projects?.activeProject()?.rootPath ?? ""),
   getSearchRoots: () => activityTimeline.searchRoots(),
-  showToast,
+  showStatus,
   renderToggle: inspectorRenderToggle,
   onLayoutChange: () => { adaptiveWorkspace?.sync(); conversationLayout?.sync(); },
 });
@@ -185,7 +185,7 @@ const composer = new Composer({
     await api(`/api/v1/projects/${project.id}`, "PATCH", { rootPath: path });
     project.rootPath = path;
   },
-  onError: showToast,
+  onError: (message) => showStatus(message, "error"),
   isRunning: () => agentRuns.active,
 });
 const conversationActionStatus = new ActionStatus();
@@ -221,7 +221,7 @@ const projects = new ProjectsController({
     hasExpandedProjects: () => projectSidebar.hasExpandedProjects(),
     removeProjectState: (projectId) => projectSidebar.removeProjectState(projectId),
   },
-  showToast,
+  showStatus,
   errorMessage,
   closePopovers,
   showConversationWorkspace,
@@ -276,7 +276,7 @@ const activityTimeline = new ActivityTimeline({
     const response = await api(`/api/v1/tool-approvals/${approvalId}/decision`, "POST", { decision, ...(request ? { request } : {}) });
     return response.data?.status === "approved" ? "approved" : "denied";
   },
-  showToast,
+  showStatus,
 });
 const conversationTranscript = new ConversationTranscript({
   messages,
@@ -300,7 +300,7 @@ const agentQueue = new AgentQueueController({
   list: element("request-queue"),
   count: element("queue-count"),
   api,
-  showToast,
+  showStatus,
   errorMessage,
 });
 const artifactController = new ArtifactController({
@@ -316,7 +316,7 @@ const artifactController = new ArtifactController({
   clearChips: () => composer.clearArtifactChips(),
   addChip: (name, detail, preview, remove) => composer.addArtifactChip(name, detail, preview, remove),
   stageFile: (file) => composer.attachFile(file),
-  showToast,
+  showStatus,
   errorMessage,
 });
 const mediaJobFeed = new MediaJobFeed({
@@ -327,7 +327,7 @@ const mediaJobFeed = new MediaJobFeed({
   openArtifact: (artifact) => inspectorPanel.previewArtifact(artifact),
   retry: async (job) => (await api(`/api/v1/media/jobs/${encodeURIComponent(job.id)}/retry`, "POST")).data as MediaJobSummary,
   watch: (jobId) => mediaJobs.watch(jobId),
-  showToast,
+  showStatus,
   errorMessage,
 });
 const mediaJobs = new MediaJobTracker({
@@ -355,7 +355,7 @@ const agentRuns = new AgentRunController({
   refreshControls: refreshComposerState,
   queueVisible: () => inspectorPanel.isOpen,
   refreshQueue: () => agentQueue.refresh(),
-  showToast,
+  showStatus,
   errorMessage,
   terminalReplayError: (error) => error instanceof HttpError,
   onMediaJobSubmitted: (jobId, toolName) => {
@@ -438,7 +438,7 @@ const playbookWorkspace = new PlaybookWorkspaceController({
 }, {
   api,
   reloadConfiguration: () => loadManagementConfiguration(true),
-  showToast,
+  showStatus,
   errorMessage,
 });
 const connectionWorkspace = new ConnectionWorkspaceController({
@@ -449,7 +449,7 @@ const connectionWorkspace = new ConnectionWorkspaceController({
   testRecipe: (recipe, card, button) => playbookWorkspace.testRecipe(recipe, card, button),
   renderRecipeTestState: (recipeId, card, button) => playbookWorkspace.renderRecipeTestState(recipeId, card, button),
   closePopovers,
-  showToast,
+  showStatus,
   errorMessage,
 });
 const workspacePages = new WorkspacePageController({
@@ -474,7 +474,7 @@ const pluginsPageController = new PluginsPageController({
   page: pluginsPage,
   api,
   openExternal: (url) => window.fitz.openExternal(url),
-  showToast,
+  showStatus,
   errorMessage,
 });
 const modelsPageController = new ModelsPageController({
@@ -482,12 +482,12 @@ const modelsPageController = new ModelsPageController({
   api,
   openExternal: (url) => window.fitz.openExternal(url),
   openPath: (path) => window.fitz.openPath(path),
-  showToast,
+  showStatus,
   errorMessage,
 });
 const messageActions = new MessageActions({
   canEdit: () => !agentRuns.active,
-  onEditBlocked: () => showToast("Wait for the current response before editing a message."),
+  onEditBlocked: () => showStatus("Wait for the current response before editing a message.", "error"),
   copyText: (text) => window.fitz.copyText(text),
   resend: (text, article) => sendPrompt(text, article),
 });
@@ -561,7 +561,7 @@ const administrationPageController = new AdministrationPageController({
   bridge: window.fitz,
   isAdministrator: () => administrator,
   currentUserId: () => currentUserId,
-  showToast,
+  showStatus,
   errorMessage,
 });
 const navigationHistory = new NavigationHistoryController({
@@ -681,7 +681,7 @@ function openNewChat(): void { beginNewChat(false); }
 function openProjectNewChat(): void { beginNewChat(true); }
 
 function beginNewChat(projectBound: boolean): void {
-  if (agentRuns.active) { showToast("Stop the current response before starting a new chat"); return; }
+  if (agentRuns.active) { showStatus("Stop the current response before starting a new chat", "error"); return; }
   showConversationWorkspace();
   inspectorPanel.reset();
   inspectorPanel.setChat(undefined);
@@ -718,7 +718,7 @@ function showNewChatLanding(): void {
 
 function openProjectWorktreeSetup(id: string): void { openNewChatForProject(id); composer.openWorktreeSetup(); }
 
-async function copyValue(value: string, message: string): Promise<void> { await window.fitz.copyText(value); showToast(message); }
+async function copyValue(value: string, message: string): Promise<void> { await window.fitz.copyText(value); showStatus(message, "success"); }
 
 async function openPlaybookPage(): Promise<void> {
   if (!canOpenManagementView("playbooks", administrator) || !pairingPage.hidden) { if (!pairingPage.hidden) pairingCode.focus(); return; }
@@ -800,7 +800,7 @@ async function updateSessionBinding(): Promise<void> {
   try {
     const response = await api(`/api/v1/sessions/${session.id}`, "PATCH", { routeId: composer.controls.routeId });
     Object.assign(session, response.data);
-  } catch (error) { showToast(errorMessage(error)); }
+  } catch (error) { showStatus(errorMessage(error), "error"); }
 }
 
 function handleRouteChange(): void {
@@ -924,20 +924,15 @@ async function compactCurrentSession(): Promise<void> {
 function setStatus(text: string, state: string): void { composer.setStatus(text, state); }
 function setConnection(text: string, state: string): void { connectionDetail.textContent = text; connectionStatus.dataset.state = state; }
 function setFormBusy(formElement: HTMLFormElement, busy: boolean): void { for (const control of formElement.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>("input,button,select")) control.disabled = busy; }
-function actionStatusTone(text: string): ActionStatusTone {
-  if (/\b(copied|created|renamed|archived|saved|installed|updated|enabled|disabled|removed|cancelled|complete(?:d)?|downloaded|opened|attached|restored|swept|working)\b/i.test(text)) return "success";
-  return "error";
-}
-
-/** Keeps legacy action callbacks visible without restoring popup notifications. */
-function showToast(text: string): void {
+/** Routes typed action feedback to the visible page without popup notifications. */
+function showStatus(text: string, tone: ActionStatusTone): void {
   const activeManagementPage = workspace.querySelector<HTMLElement>(".management-page:not([hidden])");
   const status = activeManagementPage ? ActionStatus.find(activeManagementPage) : undefined;
   if (status) {
-    status.show(text, actionStatusTone(text));
+    status.show(text, tone);
     return;
   }
-  conversationActionStatus.show(text, actionStatusTone(text));
+  conversationActionStatus.show(text, tone);
 }
 function panelEmpty(text: string): HTMLElement { return textBlock("panel-empty", text); }
 function loadingMessage(text: string): HTMLElement { return textBlock("panel-empty", text); }

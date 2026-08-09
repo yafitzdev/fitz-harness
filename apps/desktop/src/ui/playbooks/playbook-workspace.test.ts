@@ -82,16 +82,16 @@ function setup(
   // select.value behaves like it does in the real page.
   for (const value of ["managed", "external"]) elements.engineConnection.add(new Option(value, value));
   for (const value of ["windows", "wsl"]) elements.engineRuntime.add(new Option(value, value));
-  const showToast = vi.fn();
+  const showStatus = vi.fn();
   const reloadConfiguration = vi.fn(async () => configuration);
   const controller = new PlaybookWorkspaceController(elements, {
     api,
     reloadConfiguration,
-    showToast,
+    showStatus,
     errorMessage: (error: unknown) => (error instanceof Error ? error.message : String(error)),
   });
   controller.setConfiguration(configuration);
-  return { controller, elements, showToast, reloadConfiguration, api };
+  return { controller, elements, showStatus, reloadConfiguration, api };
 }
 
 function submit(form: HTMLFormElement): void { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); }
@@ -271,7 +271,7 @@ describe("PlaybookWorkspaceController", () => {
   });
 
   it("rejects recipe configuration that is not valid JSON", async () => {
-    const { controller, elements, showToast, api } = setup();
+    const { controller, elements, showStatus, api } = setup();
     controller.render();
     click([...elements.list.querySelectorAll<HTMLButtonElement>(".collapsible-actions button")].find((button) => button.textContent === "Add recipe")!);
 
@@ -279,7 +279,7 @@ describe("PlaybookWorkspaceController", () => {
     elements.recipeConfiguration.value = "{oops";
     submit(elements.recipeForm);
 
-    expect(showToast).toHaveBeenCalledWith("Configuration must be valid JSON");
+    expect(showStatus).toHaveBeenCalledWith("Configuration must be valid JSON", "error");
     expect(api).not.toHaveBeenCalled();
   });
 

@@ -1,12 +1,13 @@
 import { ManagementPageLayout } from "../layout/management-page.js";
 import { PluginCatalogController, type PluginCatalogApi } from "./plugin-catalog.js";
+import type { ActionFeedback } from "../primitives/action-status.js";
 
 export interface PluginsPageOptions {
   /** The <section id="plugins-page"> element from the shell markup. */
   page: HTMLElement;
   api: PluginCatalogApi;
   openExternal: (url: string) => void | Promise<void>;
-  showToast: (message: string) => void;
+  showStatus: ActionFeedback;
   errorMessage: (error: unknown) => string;
 }
 
@@ -50,7 +51,7 @@ export class PluginsPageController {
     }, {
       api: options.api,
       openExternal: options.openExternal,
-      showToast: options.showToast,
+      showStatus: options.showStatus,
       errorMessage: options.errorMessage,
     });
   }

@@ -1,4 +1,5 @@
 import { svgIcon, textBlock } from "../primitives/dom.js";
+import type { ActionFeedback } from "../primitives/action-status.js";
 
 type Json = Record<string, any>;
 
@@ -6,7 +7,7 @@ export interface AgentQueueOptions {
   list: HTMLElement;
   count: HTMLElement;
   api: (path: string, method?: string, body?: Json) => Promise<Json>;
-  showToast: (message: string) => void;
+  showStatus: ActionFeedback;
   errorMessage: (error: unknown) => string;
 }
 
@@ -67,7 +68,7 @@ export class AgentQueueController {
       await this.refresh();
     } catch (error) {
       button.disabled = false;
-      this.#options.showToast(this.#options.errorMessage(error));
+      this.#options.showStatus(this.#options.errorMessage(error), "error");
     }
   }
 }

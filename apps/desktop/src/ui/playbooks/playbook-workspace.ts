@@ -1,5 +1,6 @@
 import { CollapsibleSection } from "../layout/collapsible-section.js";
 import { recipeMetadata } from "../recipes/recipe-metadata.js";
+import type { ActionFeedback } from "../primitives/action-status.js";
 
 type Json = Record<string, any>;
 
@@ -43,7 +44,7 @@ export interface PlaybookWorkspaceElements {
 export interface PlaybookWorkspaceOptions {
   api: (path: string, method?: string, body?: unknown) => Promise<Json>;
   reloadConfiguration: () => Promise<Json | undefined>;
-  showToast: (message: string) => void;
+  showStatus: ActionFeedback;
   errorMessage: (error: unknown) => string;
 }
 
@@ -276,14 +277,14 @@ export class PlaybookWorkspaceController {
       });
       this.closeEditor();
       await this.options.reloadConfiguration();
-    } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
+    } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
     finally { setFormBusy(this.elements.engineForm, false); }
   }
 
   private async saveRecipe(): Promise<void> {
     let configuration: Json;
     try { configuration = JSON.parse(this.elements.recipeConfiguration.value || "{}"); }
-    catch { this.options.showToast("Configuration must be valid JSON"); return; }
+    catch { this.options.showStatus("Configuration must be valid JSON", "error"); return; }
     const id = this.elements.recipeId.value.trim(); if (!id) return;
     setFormBusy(this.elements.recipeForm, true);
     try {
@@ -295,7 +296,7 @@ export class PlaybookWorkspaceController {
       });
       this.closeEditor();
       await this.options.reloadConfiguration();
-    } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
+    } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
     finally { setFormBusy(this.elements.recipeForm, false); }
   }
 

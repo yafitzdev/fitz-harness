@@ -44,7 +44,7 @@ function setup(api: AgentRunControllerOptions["api"]) {
     setEngineState: vi.fn(),
     refreshControls: vi.fn(),
     refreshQueue: vi.fn(),
-    showToast: vi.fn(),
+    showStatus: vi.fn(),
   };
   const controller = new AgentRunController({
     messages,
@@ -129,7 +129,7 @@ describe("AgentRunController", () => {
       messages: document.createElement("main"), activity: activity.timeline, api,
       appendAssistant: () => document.createElement("div"), appendAssistantDelta: vi.fn(), appendSystem, appendChangeSummary: vi.fn(),
       addTokenEstimate: vi.fn(), recalibrateEstimate: vi.fn(), setStatus: vi.fn(), setEngineState: vi.fn(), refreshControls: vi.fn(),
-      queueVisible: () => false, refreshQueue: vi.fn(), showToast: vi.fn(), errorMessage: String, terminalReplayError: () => false,
+      queueVisible: () => false, refreshQueue: vi.fn(), showStatus: vi.fn(), errorMessage: String, terminalReplayError: () => false,
       onMediaJobSubmitted,
     });
 

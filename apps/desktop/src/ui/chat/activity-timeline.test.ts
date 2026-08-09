@@ -10,7 +10,7 @@ function setup() {
     messages,
     inspectResource: vi.fn(),
     decideApproval: vi.fn(async () => "approved" as const),
-    showToast: vi.fn(),
+    showStatus: vi.fn(),
   });
   return { messages, timeline };
 }
@@ -28,7 +28,7 @@ describe("ActivityTimeline", () => {
   it("renders media approvals as editable typed fields and submits a safe request", async () => {
     const messages = document.createElement("main");
     const decideApproval = vi.fn(async () => "approved" as const);
-    const timeline = new ActivityTimeline({ messages, inspectResource: vi.fn(), decideApproval, showToast: vi.fn() });
+    const timeline = new ActivityTimeline({ messages, inspectResource: vi.fn(), decideApproval, showStatus: vi.fn() });
     const row = timeline.appendApproval({ id: "approval-video", toolName: "generate_video", request: { prompt: "agent draft", duration_seconds: 8, resolution: "1344x768", fps: 24 }, status: "pending" });
     expect(row.parentElement?.classList.contains("work-summary-details")).toBe(true);
     expect(row.querySelector("pre.tool-approval-request")).toBeNull();

@@ -887,7 +887,7 @@ describe("desktop renderer shell", () => {
   it("stages picker files as chips in a new chat and uploads them with the first message", () => {
     // The attach button unlocks in new chat mode so "+" works before a session exists.
     expect(renderer).toContain('hasSession: Boolean(projects.currentSessionId || newChatMode)');
-    expect(artifactController).toContain('this.#options.showToast("Create or select a task before attaching a file")');
+    expect(artifactController).toContain('this.#options.showStatus("Create or select a task before attaching a file", "error")');
     expect(artifactController).toContain("this.#options.stageFile(file)");
     expect(composer).toContain("attachFile(file: File): void");
     expect(composer).toContain('const kind = file.type.startsWith("image/") ? "image" : file.type === "application/pdf" ? "pdf" : "file";');

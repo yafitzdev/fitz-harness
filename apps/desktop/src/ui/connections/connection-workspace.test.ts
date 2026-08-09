@@ -42,7 +42,7 @@ function setup(overrides: Partial<ConnectionWorkspaceBridge> = {}) {
     testRecipe: vi.fn(async () => undefined),
     renderRecipeTestState: vi.fn(),
     closePopovers: vi.fn(),
-    showToast: vi.fn(),
+    showStatus: vi.fn(),
     errorMessage: vi.fn((error: unknown) => error instanceof Error ? error.message : String(error)),
   };
   const controller = new ConnectionWorkspaceController({ mount, bridge, ...calls });
@@ -69,7 +69,7 @@ describe("ConnectionWorkspaceController", () => {
     expect(elements.connections.textContent).toContain("Local Model");
     expect(elements.connections.textContent).toContain("Remote API");
     expect(elements.connections.querySelector(".media-text")?.textContent).toBe("Text");
-    expect(calls.showToast).toHaveBeenCalledWith("Remote unavailable");
+    expect(calls.showStatus).toHaveBeenCalledWith("Remote unavailable", "error");
 
     elements.search.value = "local.gguf";
     elements.search.dispatchEvent(new Event("input", { bubbles: true }));
@@ -241,7 +241,7 @@ describe("ConnectionWorkspaceController", () => {
       testRecipe: vi.fn(async () => undefined),
       renderRecipeTestState: vi.fn(),
       closePopovers: vi.fn(),
-      showToast: vi.fn(),
+      showStatus: vi.fn(),
       errorMessage: vi.fn((error: unknown) => error instanceof Error ? error.message : String(error)),
     };
     const experimental = new ConnectionWorkspaceController({ mount: node("div"), bridge: { syncConsumerConnections: vi.fn(async () => []), listConsumerConnections: vi.fn(async () => []), saveConsumerConnection: vi.fn(), removeConsumerConnection: vi.fn(async () => undefined) }, ...calls2 });

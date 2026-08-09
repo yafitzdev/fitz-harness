@@ -2,6 +2,7 @@ import { svgIcon } from "../primitives/dom.js";
 import { CollapsibleSection } from "../layout/collapsible-section.js";
 import { CatalogFilterBar } from "../catalog/catalog-filter-bar.js";
 import { catalogQueryString, type CatalogSortOption } from "../catalog/catalog-filters.js";
+import type { ActionFeedback } from "../primitives/action-status.js";
 
 export type PluginCatalogApi = (path: string, method?: string, body?: unknown) => Promise<Record<string, any>>;
 
@@ -55,7 +56,7 @@ export interface PluginCatalogElements {
 export interface PluginCatalogOptions {
   api: PluginCatalogApi;
   openExternal: (url: string) => void | Promise<void>;
-  showToast: (message: string) => void;
+  showStatus: ActionFeedback;
   errorMessage: (error: unknown) => string;
   searchDelayMs?: number;
 }
@@ -123,7 +124,7 @@ export class PluginCatalogController {
       const message = this.options.errorMessage(error);
       this.elements.installedPlugins.replaceChildren(emptyState(message));
       this.elements.pluginCatalog.replaceChildren();
-      this.options.showToast(message);
+      this.options.showStatus(message, "error");
     }
   }
 
@@ -294,8 +295,8 @@ export class PluginCatalogController {
     try {
       await this.options.api(path, method, body);
       await this.load(false);
-      this.options.showToast("Plugin configuration updated");
-    } catch (error) { this.options.showToast(this.options.errorMessage(error)); }
+      this.options.showStatus("Plugin configuration updated", "success");
+    } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
   }
 }
 

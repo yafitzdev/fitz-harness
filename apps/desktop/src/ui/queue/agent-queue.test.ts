@@ -15,7 +15,7 @@ describe("AgentQueueController", () => {
       ] })
       .mockResolvedValueOnce({ data: {} })
       .mockResolvedValueOnce({ data: [] });
-    const controller = new AgentQueueController({ list, count, api, showToast: vi.fn(), errorMessage: String });
+    const controller = new AgentQueueController({ list, count, api, showStatus: vi.fn(), errorMessage: String });
 
     await controller.refresh();
     expect(count.textContent).toBe("2");
@@ -35,7 +35,7 @@ describe("AgentQueueController", () => {
       list,
       count,
       api: vi.fn().mockRejectedValue(new Error("offline")),
-      showToast: vi.fn(),
+      showStatus: vi.fn(),
       errorMessage: String,
     });
     await controller.refresh();

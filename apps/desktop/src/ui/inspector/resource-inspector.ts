@@ -2,6 +2,7 @@ import { setMarkdown } from "../../markdown.js";
 import type { ResourcePreview } from "../../preload.js";
 import { highlightSource } from "../../syntax-highlighting.js";
 import { textBlock } from "../primitives/dom.js";
+import type { ActionFeedback } from "../primitives/action-status.js";
 
 type Json = Record<string, any>;
 type InspectedResource = { kind: "file"; path: string } | { kind: "url"; url: string };
@@ -21,7 +22,7 @@ export interface ResourceInspectorOptions {
   openPanel: () => void;
   getProjectRoot: () => string;
   getSearchRoots: () => string[];
-  showToast: (message: string) => void;
+  showStatus: ActionFeedback;
   /**
    * Fires when a local file preview resolves, so the repository can grow.
    * The third argument is the chat reference that opened the file (when one
@@ -216,7 +217,7 @@ export class ResourceInspector {
       if (this.#resource.kind === "url") await window.fitz.openExternal(this.#resource.url);
       else await window.fitz.openPath(this.#resource.path);
     } catch (error) {
-      this.#options.showToast(this.#errorMessage(error));
+      this.#options.showStatus(this.#errorMessage(error), "error");
     }
   }
 

@@ -1,6 +1,7 @@
 import { svgIcon } from "./dom.js";
 
 export type ActionStatusTone = "neutral" | "success" | "error";
+export type ActionFeedback = (message: string, tone: ActionStatusTone) => void;
 
 const STATUS_ICON = '<circle cx="10" cy="10" r="7"></circle><path d="M10 9v4M10 6.5v.5"></path>';
 const SUCCESS_ICON = '<path d="m4.2 10.1 3.25 3.25 8.35-8.35"></path>';

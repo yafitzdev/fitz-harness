@@ -15,7 +15,7 @@ function setup(overrides: { sessionId?: string; newChat?: boolean; artifacts?: R
     clearChips: vi.fn(),
     addChip: vi.fn(),
     stageFile: vi.fn(),
-    showToast: vi.fn(),
+    showStatus: vi.fn(),
     errorMessage: vi.fn((error: unknown) => String(error)),
   };
   const controller = new ArtifactController({

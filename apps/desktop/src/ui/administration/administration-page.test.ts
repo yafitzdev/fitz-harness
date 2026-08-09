@@ -128,16 +128,16 @@ function setup(
     onUpdateStatus: vi.fn(() => () => undefined),
     ...bridgeOverrides,
   };
-  const showToast = vi.fn();
+  const showStatus = vi.fn();
   const controller = new AdministrationPageController(elements, {
     api,
     bridge,
     isAdministrator: options.isAdministrator ?? (() => true),
     currentUserId: options.currentUserId ?? (() => "user-1"),
-    showToast,
+    showStatus,
     errorMessage: (error: unknown) => (error instanceof Error ? error.message : String(error)),
   });
-  return { controller, elements, bridge, showToast, api };
+  return { controller, elements, bridge, showStatus, api };
 }
 
 function submit(form: HTMLFormElement): void { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); }
@@ -293,7 +293,7 @@ describe("AdministrationPageController", () => {
       }
       return base(path, method);
     });
-    const { controller, elements, api: calls, showToast } = setup(api);
+    const { controller, elements, api: calls, showStatus } = setup(api);
     await controller.load();
 
     expect(elements.enableRemoteAccess.disabled).toBe(false);
@@ -315,11 +315,11 @@ describe("AdministrationPageController", () => {
     click(elements.confirmHostStartup);
     await vi.waitFor(() => expect(calls).toHaveBeenCalledWith("/api/v1/management/startup", "POST", {}));
     await vi.waitFor(() => expect(elements.hostStartupConfirmation.hidden).toBe(true));
-    expect(showToast).not.toHaveBeenCalled();
+    expect(showStatus).not.toHaveBeenCalled();
   });
 
   it("empties the trash only after an explicit confirmation", async () => {
-    const { controller, elements, api, showToast } = setup();
+    const { controller, elements, api, showStatus } = setup();
     await controller.load();
 
     click(elements.emptyTrashButton);
@@ -333,23 +333,23 @@ describe("AdministrationPageController", () => {
     click(elements.emptyTrashButton);
     click(elements.confirmEmptyTrash);
     await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/trash", "DELETE"));
-    await vi.waitFor(() => expect(showToast).toHaveBeenCalledWith(expect.stringContaining("Trash emptied")));
+    await vi.waitFor(() => expect(showStatus).toHaveBeenCalledWith(expect.stringContaining("Trash emptied"), "success"));
     expect(elements.emptyTrashConfirmation.hidden).toBe(true);
   });
 
   it("restores trash entries and snapshots from the safety section", async () => {
-    const { controller, elements, api, showToast } = setup();
+    const { controller, elements, api, showStatus } = setup();
     await controller.load();
 
     const restoreButton = elements.adminTrash.querySelector<HTMLButtonElement>("button")!;
     click(restoreButton);
     await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/trash/trash-1/restore", "POST"));
-    await vi.waitFor(() => expect(showToast).toHaveBeenCalledWith("File restored"));
+    await vi.waitFor(() => expect(showStatus).toHaveBeenCalledWith("File restored", "success"));
 
     const snapshotButton = elements.adminSnapshots.querySelector<HTMLButtonElement>("button")!;
     click(snapshotButton);
     await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/snapshots/run-1/restore", "POST"));
-    await vi.waitFor(() => expect(showToast).toHaveBeenCalledWith("Workspace restored from run run-1"));
+    await vi.waitFor(() => expect(showStatus).toHaveBeenCalledWith("Workspace restored from run run-1", "success"));
   });
 
   it("runs retention and reports what was swept", async () => {
@@ -358,12 +358,12 @@ describe("AdministrationPageController", () => {
       if (path === "/api/v1/management/trash/gc" && method === "POST") return { data: { trash: 3, snapshots: 1 } };
       return base(path, method, body);
     });
-    const { controller, elements, showToast } = setup(api);
+    const { controller, elements, showStatus } = setup(api);
     await controller.load();
 
     click(elements.gcRetentionButton);
     await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/trash/gc", "POST", { maxAgeDays: 30 }));
-    await vi.waitFor(() => expect(showToast).toHaveBeenCalledWith("Retention swept 3 trashed files and 1 snapshot"));
+    await vi.waitFor(() => expect(showStatus).toHaveBeenCalledWith("Retention swept 3 trashed files and 1 snapshot", "success"));
     expect(elements.gcRetentionButton.disabled).toBe(false);
   });
 
@@ -514,7 +514,7 @@ function setupWithSections(
     },
     isAdministrator: () => true,
     currentUserId: () => "user-1",
-    showToast: vi.fn(),
+    showStatus: vi.fn(),
     errorMessage: (error: unknown) => (error instanceof Error ? error.message : String(error)),
   });
   return { controller, elements };

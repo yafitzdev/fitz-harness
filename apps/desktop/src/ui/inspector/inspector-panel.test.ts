@@ -21,7 +21,7 @@ function options(host: HTMLElement, overrides: Partial<ConstructorParameters<typ
     tabMount: host.querySelector<HTMLElement>(".workspace-header")!,
     getProjectRoot: () => "",
     getSearchRoots: () => [],
-    showToast: vi.fn(),
+    showStatus: vi.fn(),
     onLayoutChange: vi.fn(),
     ...overrides,
   };

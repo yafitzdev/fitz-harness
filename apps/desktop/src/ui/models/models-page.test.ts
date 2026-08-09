@@ -41,7 +41,7 @@ function setup(api: (path: string, method?: string, body?: unknown) => Promise<R
   const calls = {
     openExternal: vi.fn(),
     openPath: vi.fn(),
-    showToast: vi.fn(),
+    showStatus: vi.fn(),
     errorMessage: vi.fn((error: unknown) => error instanceof Error ? error.message : String(error)),
   };
   const controller = new ModelsPageController({ page, api, ...calls });
@@ -293,7 +293,7 @@ describe("ModelsPageController", () => {
     expect(page.querySelector("#model-catalog .model-progress")?.textContent).toContain("50 B / 100 B");
 
     await vi.advanceTimersByTimeAsync(500); // second poll: done → toast + reload
-    expect(calls.showToast).toHaveBeenCalledWith("Downloaded model.Q4_K_M.gguf");
+    expect(calls.showStatus).toHaveBeenCalledWith("Downloaded model.Q4_K_M.gguf", "success");
     // The finished model moves to Downloaded and leaves the Discover catalog.
     expect(page.querySelector("#model-catalog")?.textContent).not.toContain("org/model");
     expect(page.querySelector("#downloaded-models")?.textContent).toContain("model.Q4_K_M.gguf");
@@ -369,7 +369,7 @@ describe("ModelsPageController", () => {
 
     await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/models/downloaded", "DELETE", { repoId: "org/model", fileName: "model.Q4_K_M.gguf" }));
     await vi.waitFor(() => expect(page.querySelector("#downloaded-models")?.textContent).toContain("No models downloaded"));
-    expect(calls.showToast).toHaveBeenCalledWith("Removed model.Q4_K_M.gguf");
+    expect(calls.showStatus).toHaveBeenCalledWith("Removed model.Q4_K_M.gguf", "success");
   });
 
   it("collapses and expands the Downloaded and Discover sections", () => {
@@ -393,7 +393,7 @@ describe("ModelsPageController", () => {
     const page = document.createElement("section");
     page.id = "models-page";
     new ManagementPageLayout(page, { tabs: [{ id: "llm-tab", label: "LLMs", dataset: { pipeline: "text-generation" }, active: true }] });
-    expect(() => new ModelsPageController({ page, api: vi.fn(), openExternal: vi.fn(), openPath: vi.fn(), showToast: vi.fn(), errorMessage: vi.fn() } satisfies ModelsPageOptions))
+    expect(() => new ModelsPageController({ page, api: vi.fn(), openExternal: vi.fn(), openPath: vi.fn(), showStatus: vi.fn(), errorMessage: vi.fn() } satisfies ModelsPageOptions))
       .toThrow("Models page is missing #models-view");
   });
 });
