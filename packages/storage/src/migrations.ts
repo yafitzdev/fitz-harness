@@ -329,4 +329,31 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_media_quota_ledger_user ON media_quota_ledger(user_id, created_at);
     `,
   },
+  {
+    version: 10,
+    // Durable agent continuation state. The request is stored separately from
+    // the event log so an interrupted run can be continued without guessing
+    // model/access settings from rendered transcript text.
+    sql: `
+      CREATE TABLE IF NOT EXISTS agent_run_state (
+        run_id TEXT PRIMARY KEY REFERENCES agent_runs(id) ON DELETE CASCADE,
+        request_json TEXT NOT NULL,
+        resume_of_run_id TEXT REFERENCES agent_runs(id) ON DELETE SET NULL,
+        checkpoint_json TEXT NOT NULL,
+        resumable INTEGER NOT NULL DEFAULT 0 CHECK (resumable IN (0, 1))
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_runs_session_status
+        ON agent_runs(session_id, status, updated_at DESC);
+    `,
+  },
+  {
+    version: 11,
+    // A client-generated request identity makes run creation safe to retry
+    // after a connection drops between commit and HTTP response delivery.
+    sql: `
+      ALTER TABLE agent_run_state ADD COLUMN client_request_id TEXT;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_run_state_client_request
+        ON agent_run_state(client_request_id) WHERE client_request_id IS NOT NULL;
+    `,
+  },
 ] as const;

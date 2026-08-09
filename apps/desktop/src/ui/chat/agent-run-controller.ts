@@ -27,6 +27,7 @@ export interface AgentRunRequest {
   temperature: number;
   sessionId: string;
   accessMode: string;
+  clientRequestId?: string;
   messages: Array<{ role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> }>;
 }
 
@@ -62,11 +63,59 @@ export class AgentRunController {
   #lastSequence = 0;
   #warmupTimer: ReturnType<typeof setTimeout> | undefined;
   #composerHadText = false;
+  #generation = 0;
 
   constructor(options: AgentRunControllerOptions) { this.#options = options; }
 
   get active(): boolean { return this.#starting || Boolean(this.#runId); }
   get runId(): string | undefined { return this.#runId; }
+
+  /** Stop following locally without cancelling the host run. Used when the
+   * user switches chats; selecting the chat again reattaches from SQLite. */
+  detach(): void {
+    this.#generation += 1;
+    this.#runId = undefined;
+    this.#starting = false;
+    this.#cancelPending = false;
+    this.#options.refreshControls();
+  }
+
+  async attach(run: { id: string; createdAt?: string }, afterSequence = 0): Promise<void> {
+    if (this.active) return;
+    const generation = ++this.#generation;
+    const activity = this.#options.activity.appendRun("Reconnecting");
+    const startedAt = Date.parse(run.createdAt ?? "") || Date.now();
+    this.#runId = run.id;
+    this.#lastSequence = Math.max(0, afterSequence);
+    this.#cancelPending = false;
+    this.#options.setStatus("Reconnecting", "loading");
+    this.#options.refreshControls();
+    try { await this.#follow(run.id, activity, startedAt, generation); }
+    catch (error) { activity.remove(); this.#options.appendSystem(this.#options.errorMessage(error)); this.#options.setStatus("Disconnected", "error"); }
+    finally { if (this.#generation === generation) { this.#runId = undefined; this.#cancelPending = false; this.#options.refreshControls(); } }
+  }
+
+  async resume(sourceRunId: string, confirmUnsafe = false): Promise<void> {
+    if (this.active) return;
+    const generation = ++this.#generation;
+    const activity = this.#options.activity.appendRun("Resuming");
+    this.#starting = true;
+    this.#lastSequence = 0;
+    this.#options.setStatus("Resuming", "loading");
+    this.#options.refreshControls();
+    try {
+      const response = await this.#options.api(`/api/v1/agent/runs/${sourceRunId}/resume`, "POST", { confirmUnsafe });
+      const runId = String(response.data.id);
+      this.#runId = runId; this.#starting = false;
+      await this.#follow(runId, activity, Date.now(), generation);
+    } catch (error) {
+      activity.remove();
+      this.#options.appendSystem(this.#options.errorMessage(error));
+      this.#options.setStatus("Resume failed", "error");
+      throw error;
+    }
+    finally { if (this.#generation === generation) { this.#runId = undefined; this.#starting = false; this.#cancelPending = false; this.#options.refreshControls(); } }
+  }
 
   resetWarmup(): void {
     this.#composerHadText = false;
@@ -87,6 +136,7 @@ export class AgentRunController {
 
   async start(request: AgentRunRequest): Promise<void> {
     if (this.active) return;
+    const generation = ++this.#generation;
     this.resetWarmup();
     const activity = this.#options.activity.appendRun("Working");
     const startedAt = Date.now();
@@ -97,7 +147,17 @@ export class AgentRunController {
     this.#options.setEngineState("QUEUED");
     this.#options.refreshControls();
     try {
-      const response = await this.#options.api("/api/v1/agent/runs", "POST", request);
+      const durableRequest = { ...request, clientRequestId: request.clientRequestId ?? crypto.randomUUID() };
+      let response: Json | undefined;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        try { response = await this.#options.api("/api/v1/agent/runs", "POST", durableRequest); break; }
+        catch (error) {
+          if (this.#options.terminalReplayError(error) || attempt === 3) throw error;
+          this.#options.setStatus(`Submitting · retry ${attempt + 1}`, "loading");
+          await this.#delay(reconnectDelay(attempt));
+        }
+      }
+      if (!response) throw new Error("The run could not be created");
       this.#runId = String(response.data.id);
       this.#starting = false;
       if (response.context?.compacted) {
@@ -108,17 +168,19 @@ export class AgentRunController {
         if (Number.isFinite(compactedEstimate) && compactedEstimate >= 0) this.#options.recalibrateEstimate(compactedEstimate);
       }
       if (this.#cancelPending) await this.#options.api(`/api/v1/agent/runs/${this.#runId}`, "DELETE");
-      await this.#follow(this.#runId, activity, startedAt);
+      await this.#follow(this.#runId, activity, startedAt, generation);
     } catch (error) {
       activity.remove();
       this.#options.appendSystem(this.#options.errorMessage(error));
       this.#options.setStatus("Failed", "error");
       this.#options.activity.finishWork();
     } finally {
-      this.#runId = undefined;
-      this.#starting = false;
-      this.#cancelPending = false;
-      this.#options.refreshControls();
+      if (this.#generation === generation) {
+        this.#runId = undefined;
+        this.#starting = false;
+        this.#cancelPending = false;
+        this.#options.refreshControls();
+      }
     }
   }
 
@@ -143,7 +205,7 @@ export class AgentRunController {
     await this.#options.api(`/api/v1/agent/runs/${this.#runId}/steer`, "POST", { text });
   }
 
-  async #follow(runId: string, activity: HTMLElement, startedAt: number): Promise<void> {
+  async #follow(runId: string, activity: HTMLElement, startedAt: number, generation: number): Promise<void> {
     let assistant: HTMLElement | undefined;
     let reasoning: HTMLElement | undefined;
     const tools = new Map<string, { row: HTMLElement; toolName: string; input: unknown }>();
@@ -154,7 +216,7 @@ export class AgentRunController {
     let reconnectAttempt = 0;
     let nextEnginePoll = 0;
     let mediaHandedOff = false;
-    while (!done && this.#runId === runId) {
+    while (!done && this.#runId === runId && this.#generation === generation) {
       let replay: Json;
       try {
         replay = await this.#options.api(`/api/v1/agent/runs/${runId}/events?after=${this.#lastSequence}`);
@@ -241,7 +303,11 @@ export class AgentRunController {
         }
         if (event.type === "tool.completed") {
           const toolCallId = String(event.data?.toolCallId ?? "");
-          const existing = tools.get(toolCallId);
+          let existing = tools.get(toolCallId);
+          if (!existing) {
+            const restored = this.#options.messages.querySelector<HTMLElement>(`[data-tool-call-id="${CSS.escape(toolCallId)}"]`);
+            if (restored) existing = { row: restored, toolName: restored.dataset.toolName ?? String(event.data?.toolName ?? "tool"), input: undefined };
+          }
           if (existing) this.#options.activity.completeTool(existing.row, existing.toolName, existing.input, event.data?.result, Boolean(event.data?.isError));
           this.#options.addTokenEstimate(stringifyForEstimate(event.data?.result));
           const mediaJobId = mediaJobIdFromToolResult(event.data?.result);

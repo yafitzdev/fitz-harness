@@ -43,4 +43,15 @@ describe("ConversationTranscript", () => {
     expect(activity.appendTool).toHaveBeenCalledWith("bash", undefined, "late", true, undefined);
     expect(activity.completeTool).toHaveBeenCalledWith(row, "bash", undefined, "ok", false, undefined);
   });
+
+  it("records the highest durable event sequence for each restored run", () => {
+    const view = new ConversationTranscript({ messages: document.createElement("main"), activity: { clear: vi.fn(), appendTool: vi.fn(() => document.createElement("div")), completeTool: vi.fn(), appendReasoning: vi.fn(() => document.createElement("div")), appendReasoningDelta: vi.fn(), completeReasoning: vi.fn(), appendContext: vi.fn() }, appendMessage: vi.fn(), appendCommentary: vi.fn(), rebuildHistory: vi.fn() });
+    view.restore([
+      { kind: "message", role: "assistant", content: { text: "a", runId: "run-1", eventSequence: 4 } },
+      { kind: "reasoning", role: "assistant", content: { text: "b", runId: "run-1", eventSequence: 7 } },
+      { kind: "message", role: "assistant", content: { text: "c", runId: "run-2", eventSequence: 3 } },
+    ]);
+    expect(view.eventSequenceForRun("run-1")).toBe(7);
+    expect(view.eventSequenceForRun("run-2")).toBe(3);
+  });
 });

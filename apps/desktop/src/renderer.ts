@@ -3,6 +3,7 @@ import { estimateTokens } from "./context-estimate.js";
 import { MessageActions } from "./ui/chat/message-actions.js";
 import { ActivityTimeline } from "./ui/chat/activity-timeline.js";
 import { AgentRunController } from "./ui/chat/agent-run-controller.js";
+import { RunRecoveryView } from "./ui/chat/run-recovery-view.js";
 import { MediaJobFeed } from "./ui/chat/media-job-feed.js";
 import { MediaJobTracker, type MediaJobSummary } from "./ui/chat/media-job-tracker.js";
 import { Composer } from "./ui/chat/composer.js";
@@ -232,6 +233,8 @@ const projects = new ProjectsController({
   rememberLocation: (location) => navigationHistory.remember(location),
   onSessionSelected: async (sessionId) => {
     const isCurrent = () => projects.currentSessionId === sessionId;
+    agentRuns.detach();
+    runRecovery.clear();
     mediaJobs.reset();
     mediaJobFeed.reset();
     if (sessionId !== inspectorChatId) { inspectorPanel.reset(); inspectorPanel.setChat(sessionId); inspectorChatId = sessionId; }
@@ -247,6 +250,11 @@ const projects = new ProjectsController({
       const pendingApprovals = await api(`/api/v1/sessions/${sessionId}/tool-approvals?status=pending`);
       if (!isCurrent()) return;
       for (const approval of pendingApprovals.data ?? []) activityTimeline.appendApproval(approval);
+      const runState = await api(`/api/v1/sessions/${sessionId}/agent-run-state`);
+      if (!isCurrent()) return;
+      if (runState.data?.status === "queued" || runState.data?.status === "running") {
+        void agentRuns.attach(runState.data, conversationTranscript.eventSequenceForRun(String(runState.data.id)));
+      } else if (runState.data?.resumable) runRecovery.show(runState.data);
       updateContextMeter();
       if (!messages.childElementCount) showLanding(true);
       messages.scrollTop = messages.scrollHeight;
@@ -370,6 +378,10 @@ const agentRuns = new AgentRunController({
     mediaJobFeed.render({ id: jobId, modality, status: "queued" });
     mediaJobs.watch(jobId);
   },
+});
+const runRecovery = new RunRecoveryView({
+  messages,
+  resume: (runId, confirmUnsafe) => agentRuns.resume(runId, confirmUnsafe),
 });
 const promptSubmission = new PromptSubmissionController({
   draft: () => composer.value,

@@ -463,6 +463,69 @@ describe("Fitz host", () => {
     const sse = await runtime.app.inject({ method: "GET", url: `/api/v1/agent/runs/${runId}/events`, headers: { accept: "text/event-stream", "last-event-id": "2" } }); expect(sse.statusCode).toBe(200); expect(sse.body).toContain("event: run.completed"); expect(sse.body).not.toContain("id: 1\n"); await runtime.app.close();
   });
 
+  it("returns the original run when creation is retried with the same client request identity", async () => {
+    const runtime = createHost();
+    const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Idempotent" } });
+    const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "Once" } });
+    const payload = { model: "fast", sessionId: session.json().data.id, clientRequestId: "desktop:stable-request", messages: [{ role: "user", content: "run once" }] };
+    const first = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload });
+    const retried = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload });
+    expect(first.statusCode).toBe(202);
+    expect(retried.statusCode).toBe(200);
+    expect(retried.json()).toEqual(expect.objectContaining({ idempotentReplay: true, data: expect.objectContaining({ id: first.json().data.id }) }));
+    expect(runtime.agentRuns.list().filter((run) => run.id === first.json().data.id)).toHaveLength(1);
+    expect(runtime.store.transcriptAfter(session.json().data.id, 0).filter((entry) => entry.role === "user" && entry.content.text === "run once")).toHaveLength(1);
+    await runtime.app.close();
+  });
+
+  it("continues a failed run exactly once from its durable checkpoint", async () => {
+    const store = SqliteStore.memory(); const now = new Date(0).toISOString();
+    store.createProject({ id: "resume-project", name: "Resume", createdAt: now, updatedAt: now });
+    store.createSession({ id: "resume-session", projectId: "resume-project", title: "Resume", status: "active", createdAt: now, updatedAt: now });
+    store.createAgentRun({ id: "failed-run", routeId: "fast", sessionId: "resume-session", status: "running", createdAt: now, updatedAt: now, lastSequence: 0 }, { model: "fast", sessionId: "resume-session", accessMode: "full", messages: [{ role: "user", content: "finish the task" }] });
+    store.appendAgentEvent({ protocolVersion: "1", runId: "failed-run", sequence: 1, timestamp: now, type: "run.started", data: {} });
+    store.appendAgentEvent({ protocolVersion: "1", runId: "failed-run", sequence: 2, timestamp: now, type: "tool.started", data: { toolCallId: "read-1", toolName: "read", input: { path: "README.md" } } });
+    store.appendAgentEvent({ protocolVersion: "1", runId: "failed-run", sequence: 3, timestamp: now, type: "tool.completed", data: { toolCallId: "read-1", toolName: "read", result: "ok", isError: false } });
+    store.updateAgentRun("failed-run", "failed", "connection_lost");
+    store.appendAgentEvent({ protocolVersion: "1", runId: "failed-run", sequence: 4, timestamp: now, type: "run.failed", data: { error: "connection_lost" } });
+    const seen: string[] = [];
+    const runtime = createHost({ store, agentRuntime: { id: "resume-agent", run: (request) => { seen.push(String(request.messages.at(-1)?.content ?? "")); const events = (async function* () { yield { type: "assistant.delta" as const, text: "Recovered." }; })(); return Object.assign(events, { cancel: () => undefined }); } } });
+    try {
+      const state = await runtime.app.inject({ method: "GET", url: "/api/v1/sessions/resume-session/agent-run-state" });
+      expect(state.json().data).toEqual(expect.objectContaining({ id: "failed-run", resumable: true, checkpoint: expect.objectContaining({ resumeSafety: "safe" }) }));
+      const resumed = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs/failed-run/resume", payload: {} });
+      expect(resumed.statusCode, resumed.body).toBe(202); expect(resumed.json().data.resumeOfRunId).toBe("failed-run");
+      for (let attempt = 0; attempt < 50 && runtime.agentRuns.get(resumed.json().data.id)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(seen.at(-1)).toContain("do not blindly repeat mutations");
+      const replayedResume = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs/failed-run/resume", payload: {} });
+      expect(replayedResume.statusCode).toBe(200);
+      expect(replayedResume.json()).toEqual(expect.objectContaining({ idempotentReplay: true, data: expect.objectContaining({ id: resumed.json().data.id }) }));
+    } finally { await runtime.app.close(); }
+  });
+
+  it("requires explicit review before continuing a run with an in-flight tool", async () => {
+    const store = SqliteStore.memory(); const now = new Date(0).toISOString();
+    store.createProject({ id: "unsafe-project", name: "Unsafe", createdAt: now, updatedAt: now });
+    store.createSession({ id: "unsafe-session", projectId: "unsafe-project", title: "Unsafe", status: "active", createdAt: now, updatedAt: now });
+    store.createAgentRun({ id: "unsafe-run", routeId: "fast", sessionId: "unsafe-session", status: "running", createdAt: now, updatedAt: now, lastSequence: 0 }, { model: "fast", sessionId: "unsafe-session", accessMode: "full", messages: [{ role: "user", content: "publish the result" }] });
+    store.appendAgentEvent({ protocolVersion: "1", runId: "unsafe-run", sequence: 1, timestamp: now, type: "run.started", data: {} });
+    store.appendAgentEvent({ protocolVersion: "1", runId: "unsafe-run", sequence: 2, timestamp: now, type: "tool.started", data: { toolCallId: "publish-1", toolName: "publish", input: { target: "remote" } } });
+    store.updateAgentRun("unsafe-run", "failed", "connection_lost");
+    store.appendAgentEvent({ protocolVersion: "1", runId: "unsafe-run", sequence: 3, timestamp: now, type: "run.failed", data: { error: "connection_lost" } });
+    const runtime = createHost({ store, agentRuntime: { id: "review-agent", run: () => { const events = (async function* () { yield { type: "assistant.delta" as const, text: "Verified and continued." }; })(); return Object.assign(events, { cancel: () => undefined }); } } });
+    try {
+      const state = await runtime.app.inject({ method: "GET", url: "/api/v1/sessions/unsafe-session/agent-run-state" });
+      expect(state.json().data).toEqual(expect.objectContaining({ checkpoint: expect.objectContaining({ resumeSafety: "review-required", inFlightTools: [expect.objectContaining({ toolCallId: "publish-1" })] }) }));
+      const rejected = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs/unsafe-run/resume", payload: {} });
+      expect(rejected.statusCode).toBe(409);
+      expect(rejected.json()).toEqual(expect.objectContaining({ requiresConfirmation: true }));
+      expect(store.agentRunResumedFrom("unsafe-run")).toBeUndefined();
+      const confirmed = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs/unsafe-run/resume", payload: { confirmUnsafe: true } });
+      expect(confirmed.statusCode, confirmed.body).toBe(202);
+      expect(confirmed.json().data.resumeOfRunId).toBe("unsafe-run");
+    } finally { await runtime.app.close(); }
+  });
+
   it("routes native runs through a configured agent runtime", async () => {
     const runtime = createHost({ agentRuntime: { id: "test-agent", run: () => { const events = (async function* () { yield { type: "assistant.delta" as const, text: "I will inspect it." }; yield { type: "tool.started" as const, toolCallId: "tool-1", toolName: "read", input: { path: "README.md" } }; yield { type: "tool.completed" as const, toolCallId: "tool-1", toolName: "read", result: "ok", isError: false }; yield { type: "assistant.delta" as const, text: "Inspection complete." }; })(); return Object.assign(events, { cancel: () => undefined }); } } });
     const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Agent" } });

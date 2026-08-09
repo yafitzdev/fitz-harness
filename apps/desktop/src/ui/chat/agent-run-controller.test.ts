@@ -77,7 +77,7 @@ describe("AgentRunController", () => {
     await controller.start(request());
 
     expect(controller.active).toBe(false);
-    expect(api).toHaveBeenNthCalledWith(1, "/api/v1/agent/runs", "POST", request());
+    expect(api).toHaveBeenNthCalledWith(1, "/api/v1/agent/runs", "POST", expect.objectContaining({ ...request(), clientRequestId: expect.any(String) }));
     expect(api).toHaveBeenNthCalledWith(2, "/api/v1/agent/runs/run-1/events?after=0");
     expect(activity.timeline.appendContext).toHaveBeenCalled();
     expect(calls.appendAssistant).toHaveBeenCalledOnce();
@@ -87,6 +87,56 @@ describe("AgentRunController", () => {
     expect(calls.setEngineState).toHaveBeenLastCalledWith("READY");
     expect(activity.timeline.finishWork).toHaveBeenCalledOnce();
     expect(calls.refreshControls).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries run creation with the same client request identity", async () => {
+    vi.useFakeTimers();
+    let creations = 0;
+    const api = vi.fn(async (path: string) => {
+      if (path === "/api/v1/agent/runs") {
+        creations += 1;
+        if (creations === 1) throw new Error("response lost");
+        return { data: { id: "run-recovered" } };
+      }
+      return { events: [{ sequence: 1, type: "run.completed", data: {} }] };
+    });
+    const { controller } = setup(api);
+    const started = controller.start(request());
+    await vi.runAllTimersAsync();
+    await started;
+    const creationBodies = api.mock.calls.filter(([path]) => path === "/api/v1/agent/runs").map(([, , body]) => body as AgentRunRequest);
+    expect(creationBodies).toHaveLength(2);
+    expect(creationBodies[0]?.clientRequestId).toBe(creationBodies[1]?.clientRequestId);
+  });
+
+  it("reattaches to a live persisted run after the restored transcript sequence", async () => {
+    const api = vi.fn(async () => ({ events: [
+      { sequence: 8, type: "assistant.delta", data: { text: "continued" } },
+      { sequence: 9, type: "run.completed", data: {} },
+    ] }));
+    const { controller, calls } = setup(api);
+    await controller.attach({ id: "run-live", createdAt: new Date(0).toISOString() }, 7);
+    expect(api).toHaveBeenCalledWith("/api/v1/agent/runs/run-live/events?after=7");
+    expect(calls.appendAssistantDelta).toHaveBeenCalledWith(expect.any(HTMLElement), "continued");
+    expect(calls.setStatus).toHaveBeenLastCalledWith("Ready", "idle");
+  });
+
+  it("continues a failed run through the durable resume endpoint", async () => {
+    const api = vi.fn(async (path: string, method?: string) => path.endsWith("/resume") && method === "POST"
+      ? { data: { id: "run-successor" } }
+      : { events: [{ sequence: 1, type: "run.completed", data: {} }] });
+    const { controller } = setup(api);
+    await controller.resume("run-failed", true);
+    expect(api).toHaveBeenNthCalledWith(1, "/api/v1/agent/runs/run-failed/resume", "POST", { confirmUnsafe: true });
+    expect(api).toHaveBeenNthCalledWith(2, "/api/v1/agent/runs/run-successor/events?after=0");
+  });
+
+  it("keeps continuation retryable when the resume request fails", async () => {
+    const api = vi.fn(async () => { throw new Error("offline"); });
+    const { controller, calls } = setup(api);
+    await expect(controller.resume("run-failed")).rejects.toThrow("offline");
+    expect(calls.setStatus).toHaveBeenLastCalledWith("Resume failed", "error");
+    expect(controller.active).toBe(false);
   });
 
   it("routes tool and approval events through the activity timeline", async () => {

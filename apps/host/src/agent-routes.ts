@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { RouteNotFoundError } from "@fitz/inference-core";
-import { parseChatCompletionRequest, PROTOCOL_VERSION, type AgentRunRequest } from "@fitz/protocol";
+import { parseChatCompletionRequest, PROTOCOL_VERSION, type AgentRunCheckpoint, type AgentRunRequest } from "@fitz/protocol";
 import { SecurityPolicyError, type AuthenticatedPrincipal, type SecurityService } from "@fitz/security";
 import type { SqliteStore } from "@fitz/storage";
 import type { ContextManager } from "@fitz/context";
@@ -26,6 +26,11 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
     try {
       const body = parseAgentRunRequest(request.body);
       const principal = principals.get(request);
+      const existing = body.clientRequestId ? store.agentRunForClientRequest(body.clientRequestId) : undefined;
+      if (existing) {
+        if (!canAccessOwner(principal, existing.ownerUserId)) return reply.code(409).send({ error: "Request identity is already in use" });
+        return reply.code(200).send({ protocolVersion: PROTOCOL_VERSION, data: existing, idempotentReplay: true });
+      }
       const session = body.sessionId ? store.getSession(body.sessionId) : undefined;
       if (body.sessionId) {
         if (!session) return reply.code(404).send({ error: "Session not found" });
@@ -39,8 +44,15 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
         security?.enforceQuota(principal, promptChars, body.maxTokens ?? principal.quota.maxOutputTokens, agentRuns.queue().length);
       }
       const executionRouteId = normalizeRouteId(body.model);
-      const prepared = await context.prepare({ ...body, model: executionRouteId }, contextTokensForRoute(executionRouteId));
-      const run = agentRuns.start(prepared.request, principal?.user.id, body.messages);
+      const durableRequest = { ...body, model: executionRouteId };
+      const prepared = await context.prepare(durableRequest, contextTokensForRoute(executionRouteId));
+      let run;
+      try { run = agentRuns.start(prepared.request, principal?.user.id, body.messages, durableRequest); }
+      catch (error) {
+        const concurrent = body.clientRequestId ? store.agentRunForClientRequest(body.clientRequestId) : undefined;
+        if (concurrent && canAccessOwner(principal, concurrent.ownerUserId)) return reply.code(200).send({ protocolVersion: PROTOCOL_VERSION, data: concurrent, idempotentReplay: true });
+        throw error;
+      }
       security?.audit("agent-run.created", principal?.user.id, "agent-run", run.id, {
         routeId: run.routeId,
         connectionId: session?.connectionId,
@@ -83,6 +95,14 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
     };
   });
 
+  app.get("/api/v1/sessions/:sessionId/agent-run-state", async (request, reply) => {
+    const sessionId = (request.params as { sessionId: string }).sessionId;
+    const session = store.getSession(sessionId);
+    if (!session) return reply.code(404).send({ error: "Session not found" });
+    if (!canAccessOwner(principals.get(request), session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" });
+    return { protocolVersion: PROTOCOL_VERSION, data: agentRuns.getSessionRecovery(sessionId) ?? null };
+  });
+
   app.get("/api/v1/agent/runs/:runId", async (request, reply) => {
     const run = agentRuns.get((request.params as { runId: string }).runId);
     if (!run) return reply.code(404).send({ error: "Run not found" });
@@ -117,6 +137,41 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
       return { data: { id: runId, steered: true } };
     } catch (error) {
       return reply.code(400).send({ error: errorMessage(error) });
+    }
+  });
+
+  app.post("/api/v1/agent/runs/:runId/resume", async (request, reply) => {
+    const sourceRunId = (request.params as { runId: string }).runId;
+    const source = agentRuns.get(sourceRunId);
+    if (!source) return reply.code(404).send({ error: "Run not found" });
+    const principal = principals.get(request);
+    if (!canAccessOwner(principal, source.ownerUserId)) return reply.code(403).send({ error: "Run access denied" });
+    const existingResume = store.agentRunResumedFrom(sourceRunId);
+    if (existingResume) return reply.code(200).send({ protocolVersion: PROTOCOL_VERSION, data: existingResume, resumedFrom: sourceRunId, idempotentReplay: true });
+    if (!source.resumable || !source.checkpoint || !source.sessionId) return reply.code(409).send({ error: "Run is not resumable" });
+    const confirmUnsafe = requireRecord(request.body ?? {}).confirmUnsafe === true;
+    if (source.checkpoint.resumeSafety === "review-required" && !confirmUnsafe) return reply.code(409).send({ error: "The interrupted run had an unfinished tool or approval. Review is required before continuing.", requiresConfirmation: true, checkpoint: source.checkpoint });
+    const durable = store.getAgentRunRequest(sourceRunId);
+    if (!durable) return reply.code(409).send({ error: "The original run predates durable continuation support" });
+    const recoveryInstruction = buildRecoveryInstruction(sourceRunId, source.checkpoint);
+    const { clientRequestId: _sourceRequestId, ...resumeBase } = durable;
+    const resumeRequest: AgentRunRequest = { ...resumeBase, sessionId: source.sessionId, messages: [{ role: "system", content: recoveryInstruction }] };
+    try {
+      if (principal && !security?.authorizeRoute(principal, resumeRequest.model)) return reply.code(403).send({ error: "Route access denied" });
+      if (principal) security?.enforceQuota(principal, recoveryInstruction.length, resumeRequest.maxTokens ?? principal.quota.maxOutputTokens, agentRuns.queue().length);
+      const prepared = await context.prepare(resumeRequest, contextTokensForRoute(resumeRequest.model));
+      if (!store.claimAgentRunResume(sourceRunId)) {
+        const concurrentResume = store.agentRunResumedFrom(sourceRunId);
+        if (concurrentResume) return reply.code(200).send({ protocolVersion: PROTOCOL_VERSION, data: concurrentResume, resumedFrom: sourceRunId, idempotentReplay: true });
+        return reply.code(409).send({ error: "This run is already being resumed" });
+      }
+      try {
+        const run = agentRuns.start(prepared.request, principal?.user.id ?? source.ownerUserId, [], resumeRequest, sourceRunId);
+        security?.audit("agent-run.resumed", principal?.user.id, "agent-run", run.id, { sourceRunId, resumeSafety: source.checkpoint.resumeSafety });
+        return reply.code(202).send({ protocolVersion: PROTOCOL_VERSION, data: run, resumedFrom: sourceRunId, checkpoint: source.checkpoint });
+      } catch (error) { store.setAgentRunResumable(sourceRunId, true); throw error; }
+    } catch (error) {
+      return reply.code(error instanceof SecurityPolicyError ? 429 : error instanceof RouteNotFoundError ? 404 : 400).send({ error: errorMessage(error) });
     }
   });
 
@@ -156,6 +211,12 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
   });
 }
 
+function buildRecoveryInstruction(sourceRunId: string, checkpoint: AgentRunCheckpoint): string {
+  const completed = checkpoint.completedTools.map((tool) => `- ${tool.toolName} (${tool.toolCallId})${tool.isError ? " failed" : " completed"}`).join("\n") || "- none";
+  const inFlight = checkpoint.inFlightTools.map((tool) => `- ${tool.toolName} (${tool.toolCallId})`).join("\n") || "- none";
+  return `Continue the interrupted Fitz task from durable checkpoint ${sourceRunId}:${checkpoint.sequence}.\n\nCompleted tool calls:\n${completed}\n\nTool calls that were in flight when execution stopped:\n${inFlight}\n\nRecovery rules:\n1. Inspect the current workspace/state before acting.\n2. Treat completed tool calls as already applied; do not blindly repeat mutations.\n3. Treat in-flight tool calls as having an unknown outcome; verify their effects before retrying.\n4. Continue toward the user's original goal and report the recovered result normally.`;
+}
+
 function parseAgentRunRequest(value: unknown): AgentRunRequest {
   const parsed = parseChatCompletionRequest(value);
   const source = requireRecord(value);
@@ -167,7 +228,14 @@ function parseAgentRunRequest(value: unknown): AgentRunRequest {
     ...(parsed.temperature !== undefined ? { temperature: parsed.temperature } : {}),
     ...(typeof source.sessionId === "string" ? { sessionId: source.sessionId } : {}),
     accessMode,
+    ...(typeof source.clientRequestId === "string" && source.clientRequestId.trim() ? { clientRequestId: validateClientRequestId(source.clientRequestId) } : {}),
   };
+}
+
+function validateClientRequestId(value: string): string {
+  const normalized = value.trim();
+  if (normalized.length > 128 || !/^[A-Za-z0-9._:-]+$/.test(normalized)) throw new TypeError("clientRequestId is invalid");
+  return normalized;
 }
 
 function contentTextLength(content: string | Array<{ type: string; text?: string }>): number {

@@ -23,19 +23,28 @@ export interface ConversationTranscriptOptions {
 /** Restores a persisted transcript into the conversation feed. */
 export class ConversationTranscript {
   readonly #options: ConversationTranscriptOptions;
+  readonly #runSequences = new Map<string, number>();
 
   constructor(options: ConversationTranscriptOptions) { this.#options = options; }
 
   restore(entries: Json[]): number {
+    this.#runSequences.clear();
     this.#options.rebuildHistory(entries
       .filter((entry) => entry.kind === "message" && entry.role === "user" && typeof entry.content?.text === "string" && entry.content.text.length > 0)
       .map((entry) => entry.content.text as string));
     this.#options.messages.replaceChildren();
     this.#options.activity.clear();
     const tools = new Map<string, { row: HTMLElement; toolName: string; input: unknown }>();
-    for (const entry of entries) this.#restoreEntry(entry, tools);
+    for (const entry of entries) {
+      const runId = typeof entry.content?.runId === "string" ? entry.content.runId : undefined;
+      const eventSequence = Number(entry.content?.eventSequence);
+      if (runId && Number.isFinite(eventSequence)) this.#runSequences.set(runId, Math.max(this.#runSequences.get(runId) ?? 0, eventSequence));
+      this.#restoreEntry(entry, tools);
+    }
     return estimateTranscriptContext(entries);
   }
+
+  eventSequenceForRun(runId: string): number { return this.#runSequences.get(runId) ?? 0; }
 
   #restoreEntry(entry: Json, tools: Map<string, { row: HTMLElement; toolName: string; input: unknown }>): void {
     if (entry.kind === "message") {

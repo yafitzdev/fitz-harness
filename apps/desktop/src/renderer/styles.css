@@ -263,3 +263,28 @@ select:disabled { background-image: none !important; }
   .starter-grid { grid-template-columns: 1fr 1fr; }
   .mode-pill, .run-status, .composer-hint { display: none; }
 }
+.run-recovery {
+  align-items: center;
+  background: var(--grey-200);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+  margin-block: 10px;
+  padding: 12px 14px;
+}
+.run-recovery > div { display: grid; gap: 3px; min-width: 0; }
+.run-recovery strong { color: var(--text); font-weight: 600; }
+.run-recovery span { color: var(--muted); font-size: 13px; }
+.run-recovery button {
+  background: var(--grey-300);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  cursor: pointer;
+  flex: 0 0 auto;
+  padding: 7px 11px;
+}
+.run-recovery button:hover:not(:disabled) { background: var(--tint-6); }
+.run-recovery button:disabled { cursor: default; opacity: .65; }
