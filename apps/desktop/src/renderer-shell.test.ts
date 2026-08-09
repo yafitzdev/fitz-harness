@@ -189,7 +189,8 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('class="section-heading projects-heading"');
     expect(styles).toContain(".projects-heading #new-project { opacity: 0; pointer-events: none;");
     expect(styles).toContain(".projects-heading > span { color: var(--grey-800); font-weight: 650; }");
-    expect(styles).toContain(".task-row { padding: 6px 34px 6px 30px;");
+    expect(styles).toContain(".project-tree { display: grid; gap: 1px; }");
+    expect(styles).toContain(".task-row { padding: 4px 34px 4px 30px;");
     expect(renderer).toContain('identity.data?.authMode === "disabled" || identity.data?.user?.role === "administrator"');
     expect(html).toContain('d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"');
   });
@@ -660,9 +661,9 @@ describe("desktop renderer shell", () => {
   });
 
   it("keeps standalone chats in their own sidebar section, sibling to projects", () => {
-    // The sidebar carries a clearly named standalone-chat section below Projects.
-    expect(html).toContain('id="chats" class="project-tree" aria-label="Standalone chats"');
-    expect(html).toContain("<span>Standalone chats</span>");
+    // The sidebar carries a concise Chats section below Projects.
+    expect(html).toContain('id="chats" class="project-tree" aria-label="Chats"');
+    expect(html).toContain("<span>Chats</span>");
     expect(html).toContain('class="section-heading chats-heading"');
     expect(renderer).toContain("chatsMount: element(\"chats\")");
     expect(projectSidebar).toContain("chatsMount: HTMLElement");
@@ -674,7 +675,7 @@ describe("desktop renderer shell", () => {
     expect(projects).toContain('api("/api/v1/chats")');
     expect(projects).toContain("startChat(session: SessionRecord): void");
     expect(projects).toContain('else if (this.chatRecords.some((chat) => chat.id === id)) this.currentProjectIdValue = undefined');
-    expect(styles).toContain(".chat-row { padding: 6px 34px 6px 9px; font-size: 13.5px; }");
+    expect(styles).toContain(".chat-row { padding: 4px 34px 4px 9px; font-size: 13.5px; }");
     expect(styles).toContain(".chats-heading > span { color: var(--grey-800); font-weight: 650; }");
   });
 

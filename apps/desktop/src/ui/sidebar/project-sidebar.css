@@ -1,19 +1,20 @@
-.sidebar-section { margin-top: 20px; min-height: 0; overflow: auto; }
-.section-heading { height: 32px; display: flex; align-items: center; justify-content: space-between; padding: 0 7px; color: var(--muted); font-size: 13px; }
+.sidebar-section { margin-top: 16px; min-height: 0; overflow: auto; }
+.sidebar-section + .sidebar-section { margin-top: 10px; }
+.section-heading { height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 0 7px; color: var(--muted); font-size: 13px; }
 .projects-heading > span { color: var(--grey-800); font-weight: 650; }
 .chats-heading > span { color: var(--grey-800); font-weight: 650; }
 .projects-heading #new-project { opacity: 0; pointer-events: none; transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease; }
 .projects-heading:hover #new-project, .projects-heading:focus-within #new-project, #new-project:focus-visible { opacity: 1; pointer-events: auto; }
-.project-tree { display: grid; gap: 3px; }
-.project-group { display: grid; gap: 2px; }
+.project-tree { display: grid; gap: 1px; }
+.project-group { display: grid; gap: 0; }
 .project-children { display: grid; grid-template-rows: 0fr; opacity: 0; transform: translateY(-4px); transition: grid-template-rows 140ms ease, opacity 120ms ease, transform 140ms ease; }
-.project-children-inner { min-height: 0; display: grid; gap: 2px; overflow: hidden; }
+.project-children-inner { min-height: 0; display: grid; gap: 0; overflow: hidden; }
 .project-group.expanded > .project-children { grid-template-rows: 1fr; opacity: 1; transform: translateY(0); }
 .tree-item { position: relative; min-width: 0; }
 .project-row, .task-row, .chat-row { width: 100%; display: flex; align-items: center; gap: 8px; min-width: 0; background: transparent; color: var(--muted); border-radius: var(--radius-lg); cursor: pointer; text-align: left; }
-.project-row { padding: 7px 8px; color: var(--grey-800); font-weight: 500; }
-.task-row { padding: 6px 34px 6px 30px; font-size: 13.5px; }
-.chat-row { padding: 6px 34px 6px 9px; font-size: 13.5px; }
+.project-row { padding: 5px 8px; color: var(--grey-800); font-weight: 500; }
+.task-row { padding: 4px 34px 4px 30px; font-size: 13.5px; }
+.chat-row { padding: 4px 34px 4px 9px; font-size: 13.5px; }
 .tree-item:has(.project-row) .project-row { padding-right: 62px; }
 .project-row:hover, .task-row:hover, .chat-row:hover { background: var(--tint-5); color: var(--text); }
 .project-row.active, .task-row.active, .chat-row.active { background: var(--tint-6); color: var(--text); }
