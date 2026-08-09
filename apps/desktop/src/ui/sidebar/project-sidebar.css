@@ -1,7 +1,8 @@
 .sidebar-content-divider { margin: 12px 7px 4px; border-top: 1px solid var(--border-soft); }
 .sidebar-section { margin-top: 8px; min-height: 0; overflow: auto; }
 .sidebar-section + .sidebar-section { margin-top: 10px; }
-.section-heading { height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 0 7px; color: var(--muted); font-size: 13px; }
+.section-heading { height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 0 7px; color: var(--muted); }
+.section-heading, .project-row, .task-row, .chat-row { font-size: 13.5px; }
 .pinned-heading > span, .projects-heading > span, .chats-heading > span { color: var(--subtle); font-weight: 650; }
 .projects-heading #new-project { opacity: 0; pointer-events: none; transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease; }
 .projects-heading:hover #new-project, .projects-heading:focus-within #new-project, #new-project:focus-visible { opacity: 1; pointer-events: auto; }
@@ -11,17 +12,19 @@
 .project-children-inner { min-height: 0; display: grid; gap: 0; overflow: hidden; }
 .project-group.expanded > .project-children { grid-template-rows: 1fr; opacity: 1; transform: translateY(0); }
 .tree-item { position: relative; min-width: 0; }
-.project-row, .task-row, .chat-row { width: 100%; display: flex; align-items: center; gap: 8px; min-width: 0; background: transparent; color: var(--muted); border-radius: var(--sidebar-item-radius); cursor: pointer; text-align: left; }
+.project-row, .task-row, .chat-row { width: 100%; display: flex; align-items: center; gap: 8px; min-width: 0; background: transparent; color: var(--muted); border-radius: var(--sidebar-item-radius); cursor: pointer; text-align: left; transition: padding-right 120ms ease; }
 .project-row { padding: 5px 8px; color: var(--grey-800); font-weight: 500; }
-.task-row { padding: 4px 34px 4px 30px; font-size: 13.5px; }
-.chat-row { padding: 4px 34px 4px 9px; font-size: 13.5px; }
-.tree-item:has(.project-row) .project-row { padding-right: 62px; }
+.task-row { padding: 4px 9px 4px 30px; }
+.chat-row { padding: 4px 9px; }
+.tree-item:hover .task-row, .tree-item:focus-within .task-row, .tree-item:hover .chat-row, .tree-item:focus-within .chat-row { padding-right: 55px; }
+.tree-item:hover .project-row, .tree-item:focus-within .project-row { padding-right: 82px; }
 .project-row:hover, .task-row:hover, .chat-row:hover { background: var(--tint-5); color: var(--text); }
 .project-row.active, .task-row.active, .chat-row.active { background: var(--tint-6); color: var(--text); }
-.project-row span, .task-row span, .chat-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-row span, .task-row span, .chat-row span { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; -webkit-mask-image: linear-gradient(to right, black 0, black calc(100% - 6px), transparent 100%); mask-image: linear-gradient(to right, black 0, black calc(100% - 6px), transparent 100%); }
 .project-row svg, .task-row svg, .chat-row svg { flex: 0 0 auto; width: 14px; height: 14px; }
-.pin-indicator { position: absolute; z-index: 1; top: 50%; right: 9px; width: 14px; height: 14px; transform: translateY(-50%); fill: currentColor; stroke: currentColor; color: var(--grey-800); pointer-events: none; transition: opacity 120ms ease; }
-.tree-item:hover .pin-indicator, .tree-item:focus-within .pin-indicator { opacity: 0; }
+.pin-indicator { position: absolute; z-index: 1; top: 50%; right: 35px; width: 14px; height: 14px; transform: translateY(-50%); fill: currentColor; stroke: currentColor; color: var(--grey-800); pointer-events: none; opacity: 0; transition: opacity 120ms ease; }
+.tree-item:has(.project-row) .pin-indicator { right: 62px; }
+.tree-item:hover .pin-indicator, .tree-item:focus-within .pin-indicator { opacity: 1; }
 .tree-menu-toggle, .tree-quick-action { position: absolute; z-index: 2; top: 50%; width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border-radius: 7px; transform: translateY(-50%); background: transparent; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease; }
 .tree-menu-toggle { right: 4px; }
 .tree-quick-action { right: 31px; }

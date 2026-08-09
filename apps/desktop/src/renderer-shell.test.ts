@@ -199,7 +199,11 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".pinned-heading > span, .projects-heading > span, .chats-heading > span { color: var(--subtle); font-weight: 650; }");
     expect(html).not.toContain("<kbd>Ctrl N</kbd>");
     expect(styles).toContain(".project-tree { display: grid; gap: 1px; }");
-    expect(styles).toContain(".task-row { padding: 4px 34px 4px 30px;");
+    expect(styles).toContain(".section-heading, .project-row, .task-row, .chat-row { font-size: 13.5px; }");
+    expect(styles).toContain(".task-row { padding: 4px 9px 4px 30px; }");
+    expect(styles).toContain("mask-image: linear-gradient(to right, black 0, black calc(100% - 6px), transparent 100%)");
+    expect(styles).not.toContain(".project-row span, .task-row span, .chat-row span { overflow: hidden; text-overflow: ellipsis;");
+    expect(styles).toContain(".tree-item:hover .pin-indicator, .tree-item:focus-within .pin-indicator { opacity: 1; }");
     expect(tokensCss).toContain("--sidebar-item-radius: 7px");
     expect(styles).toContain("border-radius: var(--sidebar-item-radius)");
     expect(tokensCss).toContain("--grey-300: #303030");
@@ -691,7 +695,7 @@ describe("desktop renderer shell", () => {
     expect(projects).toContain('api("/api/v1/chats")');
     expect(projects).toContain("startChat(session: SessionRecord): void");
     expect(projects).toContain('else if (this.chatRecords.some((chat) => chat.id === id)) this.currentProjectIdValue = undefined');
-    expect(styles).toContain(".chat-row { padding: 4px 34px 4px 9px; font-size: 13.5px; }");
+    expect(styles).toContain(".chat-row { padding: 4px 9px; }");
     expect(styles).toContain(".pinned-heading > span, .projects-heading > span, .chats-heading > span { color: var(--subtle); font-weight: 650; }");
   });
 
