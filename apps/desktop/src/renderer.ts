@@ -209,6 +209,7 @@ const projectSidebar = new ProjectSidebarController({
   renameProject: (projectId, name) => void projects.renameProject(projectId, name),
   createProject: (name, rootPath) => { void projects.createProject(name, rootPath).then((created) => { if (created && projects.currentProjectId) openNewChatForProject(projects.currentProjectId); }); },
   chooseFolder: () => window.fitz.chooseFolder(),
+  onError: (error) => showStatus(errorMessage(error), "error"),
   archiveSession: (sessionId, projectId) => { projects.setCurrentProject(projectId); projects.setCurrentSession(sessionId); void projects.archiveCurrentTask(); },
   copyValue: (value, message) => void copyValue(value, message),
   continueSession: (session, projectId) => void projects.continueInNewChat(session, projectId),

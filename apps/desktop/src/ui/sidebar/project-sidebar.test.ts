@@ -22,7 +22,7 @@ function setup() {
   const menuElement = element<HTMLElement>("div", "sidebar-context-menu");
   menuElement.hidden = true;
   const calls = {
-    selectProject: vi.fn(), selectSession: vi.fn(), newChat: vi.fn(), openProjectPath: vi.fn(), createWorktree: vi.fn(), archiveProjectChats: vi.fn(), removeProject: vi.fn(), renameSession: vi.fn(), renameProject: vi.fn(), createProject: vi.fn(), chooseFolder: vi.fn(async () => undefined), archiveSession: vi.fn(), copyValue: vi.fn(), continueSession: vi.fn(), closePopovers: vi.fn(),
+    selectProject: vi.fn(), selectSession: vi.fn(), newChat: vi.fn(), openProjectPath: vi.fn(), createWorktree: vi.fn(), archiveProjectChats: vi.fn(), removeProject: vi.fn(), renameSession: vi.fn(), renameProject: vi.fn(), createProject: vi.fn(), chooseFolder: vi.fn(async () => undefined), onError: vi.fn(), archiveSession: vi.fn(), copyValue: vi.fn(), continueSession: vi.fn(), closePopovers: vi.fn(),
   };
   const controller = new ProjectSidebarController({ mount: tree, chatsMount: chatsTree, ...calls });
   return { controller, tree, chatsTree, menuElement, calls };
@@ -163,6 +163,23 @@ describe("ProjectSidebarController", () => {
 
     expect(calls.createProject).toHaveBeenCalledWith("my-app", "/home/user/my-app");
     expect(backdrop.hidden).toBe(true);
+  });
+
+  it("reports a rejected folder picker and restores its control", async () => {
+    const { controller, calls } = setup();
+    const failure = new Error("Picker unavailable");
+    calls.chooseFolder.mockRejectedValueOnce(failure);
+    controller.render(state());
+    controller.beginCreateProject();
+    const choose = dialog().querySelector<HTMLButtonElement>(".create-project-choose")!;
+
+    click(choose);
+    expect(choose.disabled).toBe(true);
+    await flush();
+
+    expect(calls.onError).toHaveBeenCalledWith(failure);
+    expect(choose.disabled).toBe(false);
+    expect(dialog().hidden).toBe(false);
   });
 
   it("submits the dialog with Enter and keeps the chosen folder", async () => {
@@ -339,7 +356,7 @@ describe("ProjectSidebarController", () => {
     const options: ProjectSidebarOptions = {
       mount: tree,
       chatsMount: element<HTMLElement>("nav", "chats"),
-      selectProject: vi.fn(), selectSession: vi.fn(), newChat: vi.fn(), openProjectPath: vi.fn(), createWorktree: vi.fn(), archiveProjectChats: vi.fn(), removeProject: vi.fn(), renameSession: vi.fn(), renameProject: vi.fn(), createProject: vi.fn(), chooseFolder: vi.fn(async () => undefined), archiveSession: vi.fn(), copyValue: vi.fn(), continueSession: vi.fn(), closePopovers: vi.fn(),
+      selectProject: vi.fn(), selectSession: vi.fn(), newChat: vi.fn(), openProjectPath: vi.fn(), createWorktree: vi.fn(), archiveProjectChats: vi.fn(), removeProject: vi.fn(), renameSession: vi.fn(), renameProject: vi.fn(), createProject: vi.fn(), chooseFolder: vi.fn(async () => undefined), onError: vi.fn(), archiveSession: vi.fn(), copyValue: vi.fn(), continueSession: vi.fn(), closePopovers: vi.fn(),
     };
     expect(() => new ProjectSidebarController(options)).toThrow("Missing #sidebar-context-menu");
   });

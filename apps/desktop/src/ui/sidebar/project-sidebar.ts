@@ -46,6 +46,7 @@ export interface ProjectSidebarOptions {
   renameProject: (projectId: string, name: string) => Promise<void> | void;
   createProject: (name: string, rootPath: string | undefined) => Promise<void> | void;
   chooseFolder: () => Promise<string | undefined>;
+  onError: (error: unknown) => void;
   archiveSession: (sessionId: string, projectId: string | undefined) => void;
   copyValue: (value: string, message: string) => void;
   continueSession: (session: ProjectSidebarSession, projectId?: string) => void;
@@ -425,13 +426,20 @@ export class ProjectSidebarController {
     const folderLabel = document.createElement("span"); folderLabel.className = "create-project-folder-label"; folderLabel.textContent = "No folder selected";
     const folderButton = document.createElement("button"); folderButton.type = "button"; folderButton.className = "create-project-choose"; folderButton.textContent = "Choose folder…";
     folderButton.addEventListener("click", async () => {
-      const path = await this.#options.chooseFolder();
-      if (!path || !this.#creatingProject) return;
-      this.#creatingProject.rootPath = path;
-      folderLabel.textContent = path;
-      folderLabel.title = path;
-      folderRow.classList.add("has-folder");
-      if (!name.value.trim()) name.value = path.split(/[\\/]/).filter(Boolean).at(-1) ?? "Project";
+      folderButton.disabled = true;
+      try {
+        const path = await this.#options.chooseFolder();
+        if (!path || !this.#creatingProject) return;
+        this.#creatingProject.rootPath = path;
+        folderLabel.textContent = path;
+        folderLabel.title = path;
+        folderRow.classList.add("has-folder");
+        if (!name.value.trim()) name.value = path.split(/[\\/]/).filter(Boolean).at(-1) ?? "Project";
+      } catch (error) {
+        this.#options.onError(error);
+      } finally {
+        folderButton.disabled = false;
+      }
     });
     folderRow.append(folderLabel, folderButton);
 

@@ -349,6 +349,53 @@ describe("ModelsPageController", () => {
     expect(page.querySelector("#downloaded-models")?.textContent).toContain("model.Q4_K_M.gguf");
   });
 
+  it("restores the Download action when host polling reports failure", async () => {
+    vi.useFakeTimers();
+    const api = vi.fn(async (path: string, method?: string) => {
+      if (method === "POST" && path === "/api/v1/management/models/download") {
+        return { data: { id: "d1", repoId: "org/model", fileName: "model.Q4_K_M.gguf", received: 0, total: 100, status: "active" } };
+      }
+      if (path === "/api/v1/management/models/downloads/d1") {
+        return { data: { id: "d1", repoId: "org/model", fileName: "model.Q4_K_M.gguf", received: 20, total: 100, status: "failed", error: "Disk full" } };
+      }
+      if (path === "/api/v1/management/models/downloaded" || path === "/api/v1/management/models/downloads") return { data: [] };
+      return { data: { total: 1, models: [{ id: "org/model", downloads: 10, likes: 2 }] } };
+    });
+    const { controller, page, calls } = setup(api);
+    await controller.load();
+    const download = page.querySelector<HTMLButtonElement>("#model-catalog .model-action")!;
+    click(download);
+    click(download);
+    await vi.advanceTimersByTimeAsync(0);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(calls.showStatus).toHaveBeenCalledWith("Disk full", "error");
+    expect(page.querySelector("#model-catalog .model-progress")).toBeNull();
+    expect(page.querySelector("#model-catalog .model-action")?.textContent).toBe("Download");
+  });
+
+  it("restores the Download action when polling itself fails", async () => {
+    vi.useFakeTimers();
+    const api = vi.fn(async (path: string, method?: string) => {
+      if (method === "POST" && path === "/api/v1/management/models/download") {
+        return { data: { id: "d1", repoId: "org/model", fileName: "model.Q4_K_M.gguf", received: 0, total: 100, status: "active" } };
+      }
+      if (path === "/api/v1/management/models/downloads/d1") throw new Error("Host disconnected");
+      if (path === "/api/v1/management/models/downloaded" || path === "/api/v1/management/models/downloads") return { data: [] };
+      return { data: { total: 1, models: [{ id: "org/model", downloads: 10, likes: 2 }] } };
+    });
+    const { controller, page, calls } = setup(api);
+    await controller.load();
+    const download = page.querySelector<HTMLButtonElement>("#model-catalog .model-action")!;
+    click(download);
+    click(download);
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(calls.showStatus).toHaveBeenCalledWith("Host disconnected", "error");
+    expect(page.querySelector("#model-catalog .model-action")?.textContent).toBe("Download");
+  });
+
   it("cancels an active download and restores the Download action", async () => {
     vi.useFakeTimers();
     const api = vi.fn(async (path: string, method?: string) => {

@@ -318,7 +318,10 @@ export class ModelCatalogController {
     cancel.className = "model-progress-cancel";
     cancel.title = "Cancel download";
     cancel.textContent = "Cancel";
-    cancel.addEventListener("click", () => void this.cancelDownload(repoId));
+    cancel.addEventListener("click", () => {
+      cancel.disabled = true;
+      void this.cancelDownload(repoId).finally(() => { if (cancel.isConnected) cancel.disabled = false; });
+    });
     copy.append(label, cancel);
     wrapper.append(track, copy);
     return wrapper;
@@ -341,10 +344,14 @@ export class ModelCatalogController {
           this.options.showStatus(`Downloaded ${record.fileName}`, "success");
           await this.load(false);
         } else if (record.status === "failed") {
+          this.downloads.delete(repoId);
+          this.renderCatalog();
           this.options.showStatus(record.error ?? "Download failed", "error");
         }
       } catch (error) {
         this.pollTimers.delete(repoId);
+        this.downloads.delete(repoId);
+        this.renderCatalog();
         this.options.showStatus(this.options.errorMessage(error), "error");
       }
     }, this.pollIntervalMs);
