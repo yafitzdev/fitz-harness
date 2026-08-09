@@ -12,13 +12,14 @@ import {
   type VideoGenerationResponse,
 } from "@fitz/protocol";
 import { SecurityPolicyError, type AuthenticatedPrincipal, type SecurityService } from "@fitz/security";
-import type { MediaJobEventEnvelope, SqliteStore } from "@fitz/storage";
+import type { ArtifactRepository, MediaJobEventEnvelope, SqliteStore } from "@fitz/storage";
 import { MediaJobCoordinator } from "./media-jobs.js";
 
 export interface RegisterMediaRoutesOptions {
   app: FastifyInstance;
   store: SqliteStore;
   mediaJobs: MediaJobCoordinator;
+  artifacts: ArtifactRepository;
   principals: WeakMap<object, AuthenticatedPrincipal>;
   security?: SecurityService;
   imageTimeoutMs: number;
@@ -26,7 +27,7 @@ export interface RegisterMediaRoutesOptions {
 
 /** Owns the durable media-job API and the OpenAI-shaped media gateways. */
 export function registerMediaRoutes(options: RegisterMediaRoutesOptions): void {
-  const { app, store, mediaJobs, principals, security, imageTimeoutMs } = options;
+  const { app, store, artifacts, mediaJobs, principals, security, imageTimeoutMs } = options;
 
   app.post("/api/v1/media/jobs", async (request, reply) => {
     try {
@@ -152,7 +153,7 @@ export function registerMediaRoutes(options: RegisterMediaRoutesOptions): void {
       const terminal = await awaitMediaJob(mediaJobs, job.id, imageTimeoutMs);
       if (terminal.status === "completed" && terminal.artifactId) {
         const artifact = store.getArtifact(terminal.artifactId);
-        const bytes = artifact ? store.getArtifactContent(artifact.id) : undefined;
+        const bytes = artifact ? await artifacts.read(artifact.id) : undefined;
         if (!artifact || !bytes) throw new Error("Generated artifact is missing");
         const response: ImageGenerationResponse = {
           created: Math.floor(Date.now() / 1000),

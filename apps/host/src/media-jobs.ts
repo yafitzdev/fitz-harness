@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { Readable } from "node:stream";
 import type {
   ArtifactRecord,
   MediaGenerationParams,
@@ -11,7 +12,7 @@ import type {
 } from "@fitz/protocol";
 import type { InferenceScheduler, RouteResolver, ScheduledMediaJob } from "@fitz/inference-core";
 import { SecurityPolicyError, type AuthenticatedPrincipal, type SecurityService } from "@fitz/security";
-import type { MediaJobEventEnvelope, SqliteStore } from "@fitz/storage";
+import { BlobSizeLimitError, type ArtifactRepository, type BlobSource, type MediaJobEventEnvelope, type SqliteStore } from "@fitz/storage";
 import { classifyArtifact, normalizeMimeType } from "@fitz/media";
 
 export interface MediaSubmitInput {
@@ -24,6 +25,7 @@ export interface MediaSubmitInput {
 
 export interface MediaJobCoordinatorOptions {
   store: SqliteStore;
+  artifacts: ArtifactRepository;
   scheduler: InferenceScheduler;
   routes: RouteResolver;
   security?: SecurityService;
@@ -52,6 +54,7 @@ export class ArtifactTooLargeError extends Error {
  *  (recoverInterruptedMediaJobs runs at host boot, outside this class). */
 export class MediaJobCoordinator {
   readonly #store: SqliteStore;
+  readonly #artifacts: ArtifactRepository;
   readonly #scheduler: InferenceScheduler;
   readonly #routes: RouteResolver;
   readonly #security: SecurityService | undefined;
@@ -60,6 +63,7 @@ export class MediaJobCoordinator {
 
   constructor(options: MediaJobCoordinatorOptions) {
     this.#store = options.store;
+    this.#artifacts = options.artifacts;
     this.#scheduler = options.scheduler;
     this.#routes = options.routes;
     this.#security = options.security;
@@ -180,8 +184,8 @@ export class MediaJobCoordinator {
               completedAt: now,
             });
             // Persist completion metadata, not a second JSON expansion of the
-            // complete media byte array. The artifact BLOB is the sole durable
-            // content copy; replay only needs the terminal state and artifact id.
+            // complete media byte array. The external artifact object is the sole
+            // durable content copy; replay only needs terminal state + artifact id.
             this.#appendEvent(id, {
               type: "completed",
               result: {
@@ -214,20 +218,18 @@ export class MediaJobCoordinator {
     return (async () => {
       const job = this.#store.getMediaJob(id);
       if (!job) throw new Error(`Media job not found: ${id}`);
-      const bytes = await resolveResultBytes(result);
       const limit = this.#artifactLimit(job.modality);
-      if (bytes.byteLength > limit) throw new ArtifactTooLargeError(job.modality, bytes.byteLength, limit);
+      const source = await resolveResultSource(result);
       const mimeType = normalizeMimeType(result.mimeType);
       const extension = extensionFor(mimeType);
       const name = `${id}${extension}`;
-      const artifact: ArtifactRecord = {
+      try {
+      return await this.#artifacts.create({
         id: randomUUID(),
         sessionId: job.sessionId ?? this.#syntheticSession(job),
         name,
         mimeType,
         kind: classifyArtifact(mimeType, name),
-        byteSize: bytes.byteLength,
-        sha256: createHash("sha256").update(bytes).digest("hex"),
         createdAt: new Date().toISOString(),
         ...(job.createdByUserId ? { createdByUserId: job.createdByUserId } : {}),
         metadata: {
@@ -238,9 +240,11 @@ export class MediaJobCoordinator {
           ...(result.height !== undefined ? { height: result.height } : {}),
           ...(result.durationSeconds !== undefined ? { durationSeconds: result.durationSeconds } : {}),
         },
-      };
-      this.#store.createArtifact(artifact, bytes);
-      return artifact;
+      }, source, { maxBytes: limit });
+      } catch (error) {
+        if (error instanceof BlobSizeLimitError) throw new ArtifactTooLargeError(job.modality, error.byteSize, limit);
+        throw error;
+      }
     })();
   }
 
@@ -330,11 +334,12 @@ export function creditCostCentsFor(recipe: Recipe): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
-async function resolveResultBytes(result: MediaGenerationResult): Promise<Uint8Array> {
+async function resolveResultSource(result: MediaGenerationResult): Promise<BlobSource> {
   if (result.data instanceof Uint8Array) return result.data;
   const response = await fetch(result.data.url, { signal: AbortSignal.timeout(60_000) });
   if (!response.ok) throw new Error(`Failed to download media result (HTTP ${response.status})`);
-  return new Uint8Array(await response.arrayBuffer());
+  if (!response.body) throw new Error("Media result has no response body");
+  return Readable.fromWeb(response.body as import("node:stream/web").ReadableStream<Uint8Array>);
 }
 
 function extensionFor(mimeType: string): string {

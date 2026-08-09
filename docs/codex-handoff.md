@@ -94,7 +94,7 @@ Order matters; the code is done, the deployment is not.
 - VRAM: user has **32 GB**; governor reserve 2048 MiB.
 - Single-assignment routes (a route points at exactly one recipe).
 - OQ-1 resolved: `ModelCatalogService` stays GGUF-only; catalog pipeline tags (`text-to-video`, `image-generation`) are a **follow-up**, not this work.
-- OQ-4 (design doc): artifact BLOBs stay behind the repository contract in SQLite for now; a content-addressed file store is future work (comment in `sqlite-store.ts`).
+- OQ-4 resolved: SQLite stores artifact metadata and opaque object references only. Payloads live in the content-addressed artifact directory beneath Fitz's data root and pre-v12 BLOBs migrate automatically at host startup.
 
 ## Suggested first prompt for Codex
 

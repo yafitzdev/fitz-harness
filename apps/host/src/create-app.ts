@@ -39,7 +39,7 @@ import {
 } from "@fitz/protocol";
 import { MetricsRegistry, redactSecrets } from "@fitz/observability";
 import { DEFAULT_QUOTAS, SecurityPolicyError, SecurityService, type AuthenticatedPrincipal } from "@fitz/security";
-import { SqliteStore } from "@fitz/storage";
+import { ArtifactRepository, MemoryBlobStore, SqliteStore } from "@fitz/storage";
 import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
 import { DownloadNotFoundError, type ModelCatalogService } from "./model-catalog.js";
 import { AgentRunCoordinator } from "./agent-runs.js";
@@ -133,6 +133,7 @@ export interface CreateHostOptions {
   modelCatalog?: ModelCatalogService;
   /** The host safety layer (policy engine, snapshots, trash, redaction). Optional so tests can run without it. */
   safety?: AgentSafetyService;
+  artifacts?: ArtifactRepository;
 }
 
 export interface HostRuntime {
@@ -149,6 +150,7 @@ export interface HostRuntime {
   security?: SecurityService;
   fakeAdapter?: FakeEngineAdapter;
   safety?: AgentSafetyService;
+  artifacts: ArtifactRepository;
 }
 
 export function createHost(options: CreateHostOptions = {}): HostRuntime {
@@ -171,6 +173,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     bodyLimit: 8 * 1024 * 1024,
   });
   const store = options.store ?? SqliteStore.memory();
+  const artifacts = options.artifacts ?? new ArtifactRepository(store, new MemoryBlobStore());
   const authMode = options.authMode ?? "disabled";
   const security = options.security ?? (authMode === "required" ? new SecurityService(store, options.authPepper ?? "") : undefined);
   const recoveredInterruptedRequests = store.recoverInterruptedRequests();
@@ -241,7 +244,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   void Promise.allSettled(localRecipes.map((recipe) => lifecycle.prepare(recipe)));
   const scheduler = new InferenceScheduler(routes, lifecycle, events);
   const agentRuns = new AgentRunCoordinator(store, scheduler, options.agentRuntime, options.safety ? (runId) => void options.safety!.collect().catch(() => undefined) : undefined);
-  const mediaJobs = new MediaJobCoordinator({ store, scheduler, routes, ...(security ? { security } : {}) });
+  const mediaJobs = new MediaJobCoordinator({ store, artifacts, scheduler, routes, ...(security ? { security } : {}) });
   const mediaImageTimeoutMs = options.mediaImageTimeoutMs ?? 120_000;
   const context = options.contextManager ?? new ContextManager(store);
   const tailscale = options.tailscaleMonitor ?? new TailscaleMonitor();
@@ -462,6 +465,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     app,
     store,
     mediaJobs,
+    artifacts,
     principals,
     ...(security ? { security } : {}),
     imageTimeoutMs: mediaImageTimeoutMs,
@@ -470,6 +474,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   registerWorkspaceRoutes({
     app,
     store,
+    artifacts,
     routes,
     context,
     ...(security ? { security } : {}),
@@ -959,6 +964,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   return {
     app,
     store,
+    artifacts,
     routes,
     events,
     lifecycle,

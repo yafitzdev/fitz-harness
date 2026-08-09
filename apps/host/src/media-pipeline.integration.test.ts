@@ -69,7 +69,7 @@ describe("Fitz media generation pipeline", () => {
       const artifact = runtime.store.getArtifact(job!.artifactId!);
       expect(artifact).toBeDefined();
       expect(artifact).toMatchObject({ kind: "image", mimeType: "image/png" });
-      expect([...runtime.store.getArtifactContent(artifact!.id)!]).toEqual([
+      expect([...(await runtime.artifacts.read(artifact!.id))!]).toEqual([
         ...deterministicMediaBytes("image"),
       ]);
 
@@ -106,7 +106,7 @@ describe("Fitz media generation pipeline", () => {
       // and the artifact content came from the host-side fetch of the result.
       const artifact = runtime.store.getArtifact(artifactId!);
       expect(artifact).toMatchObject({ kind: "image", mimeType: "image/png" });
-      expect([...runtime.store.getArtifactContent(artifactId!)!]).toEqual([
+      expect([...(await runtime.artifacts.read(artifactId!))!]).toEqual([
         ...deterministicMediaBytes("image"),
       ]);
 

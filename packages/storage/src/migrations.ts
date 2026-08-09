@@ -356,4 +356,37 @@ export const MIGRATIONS: readonly Migration[] = [
         ON agent_run_state(client_request_id) WHERE client_request_id IS NOT NULL;
     `,
   },
+  {
+    version: 12,
+    // Artifact payloads are deliberately outside SQLite. The database owns
+    // searchable metadata and an opaque object reference; a short-lived legacy
+    // table lets ArtifactRepository migrate pre-v12 BLOBs without data loss.
+    sql: `
+      ALTER TABLE artifacts RENAME TO artifacts_legacy;
+      DROP INDEX IF EXISTS idx_artifacts_session;
+      CREATE TABLE artifacts (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        byte_size INTEGER NOT NULL,
+        sha256 TEXT NOT NULL,
+        storage_backend TEXT NOT NULL,
+        object_key TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        created_by_user_id TEXT,
+        metadata_json TEXT NOT NULL DEFAULT '{}'
+      );
+      INSERT INTO artifacts (
+        id, session_id, name, mime_type, kind, byte_size, sha256,
+        storage_backend, object_key, created_at, created_by_user_id, metadata_json
+      ) SELECT
+        id, session_id, name, mime_type, kind, byte_size, sha256,
+        'legacy-sqlite', id, created_at, created_by_user_id, metadata_json
+      FROM artifacts_legacy;
+      CREATE INDEX idx_artifacts_session ON artifacts(session_id, created_at DESC);
+      CREATE INDEX idx_artifacts_object ON artifacts(storage_backend, object_key);
+    `,
+  },
 ] as const;

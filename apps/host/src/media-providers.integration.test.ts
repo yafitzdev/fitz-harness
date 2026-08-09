@@ -58,7 +58,7 @@ describe("Fitz media provider templates", () => {
       const imageArtifactId = artifactIdFrom(imageResponse.json().data[0].url);
       const imageArtifact = runtime.store.getArtifact(imageArtifactId);
       expect(imageArtifact).toMatchObject({ kind: "image", mimeType: "image/png" });
-      expect([...runtime.store.getArtifactContent(imageArtifactId)!]).toEqual([...deterministicMediaBytes("image")]);
+      expect([...(await runtime.artifacts.read(imageArtifactId))!]).toEqual([...deterministicMediaBytes("image")]);
 
       // Async video: 202 + job id, then the provider poll machine drives it to completed.
       const videoModel = saved.mediaModels.find((model: { modality: string }) => model.modality === "video");
@@ -139,7 +139,7 @@ describe("Fitz media provider templates", () => {
       });
       expect(imageResponse.statusCode, imageResponse.body).toBe(200);
       const artifactId = artifactIdFrom(imageResponse.json().data[0].url);
-      expect([...runtime.store.getArtifactContent(artifactId)!]).toEqual([...deterministicMediaBytes("image")]);
+      expect([...(await runtime.artifacts.read(artifactId))!]).toEqual([...deterministicMediaBytes("image")]);
 
       // Re-save with only the video model: the image recipe disappears and the
       // well-known route is de-assigned (never left dangling, §5.7).
@@ -197,7 +197,7 @@ describe("Fitz media provider templates", () => {
       const artifactId = artifactIdFrom(response.json().data[0].url);
       const artifact = runtime.store.getArtifact(artifactId);
       expect(artifact).toMatchObject({ kind: "image", mimeType: "image/png" });
-      expect([...runtime.store.getArtifactContent(artifactId)!]).toEqual([...deterministicMediaBytes("image")]);
+      expect([...(await runtime.artifacts.read(artifactId))!]).toEqual([...deterministicMediaBytes("image")]);
     } finally {
       await runtime.app.close();
       await fixture.stop();
@@ -250,7 +250,7 @@ describe("Fitz media provider templates", () => {
       expect(data.artifactUrl).toMatch(/\/api\/v1\/artifacts\/.+\/content$/);
       const artifact = runtime.store.getArtifact(data.artifactId);
       expect(artifact).toMatchObject({ kind: "image", mimeType: "image/png" });
-      expect([...runtime.store.getArtifactContent(data.artifactId)!]).toEqual([...deterministicMediaBytes("image")]);
+      expect([...(await runtime.artifacts.read(data.artifactId))!]).toEqual([...deterministicMediaBytes("image")]);
 
       // A chat-only recipe is rejected: 400, not a probe.
       const chatModel = saved.models[0];

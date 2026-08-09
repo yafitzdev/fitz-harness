@@ -746,7 +746,7 @@ describe("Fitz host", () => {
     await runtime.app.close(); });
 
   it("rejects range requests against empty artifact content", async () => { const runtime = createHost(); const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Empty" } }); const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "Empty" } }); const sessionId = session.json().data.id;
-    runtime.store.createArtifact({ id: "empty-artifact", sessionId, name: "empty.bin", mimeType: "application/octet-stream", kind: "binary", byteSize: 0, sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", createdAt: new Date().toISOString(), metadata: {} }, new Uint8Array(0));
+    await runtime.artifacts.create({ id: "empty-artifact", sessionId, name: "empty.bin", mimeType: "application/octet-stream", kind: "binary", createdAt: new Date().toISOString(), metadata: {} }, new Uint8Array(0));
     const ranged = await runtime.app.inject({ method: "GET", url: "/api/v1/artifacts/empty-artifact/content", headers: { range: "bytes=0-0" } }); expect(ranged.statusCode).toBe(416); expect(ranged.headers["content-range"]).toBe("bytes */0");
     const full = await runtime.app.inject({ method: "GET", url: "/api/v1/artifacts/empty-artifact/content" }); expect(full.statusCode).toBe(200); expect(full.body).toBe(""); await runtime.app.close(); });
 

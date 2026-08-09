@@ -36,7 +36,7 @@ The single biggest hidden cost is that **cloud media APIs are not OpenAI-compati
 - `apps/host/src/create-app.ts` exposes `GET /v1/models`, `POST /v1/chat/completions`, the native agent-run API, management endpoints (`PUT /api/v1/management/routes/:id`, recipe test), and the consumer-connection flow: `PUT /api/v1/management/connections/:connectionId` → `OpenAICompatibleClient.listModels` → filter `supportsChatCompletions` → create recipes (`playbookId: consumer-<id>`, `adapter: "openai-compatible"`) → register routes `consumer--<connection>--<hash>`.
 - `apps/desktop/src/ui/connections/connection-workspace.ts` renders the Connections tab with `FIXED_ROUTES` (fast/default/smart) toggles that `PUT /api/v1/management/routes/:id`.
 - `packages/media/src/registry.ts` already classifies `image`/`audio`/`video`/`pdf`/`code`/`text`/`binary`; the Inspector renders artifacts via `data:<mime>;base64,<payload>` (`apps/desktop/src/ui/inspector/resource-inspector.ts:130–134`).
-- `packages/storage/src/sqlite-store.ts` stores artifacts as SQLite BLOBs with SHA-256, MIME classification, and ownership; the only **media-relevant** hard caps today are at the HTTP boundaries (5 MB artifact upload cap in `create-app.ts`, 10 MB binary-preview cap in `apps/desktop/src/resource-preview.ts` for **local-file** previews). Other hard caps exist but do not constrain media artifacts: a 2 MiB text-preview cap (`MAX_TEXT_PREVIEW_BYTES`, resource-preview.ts) and the Fastify `bodyLimit` of 8 MiB (sized to fit a 5 MB artifact as padded base64, create-app.ts). Generated media is created server-side through the coordinator (§5.11), so none of these HTTP-boundary caps apply to it.
+- `ArtifactRepository` stores SHA-256, MIME classification, ownership, and an opaque object reference in SQLite while payloads live in the managed content-addressed directory. The 5 MB HTTP upload cap still applies to user uploads; generated media uses coordinator-enforced kind-aware caps (§5.11) and streams directly into the blob backend.
 - Security: administrator/agent/consumer roles, per-user route grants (`route.use:<id>`), `UserQuota` (`packages/protocol/src/security.ts`), tool approval gating (Full access / Ask first / Read only), secrets in credential env vars (never in recipes).
 
 **Pain points driving the change:**
@@ -361,7 +361,7 @@ submit(request, principal)
   ├─ scheduler.enqueueMedia(routeId, request) → ScheduledMediaJob
   ├─ subscribe: persist status/progress transitions
   │             on completed → resolve result.data to bytes (fetch provider URL or decode b64)
-  │                           → store.createArtifact(artifact, bytes)   // kind-aware size cap §5.11
+  │                           → artifacts.create(draft, stream)         // external SHA-256 object, kind-aware cap §5.11
   │                           → attach artifactId, status=completed
   │             on failed/cancelled → persist errorCode/status
   ├─ return 202 { job }
@@ -500,7 +500,7 @@ export interface UserQuota {
 ### 5.11 Artifacts & Inspector: large media
 
 - Generated media writes through `SqliteStore.createArtifact` (sha-256, MIME, ownership) with **kind-aware size caps** enforced by the coordinator (bypassing the 5 MB HTTP upload cap): image ≤ 25 MiB, audio ≤ 200 MiB, video ≤ 1 GiB (defaults; configurable via a `mediaArtifactLimits` setting). Exceeding a cap fails the job with `errorCode: "artifact_too_large"` instead of writing.
-- Storage note: artifact content currently lives as a SQLite BLOB (`artifacts.content`, migrations.ts v5). Tens-of-MB BLOBs are acceptable in WAL mode for v1; DESIGN.md §16.1 already calls for a managed content directory for large binaries — a content-addressed file store behind the same repository contract is the follow-up (OQ-4). The DB-to-file move is invisible to callers because everything already goes through `store.createArtifact` / `getArtifactContent`.
+- Storage note: artifact payloads live in an immutable SHA-256-addressed directory beneath the Fitz data root. SQLite contains searchable metadata plus `storage_backend` / `object_key`; migration v12 moves existing BLOBs at startup, verifies their digest and size, and drops the legacy payload table only after success. Identical payloads deduplicate and HTTP range reads stream directly from the object file.
 - **Inspector**: the 10 MB cap in `apps/desktop/src/resource-preview.ts` (`MAX_BINARY_PREVIEW_BYTES`) applies to *local project-file* previews (`fitz:preview-resource`). Generated-artifact previews instead fetch `GET /api/v1/artifacts/:id/content` as base64 over the `fitz:request` IPC bridge (resource-inspector.ts:116) and render via `data:<mime>;base64,<payload>` (lines 130–134) — no hard cap today, but base64-over-IPC for 2K/15s video (tens of MB, ~4/3 expansion in renderer memory) is heavy. v1 changes:
   1. Raise `MAX_BINARY_PREVIEW_BYTES` for video/audio MIME to ~150–250 MiB (local-file previews of generated outputs in agent tool rows).
   2. Add `Range` request support to `GET /api/v1/artifacts/:artifactId/content` (slice the BLOB) so a later direct-`src`/streaming path and seeking work; v1 continues to use whole-file base64 for `<video>` playback (a blob URL of the complete file plays fine in Chromium).
@@ -539,7 +539,7 @@ sequenceDiagram
     end
     E-->>L: completed(result)
     L-->>H: completed event
-    H->>A: store.createArtifact(artifact, bytes) → artifactId
+    H->>A: artifacts.create(metadata, stream) → artifactId + object reference
     H-->>P: tool result { mediaJobId, status, artifactId }
     H-->>I: artifact.available (artifact repository)
     I->>A: GET /api/v1/artifacts/:id/content (base64, size-capped)
@@ -660,7 +660,7 @@ Notes:
 - `media_job_events` mirrors `agent_events` (PK `(job_id, sequence)`); `SqliteStore` gains `appendMediaJobEvent / mediaJobEventsAfter(jobId, after)` so the SSE replay endpoint reads rows in sequence order with After / Last-Event-ID semantics.
 - `sessions.route_id` CHECK stays `fast|default|smart` — sessions remain chat-only; media jobs carry their route id independently.
 - `SqliteStore` gains `createMediaJob / getMediaJob / updateMediaJob / listMediaJobs / mediaJobsByOwner / recoverInterruptedMediaJobs / appendMediaCredit` mirroring the `agent_runs`/`inference_requests` methods.
-- Artifact BLOB content stays in `artifacts.content` for v1 (§5.11); the content-directory migration is additive when it lands.
+- Artifact payloads use the external content-addressed store (§5.11); SQLite is metadata-only and remains the durable owner of artifact UUIDs and access metadata.
 
 ---
 
@@ -722,7 +722,7 @@ Notes:
 | **Agent media tool deadlock** (blocking on a queued job behind the agent's own chat job) | High | KD-12: tools return a `mediaJobId` immediately; never await job completion inside `execute`. |
 | **Provider API drift** (fal/Replicate shapes change) | Medium | `MediaProvider` templates are the containment boundary; fixture-server tests per template (mirroring `fixtures/openai/chat-completion.json`); `defaultPollIntervalMs` + status normalization isolate drift. |
 | **Large video through base64 IPC** (memory + latency) | Medium | Kind-aware caps; raised video/audio preview caps; Range support on the content endpoint; blob-URL playback of whole files is acceptable for v1. |
-| **SQLite BLOB growth** (tens-of-MB videos in `artifacts.content`) | Medium | Kind-aware size caps; documented content-directory migration path (DESIGN.md §16.1); v1 caps keep worst-case DB growth bounded. |
+| **Artifact object growth** | Medium | Kind-aware size caps, SHA-256 deduplication, reference-aware deletion, and startup orphan collection keep the managed content directory bounded and repairable. |
 | **Orphaned cloud jobs after host restart** (job keeps running on fal/Replicate, still bills) | Medium | `providerJobId` persisted; follow-up issues provider cancels on startup; v1 marks jobs `interrupted` and documents the residual cost risk. |
 | **Credit accounting drift** (provider pricing changes) | Low | Manual `costCentsPerJob` per recipe; audit ledger; admin-adjustable. |
 
@@ -733,7 +733,7 @@ Notes:
 - **OQ-1 — RESOLVED (v1, KD-13)**: H3 weights live under `.llm/models/comfyui`; the upstream checkout remains clean under `.llm/engines/ComfyUI`, its venv is `.llm/runtimes/comfyui`, and an external YAML points ComfyUI at the model registry. `ModelCatalogService` remains GGUF/text-generation-only for now.
 - **OQ-2**: Content moderation policy for local-engine output. Cloud providers have terms; local H3 is unmoderated. Options: none (admin owns it), post-generation classifier hook, or provider-side moderation flags. Not required for v1.
 - **OQ-3**: Cloud jobs in the GPU-free side lane. v1 routes all media through the shared FIFO (KD-9); a follow-up could run provider jobs off-queue (they never acquire the lifecycle lease) while keeping queue-position reporting. This is also the *primary* mitigation for the recipe-switch eviction side effect (§5.5) — deprioritizing it would leave chat cold-reloading after every cloud media job. Decide after real usage data.
-- **OQ-4**: Content-addressed artifact file store (DESIGN.md §16.1) vs. SQLite BLOB. v1 keeps BLOB with caps; the file store lands as an additive storage change when video usage grows.
+- **OQ-4 — RESOLVED**: payloads use the content-addressed local blob backend; SQLite stores metadata and opaque references. The backend interface is intentionally compatible with a future S3 implementation.
 - **OQ-5**: Ship `media_job_status` read-only tool in v1 or defer? It improves agent UX (the agent can report "your video is 60% done") at the cost of one more tool to gate; default defer unless the UX pass demands it.
 - **OQ-6**: Audio route timing — H3 natively outputs audio, but audio as a user-facing route/tool is deferred (KD-6). Revisit after video ships.
 

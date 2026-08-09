@@ -1,10 +1,10 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { RouteNotFoundError, type RouteResolver } from "@fitz/inference-core";
 import { classifyArtifact, normalizeMimeType } from "@fitz/media";
 import type { SessionRecord } from "@fitz/protocol";
 import type { AuthenticatedPrincipal, SecurityService } from "@fitz/security";
-import type { SqliteStore } from "@fitz/storage";
+import type { ArtifactRepository, SqliteStore } from "@fitz/storage";
 import type { ContextManager } from "@fitz/context";
 
 const LOCAL_CONNECTION_ID = "hosted--local";
@@ -14,6 +14,7 @@ const MEDIA_TOOL_NAMES = new Set(["generate_image", "generate_video", "generate_
 export interface WorkspaceRouteOptions {
   app: FastifyInstance;
   store: SqliteStore;
+  artifacts: ArtifactRepository;
   routes: RouteResolver;
   context: ContextManager;
   security?: SecurityService;
@@ -22,7 +23,7 @@ export interface WorkspaceRouteOptions {
 }
 
 export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
-  const { app, store, routes, context, security, principals } = options;
+  const { app, store, artifacts, routes, context, security, principals } = options;
   const principalFor = (request: object) => principals.get(request);
   const sessionFor = (sessionId: string) => store.getSession(sessionId);
   const canAccess = (ownerUserId: string | undefined, request: object) => canAccessOwner(principalFor(request), ownerUserId);
@@ -212,19 +213,16 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
       const mimeType = normalizeMimeType(requireString(body.mimeType, "mimeType"));
       const content = decodeBase64(body.contentBase64);
       if (content.byteLength > 5_000_000) throw new TypeError("Artifact exceeds the 5000000 byte limit");
-      const artifact = {
+      const artifact = await artifacts.create({
         id: randomUUID(),
         sessionId: session.id,
         name,
         mimeType,
         kind: classifyArtifact(mimeType, name),
-        byteSize: content.byteLength,
-        sha256: createHash("sha256").update(content).digest("hex"),
         createdAt: new Date().toISOString(),
         metadata: isRecord(body.metadata) ? body.metadata : {},
         ...(principal ? { createdByUserId: principal.user.id } : {}),
-      };
-      store.createArtifact(artifact, content);
+      }, content, { maxBytes: 5_000_000 });
       security?.audit("artifact.created", principal?.user.id, "artifact", artifact.id, {
         sessionId: session.id,
         mimeType,
@@ -241,18 +239,18 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
     if (!artifact) return reply.code(404).send({ error: "Artifact not found" });
     const session = sessionFor(artifact.sessionId);
     if (!session || !canAccess(session.ownerUserId, request)) return reply.code(403).send({ error: "Artifact access denied" });
-    const content = store.getArtifactContent(artifact.id);
+    const range = resolveByteRange(request.headers.range, artifact.byteSize);
+    if (range === "unsatisfiable") return reply.code(416).header("content-range", `bytes */${artifact.byteSize}`).send();
+    const content = await artifacts.open(artifact.id, range ?? undefined);
     if (!content) return reply.code(404).send({ error: "Artifact content not found" });
-    const range = resolveByteRange(request.headers.range, content.byteLength);
-    if (range === "unsatisfiable") return reply.code(416).header("content-range", `bytes */${content.byteLength}`).send();
     const base = () => reply
       .header("accept-ranges", "bytes")
       .header("x-content-type-options", "nosniff")
       .header("content-security-policy", "sandbox; default-src 'none'")
       .header("content-disposition", `attachment; filename="${safeFilename(artifact.name)}"`)
       .type(artifact.mimeType);
-    if (range === null) return base().send(Buffer.from(content));
-    return base().code(206).header("content-range", `bytes ${range.start}-${range.end}/${content.byteLength}`).send(Buffer.from(content.subarray(range.start, range.end + 1)));
+    if (range === null) return base().header("content-length", content.byteSize).send(content.stream);
+    return base().code(206).header("content-length", range.end - range.start + 1).header("content-range", `bytes ${range.start}-${range.end}/${content.byteSize}`).send(content.stream);
   });
 
   app.delete("/api/v1/artifacts/:artifactId", async (request, reply) => {
@@ -261,7 +259,7 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
     const session = sessionFor(artifact.sessionId);
     const principal = principalFor(request);
     if (!session || !canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Artifact access denied" });
-    store.deleteArtifact(artifact.id);
+    await artifacts.delete(artifact.id);
     security?.audit("artifact.deleted", principal?.user.id, "artifact", artifact.id, { sessionId: artifact.sessionId, name: artifact.name });
     return reply.code(204).send();
   });
