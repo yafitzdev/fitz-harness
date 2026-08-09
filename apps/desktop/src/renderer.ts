@@ -1,12 +1,15 @@
-import { appendMarkdown, setMarkdown } from "./markdown.js";
-import { estimateTokens, estimateTranscriptContext } from "./context-estimate.js";
-import { MessageActions, type ActionableMessageRole } from "./ui/chat/message-actions.js";
+import { appendMarkdown } from "./markdown.js";
+import { estimateTokens } from "./context-estimate.js";
+import { MessageActions } from "./ui/chat/message-actions.js";
 import { ActivityTimeline } from "./ui/chat/activity-timeline.js";
 import { AgentRunController } from "./ui/chat/agent-run-controller.js";
 import { MediaJobFeed } from "./ui/chat/media-job-feed.js";
 import { MediaJobTracker, type MediaJobSummary } from "./ui/chat/media-job-tracker.js";
 import { Composer } from "./ui/chat/composer.js";
-import { projectRelativePath } from "./ui/chat/tool-activity.js";
+import { ConversationLanding } from "./ui/chat/conversation-landing.js";
+import { ConversationMessageFeed } from "./ui/chat/conversation-message-feed.js";
+import { ConversationTranscript } from "./ui/chat/conversation-transcript.js";
+import { PromptSubmissionController } from "./ui/chat/prompt-submission.js";
 import { ConnectionWorkspaceController, FIXED_ROUTES, type FixedRouteId } from "./ui/connections/connection-workspace.js";
 import { InspectorPanel } from "./ui/inspector/inspector-panel.js";
 import { AdaptiveWorkspace } from "./ui/layout/adaptive-workspace.js";
@@ -15,6 +18,7 @@ import { ManagementPageLayout, managementRefreshIcon } from "./ui/layout/managem
 import { WorkspacePageController } from "./ui/layout/workspace-pages.js";
 import { canOpenManagementView, managementNavigationVisibility } from "./ui/navigation/navigation-policy.js";
 import { NavigationHistoryController, type AppLocation } from "./ui/navigation/navigation-history.js";
+import { ApplicationMenuController } from "./ui/navigation/application-menu.js";
 import { CustomSelectController } from "./ui/primitives/custom-select.js";
 import { requiredElement as element, requiredQuery as query, svgIcon as svg, textBlock } from "./ui/primitives/dom.js";
 import { ResizablePane } from "./ui/primitives/resizable-pane.js";
@@ -58,7 +62,6 @@ const routeState = element("route-state");
 const inspectorRenderToggle = element("inspector-render-toggle") as HTMLButtonElement;
 const inspectorArtifacts = element("inspector-artifacts") as HTMLButtonElement;
 const updateButton = element("update") as HTMLButtonElement;
-const appMenuPopover = element("app-menu-popover");
 const selectPopover = element("select-popover");
 const sidebarResizer = element("sidebar-resizer");
 const playbookPage = element("playbook-page");
@@ -233,37 +236,7 @@ const projects = new ProjectsController({
     messages.replaceChildren(loadingMessage("Loading conversation…"));
     try {
       const transcript = await api(`/api/v1/sessions/${sessionId}/transcript`);
-      composer.rebuildHistory((transcript.data ?? []).filter((entry: Json) => entry.kind === "message" && entry.role === "user" && typeof entry.content?.text === "string" && entry.content.text.length > 0).map((entry: Json) => entry.content.text as string));
-      messages.replaceChildren();
-      activityTimeline.clear();
-      sessionTokenEstimate = estimateTranscriptContext(transcript.data ?? []);
-      const transcriptTools = new Map<string, { row: HTMLElement; toolName: string; input: unknown }>();
-      for (const entry of transcript.data ?? []) {
-        if (entry.kind === "message") {
-          const text = entry.content?.text ?? "";
-          if (entry.role === "assistant" && entry.content?.phase === "commentary") appendCommentary(text, entry.createdAt);
-          else appendMessage(entry.role ?? "system", text, entry.createdAt);
-        }
-        if (entry.kind === "tool-call") {
-          const toolCallId = String(entry.content?.toolCallId ?? entry.id);
-          const toolName = String(entry.content?.toolName ?? "tool");
-          const input = entry.content?.input;
-          transcriptTools.set(toolCallId, { row: activityTimeline.appendTool(toolName, input, toolCallId, true, entry.createdAt), toolName, input });
-        }
-        if (entry.kind === "tool-result") {
-          const toolCallId = String(entry.content?.toolCallId ?? entry.id);
-          const existing = transcriptTools.get(toolCallId);
-          if (existing) activityTimeline.completeTool(existing.row, existing.toolName, existing.input, entry.content?.result, Boolean(entry.content?.isError));
-          else activityTimeline.completeTool(activityTimeline.appendTool(String(entry.content?.toolName ?? "tool"), undefined, toolCallId, true, entry.createdAt), String(entry.content?.toolName ?? "tool"), undefined, entry.content?.result, Boolean(entry.content?.isError));
-        }
-        if (entry.kind === "reasoning") {
-          const text = entry.content?.text ?? "";
-          const row = activityTimeline.appendReasoning(false);
-          activityTimeline.appendReasoningDelta(row, text);
-          activityTimeline.completeReasoning(row);
-        }
-        if (entry.kind === "compaction") activityTimeline.appendContext(entry.content?.manual === true ? "Context compacted" : "Context automatically compacted");
-      }
+      sessionTokenEstimate = conversationTranscript.restore(transcript.data ?? []);
       const pendingApprovals = await api(`/api/v1/sessions/${sessionId}/tool-approvals?status=pending`);
       for (const approval of pendingApprovals.data ?? []) activityTimeline.appendApproval(approval);
       updateContextMeter();
@@ -300,6 +273,24 @@ const activityTimeline = new ActivityTimeline({
     return response.data?.status === "approved" ? "approved" : "denied";
   },
   showToast,
+});
+const conversationTranscript = new ConversationTranscript({
+  messages,
+  activity: activityTimeline,
+  appendMessage,
+  appendCommentary,
+  rebuildHistory: (history) => composer.rebuildHistory(history),
+});
+const conversationLanding = new ConversationLanding({
+  messages,
+  clearActivity: () => activityTimeline.clear(),
+  project: () => projects.projects.find((item) => item.id === projects.currentProjectId),
+  projectDetached: () => newChatProjectDetached,
+  setDraft: (value) => composer.setDraft(value),
+  focusComposer: () => composer.focus(),
+  createProject: () => projectSidebar.beginCreateProject(),
+  retryConnection: () => initialize(),
+  updateTitles,
 });
 const agentQueue = new AgentQueueController({
   list: element("request-queue"),
@@ -368,6 +359,42 @@ const agentRuns = new AgentRunController({
     mediaJobFeed.render({ id: jobId, modality, status: "queued" });
     mediaJobs.watch(jobId);
   },
+});
+const promptSubmission = new PromptSubmissionController({
+  draft: () => composer.value,
+  consumeAttachments: () => composer.consumePastedAttachments(),
+  sessionId: () => projects.currentSessionId,
+  settings: () => ({
+    routeId: composer.controls.routeId,
+    maxTokens: composer.controls.maxTokens,
+    temperature: composer.controls.temperature,
+    accessMode: composer.controls.accessMode,
+  }),
+  ensureSession: ensurePromptSession,
+  openNewChat,
+  clearDraft: () => composer.clearDraft(),
+  setDraft: (value) => composer.setDraft(value),
+  resetWarmup: () => agentRuns.resetWarmup(),
+  uploadAttachment: async (sessionId, attachment) => {
+    const artifact = await artifactController.uploadData(sessionId, {
+      name: attachment.kind === "image" ? `screenshot-${Date.now()}.png` : attachment.name,
+      mimeType: attachment.mimeType,
+      contentBase64: attachment.dataUrl.split(",")[1]!,
+    });
+    return artifact as { id: string };
+  },
+  clearLanding: () => { if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren(); },
+  appendUser: (content) => { appendMessage("user", content); },
+  appendSteer: (content) => activityTimeline.appendSteer(content),
+  pushHistory: (content) => composer.pushHistory(content),
+  addTokenEstimate: (content) => { sessionTokenEstimate += estimateTokens(content); },
+  refreshContext: updateContextMeter,
+  refreshControls: refreshComposerState,
+  runId: () => agentRuns.runId,
+  startRun: (request) => agentRuns.start(request),
+  steerRun: (content) => agentRuns.steer(content),
+  showError: showToast,
+  errorMessage,
 });
 const playbookWorkspace = new PlaybookWorkspaceController({
   page: playbookPage,
@@ -460,6 +487,13 @@ const messageActions = new MessageActions({
   copyText: (text) => window.fitz.copyText(text),
   resend: (text, article) => sendPrompt(text, article),
 });
+const conversationMessages = new ConversationMessageFeed({
+  messages,
+  activity: activityTimeline,
+  actions: messageActions,
+  runActive: () => agentRuns.active,
+  projectRoot: () => projects.activeProject()?.rootPath ?? "",
+});
 const administrationPageController = new AdministrationPageController({
   refresh: element("refresh-administration") as HTMLButtonElement,
   sections: administrationPage,
@@ -529,6 +563,22 @@ const navigationHistory = new NavigationHistoryController({
   blocked: () => agentRuns.active,
   replay: replayLocation,
 });
+const appMenus = new ApplicationMenuController({
+  popover: element("app-menu-popover"),
+  toggles: [...document.querySelectorAll<HTMLButtonElement>("[data-app-menu]")],
+  newChat: openNewChat,
+  newProject: () => projectSidebar.beginCreateProject(),
+  toggleSidebar,
+  editCommand: (command) => window.fitz.editCommand(command),
+  windowAction: (action) => window.fitz.windowAction(action),
+  openExternal: (url) => window.fitz.openExternal(url),
+  closeOthers: () => {
+    customSelects.close();
+    composer.closePopovers();
+    projectSidebar.hideMenu();
+    projectSidebar.resetMenuToggles();
+  },
+});
 void initialize();
 
 window.fitz.onNavigationCommand((command) => void navigationHistory.navigate(command === "back" ? -1 : 1));
@@ -548,7 +598,6 @@ pluginsButton.addEventListener("click", () => void openPluginsPage());
 modelsButton.addEventListener("click", () => void openModelsPage());
 administrationButton.addEventListener("click", () => void openAdministrationPage());
 element("sidebar-menu").addEventListener("click", toggleSidebar);
-for (const menuButton of document.querySelectorAll<HTMLButtonElement>("[data-app-menu]")) menuButton.addEventListener("click", (event) => openAppMenu(menuButton.dataset.appMenu ?? "", menuButton, event));
 for (const windowButton of document.querySelectorAll<HTMLButtonElement>("[data-window-action]")) windowButton.addEventListener("click", () => void window.fitz.windowAction(windowButton.dataset.windowAction as "minimize" | "maximize" | "close"));
 connectionStatus.addEventListener("click", () => void initialize());
 inspectorArtifacts.addEventListener("click", () => inspectorPanel.toggle());
@@ -621,50 +670,31 @@ function renderTree(): void {
 }
 
 /** Starts a standalone chat with no project attached (top "new chat" icon, Ctrl+N, File > New chat). */
-function openNewChat(): void {
-  if (agentRuns.active) { showToast("Stop the current response before starting a new chat"); return; }
-  showConversationWorkspace();
-  inspectorPanel.reset();
-  inspectorPanel.setChat(undefined);
-  inspectorChatId = undefined;
-  projects.setCurrentProject(undefined);
-  projects.beginNewChat();
-  newChatMode = true;
-  newChatProjectDetached = false;
-  sessionTokenEstimate = 0;
-  composer.controls.resetContextStatus();
-  workspace.classList.add("new-chat-open");
-  connectionWorkspace.setConfiguration(managementConfiguration);
-  composer.enterNewChat(undefined);
-  agentRuns.resetWarmup();
-  renderTree();
-  showNewChatLanding();
-  void composer.refreshBranches();
-  updateContextMeter();
-  refreshComposerState();
-  composer.focus();
-  navigationHistory.remember({ view: "conversation", newChat: true });
-}
+function openNewChat(): void { beginNewChat(false); }
 
 /** Starts a new chat bound to the current project (per-project "+" quick action, project flows). */
-function openProjectNewChat(): void {
+function openProjectNewChat(): void { beginNewChat(true); }
+
+function beginNewChat(projectBound: boolean): void {
   if (agentRuns.active) { showToast("Stop the current response before starting a new chat"); return; }
   showConversationWorkspace();
   inspectorPanel.reset();
   inspectorPanel.setChat(undefined);
   inspectorChatId = undefined;
-  if (projects.projects.length === 0) { projectSidebar.beginCreateProject(); return; }
-  projects.setCurrentProject(projects.currentProjectId ?? projects.projects[0]!.id);
-  if (!projects.currentProjectId) return;
+  if (projectBound) {
+    if (projects.projects.length === 0) { projectSidebar.beginCreateProject(); return; }
+    projects.setCurrentProject(projects.currentProjectId ?? projects.projects[0]!.id);
+    if (!projects.currentProjectId) return;
+    projectSidebar.ensureExpanded(projects.currentProjectId);
+  } else projects.setCurrentProject(undefined);
   projects.beginNewChat();
   newChatMode = true;
   newChatProjectDetached = false;
   sessionTokenEstimate = 0;
   composer.controls.resetContextStatus();
-  projectSidebar.ensureExpanded(projects.currentProjectId);
   workspace.classList.add("new-chat-open");
   connectionWorkspace.setConfiguration(managementConfiguration);
-  composer.enterNewChat(projects.activeProject()?.name ?? "Project");
+  composer.enterNewChat(projectBound ? projects.activeProject()?.name ?? "Project" : undefined);
   agentRuns.resetWarmup();
   renderTree();
   showNewChatLanding();
@@ -672,33 +702,13 @@ function openProjectNewChat(): void {
   updateContextMeter();
   refreshComposerState();
   composer.focus();
-  navigationHistory.remember({ view: "conversation", projectId: projects.currentProjectId, newChat: true });
+  navigationHistory.remember({ view: "conversation", ...(projectBound && projects.currentProjectId ? { projectId: projects.currentProjectId } : {}), newChat: true });
 }
 
 function openNewChatForProject(id: string): void { projects.setCurrentProject(id); projectSidebar.ensureExpanded(id); openProjectNewChat(); }
 
 function showNewChatLanding(): void {
-  messages.replaceChildren();
-  activityTimeline.clear();
-  const project = projects.projects.find((item) => item.id === projects.currentProjectId);
-  const landing = document.createElement("div"); landing.className = "new-chat-landing";
-  const mark = document.createElement("div"); mark.className = "landing-mark"; mark.append(terminalCloudIcon());
-  const heading = document.createElement("h1");
-  if (newChatProjectDetached || !projects.currentProjectId) heading.textContent = "What should we build?";
-  else { heading.append("What should we build in "); const projectName = document.createElement("span"); projectName.className = "landing-project-name"; projectName.textContent = project?.name ?? "this project"; heading.append(projectName, "?"); }
-  const suggestions = [
-    ["Explore and understand code", '<path d="m4.2 7.4 8.7-4.1 2 4.1-8.8 4.2z"></path><path d="m11.1 4.2 2 4.1M8 10.7l2.5 5.8M6.2 11.6l-1.7 4.1M7.2 14h4.5"></path>'],
-    ["Build a new feature, app, or tool", '<path d="m12.8 3.2 4 4-2.5 2.5-4-4z"></path><path d="m11.4 8.6-6.8 6.8M3.6 16.4l2.6-.7-1.9-1.9z"></path>'],
-    ["Review code and suggest changes", '<path d="M15.7 7.2A6 6 0 0 0 5 5.4L3.6 7"></path><path d="M3.6 3.8V7h3.2M4.3 12.8A6 6 0 0 0 15 14.6l1.4-1.6"></path><path d="M16.4 16.2V13h-3.2"></path>'],
-    ["Fix issues and failures", '<path d="M7 7.2 5.2 4.5M13 7.2l1.8-2.7M6.1 9.1h7.8v6.2H6.1z"></path><path d="M3.5 10.5h2.6M13.9 10.5h2.6M3.8 14.7l2.3-1M16.2 14.7l-2.3-1M8.2 6V4.8h3.6V6M10 9.1v6.2"></path>'],
-  ];
-  const grid = document.createElement("div"); grid.className = "starter-grid";
-  for (const [label, iconPath] of suggestions) {
-    const button = document.createElement("button"); button.type = "button"; button.className = "starter-card"; button.append(svg(iconPath!), Object.assign(document.createElement("span"), { textContent: label }));
-    button.addEventListener("click", () => { composer.setDraft(label!); composer.focus(); });
-    grid.append(button);
-  }
-  landing.append(mark, heading, grid); messages.append(landing); updateTitles();
+  conversationLanding.showNewChat();
 }
 
 function openProjectWorktreeSetup(id: string): void { openNewChatForProject(id); composer.openWorktreeSetup(); }
@@ -801,114 +811,10 @@ function syncComposerContext(): void {
   updateContextMeter();
 }
 
-function openAppMenu(name: string, toggle: HTMLButtonElement, event: MouseEvent): void {
-  event.preventDefault();
-  event.stopPropagation();
-  const reopening = appMenuPopover.dataset.menu === name && !appMenuPopover.hidden;
-  closePopovers();
-  if (reopening) return;
-  appMenuPopover.dataset.menu = name;
-  appMenuPopover.replaceChildren();
-  const separator = () => appMenuPopover.append(document.createElement("hr"));
-  const item = (label: string, icon: string, action: () => void, shortcut = "") => {
-    const button = document.createElement("button"); button.type = "button";
-    const text = document.createElement("span"); text.className = "menu-label"; text.textContent = label;
-    button.append(svg(icon), text);
-    if (shortcut) { const key = document.createElement("kbd"); key.textContent = shortcut; button.append(key); }
-    button.addEventListener("click", (clickEvent) => { clickEvent.stopPropagation(); closePopovers(); action(); });
-    appMenuPopover.append(button);
-  };
-  const edit = (command: "undo" | "redo" | "cut" | "copy" | "paste" | "select-all" | "reload" | "devtools") => () => void window.fitz.editCommand(command);
-  if (name === "File") {
-    item("New chat", '<path d="M4 4h12v12H4z"></path><path d="M7 10h6M10 7v6"></path>', openNewChat, "Ctrl+N");
-    item("New project", '<path d="M3 6h5l1.5 2H17v8H3z"></path><path d="M3 6V4h5l1.5 2"></path>', () => projectSidebar.beginCreateProject());
-    separator();
-    item("Close window", '<path d="m5 5 10 10M15 5 5 15"></path>', () => void window.fitz.windowAction("close"));
-  } else if (name === "Edit") {
-    item("Undo", '<path d="M7 7H3V3"></path><path d="M3 7c2-3 5-4 8-3 3 1 5 4 5 7"></path>', edit("undo"), "Ctrl+Z");
-    item("Redo", '<path d="M13 7h4V3"></path><path d="M17 7c-2-3-5-4-8-3-3 1-5 4-5 7"></path>', edit("redo"), "Ctrl+Y");
-    separator();
-    item("Cut", '<circle cx="6" cy="15" r="2"></circle><circle cx="14" cy="15" r="2"></circle><path d="m7.5 13.5 7-9M12.5 13.5l-7-9"></path>', edit("cut"), "Ctrl+X");
-    item("Copy", '<rect x="7" y="7" width="10" height="10" rx="2"></rect><path d="M13 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"></path>', edit("copy"), "Ctrl+C");
-    item("Paste", '<rect x="5" y="5" width="10" height="12" rx="2"></rect><path d="M8 5V3h4v2"></path>', edit("paste"), "Ctrl+V");
-    item("Select all", '<path d="M7 3H3v4M13 3h4v4M17 13v4h-4M7 17H3v-4"></path>', edit("select-all"), "Ctrl+A");
-  } else if (name === "View") {
-    item("Toggle sidebar", '<rect x="3" y="4" width="14" height="12" rx="2"></rect><path d="M7 4v12"></path>', toggleSidebar, "Ctrl+B");
-    item("Reload", '<path d="M16 7V3l-2 2a6 6 0 1 0 1 8"></path>', edit("reload"), "Ctrl+R");
-    item("Developer tools", '<path d="m7 6-4 4 4 4M13 6l4 4-4 4M11 4 9 16"></path>', edit("devtools"));
-  } else if (name === "Help") {
-    item("Fitz Codex on GitHub", '<circle cx="10" cy="10" r="7"></circle><path d="M8 8a2 2 0 1 1 3 1.7c-.7.4-1 .8-1 1.5M10 14h.01"></path>', () => void window.fitz.openExternal("https://github.com/yafitzdev/fitz-codex"));
-  }
-  const rect = toggle.getBoundingClientRect();
-  appMenuPopover.style.left = `${rect.left}px`;
-  appMenuPopover.style.top = `${rect.bottom + 3}px`;
-  appMenuPopover.hidden = false;
-  toggle.setAttribute("aria-expanded", "true");
-}
-
-function closePopovers(): void {
-  customSelects.close();
-  appMenuPopover.hidden = true;
-  composer.closePopovers();
-  projectSidebar.hideMenu();
-  projectSidebar.resetMenuToggles();
-  for (const toggle of document.querySelectorAll("[data-app-menu]")) toggle.setAttribute("aria-expanded", "false");
-}
+function closePopovers(): void { appMenus.close(); }
 
 async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLElement): Promise<void> {
-  const content = (submittedContent ?? composer.value).trim();
-  const attachments = composer.consumePastedAttachments();
-  if (!content && attachments.length === 0) return;
-  if (!projects.currentSessionId && newChatMode) {
-    try {
-      const title = content.split(/\r?\n/, 1)[0]!.trim().slice(0, 80) || "New chat";
-      const response = projects.currentProjectId
-        ? await api(`/api/v1/projects/${projects.currentProjectId}/sessions`, "POST", { title, routeId: composer.controls.routeId as FixedRouteId })
-        : await api("/api/v1/chats", "POST", { title, routeId: composer.controls.routeId as FixedRouteId });
-      newChatMode = false;
-      workspace.classList.remove("new-chat-open");
-      composer.exitNewChat();
-      if (projects.currentProjectId) projects.startSessionInProject(projects.currentProjectId, response.data);
-      else projects.startChat(response.data);
-      // Point the artifact repository at the session before any files stream
-      // into the conversation, so the first message's files land in this chat.
-      inspectorPanel.setChat(response.data.id);
-      inspectorChatId = response.data.id;
-    } catch (error) { showToast(errorMessage(error)); return; }
-  }
-  if (!projects.currentSessionId) { openNewChat(); return; }
-  if (!composer.controls.routeId) { showToast("No model route is available"); return; }
-  composer.clearDraft();
-  agentRuns.resetWarmup();
-  // Upload pasted files as artifacts; images become multi-modal message parts
-  const imageParts: Array<{ type: "image_url"; image_url: { url: string } }> = [];
-  for (const pasted of attachments) {
-    try {
-      const artifact = await artifactController.uploadData(projects.currentSessionId, {
-        name: pasted.kind === "image" ? `screenshot-${Date.now()}.png` : pasted.name,
-        mimeType: pasted.mimeType,
-        contentBase64: pasted.dataUrl.split(",")[1]!,
-      });
-      if (pasted.kind === "image") imageParts.push({ type: "image_url" as const, image_url: { url: `/api/v1/artifacts/${artifact.id}` } });
-    } catch (error) { showToast(errorMessage(error)); }
-  }
-  if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
-  if (!existingUserMessage) appendMessage("user", content);
-  if (content && !existingUserMessage) composer.pushHistory(content);
-  sessionTokenEstimate += estimateTokens(content);
-  updateContextMeter();
-  // Build multi-modal message content
-  const messageContent = imageParts.length > 0
-    ? [{ type: "text" as const, text: content }, ...imageParts]
-    : content;
-  await agentRuns.start({
-    model: composer.controls.routeId,
-    max_tokens: composer.controls.maxTokens,
-    temperature: composer.controls.temperature,
-    sessionId: projects.currentSessionId,
-    accessMode: composer.controls.accessMode,
-    messages: [{ role: "user", content: messageContent }],
-  });
+  await promptSubmission.submit(submittedContent, existingUserMessage);
 }
 
 // While the agent is reasoning the composer stays unlocked. Sending inserts the
@@ -917,24 +823,24 @@ async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLE
 // delivered. We render the message here, inside the agent's work feed next to the
 // tool calls and reasoning, so the user gets immediate feedback.
 async function steerPrompt(content: string): Promise<void> {
-  const runId = agentRuns.runId;
-  if (!content || !runId) return;
-  composer.clearDraft();
-  agentRuns.resetWarmup();
-  updateContextMeter();
-  refreshComposerState();
-  const steerRow = activityTimeline.appendSteer(content);
-  composer.pushHistory(content);
-  sessionTokenEstimate += estimateTokens(content);
-  updateContextMeter();
-  try {
-    await agentRuns.steer(content);
-  } catch {
-    // The run finished or stopped accepting messages before the steer landed;
-    // put the draft back and drop the undelivered row.
-    steerRow.remove();
-    composer.setDraft(content);
-  }
+  await promptSubmission.steer(content);
+}
+
+async function ensurePromptSession(title: string, routeId: string): Promise<string | undefined> {
+  if (projects.currentSessionId) return projects.currentSessionId;
+  if (!newChatMode) return undefined;
+  const response = projects.currentProjectId
+    ? await api(`/api/v1/projects/${projects.currentProjectId}/sessions`, "POST", { title, routeId: routeId as FixedRouteId })
+    : await api("/api/v1/chats", "POST", { title, routeId: routeId as FixedRouteId });
+  newChatMode = false;
+  workspace.classList.remove("new-chat-open");
+  composer.exitNewChat();
+  if (projects.currentProjectId) projects.startSessionInProject(projects.currentProjectId, response.data);
+  else projects.startChat(response.data);
+  // Scope artifacts before the first run can stream files into the conversation.
+  inspectorPanel.setChat(response.data.id);
+  inspectorChatId = response.data.id;
+  return response.data.id as string;
 }
 
 async function loadMediaJobs(sessionId: string, sessionArtifacts: Json[]): Promise<void> {
@@ -962,75 +868,23 @@ function scheduleQueueRefresh(): void {
 }
 
 function showLanding(hasTask = false): void {
-  messages.replaceChildren();
-  activityTimeline.clear();
-  const landing = document.createElement("div"); landing.className = "landing";
-  const mark = document.createElement("div"); mark.className = "landing-mark"; mark.append(sparkIcon());
-  const heading = document.createElement("h1"); heading.textContent = hasTask ? "What should we work on?" : "Bring your code. Build with Fitz.";
-  const detail = document.createElement("p"); detail.textContent = hasTask ? "Describe a change, ask a question, or attach a file. Fitz keeps the work and transcript together." : "Create a project, start a task, and work with local or remote inference from one focused desktop.";
-  landing.append(mark, heading, detail);
-  if (!hasTask) {
-    const action = document.createElement("button"); action.type = "button"; action.className = "primary-button"; action.textContent = "Create project";
-    action.addEventListener("click", () => projectSidebar.beginCreateProject()); landing.append(action);
-  }
-  messages.append(landing);
-  updateTitles();
+  conversationLanding.showHome(hasTask);
 }
 
 function showConnectionFailure(detail: string): void {
-  messages.replaceChildren();
-  const landing = document.createElement("div"); landing.className = "landing";
-  const heading = document.createElement("h1"); heading.textContent = "Fitz host is offline";
-  const message = document.createElement("p"); message.textContent = detail;
-  const retry = document.createElement("button"); retry.type = "button"; retry.className = "primary-button"; retry.textContent = "Try again"; retry.addEventListener("click", () => void initialize());
-  landing.append(heading, message, retry); messages.append(landing);
+  conversationLanding.showConnectionFailure(detail);
 }
 
 function appendMessage(role: string, text: string, createdAt?: string): HTMLElement {
-  if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
-  if (role !== "commentary" && !agentRuns.active) activityTimeline.finishWork(createdAt);
-  const article = document.createElement("article"); article.className = `message ${role}`;
-  const content = document.createElement("div"); content.className = "message-body"; if (role === "assistant" || role === "commentary") setMarkdown(content, text); else content.textContent = text; article.append(content); if (["user", "assistant"].includes(role)) messageActions.attach(article, content, role as ActionableMessageRole, text, createdAt); messages.append(article); messages.scrollTop = messages.scrollHeight; return content;
+  return conversationMessages.append(role, text, createdAt);
 }
 
 function appendCommentary(text: string, createdAt?: string): HTMLElement {
-  if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
-  const article = document.createElement("article"); article.className = "message commentary";
-  const content = document.createElement("div"); content.className = "message-body"; setMarkdown(content, text); article.append(content);
-  activityTimeline.appendCommentary(article, createdAt);
-  return content;
+  return conversationMessages.appendCommentary(text, createdAt);
 }
 
 function appendChangeSummary(files: Array<{ path: string; action: "edited" | "created" }>): void {
-  if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
-  const article = document.createElement("article"); article.className = "message change-summary";
-  const content = document.createElement("div"); content.className = "message-body change-summary-body";
-
-  const createdFiles = files.filter((f) => f.action === "created");
-  const editedFiles = files.filter((f) => f.action === "edited");
-
-  const summaryHeader = document.createElement("div"); summaryHeader.className = "change-summary-header";
-  const total = files.length;
-  const parts: string[] = [];
-  if (createdFiles.length) parts.push(`${createdFiles.length} created`);
-  if (editedFiles.length) parts.push(`${editedFiles.length} edited`);
-  summaryHeader.textContent = `${total} file${total === 1 ? "" : "s"}: ${parts.join(", ")}`;
-  content.append(summaryHeader);
-
-  const fileList = document.createElement("div"); fileList.className = "change-summary-list";
-  for (const file of files) {
-    const row = document.createElement("div"); row.className = `change-summary-row ${file.action}`;
-    const icon = document.createElement("span"); icon.className = "change-summary-icon";
-    icon.textContent = file.action === "created" ? "+" : "~";
-    const filePath = document.createElement("span"); filePath.className = "change-summary-path";
-    filePath.textContent = projectRelativePath(file.path, projects.activeProject()?.rootPath ?? "");
-    row.append(icon, filePath);
-    fileList.append(row);
-  }
-  content.append(fileList);
-  article.append(content);
-  messages.append(article);
-  messages.scrollTop = messages.scrollHeight;
+  conversationMessages.appendChangeSummary(files);
 }
 
 function refreshComposerState(): void {
@@ -1077,8 +931,6 @@ async function api(path: string, method = "GET", body?: unknown): Promise<Json> 
   return parsed;
 }
 
-function sparkIcon(): SVGElement { return svg('<path d="M10 2.8c.5 3.7 2.4 5.8 6.2 7.2-3.8 1.4-5.7 3.5-6.2 7.2-.5-3.7-2.4-5.8-6.2-7.2C7.6 8.6 9.5 6.5 10 2.8Z"></path>'); }
-function terminalCloudIcon(): SVGElement { return svg('<path d="M6.2 16.4c-2 0-3.7-1.6-3.7-3.6 0-1.2.6-2.3 1.5-3-.4-1.8.5-3.6 2.1-4.4.7-1.7 2.4-2.8 4.2-2.8 1.5 0 2.9.7 3.8 1.9 1.8-.1 3.3 1.3 3.4 3.1 1 .7 1.7 1.9 1.7 3.2 0 1.5-.8 2.8-2.1 3.5-.5 1.8-2.1 3-4 3-.8 0-1.6-.2-2.2-.7-.7.6-1.6.9-2.5.9-.8 0-1.6-.3-2.2-.7z"></path><path d="m6.8 8 1.8 2-1.8 2M10.7 12.3h2.7"></path>'); }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
 function formatTokenCount(value: number): string { return value >= 1000 ? `${Math.round(value / 1000)}k` : String(Math.round(value)); }

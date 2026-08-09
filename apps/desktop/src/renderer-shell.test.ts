@@ -18,9 +18,14 @@ const toolActivity = readFileSync(new URL("./ui/chat/tool-activity.ts", import.m
 const reasoningView = readFileSync(new URL("./ui/chat/reasoning-view.ts", import.meta.url), "utf8");
 const agentRunController = readFileSync(new URL("./ui/chat/agent-run-controller.ts", import.meta.url), "utf8");
 const mediaJobFeed = readFileSync(new URL("./ui/chat/media-job-feed.ts", import.meta.url), "utf8");
+const conversationMessageFeed = readFileSync(new URL("./ui/chat/conversation-message-feed.ts", import.meta.url), "utf8");
+const conversationLanding = readFileSync(new URL("./ui/chat/conversation-landing.ts", import.meta.url), "utf8");
+const conversationTranscript = readFileSync(new URL("./ui/chat/conversation-transcript.ts", import.meta.url), "utf8");
+const promptSubmission = readFileSync(new URL("./ui/chat/prompt-submission.ts", import.meta.url), "utf8");
 const agentQueue = readFileSync(new URL("./ui/queue/agent-queue.ts", import.meta.url), "utf8");
 const artifactController = readFileSync(new URL("./ui/artifacts/artifact-controller.ts", import.meta.url), "utf8");
 const navigationHistory = readFileSync(new URL("./ui/navigation/navigation-history.ts", import.meta.url), "utf8");
+const applicationMenu = readFileSync(new URL("./ui/navigation/application-menu.ts", import.meta.url), "utf8");
 const composerControls = readFileSync(new URL("./ui/chat/composer-controls.ts", import.meta.url), "utf8");
 const composer = readFileSync(new URL("./ui/chat/composer.ts", import.meta.url), "utf8");
 const connectionWorkspace = readFileSync(new URL("./ui/connections/connection-workspace.ts", import.meta.url), "utf8");
@@ -135,7 +140,8 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('data-window-action="minimize"');
     expect(main).toContain("frame: false");
     expect(html).toContain('id="app-menu-popover"');
-    expect(renderer).toContain("function openAppMenu(");
+    expect(renderer).toContain("new ApplicationMenuController({");
+    expect(applicationMenu).toContain("open(name: string, toggle: HTMLButtonElement, event: MouseEvent)");
     expect(main).toContain('ipcMain.handle("fitz:edit-command"');
     expect(main).not.toContain('ipcMain.handle("fitz:show-menu"');
     expect(main).toContain('ipcMain.handle("fitz:window-action"');
@@ -204,7 +210,7 @@ describe("desktop renderer shell", () => {
     expect(connectionWorkspace).toContain('consumerFixedRouteId');
     expect(connectionWorkspace).toContain('const LOCAL_CONNECTION_ID = "hosted--local"');
     expect(renderer).not.toContain('connectionWorkspace.selectedConnectionId');
-    expect(renderer).toContain('routeId: composer.controls.routeId as FixedRouteId');
+    expect(renderer).toContain('routeId: routeId as FixedRouteId');
     expect(renderer).not.toContain('candidate.routeId === card.id');
     expect(connectionWorkspace).toContain('testRecipe({ id: model.recipeId');
     expect(connectionWorkspace).toContain("private views(): ConnectionView[]");
@@ -322,10 +328,10 @@ describe("desktop renderer shell", () => {
     expect(playbookWorkspace).toContain('/api/v1/management/recipes/${encodeURIComponent(id)}');
     expect(renderer).toContain("sessionTokenEstimate += estimateTokens");
     expect(projects).toContain('this.options.api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" })');
-    expect(renderer).toContain("max_tokens: composer.controls.maxTokens");
+    expect(promptSubmission).toContain("max_tokens: settings.maxTokens");
     expect(renderer).toContain("if (content.trim().length > 0) void steerPrompt(content)");
     expect(renderer).toContain("else void agentRuns.cancel()");
-    expect(renderer).toContain("activityTimeline.appendSteer(content)");
+    expect(renderer).toContain("appendSteer: (content) => activityTimeline.appendSteer(content)");
     expect(agentRunController).toContain('this.#options.api(`/api/v1/agent/runs/${this.#runId}`, "DELETE")');
     expect(agentRunController).toContain('this.#options.api(`/api/v1/agent/runs/${this.#runId}/steer`, "POST", { text })');
   });
@@ -362,7 +368,7 @@ describe("desktop renderer shell", () => {
     expect(activityTimeline).toContain('this.#detail("Input", input');
     expect(activityTimeline).toContain('this.#detail("Result"');
     expect(activityTimeline).toContain('summary.setAttribute("aria-expanded", String(open))');
-    expect(renderer).toContain("entry.content?.result");
+    expect(conversationTranscript).toContain("entry.content?.result");
     expect(agentRunController).toContain("event.data?.result");
     expect(activityTimeline).toContain("#formatPayload");
     expect(agentRunController).toContain("this.#options.activity.markAssistantAsCommentary");
@@ -409,14 +415,14 @@ describe("desktop renderer shell", () => {
     expect(reasoningView).toContain("export class ReasoningView");
     expect(reasoningView).toContain('className = "reasoning-content"');
     expect(reasoningView).toContain('label.textContent = running ? "Thinking…" : "Thought through the approach"');
-    expect(renderer).toContain('entry.kind === "reasoning"');
-    expect(renderer).toContain("activityTimeline.appendReasoning(false)");
+    expect(conversationTranscript).toContain('entry.kind === "reasoning"');
+    expect(conversationTranscript).toContain("this.#options.activity.appendReasoning(false)");
     expect(styles).toContain(".reasoning-content");
     expect(styles).toContain(".reasoning-activity .agent-activity-label { font-style: italic; }");
   });
 
   it("collapses completed Pi activity behind a durable work summary", () => {
-    expect(renderer).toContain("activityTimeline.finishWork(createdAt)");
+    expect(conversationMessageFeed).toContain("this.#options.activity.finishWork(createdAt)");
     expect(activityTimeline).toContain("this.#ensureWork(createdAt)");
     expect(activityTimeline).toContain('label.textContent = `Worked for ${this.#formatElapsed(endedAt - work.startedAt)}`');
     expect(activityTimeline).toContain('row.className = "message context-activity"');
@@ -425,9 +431,11 @@ describe("desktop renderer shell", () => {
   });
 
   it("renders streamed assistant Markdown safely while keeping prompts plain", () => {
-    expect(renderer).toContain('import { appendMarkdown, setMarkdown } from "./markdown.js"');
+    expect(renderer).toContain('import { appendMarkdown } from "./markdown.js"');
+    expect(conversationMessageFeed).toContain('import { setMarkdown } from "../../markdown.js"');
     expect(renderer).toContain("appendAssistantDelta: (target, delta) => appendMarkdown(target, delta)");
-    expect(renderer).toContain('if (role === "assistant" || role === "commentary") setMarkdown(content, text); else content.textContent = text');
+    expect(conversationMessageFeed).toContain('if (role === "assistant" || role === "commentary") setMarkdown(content, text);');
+    expect(conversationMessageFeed).toContain("else content.textContent = text");
     expect(markdown).toContain("target.replaceChildren()");
     expect(markdown).not.toContain("target.innerHTML");
     expect(markdown).toContain("code.innerHTML = highlighted.html");
@@ -445,11 +453,11 @@ describe("desktop renderer shell", () => {
     expect(markdown).toContain('import { applyPostGeneration } from "./post-generation.js"');
     expect(markdown).toContain("const display = applyPostGeneration(");
     expect(markdown).toContain("renderBlocks(target, display.split(");
-    expect(renderer).toContain('if (role === "assistant" || role === "commentary") setMarkdown(content, text); else content.textContent = text');
+    expect(conversationMessageFeed).toContain('if (role === "assistant" || role === "commentary") setMarkdown(content, text);');
   });
 
   it("reveals compact Copy and user Edit actions on message hover", () => {
-    expect(renderer).toContain("messageActions.attach(article, content");
+    expect(conversationMessageFeed).toContain("this.#options.actions.attach(article, content");
     expect(renderer).toContain("copyText: (text) => window.fitz.copyText(text)");
     expect(messageActions).toContain("this.#copyButton(content)");
     expect(messageActions).toContain("createCopyButton({");
@@ -459,7 +467,7 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".message:hover .message-actions");
     expect(styles).toContain(".message.assistant .message-actions");
     expect(styles).not.toContain(".message.commentary .message-actions");
-    expect(renderer).toContain('if (["user", "assistant"].includes(role))');
+    expect(conversationMessageFeed).toContain('if (role === "user" || role === "assistant")');
     expect(activityTimeline).toContain('article.querySelector(":scope > .message-actions")?.remove()');
     expect(styles).toContain(".message-action svg");
   });
@@ -519,7 +527,7 @@ describe("desktop renderer shell", () => {
     expect(composerControls).toContain("this.toggleAdvancedSettings()");
     expect(composerControls).toContain('this.storage.setItem("fitz-temperature", this.elements.temperature.value)');
     expect(renderer).toContain("temperature: composer.controls.temperature");
-    expect(renderer).toContain("max_tokens: composer.controls.maxTokens");
+    expect(promptSubmission).toContain("max_tokens: settings.maxTokens");
     expect(styles).toContain('.advanced-row[aria-expanded="true"] svg');
     expect(styles).toContain(".advanced-settings-panel");
     expect(styles).toContain(".model-menu { right: 0; bottom: 34px; width: 286px;");
@@ -553,9 +561,9 @@ describe("desktop renderer shell", () => {
     expect(composer).toContain("this.prompt.value = this.promptDraft");
     expect(composer).toContain("this.prompt.value = this.promptHistory[this.promptHistoryIndex] ?? \"\"");
     expect(composer).toContain("rebuildHistory(texts: string[])");
-    expect(renderer).toContain("entry.kind === \"message\" && entry.role === \"user\"");
+    expect(conversationTranscript).toContain('entry.kind === "message" && entry.role === "user"');
     expect(composer).toContain("this.promptHistory.push(text)");
-    expect(renderer).toContain("composer.rebuildHistory((transcript.data ?? [])");
+    expect(renderer).toContain("conversationTranscript.restore(transcript.data ?? [])");
   });
 
   it("keeps every dropdown and overflow surface at the compact Codex menu density", () => {
@@ -570,7 +578,7 @@ describe("desktop renderer shell", () => {
   it("manually compacts context from the inline usage popover", () => {
     expect(composer).toContain('id="context-compact"');
     expect(renderer).toContain('api(`/api/v1/sessions/${projects.currentSessionId}/compact`, "POST"');
-    expect(renderer).toContain("estimateTranscriptContext");
+    expect(conversationTranscript).toContain("estimateTranscriptContext(entries)");
     expect(renderer).toContain('activityTimeline.appendContext("Context compacted")');
     expect(styles).toContain(".context-usage-popover button");
   });
@@ -632,7 +640,7 @@ describe("desktop renderer shell", () => {
     expect(renderer).not.toContain("createProjectThenNewChat");
     expect(renderer).toContain("if (created && projects.currentProjectId) openNewChatForProject(projects.currentProjectId)");
     expect(renderer).toContain("if (projects.currentProjectId) openNewChatForProject(projects.currentProjectId)");
-    expect(renderer).toContain('action.textContent = "Create project"');
+    expect(conversationLanding).toContain('action.textContent = "Create project"');
     expect(renderer).not.toContain('textContent = projects.currentProjectId ? "New task"');
     expect(projects).toContain('rememberLocation({ view: "conversation", projectId: id, newChat: true })');
   });
@@ -667,13 +675,13 @@ describe("desktop renderer shell", () => {
   });
 
   it("clears the starter screen and reports unobtrusive work progress before output arrives", () => {
-    expect(renderer).toContain('messages.querySelector(".landing, .new-chat-landing")');
+    expect(conversationMessageFeed).toContain('this.#options.messages.querySelector(".landing, .new-chat-landing")');
     expect(agentRunController).toContain('this.#options.activity.appendRun("Working")');
     expect(agentRunController).toContain('this.#options.activity.setRun(activity, "Working", startedAt)');
     expect(agentRunController).not.toContain('this.#options.activity.setRun(activity, "Loading model"');
     expect(activityTimeline).toContain("this.#formatElapsed(Date.now() - startedAt)");
     expect(agentRunController).toContain('this.#options.api("/api/v1/management/status")');
-    expect(renderer).toContain('if (role !== "commentary" && !agentRuns.active) activityTimeline.finishWork(createdAt)');
+    expect(conversationMessageFeed).toContain('if (role !== "commentary" && !this.#options.runActive()) this.#options.activity.finishWork(createdAt)');
     expect(agentRunController).toContain("this.#options.activity.finishWork()");
   });
 
@@ -760,7 +768,7 @@ describe("desktop renderer shell", () => {
     expect(composer).toContain('preview.title = kind === "pdf" ? "Preview PDF" : "Preview image";');
     expect(renderer).toContain("inspectorPanel.previewImage(dataUrl, mimeType, name)");
     expect(renderer).toContain("inspectorPanel.previewPdf(dataUrl, mimeType, name)");
-    expect(renderer).toContain('name: pasted.kind === "image" ? `screenshot-${Date.now()}.png` : pasted.name');
+    expect(renderer).toContain('name: attachment.kind === "image" ? `screenshot-${Date.now()}.png` : attachment.name');
     expect(composer).toContain('this.pastedFiles.push({ dataUrl, mimeType: file.type || (kind === "pdf" ? "application/pdf" : "application/octet-stream"), name, kind, chip })');
     expect(inspectorPanel).toContain("previewImage(dataUrl: string, mimeType: string, name: string): void");
     expect(inspectorPanel).toContain("previewPdf(dataUrl: string, mimeType: string, name: string): void");
