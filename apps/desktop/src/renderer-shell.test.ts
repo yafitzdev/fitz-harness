@@ -412,7 +412,7 @@ describe("desktop renderer shell", () => {
     expect(agentRunController).toContain("this.#options.activity.appendReasoning(true)");
     expect(agentRunController).toContain("this.#options.activity.appendReasoningDelta(reasoning, delta)");
     expect(agentRunController).toContain("this.#options.activity.completeReasoning(reasoning)");
-    expect(activityTimeline).toContain("appendReasoning(running: boolean): HTMLElement");
+    expect(activityTimeline).toContain("appendReasoning(running: boolean, createdAt?: string): HTMLElement");
     expect(activityTimeline).toContain("new ReasoningView(running)");
     expect(activityTimeline).toContain("?.appendDelta(text)");
     expect(activityTimeline).toContain("?.complete()");
@@ -420,13 +420,13 @@ describe("desktop renderer shell", () => {
     expect(reasoningView).toContain('className = "reasoning-content"');
     expect(reasoningView).toContain('label.textContent = running ? "Thinking…" : "Thought through the approach"');
     expect(conversationTranscript).toContain('entry.kind === "reasoning"');
-    expect(conversationTranscript).toContain("this.#options.activity.appendReasoning(false)");
+    expect(conversationTranscript).toContain("this.#options.activity.appendReasoning(false, entry.createdAt)");
     expect(styles).toContain(".reasoning-content");
     expect(styles).toContain(".reasoning-activity .agent-activity-label { font-style: italic; }");
   });
 
   it("collapses completed Pi activity behind a durable work summary", () => {
-    expect(conversationMessageFeed).toContain("this.#options.activity.finishWork(createdAt)");
+    expect(conversationMessageFeed).toContain('role === "user" ? "next-message" : "completed"');
     expect(activityTimeline).toContain("this.#ensureWork(createdAt)");
     expect(activityTimeline).toContain('label.textContent = `Worked for ${this.#formatElapsed(endedAt - work.startedAt)}`');
     expect(activityTimeline).toContain('row.className = "message context-activity"');
@@ -685,7 +685,8 @@ describe("desktop renderer shell", () => {
     expect(agentRunController).not.toContain('this.#options.activity.setRun(activity, "Loading model"');
     expect(activityTimeline).toContain("this.#formatElapsed(Date.now() - startedAt)");
     expect(agentRunController).toContain('this.#options.api("/api/v1/management/status")');
-    expect(conversationMessageFeed).toContain('if (role !== "commentary" && !this.#options.runActive()) this.#options.activity.finishWork(createdAt)');
+    expect(conversationMessageFeed).toContain('if (role !== "commentary" && !this.#options.runActive())');
+    expect(conversationMessageFeed).toContain('this.#options.activity.finishWork(createdAt, role === "user" ? "next-message" : "completed")');
     expect(agentRunController).toContain("this.#options.activity.finishWork()");
   });
 
@@ -898,7 +899,7 @@ describe("desktop renderer shell", () => {
   it("keeps generated media out of composer attachments and animates media progress", () => {
     expect(artifactController).toContain("if (!artifact.metadata?.mediaJobId)");
     expect(mediaJobFeed).toContain("this.#options.finishWork(job.completedAt)");
-    expect(mediaJobFeed).toContain("this.#options.appendWork(row)");
+    expect(mediaJobFeed).toContain("this.#options.appendWork(row, job.startedAt ?? job.enqueuedAt)");
     expect(mediaJobFeed).toContain('this.#options.appendAssistant(`Here is your ${job.modality}!`, job.completedAt)');
     expect(mediaJobFeed).toContain('answer.classList.add("media-result-message")');
     expect(styles).toContain("animation: run-activity-spinner 900ms linear infinite");

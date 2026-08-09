@@ -22,7 +22,19 @@ describe("ConversationMessageFeed", () => {
     expect(messages.querySelector(".landing")).toBeNull();
     expect(messages.textContent).toBe("hello");
     expect(actions.attach).toHaveBeenCalledOnce();
-    expect(activity.finishWork).toHaveBeenCalledWith("now");
+    expect(activity.finishWork).toHaveBeenCalledWith("now", "next-message");
+  });
+
+  it("does not count the idle gap before a later user message as agent work", () => {
+    const { feed, activity } = setup();
+    feed.append("user", "follow up", "2026-08-09T06:35:43.888Z");
+    expect(activity.finishWork).toHaveBeenCalledWith("2026-08-09T06:35:43.888Z", "next-message");
+  });
+
+  it("uses a final assistant timestamp as the completed-work boundary", () => {
+    const { feed, activity } = setup();
+    feed.append("assistant", "done", "2026-08-09T06:35:47.809Z");
+    expect(activity.finishWork).toHaveBeenCalledWith("2026-08-09T06:35:47.809Z", "completed");
   });
 
   it("routes commentary through the activity timeline", () => {

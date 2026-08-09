@@ -17,7 +17,7 @@ export interface AgentRunActivity {
   appendApproval(approval: Json): HTMLElement;
   resolveApproval(row: HTMLElement, decision: "approved" | "denied"): void;
   appendTool(toolName: string, input: unknown, toolCallId: string, running: boolean): HTMLElement;
-  completeTool(row: HTMLElement, toolName: string, input: unknown, result: unknown, isError: boolean): void;
+  completeTool(row: HTMLElement, toolName: string, input: unknown, result: unknown, isError: boolean, completedAt?: string): void;
   finishWork(completedAt?: string): void;
 }
 

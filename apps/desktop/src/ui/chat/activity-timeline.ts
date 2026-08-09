@@ -78,12 +78,12 @@ export class ActivityTimeline {
   }
 
   /** A model thinking segment, rendered as a collapsible row inside the work feed. */
-  appendReasoning(running: boolean): HTMLElement {
+  appendReasoning(running: boolean, createdAt?: string): HTMLElement {
     this.#removeLanding();
     this.#burst = undefined;
     const view = new ReasoningView(running);
     this.#reasoningByRow.set(view.element, view);
-    this.appendWork(view.element);
+    this.appendWork(view.element, createdAt);
     this.#scroll();
     return view.element;
   }
@@ -157,7 +157,7 @@ export class ActivityTimeline {
     return row;
   }
 
-  completeTool(row: HTMLElement, toolName: string, input: unknown, result: unknown, isError: boolean): void {
+  completeTool(row: HTMLElement, toolName: string, input: unknown, result: unknown, isError: boolean, completedAt?: string): void {
     const wasRunning = row.classList.contains("running");
     row.classList.remove("running");
     row.classList.toggle("failed", isError);
@@ -171,10 +171,11 @@ export class ActivityTimeline {
     if (shellStatus) { shellStatus.textContent = isError ? "× Failed" : "✓ Success"; shellStatus.classList.toggle("failed", isError); }
     const burst = this.#burstsByTool.get(row);
     if (burst && wasRunning) { burst.running = Math.max(0, burst.running - 1); this.#updateBurst(burst); }
+    this.#touchWork(completedAt);
   }
 
-  appendContext(text = "Context automatically compacted"): HTMLElement {
-    this.finishWork();
+  appendContext(text = "Context automatically compacted", createdAt?: string): HTMLElement {
+    this.finishWork(createdAt);
     const row = document.createElement("div");
     row.className = "message context-activity";
     const icon = document.createElement("span");
@@ -242,10 +243,14 @@ export class ActivityTimeline {
     this.#scroll();
   }
 
-  finishWork(completedAt?: string): void {
+  finishWork(completedAt?: string, boundary: "completed" | "next-message" = "completed"): void {
     const work = this.#work;
     if (!work) return;
-    const endedAt = Math.max(work.lastAt, this.#timestamp(completedAt));
+    // A later user message is only a boundary between runs. Its timestamp must
+    // not turn the idle gap since the previous tool event into elapsed work.
+    const endedAt = boundary === "next-message"
+      ? work.lastAt
+      : Math.max(work.lastAt, this.#timestamp(completedAt));
     const label = work.toggle.querySelector<HTMLElement>(".work-summary-label");
     if (label) label.textContent = `Worked for ${this.#formatElapsed(endedAt - work.startedAt)}`;
     work.details.hidden = true;

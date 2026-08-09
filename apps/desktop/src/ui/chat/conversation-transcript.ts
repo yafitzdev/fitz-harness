@@ -5,11 +5,11 @@ type Json = Record<string, any>;
 export interface TranscriptActivity {
   clear(): void;
   appendTool(toolName: string, input: unknown, toolCallId: string, running: boolean, createdAt?: string): HTMLElement;
-  completeTool(row: HTMLElement, toolName: string, input: unknown, result: unknown, isError: boolean): void;
-  appendReasoning(running: boolean): HTMLElement;
+  completeTool(row: HTMLElement, toolName: string, input: unknown, result: unknown, isError: boolean, completedAt?: string): void;
+  appendReasoning(running: boolean, createdAt?: string): HTMLElement;
   appendReasoningDelta(row: HTMLElement, text: string): void;
   completeReasoning(row: HTMLElement): void;
-  appendContext(label?: string): HTMLElement;
+  appendContext(label?: string, createdAt?: string): HTMLElement;
 }
 
 export interface ConversationTranscriptOptions {
@@ -57,15 +57,15 @@ export class ConversationTranscript {
       const toolName = existing?.toolName ?? String(entry.content?.toolName ?? "tool");
       const input = existing?.input;
       const row = existing?.row ?? this.#options.activity.appendTool(toolName, undefined, toolCallId, true, entry.createdAt);
-      this.#options.activity.completeTool(row, toolName, input, entry.content?.result, Boolean(entry.content?.isError));
+      this.#options.activity.completeTool(row, toolName, input, entry.content?.result, Boolean(entry.content?.isError), entry.createdAt);
       return;
     }
     if (entry.kind === "reasoning") {
-      const row = this.#options.activity.appendReasoning(false);
+      const row = this.#options.activity.appendReasoning(false, entry.createdAt);
       this.#options.activity.appendReasoningDelta(row, String(entry.content?.text ?? ""));
       this.#options.activity.completeReasoning(row);
       return;
     }
-    if (entry.kind === "compaction") this.#options.activity.appendContext(entry.content?.manual === true ? "Context compacted" : "Context automatically compacted");
+    if (entry.kind === "compaction") this.#options.activity.appendContext(entry.content?.manual === true ? "Context compacted" : "Context automatically compacted", entry.createdAt);
   }
 }

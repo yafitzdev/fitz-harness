@@ -4,7 +4,7 @@ import { projectRelativePath } from "./tool-activity.js";
 import { scrollToLatestIfFollowing } from "./conversation-scroll.js";
 
 export interface ConversationMessageActivity {
-  finishWork(createdAt?: string): void;
+  finishWork(createdAt?: string, boundary?: "completed" | "next-message"): void;
   appendCommentary(node: HTMLElement, createdAt?: string): void;
 }
 
@@ -28,7 +28,9 @@ export class ConversationMessageFeed {
 
   append(role: string, text: string, createdAt?: string): HTMLElement {
     this.clearLanding();
-    if (role !== "commentary" && !this.#options.runActive()) this.#options.activity.finishWork(createdAt);
+    if (role !== "commentary" && !this.#options.runActive()) {
+      this.#options.activity.finishWork(createdAt, role === "user" ? "next-message" : "completed");
+    }
     const article = document.createElement("article");
     article.className = `message ${role}`;
     if (role === "system") {

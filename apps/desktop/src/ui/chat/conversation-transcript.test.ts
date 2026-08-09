@@ -28,9 +28,9 @@ describe("ConversationTranscript", () => {
     expect(rebuildHistory).toHaveBeenCalledWith(["hello"]);
     expect(appendMessage).toHaveBeenCalledWith("user", "hello", undefined);
     expect(appendCommentary).toHaveBeenCalledWith("checking", undefined);
-    expect(activity.completeTool).toHaveBeenCalledWith(toolRow, "read", { path: "a.ts" }, "source", false);
+    expect(activity.completeTool).toHaveBeenCalledWith(toolRow, "read", { path: "a.ts" }, "source", false, undefined);
     expect(activity.appendReasoningDelta).toHaveBeenCalledWith(reasoningRow, "thinking");
-    expect(activity.appendContext).toHaveBeenCalledWith("Context automatically compacted");
+    expect(activity.appendContext).toHaveBeenCalledWith("Context automatically compacted", undefined);
     expect(tokens).toBeGreaterThan(0);
   });
 
@@ -41,6 +41,6 @@ describe("ConversationTranscript", () => {
     new ConversationTranscript({ messages, activity, appendMessage: vi.fn(), appendCommentary: vi.fn(), rebuildHistory: vi.fn() })
       .restore([{ kind: "tool-result", id: "late", content: { toolName: "bash", result: "ok" } }]);
     expect(activity.appendTool).toHaveBeenCalledWith("bash", undefined, "late", true, undefined);
-    expect(activity.completeTool).toHaveBeenCalledWith(row, "bash", undefined, "ok", false);
+    expect(activity.completeTool).toHaveBeenCalledWith(row, "bash", undefined, "ok", false, undefined);
   });
 });

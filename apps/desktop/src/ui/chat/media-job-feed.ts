@@ -7,7 +7,7 @@ type Json = Record<string, any>;
 
 export interface MediaJobFeedOptions {
   messages: HTMLElement;
-  appendWork: (element: HTMLElement) => void;
+  appendWork: (element: HTMLElement, createdAt?: string) => void;
   finishWork: (completedAt?: string) => void;
   appendAssistant: (text: string, createdAt?: string) => HTMLElement;
   openArtifact: (artifact: Json) => void | Promise<void>;
@@ -37,7 +37,7 @@ export class MediaJobFeed {
       row.className = "message media-job-notice";
       row.dataset.mediaJobId = job.id;
       this.#rows.set(job.id, row);
-      if (!completed) this.#options.appendWork(row);
+      if (!completed) this.#options.appendWork(row, job.startedAt ?? job.enqueuedAt);
     }
     row.className = `message media-job-notice ${job.status}`;
     row.replaceChildren();

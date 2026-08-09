@@ -161,9 +161,9 @@ describe("ActivityTimeline", () => {
     const label = messages.querySelector<HTMLElement>(".activity-burst-label")!;
     expect(label.textContent).toBe("Editing file, running command");
 
-    timeline.completeTool(command, "bash", { command: "pnpm test" }, "passed", false);
+    timeline.completeTool(command, "bash", { command: "pnpm test" }, "passed", false, "2026-08-03T08:00:03.000Z");
     expect(label.textContent).toBe("Editing file, running command");
-    timeline.completeTool(edit, "write", { path: "README.md" }, "done", false);
+    timeline.completeTool(edit, "write", { path: "README.md" }, "done", false, "2026-08-03T08:00:04.000Z");
     expect(label.textContent).toBe("Edited file, ran command");
 
     timeline.finishWork("2026-08-03T08:00:05.000Z");
@@ -177,6 +177,14 @@ describe("ActivityTimeline", () => {
     timeline.appendTool("bash", { command: "pnpm test" }, "tool-1", true, "2026-08-03T08:00:00.000Z");
     timeline.finishWork("2026-08-03T09:53:42.000Z");
     expect(messages.querySelector(".work-summary-label")?.textContent).toBe("Worked for 1h 53m");
+  });
+
+  it("closes restored work at its last activity instead of a later user-message boundary", () => {
+    const { messages, timeline } = setup();
+    const row = timeline.appendTool("generate_video", { prompt: "dog" }, "tool-1", true, "2026-08-08T23:36:30.428Z");
+    timeline.completeTool(row, "generate_video", { prompt: "dog" }, "submitted", false, "2026-08-08T23:36:53.203Z");
+    timeline.finishWork("2026-08-09T06:35:43.888Z", "next-message");
+    expect(messages.querySelector(".work-summary-label")?.textContent).toBe("Worked for 22s");
   });
 
   it("switches to hours at the 60-minute boundary", () => {

@@ -35,7 +35,7 @@ describe("MediaJobFeed", () => {
   it("keeps progress in agent work and promotes completed media to a final answer", () => {
     const { feed, messages, calls } = setup();
     feed.render({ id: "job-1", modality: "video", status: "queued" });
-    expect(calls.appendWork).toHaveBeenCalledOnce();
+    expect(calls.appendWork).toHaveBeenCalledWith(expect.any(HTMLElement), undefined);
     expect(messages.textContent).toContain("Video generation in progress");
 
     feed.render({ id: "job-1", modality: "video", status: "completed", completedAt: "now" }, undefined, { id: "artifact-1", name: "clip.mp4" });
@@ -44,6 +44,19 @@ describe("MediaJobFeed", () => {
     expect(messages.textContent).toContain("Video ready");
     expect(messages.textContent).toContain("clip.mp4");
     expect(calls.finishWork).toHaveBeenCalledWith("now");
+  });
+
+  it("restores terminal failure timing from durable job timestamps", () => {
+    const { feed, calls } = setup();
+    feed.render({
+      id: "job-1",
+      modality: "image",
+      status: "failed",
+      enqueuedAt: "2026-08-09T06:35:57.783Z",
+      completedAt: "2026-08-09T06:36:07.922Z",
+    }, "GPU unavailable");
+    expect(calls.appendWork).toHaveBeenCalledWith(expect.any(HTMLElement), "2026-08-09T06:35:57.783Z");
+    expect(calls.finishWork).toHaveBeenCalledWith("2026-08-09T06:36:07.922Z");
   });
 
   it("retries terminal failures through the injected lifecycle", async () => {

@@ -328,7 +328,7 @@ const artifactController = new ArtifactController({
 });
 const mediaJobFeed = new MediaJobFeed({
   messages,
-  appendWork: (row) => activityTimeline.appendWork(row),
+  appendWork: (row, createdAt) => activityTimeline.appendWork(row, createdAt),
   finishWork: (completedAt) => activityTimeline.finishWork(completedAt),
   appendAssistant: (text, createdAt) => appendMessage("assistant", text, createdAt),
   openArtifact: (artifact) => inspectorPanel.previewArtifact(artifact),
