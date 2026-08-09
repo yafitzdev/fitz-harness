@@ -24,7 +24,7 @@ function setup(overrides: Partial<DesktopUpdateBridge> = {}) {
 beforeEach(() => document.body.replaceChildren());
 
 describe("DesktopUpdateController", () => {
-  it("restores update state and routes both install actions through the trusted bridge", async () => {
+  it("restores update state and deduplicates install actions through the trusted bridge", async () => {
     const { elements, bridge } = setup();
     await vi.waitFor(() => expect(elements.label.textContent).toBe("Update ready to install"));
     expect(elements.version.textContent).toBe("Version 1.2.3");
@@ -32,7 +32,19 @@ describe("DesktopUpdateController", () => {
     expect(elements.install.hidden).toBe(false);
     elements.install.click();
     elements.globalInstall.click();
-    await vi.waitFor(() => expect(bridge.installUpdate).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(bridge.installUpdate).toHaveBeenCalledTimes(1));
+  });
+
+  it("renders a failed install request instead of leaking an unhandled rejection", async () => {
+    const { elements } = setup({
+      installUpdate: vi.fn(async () => { throw new Error("installer unavailable"); }),
+    });
+    await vi.waitFor(() => expect(elements.label.textContent).toBe("Update ready to install"));
+
+    elements.install.click();
+
+    await vi.waitFor(() => expect(elements.label.textContent).toBe("Update install failed"));
+    expect(elements.check.disabled).toBe(false);
   });
 
   it("renders live progress and recovers a failed manual check", async () => {

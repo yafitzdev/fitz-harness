@@ -20,13 +20,14 @@ export interface DesktopUpdateElements {
 export class DesktopUpdateController {
   readonly #elements: DesktopUpdateElements;
   readonly #bridge: DesktopUpdateBridge;
+  #installing = false;
 
   constructor(elements: DesktopUpdateElements, bridge: DesktopUpdateBridge) {
     this.#elements = elements;
     this.#bridge = bridge;
     elements.check.addEventListener("click", () => void this.#check());
-    elements.install.addEventListener("click", () => void bridge.installUpdate());
-    elements.globalInstall.addEventListener("click", () => void bridge.installUpdate());
+    elements.install.addEventListener("click", () => void this.#install());
+    elements.globalInstall.addEventListener("click", () => void this.#install());
     bridge.onUpdateStatus((update) => this.render(update));
     void bridge.updateStatus().then((update) => this.render(update)).catch(() => this.render({ state: "error" }));
   }
@@ -61,6 +62,23 @@ export class DesktopUpdateController {
       if (this.#elements.label.dataset.state !== "checking" && this.#elements.label.dataset.state !== "downloading") {
         this.#elements.check.disabled = false;
       }
+    }
+  }
+
+  async #install(): Promise<void> {
+    if (this.#installing) return;
+    this.#installing = true;
+    this.#elements.install.disabled = true;
+    this.#elements.globalInstall.disabled = true;
+    try {
+      await this.#bridge.installUpdate();
+    } catch {
+      this.render({ state: "error" });
+      this.#elements.label.textContent = "Update install failed";
+    } finally {
+      this.#installing = false;
+      this.#elements.install.disabled = false;
+      this.#elements.globalInstall.disabled = false;
     }
   }
 }
