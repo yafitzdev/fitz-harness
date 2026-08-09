@@ -59,7 +59,7 @@
   --radius-2xl: 20px;
   --radius-3xl: 25px;
   --sidebar-item-radius: 7px;
-  --workspace-header-height: 44px;
+  --workspace-header-height: 40px;
   --control-size: 28px;
   --elevation-stroke: 0 0 0 .5px var(--border);
   --elevation-prominent: var(--elevation-stroke), 0 3px 7.5px rgba(0,0,0,.04), 0 0 20px rgba(0,0,0,.05);

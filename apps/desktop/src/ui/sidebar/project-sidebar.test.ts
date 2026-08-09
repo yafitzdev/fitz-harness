@@ -19,13 +19,16 @@ function setup() {
   // create-project dialog is appended to document.body by the controller.
   const tree = element<HTMLElement>("nav", "projects");
   const chatsTree = element<HTMLElement>("nav", "chats");
+  const pinnedSection = element<HTMLElement>("section", "pinned-section");
+  const pinnedTree = element<HTMLElement>("nav", "pinned");
+  pinnedSection.append(pinnedTree);
   const menuElement = element<HTMLElement>("div", "sidebar-context-menu");
   menuElement.hidden = true;
   const calls = {
-    selectProject: vi.fn(), selectSession: vi.fn(), newChat: vi.fn(), openProjectPath: vi.fn(), createWorktree: vi.fn(), archiveProjectChats: vi.fn(), removeProject: vi.fn(), renameSession: vi.fn(), renameProject: vi.fn(), createProject: vi.fn(), chooseFolder: vi.fn(async () => undefined), onError: vi.fn(), archiveSession: vi.fn(), copyValue: vi.fn(), continueSession: vi.fn(), closePopovers: vi.fn(),
+    selectProject: vi.fn(), selectSession: vi.fn(), newChat: vi.fn(), openProjectPath: vi.fn(), createWorktree: vi.fn(), archiveProjectChats: vi.fn(), removeProject: vi.fn(), renameSession: vi.fn(), renameProject: vi.fn(), createProject: vi.fn(), chooseFolder: vi.fn(async () => undefined), onError: vi.fn(), archiveSession: vi.fn(), removeSession: vi.fn(), copyValue: vi.fn(), continueSession: vi.fn(), closePopovers: vi.fn(),
   };
-  const controller = new ProjectSidebarController({ mount: tree, chatsMount: chatsTree, ...calls });
-  return { controller, tree, chatsTree, menuElement, calls };
+  const controller = new ProjectSidebarController({ mount: tree, pinnedMount: pinnedTree, pinnedSection, chatsMount: chatsTree, ...calls });
+  return { controller, tree, chatsTree, pinnedTree, pinnedSection, menuElement, calls };
 }
 
 function state(): ProjectSidebarState {
@@ -50,6 +53,10 @@ function menuButton(menuElement: HTMLElement, label: string): HTMLButtonElement 
   const button = [...menuElement.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes(label));
   if (!button) throw new Error(`No menu item "${label}"`);
   return button;
+}
+
+function menuOrder(menuElement: HTMLElement): string[] {
+  return [...menuElement.children].map((item) => item.tagName === "HR" ? "|" : item.textContent?.trim() ?? "");
 }
 
 function dialog(): HTMLElement {
@@ -109,8 +116,24 @@ describe("ProjectSidebarController", () => {
     expect(calls.selectSession).toHaveBeenCalledWith("a1", "alpha");
   });
 
-  it("shows a filled pin indicator on pinned chat rows and sorts them first", () => {
-    const { controller, tree, menuElement } = setup();
+  it("collects pinned projects in the Pinned section and hides the section after unpinning", () => {
+    const { controller, tree, pinnedTree, pinnedSection, menuElement } = setup();
+    controller.render(state());
+    expect(pinnedSection.hidden).toBe(true);
+
+    click(tree.querySelector(".project-row")!.closest(".tree-item")!.querySelector(".tree-menu-toggle")!);
+    click(menuButton(menuElement, "Pin project"));
+    expect(pinnedSection.hidden).toBe(false);
+    expect(pinnedTree.textContent).toContain("Alpha");
+    expect(pinnedTree.querySelector(".pin-indicator")?.getAttribute("aria-label")).toBe("Pinned");
+
+    click(pinnedTree.querySelector(".tree-menu-toggle")!);
+    click(menuButton(menuElement, "Unpin project"));
+    expect(pinnedSection.hidden).toBe(true);
+  });
+
+  it("shows pinned project chats in the shared Pinned section without reordering their project", () => {
+    const { controller, tree, pinnedTree, pinnedSection, menuElement } = setup();
     controller.ensureExpanded("alpha");
     controller.render(state());
     const sessionItems = [...tree.querySelectorAll<HTMLElement>(".task-row")].map((row) => row.closest(".tree-item")!);
@@ -120,11 +143,14 @@ describe("ProjectSidebarController", () => {
 
     const rows = tree.querySelectorAll<HTMLElement>(".task-row");
     expect(rows).toHaveLength(3);
-    expect(rows[0]!.textContent).toContain("Second chat");
-    const indicator = rows[0]!.querySelector(".pin-indicator");
+    expect(rows[0]!.textContent).toContain("First chat");
+    expect(rows[1]!.textContent).toContain("Second chat");
+    const indicator = rows[1]!.querySelector(".pin-indicator");
     expect(indicator).not.toBeNull();
     expect(indicator!.getAttribute("aria-label")).toBe("Pinned");
-    expect(rows[1]!.querySelector(".pin-indicator")).toBeNull();
+    expect(rows[0]!.querySelector(".pin-indicator")).toBeNull();
+    expect(pinnedSection.hidden).toBe(false);
+    expect(pinnedTree.textContent).toContain("Second chat");
   });
 
   it("opens a centered create-project dialog with name and folder controls", () => {
@@ -355,8 +381,10 @@ describe("ProjectSidebarController", () => {
     const tree = element<HTMLElement>("nav", "projects");
     const options: ProjectSidebarOptions = {
       mount: tree,
+      pinnedMount: element<HTMLElement>("nav", "pinned"),
+      pinnedSection: element<HTMLElement>("section", "pinned-section"),
       chatsMount: element<HTMLElement>("nav", "chats"),
-      selectProject: vi.fn(), selectSession: vi.fn(), newChat: vi.fn(), openProjectPath: vi.fn(), createWorktree: vi.fn(), archiveProjectChats: vi.fn(), removeProject: vi.fn(), renameSession: vi.fn(), renameProject: vi.fn(), createProject: vi.fn(), chooseFolder: vi.fn(async () => undefined), onError: vi.fn(), archiveSession: vi.fn(), copyValue: vi.fn(), continueSession: vi.fn(), closePopovers: vi.fn(),
+      selectProject: vi.fn(), selectSession: vi.fn(), newChat: vi.fn(), openProjectPath: vi.fn(), createWorktree: vi.fn(), archiveProjectChats: vi.fn(), removeProject: vi.fn(), renameSession: vi.fn(), renameProject: vi.fn(), createProject: vi.fn(), chooseFolder: vi.fn(async () => undefined), onError: vi.fn(), archiveSession: vi.fn(), removeSession: vi.fn(), copyValue: vi.fn(), continueSession: vi.fn(), closePopovers: vi.fn(),
     };
     expect(() => new ProjectSidebarController(options)).toThrow("Missing #sidebar-context-menu");
   });
@@ -389,8 +417,8 @@ describe("ProjectSidebarController", () => {
     expect(rows[1]!.classList.contains("active")).toBe(false);
   });
 
-  it("sorts pinned chats first and shows their pin indicator", () => {
-    const { controller, chatsTree, menuElement } = setup();
+  it("renders pinned standalone chats in the shared Pinned section", () => {
+    const { controller, chatsTree, pinnedTree, pinnedSection, menuElement } = setup();
     controller.render(state());
     const chatItems = [...chatsTree.querySelectorAll<HTMLElement>(".chat-row")].map((row) => row.closest(".tree-item")!);
     click(chatItems[1]!.querySelector(".tree-menu-toggle")!);
@@ -398,9 +426,11 @@ describe("ProjectSidebarController", () => {
 
     const rows = chatsTree.querySelectorAll<HTMLElement>(".chat-row");
     expect(rows).toHaveLength(2);
-    expect(rows[0]!.textContent).toContain("Another chat");
-    expect(rows[0]!.querySelector(".pin-indicator")).not.toBeNull();
-    expect(rows[1]!.querySelector(".pin-indicator")).toBeNull();
+    expect(rows[0]!.textContent).toContain("Standalone chat");
+    expect(rows[1]!.textContent).toContain("Another chat");
+    expect(rows[1]!.querySelector(".pin-indicator")).not.toBeNull();
+    expect(pinnedSection.hidden).toBe(false);
+    expect(pinnedTree.textContent).toContain("Another chat");
   });
 
   it("renames a standalone chat inline, committing with an undefined project", async () => {
@@ -428,6 +458,29 @@ describe("ProjectSidebarController", () => {
     click(menuButton(menuElement, "Archive chat"));
 
     expect(calls.archiveSession).toHaveBeenCalledWith("c1", undefined);
+  });
+
+  it("uses the canonical chat menu order and destructive styling", () => {
+    const { controller, chatsTree, menuElement } = setup();
+    controller.render(state());
+    click(chatsTree.querySelector(".tree-menu-toggle")!);
+
+    expect(menuOrder(menuElement)).toEqual([
+      "Pin chat", "Rename chat", "Continue in new chat", "|",
+      "Open in Explorer", "Copy working directory", "Copy session ID", "Copy deeplink", "|",
+      "Archive chat", "Remove",
+    ]);
+    expect(menuButton(menuElement, "Archive chat").classList.contains("danger")).toBe(true);
+    expect(menuButton(menuElement, "Remove").classList.contains("danger")).toBe(true);
+  });
+
+  it("removes a standalone chat through the durable callback", async () => {
+    const { controller, chatsTree, menuElement, calls } = setup();
+    controller.render(state());
+    click(chatsTree.querySelector(".tree-menu-toggle")!);
+    click(menuButton(menuElement, "Remove"));
+    await flush();
+    expect(calls.removeSession).toHaveBeenCalledWith("c1", undefined);
   });
 
   it("continues a standalone chat in a new chat", () => {

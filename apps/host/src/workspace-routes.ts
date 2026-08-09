@@ -165,6 +165,19 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
     }
   });
 
+  app.delete("/api/v1/sessions/:sessionId", async (request, reply) => {
+    const session = sessionFor((request.params as { sessionId: string }).sessionId);
+    if (!session) return reply.code(404).send({ error: "Session not found" });
+    const principal = principalFor(request);
+    if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" });
+    const activeRun = store.latestSessionAgentRun(session.id);
+    if (activeRun?.status === "queued" || activeRun?.status === "running") return reply.code(409).send({ error: "Stop the active request before removing this chat" });
+    for (const artifact of store.listArtifacts(session.id)) await artifacts.delete(artifact.id);
+    store.deleteSession(session.id);
+    security?.audit("session.deleted", principal?.user.id, "session", session.id, { title: session.title, projectId: session.projectId });
+    return reply.code(204).send();
+  });
+
   app.get("/api/v1/sessions/:sessionId/transcript", async (request, reply) => {
     const session = sessionFor((request.params as { sessionId: string }).sessionId);
     if (!session) return reply.code(404).send({ error: "Session not found" });

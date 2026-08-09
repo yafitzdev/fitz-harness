@@ -51,6 +51,12 @@ function fakeApi(initial: { projects: Json[]; sessions: Record<string, Json[]>; 
       delete state.sessions[projectId];
       return { data: {} };
     }
+    if (method === "DELETE" && path.startsWith("/api/v1/sessions/")) {
+      const sessionId = path.split("/").at(-1)!;
+      for (const projectId of Object.keys(state.sessions)) state.sessions[projectId] = state.sessions[projectId]!.filter((session) => session.id !== sessionId);
+      state.chats = state.chats.filter((chat) => chat.id !== sessionId);
+      return { data: {} };
+    }
     if (path === "/api/v1/projects") return { data: state.projects };
     if (sessionsPath) return { data: (state.sessions[sessionsPath[1]!] ?? []).filter((session: Json) => session.status !== "archived") };
     if (path === "/api/v1/chats") return { data: state.chats.filter((chat: Json) => chat.status !== "archived") };
@@ -234,6 +240,21 @@ describe("ProjectsController", () => {
     expect(controller.currentSessionId).toBeUndefined();
     expect(calls.showStatus).toHaveBeenCalledWith("Archived Old chat", "success");
     expect(calls.onNoSession).toHaveBeenCalled();
+  });
+
+  it("permanently removes a chat and keeps its project selected", async () => {
+    const { controller, api, calls } = setup({
+      projects: [{ id: "project-a", name: "Alpha" }],
+      sessions: { "project-a": [{ id: "session-1", title: "Disposable" }, { id: "session-2", title: "Keep" }] },
+    });
+    await controller.load("project-a", "session-1");
+
+    await controller.removeSession("session-1", "project-a");
+
+    expect(api).toHaveBeenCalledWith("/api/v1/sessions/session-1", "DELETE");
+    expect(controller.currentProjectId).toBe("project-a");
+    expect(controller.currentSessionId).toBe("session-2");
+    expect(calls.showStatus).toHaveBeenCalledWith("Chat removed", "success");
   });
 
   it("removes a project and clears its sidebar state", async () => {

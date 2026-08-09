@@ -56,8 +56,6 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .nav-action { width: 100%; display: flex; align-items: center; gap: 9px; padding: 8px 9px; color: var(--text); background: transparent; border-radius: var(--sidebar-item-radius); cursor: pointer; text-align: left; }
 .nav-action:hover { background: var(--tint-5); }
 .nav-action.active { background: var(--tint-6); color: var(--text); }
-.nav-action kbd { margin-left: auto; color: var(--subtle); font: 11px inherit; opacity: 0; }
-.nav-action:hover kbd { opacity: 1; }
 .sidebar-spacer { flex: 1; }
 .connection-card { display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px; border-radius: 8px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
 .connection-card:hover { background: var(--tint-2); }

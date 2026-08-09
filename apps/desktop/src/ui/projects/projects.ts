@@ -235,6 +235,24 @@ export class ProjectsController {
     } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
   }
 
+  /** Permanently removes one chat while preserving the surrounding selection when possible. */
+  async removeSession(id: string, projectId: string | undefined): Promise<void> {
+    this.options.closePopovers();
+    try {
+      await this.options.api(`/api/v1/sessions/${id}`, "DELETE");
+      const removingCurrent = this.currentSessionIdValue === id;
+      if (removingCurrent) {
+        this.currentSessionIdValue = undefined;
+        if (this.currentProjectIdValue !== projectId) this.currentProjectIdValue = projectId;
+      }
+      await this.load(this.currentProjectIdValue, this.currentSessionIdValue);
+      this.options.showStatus("Chat removed", "success");
+    } catch (error) {
+      this.options.showStatus(this.options.errorMessage(error), "error");
+      throw error;
+    }
+  }
+
   async openProjectPath(path: string): Promise<void> {
     try { await this.options.bridge.openPath(path); } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
   }

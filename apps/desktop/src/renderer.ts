@@ -198,6 +198,8 @@ adaptiveWorkspace = new AdaptiveWorkspace({ shell, workspace, onLayoutChange: ()
 const customSelects = new CustomSelectController(selectPopover, closePopovers);
 const projectSidebar = new ProjectSidebarController({
   mount: element("projects"),
+  pinnedMount: element("pinned"),
+  pinnedSection: element("pinned-section"),
   chatsMount: element("chats"),
   closePopovers,
   selectProject: (projectId) => void projects.selectProject(projectId),
@@ -213,6 +215,7 @@ const projectSidebar = new ProjectSidebarController({
   chooseFolder: () => window.fitz.chooseFolder(),
   onError: (error) => showStatus(errorMessage(error), "error"),
   archiveSession: (sessionId, projectId) => { projects.setCurrentProject(projectId); projects.setCurrentSession(sessionId); void projects.archiveCurrentTask(); },
+  removeSession: (sessionId, projectId) => projects.removeSession(sessionId, projectId),
   copyValue: (value, message) => void copyValue(value, message),
   continueSession: (session, projectId) => void projects.continueInNewChat(session, projectId),
 });

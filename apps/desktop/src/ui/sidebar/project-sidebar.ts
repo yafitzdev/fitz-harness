@@ -25,6 +25,8 @@ export interface ProjectSidebarState {
 }
 
 export interface ProjectSidebarElements {
+  pinnedTree: HTMLElement;
+  pinnedSection: HTMLElement;
   tree: HTMLElement;
   chatsTree: HTMLElement;
 }
@@ -32,6 +34,10 @@ export interface ProjectSidebarElements {
 export interface ProjectSidebarOptions {
   /** The sidebar tree the controller renders projects and sessions into. */
   mount: HTMLElement;
+  /** The flat collection of pinned projects and chats. */
+  pinnedMount: HTMLElement;
+  /** The section hidden when there are no valid pinned records. */
+  pinnedSection: HTMLElement;
   /** The sidebar tree the controller renders standalone chats into. */
   chatsMount: HTMLElement;
   closePopovers: () => void;
@@ -48,6 +54,7 @@ export interface ProjectSidebarOptions {
   chooseFolder: () => Promise<string | undefined>;
   onError: (error: unknown) => void;
   archiveSession: (sessionId: string, projectId: string | undefined) => void;
+  removeSession: (sessionId: string, projectId: string | undefined) => Promise<void> | void;
   copyValue: (value: string, message: string) => void;
   continueSession: (session: ProjectSidebarSession, projectId?: string) => void;
 }
@@ -86,7 +93,7 @@ export class ProjectSidebarController {
     this.#options = options;
     // The context menu lives at shell level, so its lookup is global rather
     // than scoped to the tree.
-    const elements: ProjectSidebarElements = { tree: options.mount, chatsTree: options.chatsMount };
+    const elements: ProjectSidebarElements = { pinnedTree: options.pinnedMount, pinnedSection: options.pinnedSection, tree: options.mount, chatsTree: options.chatsMount };
     this.#elements = elements;
     this.#menuElement = requiredElement("sidebar-context-menu");
     this.#menu = new ContextMenu(this.#menuElement, options.closePopovers);
@@ -97,13 +104,13 @@ export class ProjectSidebarController {
 
   render(state: ProjectSidebarState): void {
     this.#state = state;
+    this.#renderPinned();
     const chatsTree = this.#elements.chatsTree;
     chatsTree.replaceChildren();
     if (state.chats.length === 0) {
       chatsTree.append(this.#empty("No chats yet"));
     } else {
-      const chats = [...state.chats].sort((left, right) => Number(this.#pinnedSessions.has(right.id)) - Number(this.#pinnedSessions.has(left.id)));
-      for (const chat of chats) chatsTree.append(this.#chatItem(chat));
+      for (const chat of state.chats) chatsTree.append(this.#chatItem(chat));
     }
 
     const tree = this.#elements.tree;
@@ -113,8 +120,7 @@ export class ProjectSidebarController {
       return;
     }
 
-    const projects = [...state.projects].sort((left, right) => Number(this.#pinnedProjects.has(right.id)) - Number(this.#pinnedProjects.has(left.id)));
-    for (const project of projects) {
+    for (const project of state.projects) {
       if (this.#confirmingRemoval?.projectId === project.id) tree.append(this.#confirmRemoveRow(project));
       else tree.append(this.#projectGroup(project));
     }
@@ -153,15 +159,58 @@ export class ProjectSidebarController {
   removeProjectState(projectId: string): void {
     this.#pinnedProjects.delete(projectId);
     this.#expandedProjects.delete(projectId);
+    for (const session of this.#state.sessionsByProject.get(projectId) ?? []) this.#pinnedSessions.delete(session.id);
     this.#saveSet("fitz-pinned-projects", this.#pinnedProjects);
+    this.#saveSet("fitz-pinned-sessions", this.#pinnedSessions);
     this.#saveSet("fitz-expanded-projects", this.#expandedProjects);
   }
 
   hideMenu(): void { this.#menuElement.hidden = true; }
 
   resetMenuToggles(): void {
+    for (const toggle of this.#elements.pinnedTree.querySelectorAll(".tree-menu-toggle")) toggle.setAttribute("aria-expanded", "false");
     for (const toggle of this.#elements.tree.querySelectorAll(".tree-menu-toggle")) toggle.setAttribute("aria-expanded", "false");
     for (const toggle of this.#elements.chatsTree.querySelectorAll(".tree-menu-toggle")) toggle.setAttribute("aria-expanded", "false");
+  }
+
+  #renderPinned(): void {
+    const pinnedTree = this.#elements.pinnedTree;
+    pinnedTree.replaceChildren();
+    for (const projectId of this.#pinnedProjects) {
+      const project = this.#project(projectId);
+      if (project) pinnedTree.append(this.#pinnedProjectItem(project));
+    }
+    for (const sessionId of this.#pinnedSessions) {
+      const standalone = this.#state.chats.find((session) => session.id === sessionId);
+      if (standalone) { pinnedTree.append(this.#pinnedSessionItem(standalone)); continue; }
+      for (const project of this.#state.projects) {
+        const session = (this.#state.sessionsByProject.get(project.id) ?? []).find((candidate) => candidate.id === sessionId);
+        if (session) { pinnedTree.append(this.#pinnedSessionItem(session, project)); break; }
+      }
+    }
+    this.#elements.pinnedSection.hidden = pinnedTree.childElementCount === 0;
+  }
+
+  #pinnedProjectItem(project: ProjectSidebarProject): HTMLElement {
+    if (this.#editing?.kind === "project" && this.#editing.id === project.id) {
+      return this.#editingRow("project-row pinned-row", project.name, 80, (value) => this.#commitEdit(value));
+    }
+    const item = this.#treeItem(project.name, "project-row pinned-row", this.#folderIcon(), () => this.#options.selectProject(project.id), (toggle, event) => this.#openMenu("project", project.id, undefined, toggle, event), () => this.#options.newChat(project.id));
+    const button = item.querySelector<HTMLButtonElement>(".project-row")!;
+    button.classList.toggle("active", project.id === this.#state.currentProjectId && !this.#state.currentSessionId && !this.#state.newChat);
+    this.#appendPin(button);
+    return item;
+  }
+
+  #pinnedSessionItem(session: ProjectSidebarSession, project?: ProjectSidebarProject): HTMLElement {
+    if (this.#editing?.kind === "session" && this.#editing.id === session.id) {
+      return this.#editingRow("chat-row pinned-row", session.title, 120, (value) => this.#commitEdit(value));
+    }
+    const item = this.#treeItem(session.title, "chat-row pinned-row", undefined, () => this.#options.selectSession(session.id, project?.id), (toggle, event) => this.#openMenu(project ? "task" : "chat", session.id, project?.id, toggle, event));
+    const button = item.querySelector<HTMLButtonElement>(".chat-row")!;
+    button.classList.toggle("active", session.id === this.#state.currentSessionId && project?.id === this.#state.currentProjectId);
+    this.#appendPin(button);
+    return item;
   }
 
   #projectGroup(project: ProjectSidebarProject): HTMLElement {
@@ -180,6 +229,7 @@ export class ProjectSidebarController {
     const projectButton = projectItem.querySelector<HTMLButtonElement>(".project-row")!;
     projectButton.classList.toggle("active", project.id === this.#state.currentProjectId && !this.#state.currentSessionId && !this.#state.newChat);
     projectButton.setAttribute("aria-expanded", String(expanded));
+    if (this.#pinnedProjects.has(project.id)) this.#appendPin(projectButton);
     group.append(projectItem);
 
     const children = document.createElement("div");
@@ -188,7 +238,7 @@ export class ProjectSidebarController {
     childrenInner.className = "project-children-inner";
     children.append(childrenInner);
     group.append(children);
-    const sessions = [...(this.#state.sessionsByProject.get(project.id) ?? [])].sort((left, right) => Number(this.#pinnedSessions.has(right.id)) - Number(this.#pinnedSessions.has(left.id)));
+    const sessions = this.#state.sessionsByProject.get(project.id) ?? [];
     if (sessions.length === 0) childrenInner.append(this.#empty("No chats"));
     for (const session of sessions) childrenInner.append(this.#sessionItem(session, project));
     return group;
@@ -202,11 +252,7 @@ export class ProjectSidebarController {
     const button = item.querySelector<HTMLButtonElement>(".task-row")!;
     button.classList.toggle("active", session.id === this.#state.currentSessionId);
     if (this.#pinnedSessions.has(session.id)) {
-      const pin = svgIcon('<path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path>');
-      pin.classList.add("pin-indicator");
-      pin.setAttribute("role", "img");
-      pin.setAttribute("aria-label", "Pinned");
-      button.append(pin);
+      this.#appendPin(button);
     }
     return item;
   }
@@ -219,13 +265,17 @@ export class ProjectSidebarController {
     const button = item.querySelector<HTMLButtonElement>(".chat-row")!;
     button.classList.toggle("active", chat.id === this.#state.currentSessionId && !this.#state.currentProjectId);
     if (this.#pinnedSessions.has(chat.id)) {
-      const pin = svgIcon('<path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path>');
-      pin.classList.add("pin-indicator");
-      pin.setAttribute("role", "img");
-      pin.setAttribute("aria-label", "Pinned");
-      button.append(pin);
+      this.#appendPin(button);
     }
     return item;
+  }
+
+  #appendPin(button: HTMLButtonElement): void {
+    const pin = svgIcon('<path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path>');
+    pin.classList.add("pin-indicator");
+    pin.setAttribute("role", "img");
+    pin.setAttribute("aria-label", "Pinned");
+    button.append(pin);
   }
 
   #treeItem(label: string, className: string, icon: SVGElement | undefined, action: () => void, menu: (toggle: HTMLButtonElement, event: MouseEvent) => void, quickAction?: () => void): HTMLElement {
@@ -273,12 +323,14 @@ export class ProjectSidebarController {
     const sessions = this.#state.sessionsByProject.get(projectId) ?? [];
     const menu = this.#menu;
     menu.add({ label: this.#pinnedProjects.has(projectId) ? "Unpin project" : "Pin project", action: () => this.#toggleStored(this.#pinnedProjects, projectId, "fitz-pinned-projects"), icon: '<path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path>' });
-    menu.add({ label: "Open in Explorer", action: () => { if (project.rootPath) this.#options.openProjectPath(project.rootPath); }, icon: '<path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path><path d="M3.5 6.5V4h5l1.5 2"></path>', disabled: !project.rootPath });
-    menu.add({ label: "Create permanent worktree", action: () => this.#options.createWorktree(projectId), icon: '<path d="M4 6h8M12 3l3 3-3 3M16 14H8M8 11l-3 3 3 3"></path>', disabled: !project.rootPath });
     menu.add({ label: "Edit project", action: () => this.#beginEdit("project", projectId), icon: '<circle cx="10" cy="10" r="3"></circle><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M15.3 4.7l-1.4 1.4M6.1 13.9l-1.4 1.4"></path>' });
+    menu.add({ label: "Create permanent worktree", action: () => this.#options.createWorktree(projectId), icon: '<path d="M4 6h8M12 3l3 3-3 3M16 14H8M8 11l-3 3 3 3"></path>', disabled: !project.rootPath });
     menu.separator();
-    menu.add({ label: "Archive chats", action: () => this.#options.archiveProjectChats(projectId), icon: '<rect x="3" y="5" width="14" height="11" rx="2"></rect><path d="M3 8h14M8 11h4"></path>', disabled: sessions.length === 0 });
-    menu.add({ label: "Remove", action: () => this.#beginRemove(projectId), icon: '<path d="m5 5 10 10M15 5 5 15"></path>' });
+    menu.add({ label: "Open in Explorer", action: () => { if (project.rootPath) this.#options.openProjectPath(project.rootPath); }, icon: '<path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path><path d="M3.5 6.5V4h5l1.5 2"></path>', disabled: !project.rootPath });
+    menu.add({ label: "Copy working directory", action: () => { if (project.rootPath) this.#options.copyValue(project.rootPath, "Working directory copied"); }, icon: '<rect x="6" y="6" width="10" height="10" rx="2"></rect><path d="M13 6V4H4v9h2"></path>', disabled: !project.rootPath });
+    menu.separator();
+    menu.add({ label: "Archive chats", action: () => this.#options.archiveProjectChats(projectId), danger: true, icon: '<rect x="3" y="5" width="14" height="11" rx="2"></rect><path d="M3 8h14M8 11h4"></path>', disabled: sessions.length === 0 });
+    menu.add({ label: "Remove", action: () => this.#beginRemove(projectId), danger: true, icon: '<path d="m5 5 10 10M15 5 5 15"></path>' });
   }
 
   #buildSessionMenu(sessionId: string, projectId: string | undefined): void {
@@ -290,16 +342,23 @@ export class ProjectSidebarController {
     const menu = this.#menu;
     menu.add({ label: this.#pinnedSessions.has(sessionId) ? "Unpin chat" : "Pin chat", action: () => this.#toggleStored(this.#pinnedSessions, sessionId, "fitz-pinned-sessions"), icon: '<path d="m12.8 3 4.2 4.2-2.2 2.2-.5 3.4-2.1 2.1-7.1-7.1 2.1-2.1 3.4-.5z"></path><path d="m8.3 11.7-5 5"></path>' });
     menu.add({ label: "Rename chat", action: () => this.#beginEdit("session", sessionId, projectId), icon: '<path d="M4 14.5V17h2.5L15 8.5 11.5 5z"></path><path d="m10.5 6 3.5 3.5"></path>' });
-    menu.add({ label: "Archive chat", action: () => this.#options.archiveSession(sessionId, projectId), danger: true, icon: '<rect x="3" y="5" width="14" height="11" rx="2"></rect><path d="M3 8h14M8 11h4"></path>' });
-    if (project?.rootPath) {
-      menu.separator();
-      menu.add({ label: "Open in Explorer", action: () => this.#options.openProjectPath(project.rootPath!), icon: '<path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path><path d="M3.5 6.5V4h5l1.5 2"></path>' });
-      menu.add({ label: "Copy working directory", action: () => this.#options.copyValue(project.rootPath!, "Working directory copied"), icon: '<rect x="6" y="6" width="10" height="10" rx="2"></rect><path d="M13 6V4H4v9h2"></path>' });
-    }
+    menu.add({ label: "Continue in new chat", action: () => this.#options.continueSession(session, projectId), icon: '<path d="M4 5h7a4 4 0 0 1 4 4v6"></path><path d="m12 12 3 3 3-3"></path>' });
+    menu.separator();
+    menu.add({ label: "Open in Explorer", action: () => { if (project?.rootPath) this.#options.openProjectPath(project.rootPath); }, icon: '<path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z"></path><path d="M3.5 6.5V4h5l1.5 2"></path>', disabled: !project?.rootPath });
+    menu.add({ label: "Copy working directory", action: () => { if (project?.rootPath) this.#options.copyValue(project.rootPath, "Working directory copied"); }, icon: '<rect x="6" y="6" width="10" height="10" rx="2"></rect><path d="M13 6V4H4v9h2"></path>', disabled: !project?.rootPath });
     menu.add({ label: "Copy session ID", action: () => this.#options.copyValue(sessionId, "Session ID copied"), icon: '<rect x="6" y="6" width="10" height="10" rx="2"></rect><path d="M13 6V4H4v9h2"></path>' });
     menu.add({ label: "Copy deeplink", action: () => this.#options.copyValue(`fitz://sessions/${sessionId}`, "Deeplink copied"), icon: '<path d="m8 12 4-4"></path><path d="M6.5 13.5 5 15a3 3 0 0 1-4-4l2.5-2.5a3 3 0 0 1 4.2 0"></path><path d="M13.5 6.5 15 5a3 3 0 0 1 4 4l-2.5 2.5a3 3 0 0 1-4.2 0"></path>' });
     menu.separator();
-    menu.add({ label: "Continue in new chat", action: () => this.#options.continueSession(session, projectId), icon: '<path d="M4 5h7a4 4 0 0 1 4 4v6"></path><path d="m12 12 3 3 3-3"></path>' });
+    menu.add({ label: "Archive chat", action: () => this.#options.archiveSession(sessionId, projectId), danger: true, icon: '<rect x="3" y="5" width="14" height="11" rx="2"></rect><path d="M3 8h14M8 11h4"></path>' });
+    menu.add({ label: "Remove", action: () => this.#removeSession(sessionId, projectId), danger: true, icon: '<path d="m5 5 10 10M15 5 5 15"></path>' });
+  }
+
+  #removeSession(sessionId: string, projectId: string | undefined): void {
+    const action = this.#options.removeSession(sessionId, projectId);
+    void Promise.resolve(action).then(() => {
+      this.#pinnedSessions.delete(sessionId);
+      this.#saveSet("fitz-pinned-sessions", this.#pinnedSessions);
+    }).catch(() => undefined);
   }
 
   #beginEdit(kind: "session" | "project", id: string, projectId?: string): void {
@@ -308,7 +367,7 @@ export class ProjectSidebarController {
     this.#editing = { kind, id, projectId };
     this.#options.closePopovers();
     this.render(this.#state);
-    const input = this.#elements.tree.querySelector<HTMLInputElement>(".tree-rename-input") ?? this.#elements.chatsTree.querySelector<HTMLInputElement>(".tree-rename-input");
+    const input = this.#elements.pinnedTree.querySelector<HTMLInputElement>(".tree-rename-input") ?? this.#elements.tree.querySelector<HTMLInputElement>(".tree-rename-input") ?? this.#elements.chatsTree.querySelector<HTMLInputElement>(".tree-rename-input");
     input?.focus();
     input?.select();
   }

@@ -151,7 +151,7 @@ describe("desktop renderer shell", () => {
     expect(main).toContain('ipcMain.handle("fitz:window-action"');
     expect(main).not.toContain("window.getBounds()");
     expect(styles).toContain("grid-template-rows: 32px minmax(0, 1fr)");
-    expect(tokensCss).toContain("--workspace-header-height: 44px");
+    expect(tokensCss).toContain("--workspace-header-height: 40px");
     expect(styles).toContain("grid-template-rows: var(--workspace-header-height) minmax(0, 1fr)");
     expect(styles).toContain(".management-page-header { height: var(--workspace-header-height)");
     expect(styles).toContain("top: var(--workspace-header-height); right: 0; bottom: 0");
@@ -193,8 +193,11 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('class="sidebar-section projects-section"');
     expect(html).toContain('class="section-heading projects-heading"');
     expect(styles).toContain(".projects-heading #new-project { opacity: 0; pointer-events: none;");
-    expect(styles).toContain(".projects-section { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--border-soft); }");
-    expect(styles).toContain(".projects-heading > span, .chats-heading > span { color: var(--muted); font-weight: 650; }");
+    expect(html).toContain('id="pinned-section" class="sidebar-section pinned-section" hidden');
+    expect(html).toContain('id="pinned" class="project-tree"');
+    expect(styles).toContain(".sidebar-content-divider { margin: 12px 7px 4px; border-top: 1px solid var(--border-soft); }");
+    expect(styles).toContain(".pinned-heading > span, .projects-heading > span, .chats-heading > span { color: var(--subtle); font-weight: 650; }");
+    expect(html).not.toContain("<kbd>Ctrl N</kbd>");
     expect(styles).toContain(".project-tree { display: grid; gap: 1px; }");
     expect(styles).toContain(".task-row { padding: 4px 34px 4px 30px;");
     expect(tokensCss).toContain("--sidebar-item-radius: 7px");
@@ -689,7 +692,7 @@ describe("desktop renderer shell", () => {
     expect(projects).toContain("startChat(session: SessionRecord): void");
     expect(projects).toContain('else if (this.chatRecords.some((chat) => chat.id === id)) this.currentProjectIdValue = undefined');
     expect(styles).toContain(".chat-row { padding: 4px 34px 4px 9px; font-size: 13.5px; }");
-    expect(styles).toContain(".projects-heading > span, .chats-heading > span { color: var(--muted); font-weight: 650; }");
+    expect(styles).toContain(".pinned-heading > span, .projects-heading > span, .chats-heading > span { color: var(--subtle); font-weight: 650; }");
   });
 
   it("clears the starter screen and reports unobtrusive work progress before output arrives", () => {
