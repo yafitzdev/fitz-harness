@@ -20,6 +20,7 @@ import { canOpenManagementView, managementNavigationVisibility } from "./ui/navi
 import { NavigationHistoryController, type AppLocation } from "./ui/navigation/navigation-history.js";
 import { ApplicationMenuController } from "./ui/navigation/application-menu.js";
 import { CustomSelectController } from "./ui/primitives/custom-select.js";
+import { ActionStatus, type ActionStatusTone } from "./ui/primitives/action-status.js";
 import { requiredElement as element, requiredQuery as query, svgIcon as svg, textBlock } from "./ui/primitives/dom.js";
 import { ResizablePane } from "./ui/primitives/resizable-pane.js";
 import { PluginsPageController } from "./ui/plugins/plugins-page.js";
@@ -187,6 +188,9 @@ const composer = new Composer({
   onError: showToast,
   isRunning: () => agentRuns.active,
 });
+const conversationActionStatus = new ActionStatus();
+conversationActionStatus.root.classList.add("conversation-action-status");
+composer.root.prepend(conversationActionStatus.root);
 conversationLayout = new ConversationLayout({ workspace, messages, composer: composer.root, scrollButton: composer.scrollButton, inspectorWidth: () => inspectorPanel.width() });
 adaptiveWorkspace = new AdaptiveWorkspace({ shell, workspace, onLayoutChange: () => conversationLayout?.sync() });
 const customSelects = new CustomSelectController(selectPopover, closePopovers);
@@ -920,8 +924,21 @@ async function compactCurrentSession(): Promise<void> {
 function setStatus(text: string, state: string): void { composer.setStatus(text, state); }
 function setConnection(text: string, state: string): void { connectionDetail.textContent = text; connectionStatus.dataset.state = state; }
 function setFormBusy(formElement: HTMLFormElement, busy: boolean): void { for (const control of formElement.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>("input,button,select")) control.disabled = busy; }
-// Toast notifications are intentionally removed; this no-op keeps the call sites intact.
-function showToast(_text: string): void { }
+function actionStatusTone(text: string): ActionStatusTone {
+  if (/\b(copied|created|renamed|archived|saved|installed|updated|enabled|disabled|removed|cancelled|complete(?:d)?|downloaded|opened|attached|restored|swept|working)\b/i.test(text)) return "success";
+  return "error";
+}
+
+/** Keeps legacy action callbacks visible without restoring popup notifications. */
+function showToast(text: string): void {
+  const activeManagementPage = workspace.querySelector<HTMLElement>(".management-page:not([hidden])");
+  const status = activeManagementPage ? ActionStatus.find(activeManagementPage) : undefined;
+  if (status) {
+    status.show(text, actionStatusTone(text));
+    return;
+  }
+  conversationActionStatus.show(text, actionStatusTone(text));
+}
 function panelEmpty(text: string): HTMLElement { return textBlock("panel-empty", text); }
 function loadingMessage(text: string): HTMLElement { return textBlock("panel-empty", text); }
 async function api(path: string, method = "GET", body?: unknown): Promise<Json> {

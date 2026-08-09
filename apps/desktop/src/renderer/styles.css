@@ -1,6 +1,7 @@
 @import "../ui/theme/tokens.css";
 @import "../ui/primitives/scroll-surface.css";
 @import "../ui/primitives/action-menu.css";
+@import "../ui/primitives/action-status.css";
 @import "../ui/chat/message-actions.css";
 @import "../ui/chat/activity-timeline.css";
 @import "../ui/chat/reasoning-view.css";
