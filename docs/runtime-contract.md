@@ -69,6 +69,29 @@ but not local VRAM.
 - Destroying the renderer aborts its outstanding host call so a closed window cannot retain network,
   memory, or host-side response work.
 
+## Streaming and backpressure
+
+- Every inference result crosses a bounded asynchronous channel. The default budget is 64 queued
+  events and 1 MiB of serialized payload, and both limits are enforced before the producer may
+  continue. An atomic media completion may occupy one oversize slot because it already represents
+  one artifact subject to the stricter modality-specific artifact limit; no progress event can queue
+  behind it.
+- HTTP streaming writes honor the response's `drain` signal. A slow client therefore propagates
+  pressure through the SSE transport, channel, adapter, and scheduler rather than creating an
+  unbounded process-local queue.
+- Disconnect, cancellation, channel failure, and host shutdown release blocked producers and remove
+  every response and abort listener. Remote-provider polling uses the same leak-free cancellation
+  contract for its timers.
+- Already-buffered events preserve FIFO order. Closing a stream drains accepted events; failing a
+  stream rejects both consumers and any producers waiting for capacity.
+
+## Host composition
+
+`createHost` wires infrastructure and registers cohesive protocol families. OpenAI transport,
+runtime administration, catalogs, storage and backups, workspaces, media, and native-agent routes
+own their parsing, authorization, persistence, and response behavior in separate registrars. Route
+modules receive explicit capabilities; they do not reach back into host bootstrap state.
+
 ## Durability and recovery
 
 - Native agent requests and their event checkpoints are durable before execution. Client request ids

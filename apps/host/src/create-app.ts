@@ -23,12 +23,8 @@ import {
   type ResourcePolicy,
 } from "@fitz/inference-core";
 import {
-  parseChatCompletionRequest,
   HOST_CONTRACT_VERSION,
   PROTOCOL_VERSION,
-  type InferenceDelta,
-  type ModelListResponse,
-  type OpenAIErrorResponse,
   type EngineConnectionMode,
   type EngineRegistration,
   type EngineRuntime,
@@ -44,7 +40,7 @@ import { MetricsRegistry, redactSecrets } from "@fitz/observability";
 import { DEFAULT_QUOTAS, SecurityPolicyError, SecurityService, type AuthenticatedPrincipal } from "@fitz/security";
 import { ArtifactRepository, MemoryBlobStore, SqliteStore, type StorageDurabilityService } from "@fitz/storage";
 import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
-import { DownloadNotFoundError, type ModelCatalogService } from "./model-catalog.js";
+import type { ModelCatalogService } from "./model-catalog.js";
 import { AgentRunCoordinator } from "./agent-runs.js";
 import { MediaCoordinatorClosedError, MediaJobAdmissionError, MediaJobCoordinator } from "./media-jobs.js";
 import type { AgentRuntime } from "@fitz/agent-core";
@@ -67,6 +63,10 @@ import { registerAgentRoutes } from "./agent-routes.js";
 import { awaitMediaJob, MediaGenerationTimeoutError, mediaJobFailureMessage, registerMediaRoutes, requestOrigin } from "./media-routes.js";
 import { registerWorkspaceRoutes } from "./workspace-routes.js";
 import { classifyHostError } from "./host-error.js";
+import { registerOpenAIRoutes } from "./openai-routes.js";
+import { registerCatalogRoutes } from "./catalog-routes.js";
+import { registerRuntimeAdministrationRoutes } from "./runtime-administration-routes.js";
+import { registerStorageRoutes } from "./storage-routes.js";
 
 interface ConsumerModelRegistration { modelId: string; routeId: string; recipeId: string }
 interface ConsumerMediaModelRegistration { modelId: string; recipeId: string; routeId: string; modality: MediaModality; template: string }
@@ -354,122 +354,14 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     return reply.code(201).send({ data: { user: administrator, device: issued.device, token: issued.token } });
   });
 
-  app.get("/v1/models", async (request): Promise<ModelListResponse> => ({
-    object: "list",
-    data: publicRoutes().filter((route) => {
-      const principal = principals.get(request);
-      return !principal || security?.authorizeRoute(principal, route.id);
-    }).map((route) => ({
-      id: route.id,
-      object: "model",
-      created: 0,
-      owned_by: "fitz",
-      display_name: route.displayName,
-      ...(route.description ? { description: route.description } : {}),
-    })),
-  }));
-
-  app.post("/v1/chat/completions", async (request, reply) => {
-    let body;
-    let model: string;
-    try {
-      body = parseChatCompletionRequest(request.body);
-      model = body.model;
-      const resolved = resolveActiveRoute(model);
-      const principal = principals.get(request);
-      if (principal && !security?.authorizeRoute(principal, model)) {
-        return reply.code(403).send(openAIError(new SecurityPolicyError("Route access denied"), "permission_error"));
-      }
-      if (principal) {
-        const promptChars = body.messages.reduce((total, message) => total + contentTextLength(message.content), 0);
-        security?.enforceQuota(principal, promptChars, body.max_tokens ?? principal.quota.maxOutputTokens, scheduler.snapshot().filter((item) => item.context.ownerUserId === principal.user.id).length);
-      }
-      if (!resolved.recipe.capabilities.chatCompletions) {
-        throw new TypeError(`Route ${model} does not support chat completions`);
-      }
-      if (body.stream !== false && !resolved.recipe.capabilities.streaming) {
-        throw new TypeError(`Route ${model} does not support streaming`);
-      }
-      if (body.tools?.length && !resolved.recipe.capabilities.toolCalls) {
-        throw new TypeError(`Route ${model} does not support tool calls`);
-      }
-    } catch (error) {
-      const statusCode = error instanceof RouteNotFoundError ? 404 : error instanceof SecurityPolicyError ? 429 : 400;
-      return reply.code(statusCode).send(openAIError(error, "invalid_request_error"));
-    }
-
-    const principal = principals.get(request);
-    const internalContext = internalWorkContexts.get(request);
-    let stream: ReturnType<InferenceScheduler["enqueue"]>;
-    try {
-      stream = scheduler.enqueue(model, {
-        messages: body.messages,
-        ...(body.max_tokens !== undefined ? { maxTokens: body.max_tokens } : {}),
-        ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),
-        ...(body.top_p !== undefined ? { topP: body.top_p } : {}),
-        ...(body.stop !== undefined ? { stop: body.stop } : {}),
-        ...(body.tools !== undefined ? { tools: body.tools } : {}),
-        ...(body.tool_choice !== undefined ? { toolChoice: body.tool_choice } : {}),
-        ...(body.parallel_tool_calls !== undefined ? { parallelToolCalls: body.parallel_tool_calls } : {}),
-        ...(principal ? { userId: principal.user.id } : internalContext?.ownerUserId ? { userId: internalContext.ownerUserId } : body.user !== undefined ? { userId: body.user } : {}),
-      }, undefined, { ...(principal ? { ownerUserId: principal.user.id } : {}), ...internalContext, label: `${model} completion` });
-    } catch (error) {
-      if (error instanceof InferenceAdmissionError) reply.header("retry-after", "2");
-      return reply.code(error instanceof InferenceAdmissionError ? 429 : 502).send(openAIError(
-        error,
-        error instanceof InferenceAdmissionError ? "resource_busy" : "server_error",
-      ));
-    }
-
-    if (body.stream === false) {
-      try {
-        return await collectCompletion(stream.requestId, model, stream);
-      } catch (error) {
-        const statusCode = error instanceof RouteNotFoundError ? 404 : 502;
-        return reply.code(statusCode).send(openAIError(error, "server_error"));
-      }
-    }
-
-    reply.hijack();
-    reply.raw.writeHead(200, {
-      "content-type": "text/event-stream; charset=utf-8",
-      "cache-control": "no-cache, no-transform",
-      connection: "keep-alive",
-      "x-accel-buffering": "no",
-    });
-
-    const created = Math.floor(Date.now() / 1_000);
-    const completionId = `chatcmpl-${stream.requestId}`;
-    const abort = () => stream.cancel();
-    request.raw.once("aborted", abort);
-    reply.raw.once("close", () => {
-      if (!reply.raw.writableEnded) abort();
-    });
-
-    writeSse(reply, streamChunk(completionId, created, model, { role: "assistant" }, null));
-    try {
-      for await (const delta of stream) {
-        writeSse(
-          reply,
-          streamChunk(
-            completionId,
-            created,
-            model,
-            {
-              ...(delta.text ? { content: delta.text } : {}),
-              ...(delta.toolCalls?.length ? { tool_calls: delta.toolCalls } : {}),
-            },
-            delta.finishReason ?? null,
-          ),
-        );
-      }
-      reply.raw.write("data: [DONE]\n\n");
-    } catch (error) {
-      writeSse(reply, openAIError(error, "server_error"));
-      reply.raw.write("data: [DONE]\n\n");
-    } finally {
-      reply.raw.end();
-    }
+  registerOpenAIRoutes({
+    app,
+    scheduler,
+    routes,
+    publicRoutes,
+    principals,
+    internalWorkContexts,
+    ...(security ? { security } : {}),
   });
 
   app.get("/api/v1/events", async (request) => {
@@ -931,27 +823,8 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   );
 
   const administratorGuard = adminGuard(options.adminToken, authMode, principals);
-  app.get("/api/v1/management/connectivity/status", { preHandler: administratorGuard }, async () => { const tailscaleStatus = await tailscale.status(); try { return { data: { tailscale: tailscaleStatus, serve: { available: true, configuration: await tailscaleServe.status() } } }; } catch (error) { return { data: { tailscale: tailscaleStatus, serve: { available: false, message: errorMessage(error) } } }; } });
-  app.post("/api/v1/management/connectivity/tailscale-serve", { preHandler: administratorGuard }, async (request, reply) => { try { if (authMode !== "required") return reply.code(409).send({ error: "Device authentication must be enabled before remote access" }); const body = requireRecord(request.body); const localPort = body.localPort === undefined ? options.localPort ?? 8787 : requireInteger(body.localPort); const httpsPort = body.httpsPort === undefined ? 443 : requireInteger(body.httpsPort); await tailscaleServe.enable(localPort, httpsPort); security?.audit("tailscale-serve.enabled", principals.get(request)?.user.id, "connectivity", "tailscale", { localPort, httpsPort }); return { data: await tailscaleServe.status() }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
-  app.delete("/api/v1/management/connectivity/tailscale-serve", { preHandler: administratorGuard }, async (request, reply) => { try { const query = request.query as { httpsPort?: string }; const httpsPort = toNonNegativeInteger(query.httpsPort, 443); await tailscaleServe.disable(httpsPort); security?.audit("tailscale-serve.disabled", principals.get(request)?.user.id, "connectivity", "tailscale", { httpsPort }); return reply.code(204).send(); } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
-  app.get("/api/v1/management/startup", { preHandler: administratorGuard }, async () => ({ data: startup ? await startup.status() : { available: false, configured: false, message: "Startup management is unavailable" } }));
-  app.post("/api/v1/management/startup", { preHandler: administratorGuard }, async (request, reply) => { try { if (!startup) throw new Error("Startup management is unavailable"); const result = await startup.install(); security?.audit("host-startup.installed", principals.get(request)?.user.id, "host", "startup"); return { data: result }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
-  app.delete("/api/v1/management/startup", { preHandler: administratorGuard }, async (request, reply) => { try { if (!startup) throw new Error("Startup management is unavailable"); const result = await startup.remove(); security?.audit("host-startup.removed", principals.get(request)?.user.id, "host", "startup"); return { data: result }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
-  app.get("/api/v1/management/pi/catalog", { preHandler: administratorGuard }, async (request, reply) => { try { if (!piPackages) throw new Error("Pi package management is unavailable"); const query = request.query as { query?: string; offset?: string; limit?: string; sort?: string; direction?: string; type?: unknown }; return { data: await piPackages.catalog(query.query ?? "", toNonNegativeInteger(query.offset, 0), Math.min(toNonNegativeInteger(query.limit, 30), 50), catalogSort(query.sort), catalogDirection(query.direction), catalogTypeFilter(query.type)) }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
-  app.get("/api/v1/management/pi/packages", { preHandler: administratorGuard }, async (_request, reply) => { try { if (!piPackages) throw new Error("Pi package management is unavailable"); return { data: await piPackages.installed() }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
-  app.get("/api/v1/management/pi/skills", { preHandler: administratorGuard }, async (_request, reply) => { try { if (!piPackages) throw new Error("Pi package management is unavailable"); return { data: await piPackages.skills() }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
-  app.post("/api/v1/management/pi/packages/install", { preHandler: administratorGuard }, async (request, reply) => { try { if (!piPackages) throw new Error("Pi package management is unavailable"); const source = requireString(requireRecord(request.body).source, "source"); await piPackages.install(source); security?.audit("pi-package.installed", principals.get(request)?.user.id, "pi-package", source); return reply.code(201).send({ data: { source } }); } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
-  app.post("/api/v1/management/pi/packages/update", { preHandler: administratorGuard }, async (request, reply) => { try { if (!piPackages) throw new Error("Pi package management is unavailable"); const source = requireString(requireRecord(request.body).source, "source"); await piPackages.update(source); security?.audit("pi-package.updated", principals.get(request)?.user.id, "pi-package", source); return { data: { source } }; } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
-  app.put("/api/v1/management/pi/packages/enabled", { preHandler: administratorGuard }, async (request, reply) => { try { if (!piPackages) throw new Error("Pi package management is unavailable"); const body = requireRecord(request.body); const source = requireString(body.source, "source"); if (typeof body.enabled !== "boolean") throw new TypeError("enabled must be boolean"); await piPackages.setEnabled(source, body.enabled); security?.audit(body.enabled ? "pi-package.enabled" : "pi-package.disabled", principals.get(request)?.user.id, "pi-package", source); return { data: { source, enabled: body.enabled } }; } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
-  app.delete("/api/v1/management/pi/packages", { preHandler: administratorGuard }, async (request, reply) => { try { if (!piPackages) throw new Error("Pi package management is unavailable"); const source = requireString(requireRecord(request.body).source, "source"); await piPackages.remove(source); security?.audit("pi-package.removed", principals.get(request)?.user.id, "pi-package", source); return reply.code(204).send(); } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
-  app.get("/api/v1/management/models/catalog", { preHandler: administratorGuard }, async (request, reply) => { try { if (!modelCatalog) throw new Error("Model catalog is unavailable"); const query = request.query as { query?: string; pipeline?: string; offset?: string; limit?: string; sort?: string; direction?: string; min_likes?: string; min_downloads?: string; released_within_weeks?: string }; return { data: await modelCatalog.search(query.query ?? "", toNonNegativeInteger(query.offset, 0), Math.min(toNonNegativeInteger(query.limit, 30), 50), query.pipeline ?? "text-generation", catalogSort(query.sort), catalogDirection(query.direction), toNonNegativeInteger(query.min_likes, 0), toNonNegativeInteger(query.min_downloads, 0), toNonNegativeInteger(query.released_within_weeks, 0)) }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
-  app.get("/api/v1/management/models/files", { preHandler: administratorGuard }, async (request, reply) => { try { if (!modelCatalog) throw new Error("Model catalog is unavailable"); const query = request.query as { repo?: string }; return { data: await modelCatalog.files(requireString(query.repo, "repo")) }; } catch (error) { return reply.code(error instanceof TypeError ? 400 : 503).send({ error: errorMessage(error) }); } });
-  app.get("/api/v1/management/models/downloaded", { preHandler: administratorGuard }, async (_request, reply) => { try { if (!modelCatalog) throw new Error("Model catalog is unavailable"); return { data: await modelCatalog.downloaded() }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
-  app.get("/api/v1/management/models/downloads", { preHandler: administratorGuard }, async (_request, reply) => { try { if (!modelCatalog) throw new Error("Model catalog is unavailable"); return { data: modelCatalog.list() }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
-  app.post("/api/v1/management/models/download", { preHandler: administratorGuard }, async (request, reply) => { try { if (!modelCatalog) throw new Error("Model catalog is unavailable"); const body = requireRecord(request.body); const repo = requireString(body.repo, "repo"); const fileName = body.fileName === undefined ? undefined : requireString(body.fileName, "fileName"); const record = await modelCatalog.start(repo, fileName); security?.audit("model.download-started", principals.get(request)?.user.id, "model", `${repo}/${record.fileName}`); return reply.code(202).send({ data: record }); } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
-  app.get("/api/v1/management/models/downloads/:id", { preHandler: administratorGuard }, async (request, reply) => { try { if (!modelCatalog) throw new Error("Model catalog is unavailable"); const id = (request.params as { id: string }).id; return { data: modelCatalog.progress(id) }; } catch (error) { return reply.code(error instanceof DownloadNotFoundError ? 404 : 400).send({ error: errorMessage(error) }); } });
-  app.delete("/api/v1/management/models/downloads/:id", { preHandler: administratorGuard }, async (request, reply) => { try { if (!modelCatalog) throw new Error("Model catalog is unavailable"); const id = (request.params as { id: string }).id; modelCatalog.cancel(id); security?.audit("model.download-cancelled", principals.get(request)?.user.id, "model", id); return reply.code(204).send(); } catch (error) { return reply.code(error instanceof DownloadNotFoundError ? 404 : 400).send({ error: errorMessage(error) }); } });
-  app.delete("/api/v1/management/models/downloaded", { preHandler: administratorGuard }, async (request, reply) => { try { if (!modelCatalog) throw new Error("Model catalog is unavailable"); const body = requireRecord(request.body); const repoId = requireString(body.repoId, "repoId"); const fileName = requireString(body.fileName, "fileName"); await modelCatalog.removeDownloaded(repoId, fileName); security?.audit("model.removed", principals.get(request)?.user.id, "model", `${repoId}/${fileName}`); return reply.code(204).send(); } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
+  registerRuntimeAdministrationRoutes({ app, tailscale, tailscaleServe, authMode, localPort: options.localPort ?? 8787, principals, administratorGuard, ...(startup ? { startup } : {}), ...(security ? { security } : {}) });
+  registerCatalogRoutes({ app, principals, administratorGuard, ...(piPackages ? { piPackages } : {}), ...(modelCatalog ? { modelCatalog } : {}), ...(security ? { security } : {}) });
   app.post("/api/v1/management/pairing-codes", { preHandler: administratorGuard }, async (request, reply) => { try { const body = requireRecord(request.body); const role = parseRole(body.intendedRole); const ttlSeconds = body.ttlSeconds === undefined ? 600 : requireInteger(body.ttlSeconds); const pairing = securityRequired(security).issuePairingCode(role, ttlSeconds); security?.audit("pairing-code.issued", principals.get(request)?.user.id, "pairing-code", pairing.id, { intendedRole: role, expiresAt: pairing.expiresAt }); return reply.code(201).send({ data: pairing }); } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
   app.get("/api/v1/management/tool-policies", { preHandler: administratorGuard }, async () => ({ data: store.listToolPolicies() }));
   app.put("/api/v1/management/tool-policies/:subjectType/:subjectId/:toolName", { preHandler: administratorGuard }, async (request, reply) => { try { const params = request.params as { subjectType: string; subjectId: string; toolName: string }; if (params.subjectType !== "role" && params.subjectType !== "user") throw new TypeError("subjectType must be role or user"); const body = requireRecord(request.body); if (body.decision !== "allow" && body.decision !== "deny" && body.decision !== "ask") throw new TypeError("decision must be allow, deny, or ask"); const policy: ToolPolicyRecord = { subjectType: params.subjectType, subjectId: params.subjectId, toolName: params.toolName, decision: body.decision, updatedAt: new Date().toISOString() }; store.upsertToolPolicy(policy); security?.audit("tool-policy.updated", principals.get(request)?.user.id, "tool-policy", `${params.subjectType}:${params.subjectId}:${params.toolName}`, { decision: body.decision }); return { data: policy }; } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
@@ -991,14 +864,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
   });
   app.get("/api/v1/management/audit-events", { preHandler: administratorGuard }, async (request) => { const query = request.query as { limit?: string }; return { data: store.listAuditEvents(Math.min(toNonNegativeInteger(query.limit, 100), 1000)) }; });
-  app.get("/api/v1/management/storage", { preHandler: administratorGuard }, async (_request, reply) => { try { return { data: { report: await artifacts.inspect(), backups: storageDurability ? await storageDurability.listBackups() : [], available: Boolean(storageDurability) } }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
-  app.post("/api/v1/management/storage/verify", { preHandler: administratorGuard }, async (request, reply) => { try { const body = isRecord(request.body) ? request.body : {}; const report = await artifacts.inspect({ verifyChecksums: body.verifyChecksums !== false }); security?.audit("storage.verified", principals.get(request)?.user.id, "storage", undefined, { issues: report.issues.length, verifiedChecksums: report.verifiedChecksums }); return { data: report }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
-  app.post("/api/v1/management/storage/gc", { preHandler: administratorGuard }, async (request, reply) => { try { const result = await artifacts.collectGarbage(); security?.audit("storage.garbage-collected", principals.get(request)?.user.id, "storage", undefined, { ...result }); return { data: result }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
-  app.put("/api/v1/management/storage/quota", { preHandler: administratorGuard }, async (request, reply) => { try { const body = requireRecord(request.body); const quotaBytes = body.quotaBytes === null ? undefined : Number(body.quotaBytes); if (quotaBytes !== undefined && (!Number.isSafeInteger(quotaBytes) || quotaBytes < 1)) throw new TypeError("quotaBytes must be a positive integer or null"); if (quotaBytes === undefined) store.deleteSetting("artifactStorageQuotaBytes"); else store.setSetting("artifactStorageQuotaBytes", quotaBytes); security?.audit("storage.quota-updated", principals.get(request)?.user.id, "storage", undefined, { quotaBytes: quotaBytes ?? null }); return { data: { quotaBytes: quotaBytes ?? null } }; } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
-  app.get("/api/v1/management/backups", { preHandler: administratorGuard }, async (_request, reply) => { try { if (!storageDurability) throw new Error("Storage backups are unavailable"); return { data: await storageDurability.listBackups() }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
-  app.post("/api/v1/management/backups", { preHandler: administratorGuard }, async (request, reply) => { try { if (!storageDurability) throw new Error("Storage backups are unavailable"); const backup = await storageDurability.createBackup(); security?.audit("storage.backup-created", principals.get(request)?.user.id, "backup", backup.id, { objects: backup.objects, bytes: backup.bytes }); return reply.code(201).send({ data: backup }); } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
-  app.post("/api/v1/management/backups/:id/validate", { preHandler: administratorGuard }, async (request, reply) => { try { if (!storageDurability) throw new Error("Storage backups are unavailable"); const id = (request.params as { id: string }).id; return { data: await storageDurability.validateBackup(id, true) }; } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
-  app.post("/api/v1/management/backups/:id/restore", { preHandler: administratorGuard }, async (request, reply) => { try { if (!storageDurability) throw new Error("Storage backups are unavailable"); const id = (request.params as { id: string }).id; const result = await storageDurability.scheduleRestore(id); security?.audit("storage.restore-scheduled", principals.get(request)?.user.id, "backup", id); return { data: result }; } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
+  registerStorageRoutes({ app, store, artifacts, principals, administratorGuard, ...(storageDurability ? { storageDurability } : {}), ...(security ? { security } : {}) });
   app.get("/api/v1/management/snapshots", { preHandler: administratorGuard }, async (_request, reply) => { try { if (!safety) throw new Error("Safety layer is unavailable"); return { data: safety.listSnapshots() }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
   app.post("/api/v1/management/snapshots/:runId/restore", { preHandler: administratorGuard }, async (request, reply) => { try { if (!safety) throw new Error("Safety layer is unavailable"); const runId = (request.params as { runId: string }).runId; const result = await safety.restoreSnapshot(runId); security?.audit("snapshot.restored", principals.get(request)?.user.id, "snapshot", runId); return { data: result }; } catch (error) { return reply.code(error instanceof Error && error.message === "Snapshot not found" ? 404 : 400).send({ error: errorMessage(error) }); } });
   app.get("/api/v1/management/trash", { preHandler: administratorGuard }, async (_request, reply) => { try { if (!safety) throw new Error("Safety layer is unavailable"); return { data: safety.listTrash() }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
@@ -1335,71 +1201,6 @@ function cancelOrphanedProviderJobs(store: SqliteStore, routes: RouteResolver, a
   }
 }
 
-async function collectCompletion(
-  requestId: string,
-  model: string,
-  stream: AsyncIterable<InferenceDelta>,
-): Promise<Record<string, unknown>> {
-  let content = "";
-  let promptTokens = 0;
-  let completionTokens = 0;
-  let finishReason = "stop";
-  const toolCalls = new Map<number, { id: string; type: "function"; function: { name: string; arguments: string } }>();
-  for await (const delta of stream) {
-    content += delta.text;
-    for (const call of delta.toolCalls ?? []) {
-      const current = toolCalls.get(call.index) ?? { id: "", type: "function" as const, function: { name: "", arguments: "" } };
-      if (call.id) current.id = call.id;
-      if (call.function?.name) current.function.name += call.function.name;
-      if (call.function?.arguments) current.function.arguments += call.function.arguments;
-      toolCalls.set(call.index, current);
-    }
-    if (delta.promptTokens !== undefined) promptTokens = delta.promptTokens;
-    if (delta.completionTokens !== undefined) completionTokens = delta.completionTokens;
-    if (delta.finishReason) finishReason = delta.finishReason;
-  }
-  return {
-    id: `chatcmpl-${requestId}`,
-    object: "chat.completion",
-    created: Math.floor(Date.now() / 1_000),
-    model,
-    choices: [{
-      index: 0,
-      message: { role: "assistant", content, ...(toolCalls.size ? { tool_calls: [...toolCalls.values()] } : {}) },
-      finish_reason: finishReason,
-    }],
-    usage: {
-      prompt_tokens: promptTokens,
-      completion_tokens: completionTokens,
-      total_tokens: promptTokens + completionTokens,
-    },
-  };
-}
-
-function streamChunk(
-  id: string,
-  created: number,
-  model: string,
-  delta: Record<string, unknown>,
-  finishReason: string | null,
-): Record<string, unknown> {
-  return {
-    id,
-    object: "chat.completion.chunk",
-    created,
-    model,
-    choices: [{ index: 0, delta, finish_reason: finishReason }],
-  };
-}
-
-function writeSse(reply: { raw: { write(chunk: string): unknown } }, value: unknown): void {
-  reply.raw.write(`data: ${JSON.stringify(value)}\n\n`);
-}
-
-function openAIError(error: unknown, type: string): OpenAIErrorResponse {
-  return { error: { message: errorMessage(error), type } };
-}
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -1445,24 +1246,6 @@ function toNonNegativeInteger(value: string | undefined, fallback: number): numb
   if (value === undefined) return fallback;
   const number = Number.parseInt(value, 10);
   return Number.isFinite(number) && number >= 0 ? number : fallback;
-}
-
-/** Shared catalog query params: sort keys and direction, both stores. */
-const CATALOG_SORT_KEYS = ["downloads", "updated", "name", "likes"] as const;
-type CatalogSortKey = (typeof CATALOG_SORT_KEYS)[number];
-function catalogSort(value: unknown): CatalogSortKey {
-  return typeof value === "string" && (CATALOG_SORT_KEYS as readonly string[]).includes(value) ? value as CatalogSortKey : "downloads";
-}
-function catalogDirection(value: unknown): "asc" | "desc" {
-  return value === "asc" ? "asc" : "desc";
-}
-
-const CATALOG_TYPES = ["extension", "skill", "prompt", "theme"] as const;
-type CatalogType = (typeof CATALOG_TYPES)[number];
-/** Normalizes the repeated `type` query param into the Pi package type filter. */
-function catalogTypeFilter(value: unknown): CatalogType[] {
-  const values = Array.isArray(value) ? value : value === undefined ? [] : [value];
-  return values.filter((entry): entry is CatalogType => typeof entry === "string" && (CATALOG_TYPES as readonly string[]).includes(entry));
 }
 
 function parseRoute(value: unknown, routeId: string): Route {
@@ -1533,8 +1316,6 @@ function parseRecipe(value: unknown, recipeId: string): Recipe {
 }
 
 function nonNegativeInteger(value: unknown, name: string): number { if (!Number.isInteger(value) || (value as number) < 0) throw new TypeError(`${name} must be a non-negative integer`); return value as number; }
-function contentTextLength(content: string | Array<{ type: string; text?: string }>): number { if (typeof content === "string") return content.length; return content.reduce((total, part) => total + (part.type === "text" ? (part.text ?? "").length : 0), 0); }
-
 function canAccessOwner(principal: AuthenticatedPrincipal | undefined, ownerUserId: string | undefined): boolean { return !principal || principal.user.role === "administrator" || principal.user.id === ownerUserId; }
 
 /** Pick the enabled route to probe for a recipe's media-test: prefer a

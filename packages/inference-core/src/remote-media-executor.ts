@@ -1,6 +1,7 @@
 import type { MediaGenerationRequest, MediaJobEvent, Recipe } from "@fitz/protocol";
 import type { MediaJobHandle } from "./adapter.js";
 import { EngineAdapterRegistry } from "./adapter.js";
+import { abortableDelay } from "./abortable-delay.js";
 
 /** Executes provider-hosted media without entering the local model lifecycle.
  * Each job owns its provider handle, so bounded concurrent cloud requests cannot
@@ -47,14 +48,6 @@ export class RemoteMediaExecutor {
       await adapter.stop(instance, "graceful").catch(() => undefined);
     }
   }
-}
-
-function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) throw abortError();
-  return new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(resolve, milliseconds);
-    signal.addEventListener("abort", () => { clearTimeout(timer); reject(abortError()); }, { once: true });
-  });
 }
 
 function abortError(): Error {

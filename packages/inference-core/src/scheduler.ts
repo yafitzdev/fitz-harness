@@ -51,6 +51,8 @@ export interface InferenceSchedulerOptions {
   gpuQueueCapacity?: number;
   cloudQueueCapacity?: number;
   remoteMedia?: RemoteMediaExecutor;
+  streamBufferItems?: number;
+  streamBufferBytes?: number;
 }
 
 export type InferenceAdmissionReason = "queue_capacity" | "scheduler_closed";
@@ -74,6 +76,8 @@ export class InferenceScheduler {
   readonly #gpuLane: BoundedWorkLane<QueueJob>;
   readonly #cloudLane: BoundedWorkLane<QueueJob>;
   readonly #remoteMedia: RemoteMediaExecutor;
+  readonly #streamBufferItems: number;
+  readonly #streamBufferBytes: number;
 
   constructor(
     readonly routes: RouteResolver,
@@ -82,6 +86,8 @@ export class InferenceScheduler {
     options: InferenceSchedulerOptions = {},
   ) {
     this.#remoteMedia = options.remoteMedia ?? new RemoteMediaExecutor(lifecycle.adapters);
+    this.#streamBufferItems = options.streamBufferItems ?? 64;
+    this.#streamBufferBytes = options.streamBufferBytes ?? 1024 * 1024;
     this.#gpuLane = this.#createLane(1, options.gpuQueueCapacity ?? 256);
     this.#cloudLane = this.#createLane(options.cloudConcurrency ?? 4, options.cloudQueueCapacity ?? 64);
   }
@@ -109,7 +115,11 @@ export class InferenceScheduler {
     }
     const id = options.jobId;
     if (!id.trim()) throw new TypeError("Media scheduler jobId must not be empty");
-    const output = new AsyncChannel<MediaJobEvent>();
+    // A completed local-media event can contain one artifact-sized atomic
+    // payload before MediaJobService streams it into blob storage. It may cross
+    // the ordinary event high-water mark, but it is the only buffered value;
+    // progress events cannot accumulate behind it.
+    const output = this.#outputChannel<MediaJobEvent>(true);
     const job: QueueJob = { kind: "media", id, routeId, lane, enqueuedAt: new Date().toISOString(), context: options.context ?? {}, mediaRequest: { ...input, id, routeId }, output, controller: new AbortController() };
     this.#attachAbort(job, externalSignal);
     this.#submit(job);
@@ -145,7 +155,7 @@ export class InferenceScheduler {
 
   #enqueue(routeId: string, input: Omit<InferenceRequest, "id" | "routeId">, externalSignal: AbortSignal | undefined, recipeId: string | undefined, unloadAfterCompletion: boolean | undefined, context: WorkContext): ScheduledStream {
     const id = randomUUID();
-    const output = new AsyncChannel<InferenceDelta>();
+    const output = this.#outputChannel<InferenceDelta>();
     const job: QueueJob = { kind: "chat", id, routeId, lane: "gpu", enqueuedAt: new Date().toISOString(), context, request: { ...input, id, routeId }, output, controller: new AbortController(), ...(recipeId ? { recipeId } : {}), ...(unloadAfterCompletion ? { unloadAfterCompletion: true } : {}) };
     this.#attachAbort(job, externalSignal);
     this.#submit(job);
@@ -179,14 +189,14 @@ export class InferenceScheduler {
     try {
       if (job.kind === "chat") {
         const recipe = job.recipeId ? this.routes.resolveRecipe(job.recipeId) : this.routes.resolve(job.routeId).recipe;
-        for await (const delta of this.lifecycle.run(recipe, job.request, job.controller.signal)) job.output.push(delta);
+        for await (const delta of this.lifecycle.run(recipe, job.request, job.controller.signal)) await job.output.push(delta, job.controller.signal);
         if (job.unloadAfterCompletion) await this.lifecycle.stop(`recipe-test:${recipe.id}`, "graceful");
       } else if (job.kind === "media") {
         const recipe = this.routes.resolve(job.routeId).recipe;
         const events = job.lane === "cloud"
           ? this.#remoteMedia.run(recipe, job.mediaRequest, job.controller.signal)
           : this.lifecycle.runMedia(recipe, job.mediaRequest, job.controller.signal);
-        for await (const event of events) job.output.push(event);
+        for await (const event of events) await job.output.push(event, job.controller.signal);
       } else {
         const recipe = this.routes.resolve(job.routeId).recipe;
         job.result.resolve(await this.lifecycle.warm(recipe, job.controller.signal));
@@ -212,6 +222,15 @@ export class InferenceScheduler {
 
   #lane(lane: InferenceLane): BoundedWorkLane<QueueJob> { return lane === "gpu" ? this.#gpuLane : this.#cloudLane }
 
+  #outputChannel<T>(allowSingleOversizedItem = false): AsyncChannel<T> {
+    return new AsyncChannel<T>({
+      capacity: this.#streamBufferItems,
+      maxBufferedSize: this.#streamBufferBytes,
+      sizeOf: serializedSize,
+      allowSingleOversizedItem,
+    });
+  }
+
   #snapshotLane(lane: BoundedWorkLane<QueueJob>): InferenceQueueItem[] {
     const snapshot = lane.snapshot();
     return [
@@ -231,3 +250,4 @@ function failJob(job: QueueJob, error: unknown): void { if (job.kind === "warm")
 function closeJob(job: QueueJob): void { if (job.kind !== "warm") job.output.close() }
 function abortError(): Error { const error = new Error("Inference request was cancelled"); error.name = "AbortError"; return error }
 function queueItem(job: QueueJob, status: "running" | "queued", position: number): InferenceQueueItem { return { id: job.id, routeId: job.routeId, kind: job.kind, lane: job.lane, status, position, enqueuedAt: job.enqueuedAt, context: job.context } }
+function serializedSize(value: unknown): number { return Buffer.byteLength(JSON.stringify(value), "utf8") }
