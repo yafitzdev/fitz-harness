@@ -77,6 +77,9 @@ export interface MediaEngineAdapter<THandle extends EngineInstanceHandle = Engin
   readonly modalities: Array<"image" | "video" | "audio">;
   /** Recommended poll interval for this engine/provider (default 1000 ms). */
   readonly defaultPollIntervalMs?: number;
+  /** Where generation compute runs. Local is the safe default so newly added
+   *  media engines automatically inherit host GPU thermal protection. */
+  executionLocation?(recipe: Recipe): "local" | "remote";
   prepare?(recipe: Recipe, signal: AbortSignal): Promise<void>;
   validateRecipe(recipe: Recipe): Promise<ValidationReport>;
   estimateResources(recipe: Recipe): Promise<ResourceEstimate>;

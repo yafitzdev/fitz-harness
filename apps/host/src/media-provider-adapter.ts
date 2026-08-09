@@ -67,6 +67,11 @@ export class MediaProviderEngineAdapter implements MediaEngineAdapter<MediaProvi
     this.#environment = options.environment ?? process.env;
   }
 
+  executionLocation(recipe: Recipe): "local" | "remote" {
+    const hostname = new URL(readMediaProviderConfiguration(recipe).baseUrl).hostname;
+    return isLoopbackHostname(hostname) ? "local" : "remote";
+  }
+
   async validateRecipe(recipe: Recipe): Promise<ValidationReport> {
     const issues: ValidationIssue[] = [];
     if (recipe.adapter !== this.id) {
@@ -166,6 +171,10 @@ export class MediaProviderEngineAdapter implements MediaEngineAdapter<MediaProvi
       return { healthy: false, modelId: instance.modelId, detail: errorMessage(error) };
     }
   }
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
 }
 
 export function readMediaProviderConfiguration(recipe: Recipe): MediaProviderConfiguration {

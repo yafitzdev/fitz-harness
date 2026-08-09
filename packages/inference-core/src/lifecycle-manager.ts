@@ -15,6 +15,7 @@ import { SystemClock } from "./clock.js";
 import { LifecycleEventBus } from "./event-bus.js";
 import { assertTransition } from "./state-machine.js";
 import { ResourceGovernor, SystemResourceMonitor } from "./resources.js";
+import { GpuThermalGuard, ThermalSafetyError } from "./thermal.js";
 
 export interface LifecycleManagerOptions {
   adapters: EngineAdapterRegistry;
@@ -22,11 +23,13 @@ export interface LifecycleManagerOptions {
   clock?: Clock;
   allocatePort?: () => number;
   resources?: ResourceGovernor;
+  thermalGuard?: GpuThermalGuard;
 }
 
 export class LifecycleManager {
   readonly events: LifecycleEventBus;
   readonly resources: ResourceGovernor;
+  readonly thermalGuard: GpuThermalGuard;
   readonly #adapters: EngineAdapterRegistry;
   readonly #clock: Clock;
   readonly #allocatePort: () => number;
@@ -49,6 +52,7 @@ export class LifecycleManager {
     this.#clock = options.clock ?? new SystemClock();
     this.#allocatePort = options.allocatePort ?? (() => 19_000);
     this.resources = options.resources ?? new ResourceGovernor(new SystemResourceMonitor());
+    this.thermalGuard = options.thermalGuard ?? new GpuThermalGuard(this.resources.monitor);
   }
 
   snapshot(): InstanceSnapshot {
@@ -114,18 +118,21 @@ export class LifecycleManager {
     const adapter = this.#mediaAdapter(recipe);
     if (!this.#handle) throw new Error("Engine instance is not ready");
     const handle = this.#handle;
+    const thermal = this.thermalGuard.start((adapter.executionLocation?.(recipe) ?? "local") === "local");
 
     this.#cancelEviction();
     this.#activeLeases += 1;
     this.#transition("BUSY", "media-generation-started");
     let job: MediaJobHandle | undefined;
     try {
+      await thermal.regulate();
       job = await adapter.submit(handle, request, signal);
       // The provider job id is the durable link for restart recovery: the host
       // coordinator persists it so a follow-up can cancel orphaned cloud jobs
       // after a crash (design doc §5.3 restart recovery, PR 4).
       yield { type: "started", providerJobId: job.id };
       for (;;) {
+        await thermal.regulate();
         const poll = await adapter.poll(handle, job, signal);
         if (poll.status === "completed" && poll.result) {
           yield { type: "completed", result: poll.result };
@@ -137,7 +144,7 @@ export class LifecycleManager {
         await abortableDelay(adapter.defaultPollIntervalMs ?? 1_000, signal);
       }
     } catch (error) {
-      if (isAbortError(error) && job) {
+      if ((isAbortError(error) || error instanceof ThermalSafetyError) && job) {
         try {
           await adapter.cancel(handle, job); // best-effort provider cancel
         } catch {
@@ -150,6 +157,7 @@ export class LifecycleManager {
       }
       throw error;
     } finally {
+      await thermal.close();
       this.#activeLeases = Math.max(0, this.#activeLeases - 1);
       this.#lastActivityAt = this.#clock.now();
       if (this.#state === "BUSY") {

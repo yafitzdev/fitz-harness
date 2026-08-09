@@ -121,6 +121,13 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
     this.#stopTimeoutMs = options.stopTimeoutMs ?? 10_000;
   }
 
+  executionLocation(recipe: Recipe): "local" | "remote" {
+    const baseUrl = readComfyUIConfiguration(recipe).baseUrl;
+    if (baseUrl === undefined) return "local";
+    const hostname = new URL(baseUrl).hostname;
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]" ? "local" : "remote";
+  }
+
   async validateRecipe(recipe: Recipe): Promise<ValidationReport> {
     const issues = validateComfyUIConfiguration(recipe);
     if (issues.every((issue) => issue.level !== "error") && this.#validatePaths) {

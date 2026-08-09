@@ -12,6 +12,11 @@ export interface ResourceSnapshot {
   totalVramMiB?: number;
   usedVramMiB?: number;
   freeVramMiB?: number;
+  gpuTemperatureC?: number;
+  gpuPowerDrawW?: number;
+  gpuPowerLimitW?: number;
+  gpuMinPowerLimitW?: number;
+  gpuMaxPowerLimitW?: number;
   gpuTelemetryAvailable: boolean;
 }
 
@@ -103,17 +108,11 @@ export class SystemResourceMonitor implements ResourceMonitor {
       freeRamMiB: bytesToMiB(freemem()),
     };
     try {
-      const { stdout } = await execFileAsync(
-        this.nvidiaSmiExecutable,
-        [
-          "--query-gpu=memory.total,memory.used,memory.free",
-          "--format=csv,noheader,nounits",
-        ],
-        { timeout: 5_000, windowsHide: true, maxBuffer: 64 * 1024 },
-      );
+      const stdout = await this.#query("memory.total,memory.used,memory.free,temperature.gpu,power.draw,power.limit,power.min_limit,power.max_limit")
+        .catch(() => this.#query("memory.total,memory.used,memory.free"));
       const firstGpu = stdout.trim().split(/\r?\n/, 1)[0];
       if (!firstGpu) throw new Error("nvidia-smi returned no GPU rows");
-      const [total, used, free] = firstGpu.split(",").map((value) => Number.parseInt(value.trim(), 10));
+      const [total, used, free, temperature, powerDraw, powerLimit, minPowerLimit, maxPowerLimit] = firstGpu.split(",").map((value) => Number.parseFloat(value.trim()));
       if (![total, used, free].every(Number.isFinite)) {
         throw new Error(`Could not parse nvidia-smi output: ${firstGpu}`);
       }
@@ -122,11 +121,25 @@ export class SystemResourceMonitor implements ResourceMonitor {
         totalVramMiB: total!,
         usedVramMiB: used!,
         freeVramMiB: free!,
+        ...(Number.isFinite(temperature) ? { gpuTemperatureC: temperature } : {}),
+        ...(Number.isFinite(powerDraw) ? { gpuPowerDrawW: powerDraw } : {}),
+        ...(Number.isFinite(powerLimit) ? { gpuPowerLimitW: powerLimit } : {}),
+        ...(Number.isFinite(minPowerLimit) ? { gpuMinPowerLimitW: minPowerLimit } : {}),
+        ...(Number.isFinite(maxPowerLimit) ? { gpuMaxPowerLimitW: maxPowerLimit } : {}),
         gpuTelemetryAvailable: true,
       };
     } catch {
       return { ...memory, gpuTelemetryAvailable: false };
     }
+  }
+
+  async #query(fields: string): Promise<string> {
+    const { stdout } = await execFileAsync(
+      this.nvidiaSmiExecutable,
+      [`--query-gpu=${fields}`, "--format=csv,noheader,nounits"],
+      { timeout: 5_000, windowsHide: true, maxBuffer: 64 * 1024 },
+    );
+    return stdout;
   }
 }
 

@@ -883,6 +883,14 @@ describe("desktop renderer shell", () => {
     expect(composerCss).toContain(".file-chip .file-chip-body");
   });
 
+  it("keeps generated media out of composer attachments and animates media progress", () => {
+    expect(renderer).toContain("if (!artifact.metadata?.mediaJobId)");
+    expect(renderer).toContain("activityTimeline.finishWork(job.completedAt)");
+    expect(renderer).toContain("activityTimeline.appendWork(row)");
+    expect(styles).toContain("animation: run-activity-spinner 900ms linear infinite");
+    expect(styles).not.toContain("animation: spin 900ms linear infinite");
+  });
+
   it("pairs a desktop without exposing its durable bearer credential to the renderer", () => {
     for (const id of ["pairing-page", "pairing-form", "pairing-code", "pairing-display-name", "pairing-device-name", "pairing-error"]) expect(html).toContain(`id="${id}"`);
     expect(renderer).toContain("showPairingPage(`Enter a one-time code to connect to ${configuredHostOrigin}.`)");

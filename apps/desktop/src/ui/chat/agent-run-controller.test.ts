@@ -135,6 +135,7 @@ describe("AgentRunController", () => {
     await replacement.start(request());
 
     expect(onMediaJobSubmitted).toHaveBeenCalledWith("job-video", "generate_video");
+    expect(activity.timeline.finishWork).not.toHaveBeenCalled();
   });
 
   it("warms once after the first character and can be reset for another model", async () => {

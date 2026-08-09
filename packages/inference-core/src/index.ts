@@ -7,3 +7,4 @@ export * from "./route-resolver.js";
 export * from "./resources.js";
 export * from "./scheduler.js";
 export * from "./state-machine.js";
+export * from "./thermal.js";

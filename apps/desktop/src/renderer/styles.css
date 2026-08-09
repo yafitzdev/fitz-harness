@@ -181,7 +181,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .media-job-notice.failed, .media-job-notice.interrupted { border-color: var(--danger); background: var(--danger-tint); }
 .media-job-icon { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: var(--tint-5); color: var(--subtle); }
 .media-job-icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.media-job-notice.queued .media-job-icon svg, .media-job-notice.started .media-job-icon svg, .media-job-notice.progressing .media-job-icon svg { animation: spin 900ms linear infinite; stroke-dasharray: 30 14; }
+.media-job-notice.queued .media-job-icon svg, .media-job-notice.started .media-job-icon svg, .media-job-notice.progressing .media-job-icon svg { animation: run-activity-spinner 900ms linear infinite; transform-origin: center; stroke-dasharray: 30 14; }
 .media-job-copy { min-width: 0; display: grid; gap: 2px; }
 .media-job-copy strong, .media-job-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .media-job-copy strong { color: var(--text); font-size: 13px; font-weight: 550; }
@@ -210,7 +210,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .queue-item { min-width: 0; display: grid; grid-template-columns: 18px minmax(0,1fr) auto; align-items: center; gap: 8px; padding: 8px 5px; border-radius: var(--radius-md); color: var(--muted); }
 .queue-item:hover { background: var(--grey-250); }
 .queue-state { width: 16px; height: 16px; display: grid; place-items: center; color: var(--subtle); font-size: 10px; }
-.queue-item.running .queue-state { border: 2px solid var(--grey-400); border-top-color: var(--grey-800); border-radius: 50%; animation: spin 850ms linear infinite; }
+.queue-item.running .queue-state { border: 2px solid var(--grey-400); border-top-color: var(--grey-800); border-radius: 50%; animation: run-activity-spinner 850ms linear infinite; }
 .queue-copy { min-width: 0; display: grid; gap: 2px; }
 .queue-copy strong, .queue-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .queue-copy strong { color: var(--text); font-size: 12px; font-weight: 500; }

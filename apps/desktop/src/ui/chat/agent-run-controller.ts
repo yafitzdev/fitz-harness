@@ -151,6 +151,7 @@ export class AgentRunController {
     let queued = true;
     let reconnectAttempt = 0;
     let nextEnginePoll = 0;
+    let mediaHandedOff = false;
     while (!done && this.#runId === runId) {
       let replay: Json;
       try {
@@ -242,7 +243,10 @@ export class AgentRunController {
           if (existing) this.#options.activity.completeTool(existing.row, existing.toolName, existing.input, event.data?.result, Boolean(event.data?.isError));
           this.#options.addTokenEstimate(stringifyForEstimate(event.data?.result));
           const mediaJobId = mediaJobIdFromToolResult(event.data?.result);
-          if (mediaJobId) this.#options.onMediaJobSubmitted?.(mediaJobId, existing?.toolName ?? String(event.data?.toolName ?? "generate_video"));
+          if (mediaJobId) {
+            mediaHandedOff = true;
+            this.#options.onMediaJobSubmitted?.(mediaJobId, existing?.toolName ?? String(event.data?.toolName ?? "generate_video"));
+          }
           // Track file changes from write/edit tools (updated)
           if (existing && (existing.toolName === "write" || existing.toolName === "edit") && !Boolean(event.data?.isError)) {
             const input = existing.input;
@@ -266,7 +270,10 @@ export class AgentRunController {
           if (success && changedFiles.size > 0) {
             this.#options.appendChangeSummary([...changedFiles.entries()].map(([path, action]) => ({ path, action })));
           }
-          this.#options.activity.finishWork();
+          // Media tools return after durable submission while the GPU job keeps
+          // running in the background. Keep the outer work disclosure active;
+          // MediaJobTracker closes it with the true terminal timestamp.
+          if (!mediaHandedOff) this.#options.activity.finishWork();
         }
       }
       if (!done && !queued && !assistant && Date.now() >= nextEnginePoll) {

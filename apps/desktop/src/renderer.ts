@@ -312,6 +312,7 @@ const mediaJobs = new MediaJobTracker({
     const artifactsForSession = job.status === "completed" ? await loadArtifacts() : [];
     const artifact = job.artifactId ? artifactsForSession.find((item) => item.id === job.artifactId) : undefined;
     renderMediaJob(job, failure, artifact);
+    activityTimeline.finishWork(job.completedAt);
     if (artifact) await inspectorPanel.previewArtifact(artifact);
   },
 });
@@ -937,7 +938,13 @@ async function loadArtifacts(): Promise<Json[]> {
     const name = document.createElement("span"); name.textContent = artifact.name;
     const size = document.createElement("small"); size.textContent = formatBytes(artifact.byteSize);
     value.append(name, size); value.addEventListener("click", () => void inspectorPanel.previewArtifact(artifact, value, artifacts)); artifacts.append(value);
-    composer.addArtifactChip(artifact.name, formatBytes(artifact.byteSize), () => void inspectorPanel.previewArtifact(artifact, value, artifacts), () => undefined);
+    // Generated media is a durable task artifact, never an input attachment.
+    // User-uploaded artifacts retain the existing chip behavior until sent or
+    // removed, while anything produced by a media job lives only in the
+    // repository and its chat result row.
+    if (!artifact.metadata?.mediaJobId) {
+      composer.addArtifactChip(artifact.name, formatBytes(artifact.byteSize), () => void inspectorPanel.previewArtifact(artifact, value, artifacts), () => undefined);
+    }
   }
   return sessionArtifacts;
 }
@@ -956,6 +963,7 @@ async function loadMediaJobs(sessionId: string, sessionArtifacts: Json[]): Promi
       ? undefined
       : await mediaJobs.failureMessage(job.id, job.errorCode ?? `Media generation ${job.status}`);
     renderMediaJob(job, failure, artifact);
+    activityTimeline.finishWork(job.completedAt);
   }
   messages.scrollTop = messages.scrollHeight;
 }
@@ -968,7 +976,9 @@ function renderMediaJob(job: MediaJobSummary, failure?: string, artifact?: Json)
     row.className = "message media-job-notice";
     row.dataset.mediaJobId = job.id;
     mediaJobRows.set(job.id, row);
-    messages.append(row);
+    // Media progress and its terminal result are part of the agent's work,
+    // alongside the approval and tool activity that launched the job.
+    activityTimeline.appendWork(row);
   }
   row.className = `message media-job-notice ${job.status}`;
   row.replaceChildren();
