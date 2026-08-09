@@ -99,6 +99,7 @@ export class ModelCatalogController {
   private downloaded: DownloadedModel[] = [];
   private catalogTotal = 0;
   private searchTimer: ReturnType<typeof setTimeout> | undefined;
+  private loadGeneration = 0;
   /** Active downloads keyed by repo id; the record carries the server id. */
   private downloads = new Map<string, DownloadRecord>();
   private pollTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -126,6 +127,7 @@ export class ModelCatalogController {
   }
 
   async load(appendCatalog = false): Promise<void> {
+    const generation = ++this.loadGeneration;
     try {
       if (!appendCatalog) {
         this.stopPolls();
@@ -134,6 +136,7 @@ export class ModelCatalogController {
           this.options.api("/api/v1/management/models/downloaded"),
           this.options.api("/api/v1/management/models/downloads"),
         ]);
+        if (generation !== this.loadGeneration) return;
         this.downloaded = downloaded.data ?? [];
         this.renderDownloaded();
         // Re-attach to downloads that were already running on the host.
@@ -142,8 +145,9 @@ export class ModelCatalogController {
           this.poll(record.id, record.repoId);
         }
       }
-      await this.loadCatalog(appendCatalog);
+      await this.loadCatalog(appendCatalog, generation);
     } catch (error) {
+      if (generation !== this.loadGeneration) return;
       const message = this.options.errorMessage(error);
       if (!appendCatalog) {
         this.elements.downloadedList.replaceChildren(emptyState(message));
@@ -169,11 +173,12 @@ export class ModelCatalogController {
     }
   }
 
-  private async loadCatalog(append: boolean): Promise<void> {
+  private async loadCatalog(append: boolean, generation: number): Promise<void> {
     const offset = append ? this.models.length : 0;
     const query = encodeURIComponent(this.elements.modelSearch.value.trim());
     const pipeline = encodeURIComponent(this.pipelineTag);
     const response = await this.options.api(`/api/v1/management/models/catalog?query=${query}&pipeline=${pipeline}&offset=${offset}&limit=30&${catalogQueryString(this.filterBar.filters)}`);
+    if (generation !== this.loadGeneration) return;
     this.catalogTotal = response.data?.total ?? 0;
     this.models = append ? [...this.models, ...(response.data?.models ?? [])] : (response.data?.models ?? []);
     this.renderCatalog();

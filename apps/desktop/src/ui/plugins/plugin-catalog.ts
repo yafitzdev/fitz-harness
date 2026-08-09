@@ -86,6 +86,7 @@ export class PluginCatalogController {
   private catalogTotal = 0;
   private catalogType: string;
   private searchTimer: ReturnType<typeof setTimeout> | undefined;
+  private loadGeneration = 0;
 
   constructor(elements: PluginCatalogElements, options: PluginCatalogOptions) {
     this.elements = elements;
@@ -108,19 +109,22 @@ export class PluginCatalogController {
   }
 
   async load(appendCatalog = false): Promise<void> {
+    const generation = ++this.loadGeneration;
     try {
       if (!appendCatalog) {
         const [packages, skills] = await Promise.all([
           this.options.api("/api/v1/management/pi/packages"),
           this.options.api("/api/v1/management/pi/skills"),
         ]);
+        if (generation !== this.loadGeneration) return;
         this.installedPackages = packages.data ?? [];
         this.installedSkills = skills.data ?? [];
         this.renderInstalledPackages();
         this.renderSkills();
       }
-      await this.loadCatalog(appendCatalog);
+      await this.loadCatalog(appendCatalog, generation);
     } catch (error) {
+      if (generation !== this.loadGeneration) return;
       const message = this.options.errorMessage(error);
       if (!appendCatalog) {
         this.elements.installedPlugins.replaceChildren(emptyState(message));
@@ -147,13 +151,14 @@ export class PluginCatalogController {
     this.elements.loadMorePlugins.addEventListener("click", () => void this.load(true));
   }
 
-  private async loadCatalog(append: boolean): Promise<void> {
+  private async loadCatalog(append: boolean, generation: number): Promise<void> {
     const offset = append ? this.catalogPackages.length : 0;
     const query = encodeURIComponent(this.elements.pluginSearch.value.trim());
     // The active header tab's type is pushed into the npm query so the page
     // fills with matching packages instead of a blank client-side filter.
     const typeParam = this.catalogType ? `&type=${encodeURIComponent(this.catalogType)}` : "";
     const response = await this.options.api(`/api/v1/management/pi/catalog?query=${query}&offset=${offset}&limit=30&${catalogQueryString(this.filterBar.filters)}${typeParam}`);
+    if (generation !== this.loadGeneration) return;
     this.catalogTotal = response.data?.total ?? 0;
     this.catalogPackages = append ? [...this.catalogPackages, ...(response.data?.packages ?? [])] : (response.data?.packages ?? []);
     this.renderCatalog();

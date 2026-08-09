@@ -240,6 +240,31 @@ describe("ModelsPageController", () => {
     expect(api).toHaveBeenCalledWith("/api/v1/management/models/catalog?query=llama&pipeline=text-generation&offset=0&limit=30&sort=downloads&direction=desc");
   });
 
+  it("does not let a slow stale search replace newer catalog results", async () => {
+    let resolveOld: ((value: Record<string, any>) => void) | undefined;
+    const oldResponse = new Promise<Record<string, any>>((resolve) => { resolveOld = resolve; });
+    const api = vi.fn(async (path: string) => {
+      if (path === "/api/v1/management/models/downloaded" || path === "/api/v1/management/models/downloads") return { data: [] };
+      if (path.includes("query=old")) return oldResponse;
+      if (path.includes("query=new")) return { data: { total: 1, models: [{ id: "org/new-result", downloads: 2, likes: 1 }] } };
+      return { data: { total: 0, models: [] } };
+    });
+    const { controller, page } = setup(api);
+    const search = page.querySelector<HTMLInputElement>("#model-search")!;
+    search.value = "old";
+    const oldLoad = controller.load();
+    await Promise.resolve();
+    await Promise.resolve();
+    search.value = "new";
+
+    await controller.load();
+    resolveOld?.({ data: { total: 1, models: [{ id: "org/old-result", downloads: 1, likes: 0 }] } });
+    await oldLoad;
+
+    expect(page.querySelector("#model-catalog")?.textContent).toContain("new-result");
+    expect(page.querySelector("#model-catalog")?.textContent).not.toContain("old-result");
+  });
+
   it("loads more catalog results on demand", async () => {
     const api = vi.fn(async (path: string) => {
       if (path === "/api/v1/management/models/downloaded" || path === "/api/v1/management/models/downloads") return { data: [] };

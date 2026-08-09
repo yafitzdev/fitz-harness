@@ -178,6 +178,29 @@ describe("PluginCatalogController", () => {
     expect(elements.loadMorePlugins.hidden).toBe(true);
   });
 
+  it("does not let a slow stale search replace newer catalog results", async () => {
+    let resolveOld: ((value: Record<string, any>) => void) | undefined;
+    const oldResponse = new Promise<Record<string, any>>((resolve) => { resolveOld = resolve; });
+    const api = vi.fn(async (path: string) => {
+      if (path === "/api/v1/management/pi/packages" || path === "/api/v1/management/pi/skills") return { data: [] };
+      if (path.includes("query=old")) return oldResponse;
+      if (path.includes("query=new")) return { data: { total: 1, packages: [{ name: "new-result", description: "New", version: "1", links: {} }] } };
+      return { data: { total: 0, packages: [] } };
+    });
+    const { controller, elements } = setup(api);
+    elements.pluginSearch.value = "old";
+    const oldLoad = controller.load();
+    await settle();
+    elements.pluginSearch.value = "new";
+
+    await controller.load();
+    resolveOld?.({ data: { total: 1, packages: [{ name: "old-result", description: "Old", version: "1", links: {} }] } });
+    await oldLoad;
+
+    expect(elements.pluginCatalog.textContent).toContain("new-result");
+    expect(elements.pluginCatalog.textContent).not.toContain("old-result");
+  });
+
   it("contains a rejected catalog pagination request", async () => {
     let page = 0;
     const api = vi.fn(async (path: string) => {
