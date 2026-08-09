@@ -25,7 +25,7 @@ import { contextTokensForRoute } from "./route-context.js";
 import { WindowsStartupManager } from "@fitz/connectivity";
 import { resolveRuntimePaths } from "./runtime-paths.js";
 import { AgentSafetyService } from "./agent-safety/index.js";
-import { localComfyUIPaths, localH3RuntimeInstalled, reconcileLocalComfyUIConfiguration } from "./comfyui-reconcile.js";
+import { localComfyUIPaths, localComfyUIRecipeIds, reconcileLocalComfyUIConfiguration } from "./comfyui-reconcile.js";
 import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
@@ -171,11 +171,13 @@ function ninferOptions() {
 
 function installedLocalComfyUIPlaybook() {
   const local = localComfyUIPaths(runtimePaths);
-  if (!localH3RuntimeInstalled(runtimePaths, local)) return undefined;
+  const recipeIds = localComfyUIRecipeIds(runtimePaths, local);
+  if (recipeIds.length === 0) return undefined;
   return createComfyUIPlaybook({
     engineDir: local.engineDir,
     executable: local.executable,
     launchArgs: ["--extra-model-paths-config", local.modelConfigPath, "--output-directory", local.outputDir],
+    recipeIds,
   });
 }
 
@@ -243,6 +245,7 @@ function engineModeOptions(mode: string) {
  * deployments. */
 function comfyuiOptions() {
   const local = localComfyUIPaths(runtimePaths);
+  const installedRecipeIds = localComfyUIRecipeIds(runtimePaths, local);
   const playbook = createComfyUIPlaybook({
     engineDir: process.env.FITZ_COMFYUI_DIR ?? local.engineDir,
     executable: process.env.FITZ_COMFYUI_EXECUTABLE ?? local.executable,
@@ -259,6 +262,7 @@ function comfyuiOptions() {
     ...(process.env.FITZ_COMFYUI_EXPECTED_VRAM_MIB
       ? { expectedVramMiB: parseNonNegativeInteger(process.env.FITZ_COMFYUI_EXPECTED_VRAM_MIB, "FITZ_COMFYUI_EXPECTED_VRAM_MIB") }
       : {}),
+    ...(installedRecipeIds.length ? { recipeIds: installedRecipeIds } : {}),
   });
   return {
     adapters: [new ComfyUIEngineAdapter(), new ManagedOpenAIEngineAdapter(), new OpenAICompatibleEngineAdapter()],

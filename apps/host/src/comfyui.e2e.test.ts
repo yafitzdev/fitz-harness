@@ -39,6 +39,47 @@ describe("MiniMax H3 via ComfyUI (PR 7)", () => {
     expect(playbook.routes).not.toContainEqual(expect.objectContaining({ id: "image" }));
   });
 
+  it("onboards independently installed PinkCherry H3 and Krea 2 recipes", async () => {
+    const playbook = createComfyUIPlaybook({
+      engineDir: "/engines/comfyui",
+      executable: "python",
+      recipeIds: ["h3-video", "pinkcherry-h3-video", "krea2-turbo-image"],
+    });
+    const adapter = new ComfyUIEngineAdapter({ validatePaths: false });
+
+    expect(playbook.recipes.map((recipe) => recipe.id)).toEqual([
+      "h3-video",
+      "pinkcherry-h3-video",
+      "krea2-turbo-image",
+    ]);
+    expect(playbook.recipes.find((recipe) => recipe.id === "pinkcherry-h3-video")).toMatchObject({
+      modelId: "pinkcherry-minimax-h3-v0.5-pruned-int8",
+      lifecycle: { evictionPolicy: "immediate", idleTtlSeconds: 0 },
+      capabilities: { modalities: { output: ["video", "audio"] } },
+    });
+    expect(playbook.recipes.find((recipe) => recipe.id === "krea2-turbo-image")).toMatchObject({
+      modelId: "krea2-turbo-nvfp4",
+      lifecycle: { evictionPolicy: "immediate", idleTtlSeconds: 0 },
+      capabilities: { modalities: { output: ["image"] } },
+      configuration: { defaults: { resolution: "1024x1024", sampler: "euler", steps: 8, guidance: 1 } },
+    });
+    for (const recipe of playbook.recipes) {
+      await expect(adapter.validateRecipe(recipe)).resolves.toEqual({ valid: true, issues: [] });
+    }
+    expect(playbook.routes).toContainEqual(expect.objectContaining({ id: "video", recipeId: "h3-video" }));
+    expect(playbook.routes).toContainEqual(expect.objectContaining({ id: "image", recipeId: "krea2-turbo-image" }));
+  });
+
+  it("routes PinkCherry when it is the only installed video recipe", () => {
+    const playbook = createComfyUIPlaybook({
+      engineDir: "/engines/comfyui",
+      executable: "python",
+      recipeIds: ["pinkcherry-h3-video"],
+    });
+    expect(playbook.recipes.map((recipe) => recipe.id)).toEqual(["pinkcherry-h3-video"]);
+    expect(playbook.routes).toEqual([expect.objectContaining({ id: "video", recipeId: "pinkcherry-h3-video" })]);
+  });
+
   it("runs a video generation end-to-end through the host pipeline", async () => {
     const fixturePort = await unusedPort();
     const child = spawn(process.execPath, [FIXTURE, "--listen", "127.0.0.1", "--port", String(fixturePort), "--progress-per-poll", "0.5"]);
