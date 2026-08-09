@@ -396,6 +396,7 @@ export class ConnectionWorkspaceController {
     setFormBusy(this.elements.form, true);
     this.setFormStatus("Connecting…");
     try {
+      const updating = Boolean(this.elements.id.value);
       const template = this.elements.template.value as "openai-compatible" | "openai-media" | "fal" | "replicate";
       const hidesUrl = template === "fal" || template === "replicate";
       await this.options.bridge.saveConsumerConnection({
@@ -411,6 +412,7 @@ export class ConnectionWorkspaceController {
       });
       this.closeEditor();
       await this.refreshRecordsAndConfiguration();
+      this.options.showStatus(updating ? "Connection updated" : "Connection added", "success");
     } catch (error) { this.setFormStatus(this.options.errorMessage(error), true); }
     finally { setFormBusy(this.elements.form, false); }
   }
@@ -447,6 +449,7 @@ export class ConnectionWorkspaceController {
       try {
         await this.options.bridge.removeConsumerConnection(id);
         await this.refreshRecordsAndConfiguration();
+        this.options.showStatus("Connection removed", "success");
       } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
     });
     button.classList.add("danger");
@@ -474,6 +477,7 @@ export class ConnectionWorkspaceController {
       });
       this.configuration = await this.options.reloadConfiguration();
       this.render();
+      this.options.showStatus(`${definition.label} route updated`, "success");
     } catch (error) {
       button.disabled = false;
       this.options.showStatus(this.options.errorMessage(error), "error");
@@ -494,6 +498,7 @@ export class ConnectionWorkspaceController {
       });
       this.configuration = await this.options.reloadConfiguration();
       this.render();
+      this.options.showStatus(`${definition.label} route updated`, "success");
     } catch (error) {
       button.disabled = false;
       this.options.showStatus(this.options.errorMessage(error), "error");

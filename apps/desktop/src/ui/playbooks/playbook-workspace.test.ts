@@ -214,7 +214,7 @@ describe("PlaybookWorkspaceController", () => {
   });
 
   it("opens the engine editor with the folder applied and saves it", async () => {
-    const { controller, elements, api, reloadConfiguration } = setup();
+    const { controller, elements, api, reloadConfiguration, showStatus } = setup();
     controller.render();
 
     const configure = [...elements.list.querySelectorAll<HTMLButtonElement>(".collapsible-actions button")].find((button) => button.textContent === "Configure")!;
@@ -241,10 +241,11 @@ describe("PlaybookWorkspaceController", () => {
     await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/engines/scratch", "PUT", expect.objectContaining({ displayName: "scratch", connectionMode: "managed" })));
     await vi.waitFor(() => expect(controller.editorOpen).toBe(false));
     expect(reloadConfiguration).toHaveBeenCalled();
+    expect(showStatus).toHaveBeenCalledWith("Engine configuration saved", "success");
   });
 
   it("creates a recipe from an engine's managed configuration and saves it", async () => {
-    const { controller, elements, api, reloadConfiguration } = setup();
+    const { controller, elements, api, reloadConfiguration, showStatus } = setup();
     controller.render();
 
     const addRecipe = [...elements.list.querySelectorAll<HTMLButtonElement>(".collapsible-actions button")].find((button) => button.textContent === "Add recipe")!;
@@ -268,6 +269,7 @@ describe("PlaybookWorkspaceController", () => {
     })));
     await vi.waitFor(() => expect(controller.editorOpen).toBe(false));
     expect(reloadConfiguration).toHaveBeenCalled();
+    expect(showStatus).toHaveBeenCalledWith("Recipe saved", "success");
   });
 
   it("rejects recipe configuration that is not valid JSON", async () => {

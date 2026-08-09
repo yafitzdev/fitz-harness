@@ -78,7 +78,7 @@ describe("ConnectionWorkspaceController", () => {
   });
 
   it("owns editor auth state and saves a new OpenAI-compatible connection", async () => {
-    const { controller, elements, bridge } = setup();
+    const { controller, elements, bridge, calls } = setup();
     click(elements.newConnection);
     expect(controller.editorOpen).toBe(true);
     expect(elements.listView.hidden).toBe(true);
@@ -94,6 +94,7 @@ describe("ConnectionWorkspaceController", () => {
     await vi.waitFor(() => expect(bridge.saveConsumerConnection).toHaveBeenCalledWith({ displayName: "Self hosted", baseUrl: "http://127.0.0.1:8000/v1", authType: "none", template: "openai-compatible" }));
     await vi.waitFor(() => expect(controller.editorOpen).toBe(false));
     expect(bridge.listConsumerConnections).toHaveBeenCalled();
+    await vi.waitFor(() => expect(calls.showStatus).toHaveBeenCalledWith("Connection added", "success"));
   });
 
   it("assigns global routes from any connection and delegates recipe tests", async () => {
@@ -105,6 +106,7 @@ describe("ConnectionWorkspaceController", () => {
     click(fast);
     await vi.waitFor(() => expect(calls.api).toHaveBeenCalledWith("/api/v1/management/routes/fast", "PUT", expect.objectContaining({ recipeId: "consumer-recipe--remote-model" })));
     await vi.waitFor(() => expect(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[1]?.querySelector(".route-fast")?.classList.contains("active")).toBe(true));
+    expect(calls.showStatus).toHaveBeenCalledWith("Fast route updated", "success");
 
     const test = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[1]!.querySelector<HTMLButtonElement>(".recipe-test-button")!;
     click(test);
@@ -115,7 +117,7 @@ describe("ConnectionWorkspaceController", () => {
     const listConsumerConnections = vi.fn()
       .mockResolvedValueOnce([{ id: "remote-1", displayName: "Remote API", baseUrl: "https://remote.test/v1", authType: "bearer", hasCredential: true, template: "openai-compatible", models: [], mediaModels: [], updatedAt: "now" }])
       .mockResolvedValue([]);
-    const { controller, elements, bridge } = setup({ listConsumerConnections });
+    const { controller, elements, bridge, calls } = setup({ listConsumerConnections });
     await controller.sync(false);
     expect(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")).toHaveLength(2);
     const remoteCard = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[1]!;
@@ -125,6 +127,7 @@ describe("ConnectionWorkspaceController", () => {
     click(remove);
     await vi.waitFor(() => expect(bridge.removeConsumerConnection).toHaveBeenCalledWith("remote-1"));
     await vi.waitFor(() => expect(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")).toHaveLength(1));
+    expect(calls.showStatus).toHaveBeenCalledWith("Connection removed", "success");
   });
 
   it("collapses and expands a connection without losing state across re-renders", async () => {
@@ -223,6 +226,7 @@ describe("ConnectionWorkspaceController", () => {
       const fresh = elements.connections.querySelector<HTMLElement>(".media-recipe-card")!.querySelector<HTMLButtonElement>(".route-image")!;
       expect(fresh.classList.contains("active")).toBe(true);
     });
+    expect(calls.showStatus).toHaveBeenCalledWith("Image route updated", "success");
 
     // Hosted experimental media recipe: card hidden by default, shown after the
     // toggle, and its assignment carries acceptExperimental.

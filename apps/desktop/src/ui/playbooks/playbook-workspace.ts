@@ -277,6 +277,7 @@ export class PlaybookWorkspaceController {
       });
       this.closeEditor();
       await this.options.reloadConfiguration();
+      this.options.showStatus("Engine configuration saved", "success");
     } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
     finally { setFormBusy(this.elements.engineForm, false); }
   }
@@ -296,6 +297,7 @@ export class PlaybookWorkspaceController {
       });
       this.closeEditor();
       await this.options.reloadConfiguration();
+      this.options.showStatus("Recipe saved", "success");
     } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
     finally { setFormBusy(this.elements.recipeForm, false); }
   }
