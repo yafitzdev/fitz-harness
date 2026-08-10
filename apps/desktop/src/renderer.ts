@@ -27,6 +27,7 @@ import { ResizablePane } from "./ui/primitives/resizable-pane.js";
 import { PluginsPageController } from "./ui/plugins/plugins-page.js";
 import { ModelsPageController } from "./ui/models/models-page.js";
 import { AdministrationPageController } from "./ui/administration/administration-page.js";
+import { UsagePageController } from "./ui/usage/usage-page.js";
 import { PlaybookWorkspaceController } from "./ui/playbooks/playbook-workspace.js";
 import { ProjectsController } from "./ui/projects/projects.js";
 import { ProjectSidebarController } from "./ui/sidebar/project-sidebar.js";
@@ -82,6 +83,8 @@ const pairingDescription = element("pairing-description");
 const pairingError = element("pairing-error");
 const administrationPage = element("administration-page");
 const administrationButton = element("manage-administration") as HTMLButtonElement;
+const usagePage = element("usage-page");
+const usageButton = element("manage-usage") as HTMLButtonElement;
 
 // Every management tab is built from the same layout component: a header with
 // tabs and actions plus one or more content columns, so switching between
@@ -138,6 +141,14 @@ administrationLayout.addContent({
   title: "Administration",
   description: "Pair devices, manage users, and control their access.",
   body: [element("administration-sections")],
+});
+const usageLayout = new ManagementPageLayout(usagePage, {
+  actions: [{ id: "refresh-usage", icon: managementRefreshIcon, label: "Refresh usage" }],
+});
+usageLayout.addContent({
+  title: "Usage",
+  description: "Requests, latency, tokens, and media activity across this host.",
+  body: [element("usage-dashboard")],
 });
 
 let conversationLayout: ConversationLayout | undefined;
@@ -489,6 +500,7 @@ const workspacePages = new WorkspacePageController({
     connections: connectionWorkspace.root,
     plugins: pluginsPage,
     models: modelsPage,
+    usage: usagePage,
     administration: administrationPage,
     pairing: pairingPage,
   },
@@ -497,6 +509,7 @@ const workspacePages = new WorkspacePageController({
     connections: connectionsButton,
     plugins: pluginsButton,
     models: modelsButton,
+    usage: usageButton,
     administration: administrationButton,
   },
   setConversationInert,
@@ -607,6 +620,12 @@ const administrationPageController = new AdministrationPageController({
   showStatus,
   errorMessage,
 });
+const usagePageController = new UsagePageController({
+  root: element("usage-dashboard"),
+  refresh: element("refresh-usage") as HTMLButtonElement,
+  api,
+  errorMessage,
+});
 const navigationHistory = new NavigationHistoryController({
   blocked: () => agentRuns.active,
   replay: replayLocation,
@@ -647,6 +666,7 @@ element("manage-playbooks").addEventListener("click", () => void openPlaybookPag
 connectionsButton.addEventListener("click", () => void openConnectionsPage());
 pluginsButton.addEventListener("click", () => void openPluginsPage());
 modelsButton.addEventListener("click", () => void openModelsPage());
+usageButton.addEventListener("click", () => void openUsagePage());
 administrationButton.addEventListener("click", () => void openAdministrationPage());
 element("sidebar-menu").addEventListener("click", toggleSidebar);
 for (const windowButton of document.querySelectorAll<HTMLButtonElement>("[data-window-action]")) {
@@ -790,6 +810,7 @@ async function openPlaybookPage(): Promise<void> {
 async function openConnectionsPage(): Promise<void> { if (!pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("connections"); await connectionWorkspace.sync(false); navigationHistory.remember({ view: "connections" }); }
 async function openPluginsPage(): Promise<void> { if (!canOpenManagementView("plugins", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("plugins"); pluginsPageController.showLoading(); await pluginsPageController.load(false); navigationHistory.remember({ view: "plugins" }); }
 async function openModelsPage(): Promise<void> { if (!canOpenManagementView("models", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("models"); modelsPageController.showLoading(); await modelsPageController.load(false); navigationHistory.remember({ view: "models" }); }
+async function openUsagePage(): Promise<void> { if (!canOpenManagementView("usage", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("usage"); await usagePageController.load(); navigationHistory.remember({ view: "usage" }); }
 async function openAdministrationPage(): Promise<void> { if (!canOpenManagementView("administration", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); workspacePages.show("administration"); administrationPageController.showLoading(); await administrationPageController.load(); navigationHistory.remember({ view: "administration" }); }
 function showPairingPage(message: string): void { closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); workspacePages.show("pairing"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
 function showConversationWorkspace(): void { playbookWorkspace.closeEditor(); workspacePages.show("conversation"); }
@@ -800,6 +821,7 @@ async function replayLocation(location: AppLocation): Promise<void> {
   else if (location.view === "connections") await openConnectionsPage();
   else if (location.view === "plugins") await openPluginsPage();
   else if (location.view === "models") await openModelsPage();
+  else if (location.view === "usage") await openUsagePage();
   else if (location.view === "administration") await openAdministrationPage();
   else if (location.view === "conversation") {
     if (location.newChat && location.projectId) openNewChatForProject(location.projectId);
@@ -815,6 +837,7 @@ function applyNavigation(): void {
   connectionsButton.hidden = !visibility.connections;
   pluginsButton.hidden = !visibility.plugins;
   modelsButton.hidden = !visibility.models;
+  usageButton.hidden = !visibility.usage;
   administrationButton.hidden = !visibility.administration;
 }
 

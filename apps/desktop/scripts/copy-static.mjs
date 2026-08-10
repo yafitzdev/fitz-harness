@@ -11,6 +11,7 @@ mkdirSync(new URL("../dist/ui/connections/", import.meta.url), { recursive: true
 mkdirSync(new URL("../dist/ui/plugins/", import.meta.url), { recursive: true });
 mkdirSync(new URL("../dist/ui/models/", import.meta.url), { recursive: true });
 mkdirSync(new URL("../dist/ui/administration/", import.meta.url), { recursive: true });
+mkdirSync(new URL("../dist/ui/usage/", import.meta.url), { recursive: true });
 mkdirSync(new URL("../dist/ui/playbooks/", import.meta.url), { recursive: true });
 mkdirSync(new URL("../dist/ui/sidebar/", import.meta.url), { recursive: true });
 mkdirSync(new URL("../dist/ui/inspector/", import.meta.url), { recursive: true });
@@ -31,6 +32,7 @@ cpSync(new URL("../src/ui/connections/connection-workspace.css", import.meta.url
 cpSync(new URL("../src/ui/plugins/plugin-catalog.css", import.meta.url), new URL("../dist/ui/plugins/plugin-catalog.css", import.meta.url));
 cpSync(new URL("../src/ui/models/model-catalog.css", import.meta.url), new URL("../dist/ui/models/model-catalog.css", import.meta.url));
 cpSync(new URL("../src/ui/administration/administration-page.css", import.meta.url), new URL("../dist/ui/administration/administration-page.css", import.meta.url));
+cpSync(new URL("../src/ui/usage/usage-page.css", import.meta.url), new URL("../dist/ui/usage/usage-page.css", import.meta.url));
 cpSync(new URL("../src/ui/playbooks/playbook-workspace.css", import.meta.url), new URL("../dist/ui/playbooks/playbook-workspace.css", import.meta.url));
 cpSync(new URL("../src/ui/sidebar/project-sidebar.css", import.meta.url), new URL("../dist/ui/sidebar/project-sidebar.css", import.meta.url));
 cpSync(new URL("../src/ui/inspector/inspector-panel.css", import.meta.url), new URL("../dist/ui/inspector/inspector-panel.css", import.meta.url));

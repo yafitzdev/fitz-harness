@@ -9,6 +9,7 @@ import type {
   MediaJobStatus,
   MediaModality,
   Recipe,
+  RequestUsageRecord,
 } from "@fitz/protocol";
 import { InferenceAdmissionError, type InferenceScheduler, type RouteResolver, type ScheduledMediaJob } from "@fitz/inference-core";
 import { SecurityPolicyError, type AuthenticatedPrincipal, type SecurityService } from "@fitz/security";
@@ -243,8 +244,9 @@ export class MediaJobCoordinator {
               },
             });
             this.#credit(id);
+            this.#recordUsage(id, "completed", scheduled.lane);
           } catch (error) {
-            this.#fail(id, errorMessage(error), error instanceof ArtifactTooLargeError ? "artifact_too_large" : error instanceof ArtifactQuotaExceededError ? "artifact_quota_exceeded" : undefined);
+            this.#fail(id, errorMessage(error), error instanceof ArtifactTooLargeError ? "artifact_too_large" : error instanceof ArtifactQuotaExceededError ? "artifact_quota_exceeded" : undefined, scheduled.lane);
           }
         }
       }
@@ -255,8 +257,9 @@ export class MediaJobCoordinator {
         const now = new Date().toISOString();
         this.#store.updateMediaJob(id, { status: "cancelled", cancelledAt: now });
         this.#appendEvent(id, { type: "cancelled" });
+        this.#recordUsage(id, "cancelled", scheduled.lane);
       } else {
-        this.#fail(id, errorMessage(error));
+        this.#fail(id, errorMessage(error), "generation_failed", scheduled.lane);
       }
     } finally {
       this.#active.delete(id);
@@ -335,10 +338,40 @@ export class MediaJobCoordinator {
   /** Terminal failure: `errorCode` carries the machine-readable code
    *  (e.g. `artifact_too_large`, design doc §5.11) and the failed event keeps
    *  the human-readable message. */
-  #fail(id: string, message: string, errorCode = "generation_failed"): void {
+  #fail(id: string, message: string, errorCode = "generation_failed", lane?: ScheduledMediaJob["lane"]): void {
     const now = new Date().toISOString();
     this.#store.updateMediaJob(id, { status: "failed", errorCode, completedAt: now });
     this.#appendEvent(id, { type: "failed", error: message });
+    this.#recordUsage(id, "failed", lane, errorCode);
+  }
+
+  #recordUsage(id: string, status: RequestUsageRecord["status"], lane?: ScheduledMediaJob["lane"], errorCode?: string): void {
+    const job = this.#store.getMediaJob(id);
+    if (!job) return;
+    let recipe: Recipe | undefined;
+    try { recipe = this.#routes.resolve(job.routeId).recipe; } catch { /* A removed route must not erase terminal accounting. */ }
+    const finishedAt = job.completedAt ?? job.cancelledAt ?? new Date().toISOString();
+    const enqueued = Date.parse(job.enqueuedAt);
+    const started = job.startedAt ? Date.parse(job.startedAt) : undefined;
+    const finished = Date.parse(finishedAt);
+    try { this.#store.recordRequestUsage({
+      id: job.id,
+      kind: job.modality,
+      status,
+      routeId: job.routeId,
+      ...(recipe ? { recipeId: recipe.id, playbookId: recipe.playbookId, adapter: recipe.adapter, modelId: recipe.modelId } : {}),
+      ...(job.createdByUserId ? { ownerUserId: job.createdByUserId } : {}),
+      ...(job.sessionId ? { sessionId: job.sessionId } : {}),
+      executionLane: lane ?? "gpu",
+      enqueuedAt: job.enqueuedAt,
+      ...(job.startedAt ? { startedAt: job.startedAt } : {}),
+      completedAt: finishedAt,
+      ...(started === undefined ? {} : { queueWaitMs: Math.max(0, started - enqueued) }),
+      ...(Number.isFinite(finished) ? { durationMs: Math.max(0, finished - (started ?? enqueued)) } : {}),
+      ...(job.creditCostCents !== undefined ? { creditCostCents: job.creditCostCents } : {}),
+      ...(errorCode ? { errorCode } : {}),
+      metadata: { ...job.params },
+    }); } catch { /* Usage accounting is fail-open and never changes job outcome. */ }
   }
 
   #appendEvent(id: string, event: MediaJobEvent): void {

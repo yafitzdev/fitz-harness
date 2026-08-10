@@ -3,7 +3,7 @@ import { canOpenManagementView, managementNavigationVisibility } from "./navigat
 
 describe("management navigation policy", () => {
   it("keeps consumer-facing Connections visible while hiding host administration", () => {
-    expect(managementNavigationVisibility(false)).toEqual({ playbooks: false, connections: true, plugins: false, models: false, administration: false });
+    expect(managementNavigationVisibility(false)).toEqual({ playbooks: false, connections: true, plugins: false, models: false, usage: false, administration: false });
     expect(canOpenManagementView("playbooks", false)).toBe(false);
     expect(canOpenManagementView("connections", false)).toBe(true);
   });

@@ -30,6 +30,33 @@ describe("Fitz host", () => {
     await runtime.app.close();
   });
 
+  it("exposes durable usage aggregates after a terminal request", async () => {
+    const runtime = createHost();
+    try {
+      const completion = await runtime.app.inject({
+        method: "POST", url: "/v1/chat/completions",
+        payload: { model: "default", stream: false, messages: [{ role: "user", content: "usage accounting" }] },
+      });
+      expect(completion.statusCode, completion.body).toBe(200);
+      const usage = await runtime.app.inject({ method: "GET", url: "/api/v1/management/usage?bucket=hour" });
+      expect(usage.statusCode, usage.body).toBe(200);
+      expect(usage.json().data).toEqual(expect.objectContaining({
+        bucket: "hour",
+        totals: expect.objectContaining({ requests: 1, successful: 1, failed: 0, tokenReportedRequests: 1 }),
+        routes: expect.arrayContaining([expect.objectContaining({ key: "default", requests: 1 })]),
+      }));
+    } finally { await runtime.app.close(); }
+  });
+
+  it("rejects malformed usage report ranges instead of silently changing them", async () => {
+    const runtime = createHost();
+    try {
+      expect((await runtime.app.inject({ method: "GET", url: "/api/v1/management/usage?from=nope" })).statusCode).toBe(400);
+      expect((await runtime.app.inject({ method: "GET", url: "/api/v1/management/usage?bucket=minute" })).statusCode).toBe(400);
+      expect((await runtime.app.inject({ method: "GET", url: "/api/v1/management/usage?from=2026-08-10T00:00:00.000Z&to=2026-08-09T00:00:00.000Z" })).statusCode).toBe(400);
+    } finally { await runtime.app.close(); }
+  });
+
   it("warms a selected route without generating a message", async () => {
     const runtime = createHost();
     try {
@@ -824,7 +851,8 @@ describe("Fitz host", () => {
   it("creates projects and sessions and records a canonical run transcript", async () => {
     const runtime = createHost(); const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Fitz", rootPath: "C:\\work\\fitz" } }); const projectId = project.json().data.id; expect(project.json().data.rootPath).toBe("C:\\work\\fitz");
     const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${projectId}/sessions`, payload: { title: "Infrastructure" } }); const sessionId = session.json().data.id;
-    const run = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", sessionId, messages: [{ role: "user", content: "persist this turn" }] } }); const runId = run.json().data.id; for (let attempt = 0; attempt < 50 && runtime.agentRuns.get(runId)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+    const run = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", sessionId, messages: [{ role: "user", content: "persist this turn" }] } }); const runId = run.json().data.id; for (let attempt = 0; attempt < 400 && runtime.agentRuns.get(runId)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(runtime.agentRuns.get(runId)?.status).toBe("completed");
     const transcript = await runtime.app.inject({ method: "GET", url: `/api/v1/sessions/${sessionId}/transcript` }); expect(transcript.json().data).toEqual([expect.objectContaining({ sequence: 1, role: "user", content: expect.objectContaining({ text: "persist this turn" }) }), expect.objectContaining({ sequence: 2, role: "assistant", content: expect.objectContaining({ runId }) })]); await runtime.app.close();
   });
 

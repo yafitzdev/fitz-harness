@@ -260,4 +260,40 @@ describe("SqliteStore", () => {
     expect(detached?.sessionId).toBeUndefined();
     store.close();
   });
+
+  it("accounts terminal requests idempotently and aggregates nullable token telemetry", () => {
+    const store = SqliteStore.memory();
+    store.recordRequestUsage({
+      id: "chat-usage", kind: "chat", status: "completed", routeId: "smart", recipeId: "reasoner", playbookId: "ninfer", adapter: "ninfer", modelId: "qwen",
+      ownerUserId: "user-1", executionLane: "gpu", enqueuedAt: "2026-08-09T10:00:00.000Z", startedAt: "2026-08-09T10:00:01.000Z",
+      firstOutputAt: "2026-08-09T10:00:03.000Z", completedAt: "2026-08-09T10:00:09.000Z", queueWaitMs: 1_000, ttftMs: 2_000, durationMs: 8_000,
+    });
+    // A terminal replay enriches the same request instead of double-counting it.
+    store.recordRequestUsage({
+      id: "chat-usage", kind: "chat", status: "completed", routeId: "smart", recipeId: "reasoner", playbookId: "ninfer", adapter: "ninfer", modelId: "qwen",
+      ownerUserId: "user-1", executionLane: "gpu", enqueuedAt: "2026-08-09T10:00:00.000Z", startedAt: "2026-08-09T10:00:01.000Z",
+      firstOutputAt: "2026-08-09T10:00:03.000Z", completedAt: "2026-08-09T10:00:09.000Z", queueWaitMs: 1_000, ttftMs: 2_000, durationMs: 8_000,
+      promptTokens: 120, completionTokens: 30,
+    });
+    // A contradictory terminal replay cannot rewrite the original outcome.
+    store.recordRequestUsage({
+      id: "chat-usage", kind: "chat", status: "interrupted", routeId: "different", executionLane: "cloud",
+      enqueuedAt: "2026-08-09T12:00:00.000Z", completedAt: "2026-08-09T12:00:01.000Z",
+    });
+    store.recordRequestUsage({
+      id: "image-usage", kind: "image", status: "failed", routeId: "image", recipeId: "flux", executionLane: "gpu",
+      enqueuedAt: "2026-08-09T11:00:00.000Z", completedAt: "2026-08-09T11:00:04.000Z", durationMs: 4_000, errorCode: "generation_failed",
+    });
+
+    const report = store.usageReport({ from: "2026-08-09T00:00:00.000Z", to: "2026-08-10T00:00:00.000Z", bucket: "hour" });
+    expect(report.totals).toEqual(expect.objectContaining({ requests: 2, successful: 1, failed: 1, mediaJobs: 1, promptTokens: 120, completionTokens: 30, totalTokens: 150, tokenReportedRequests: 1 }));
+    expect(report.totals.interrupted).toBe(0);
+    expect(report.timeline).toHaveLength(2);
+    expect(report.routes).toEqual(expect.arrayContaining([expect.objectContaining({ key: "smart", requests: 1, totalTokens: 150 })]));
+    expect(report.recipes).toEqual(expect.arrayContaining([expect.objectContaining({ key: "reasoner", label: "qwen" })]));
+    expect(report.modalities).toEqual(expect.arrayContaining([expect.objectContaining({ key: "image", label: "Images", failed: 1 })]));
+    const ownerReport = store.usageReport({ from: "2026-08-09T00:00:00.000Z", to: "2026-08-10T00:00:00.000Z", bucket: "day", ownerUserId: "user-1" });
+    expect(ownerReport.totals.requests).toBe(1);
+    store.close();
+  });
 });

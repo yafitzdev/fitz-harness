@@ -264,6 +264,26 @@ describe("InferenceScheduler", () => {
     expect(adapter.stops).toEqual([expect.objectContaining({ mode: "force" })]);
     expect(lifecycle.snapshot().state).toBe("READY");
   });
+
+  it("records one terminal usage fact with provider token telemetry", async () => {
+    const adapter = new FakeEngineAdapter();
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]) });
+    const records: import("@fitz/protocol").RequestUsageRecord[] = [];
+    const scheduler = new InferenceScheduler(
+      new RouteResolver([route("smart", "reasoner")], [recipe("reasoner", 60)]),
+      lifecycle,
+      undefined,
+      { recordUsage: (record) => { records.push(record); } },
+    );
+
+    await collect(scheduler.enqueue("smart", { messages: [{ role: "user", content: "count these tokens" }] }, undefined, { ownerUserId: "user-1", sessionId: "session-1" }));
+    await waitFor(() => records.length === 1);
+
+    expect(records).toEqual([expect.objectContaining({
+      kind: "chat", status: "completed", routeId: "smart", recipeId: "reasoner", modelId: "reasoner-model",
+      ownerUserId: "user-1", sessionId: "session-1", executionLane: "gpu", promptTokens: expect.any(Number), completionTokens: expect.any(Number),
+    })]);
+  });
 });
 
 async function collect(stream: AsyncIterable<InferenceDelta>): Promise<string> {

@@ -1,6 +1,6 @@
 export type AppLocation =
   | { view: "conversation"; projectId?: string; sessionId?: string; newChat?: boolean }
-  | { view: "playbooks" | "connections" | "plugins" | "models" | "administration" };
+  | { view: "playbooks" | "connections" | "plugins" | "models" | "usage" | "administration" };
 
 export interface NavigationHistoryOptions {
   blocked: () => boolean;

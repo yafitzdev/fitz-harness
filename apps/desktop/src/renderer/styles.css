@@ -11,6 +11,7 @@
 @import "../ui/plugins/plugin-catalog.css";
 @import "../ui/models/model-catalog.css";
 @import "../ui/administration/administration-page.css";
+@import "../ui/usage/usage-page.css";
 @import "../ui/playbooks/playbook-workspace.css";
 @import "../ui/sidebar/project-sidebar.css";
 @import "../ui/inspector/inspector-panel.css";

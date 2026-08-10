@@ -427,4 +427,66 @@ export const MIGRATIONS: readonly Migration[] = [
       WHERE json_extract(configuration_json, '$.performanceMode') IS NULL;
     `,
   },
+  {
+    version: 15,
+    // Analytics facts are separate from mutable queue/job state. One row is
+    // upserted at the terminal boundary of every request, allowing exact
+    // retries/recovery without double-counting.
+    sql: `
+      CREATE TABLE request_usage (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('chat', 'image', 'video', 'audio')),
+        status TEXT NOT NULL CHECK (status IN ('completed', 'failed', 'cancelled', 'interrupted')),
+        route_id TEXT NOT NULL,
+        recipe_id TEXT,
+        playbook_id TEXT,
+        adapter TEXT,
+        model_id TEXT,
+        owner_user_id TEXT,
+        session_id TEXT,
+        run_id TEXT,
+        execution_lane TEXT NOT NULL CHECK (execution_lane IN ('gpu', 'cloud')),
+        enqueued_at TEXT NOT NULL,
+        started_at TEXT,
+        first_output_at TEXT,
+        completed_at TEXT NOT NULL,
+        queue_wait_ms INTEGER,
+        ttft_ms INTEGER,
+        generation_ms INTEGER,
+        duration_ms INTEGER,
+        prompt_tokens INTEGER,
+        completion_tokens INTEGER,
+        credit_cost_cents INTEGER,
+        error_code TEXT,
+        metadata_json TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE INDEX idx_request_usage_completed ON request_usage(completed_at);
+      CREATE INDEX idx_request_usage_owner ON request_usage(owner_user_id, completed_at);
+      CREATE INDEX idx_request_usage_route ON request_usage(route_id, completed_at);
+      CREATE INDEX idx_request_usage_recipe ON request_usage(recipe_id, completed_at);
+
+      INSERT OR IGNORE INTO request_usage (
+        id, kind, status, route_id, execution_lane, enqueued_at, started_at,
+        completed_at, queue_wait_ms, duration_ms, error_code
+      )
+      SELECT id, 'chat', status, route_id, 'gpu', enqueued_at, started_at,
+        COALESCE(completed_at, enqueued_at),
+        CASE WHEN started_at IS NOT NULL THEN CAST((julianday(started_at)-julianday(enqueued_at))*86400000 AS INTEGER) END,
+        CASE WHEN completed_at IS NOT NULL AND started_at IS NOT NULL THEN CAST((julianday(completed_at)-julianday(started_at))*86400000 AS INTEGER) END,
+        error_code
+      FROM inference_requests WHERE status IN ('completed', 'failed', 'cancelled', 'interrupted');
+
+      INSERT OR IGNORE INTO request_usage (
+        id, kind, status, route_id, owner_user_id, session_id, execution_lane,
+        enqueued_at, started_at, completed_at, queue_wait_ms, duration_ms,
+        credit_cost_cents, error_code, metadata_json
+      )
+      SELECT id, modality, status, route_id, created_by_user_id, session_id, 'gpu',
+        enqueued_at, started_at, COALESCE(completed_at, cancelled_at, enqueued_at),
+        CASE WHEN started_at IS NOT NULL THEN CAST((julianday(started_at)-julianday(enqueued_at))*86400000 AS INTEGER) END,
+        CASE WHEN started_at IS NOT NULL THEN CAST((julianday(COALESCE(completed_at,cancelled_at,enqueued_at))-julianday(started_at))*86400000 AS INTEGER) END,
+        credit_cost_cents, error_code, params_json
+      FROM media_jobs WHERE status IN ('completed', 'failed', 'cancelled', 'interrupted');
+    `,
+  },
 ] as const;

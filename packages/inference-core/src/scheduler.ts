@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { InferenceDelta, InferenceLane, InferenceRequest, InstanceSnapshot, MediaGenerationRequest, MediaJobEvent } from "@fitz/protocol";
+import type { InferenceDelta, InferenceLane, InferenceRequest, InstanceSnapshot, MediaGenerationRequest, MediaJobEvent, Recipe, RequestUsageRecord } from "@fitz/protocol";
 import { AsyncChannel } from "./async-channel.js";
 import { BoundedWorkLane, type WorkLaneStatus } from "./bounded-work-lane.js";
 import { LifecycleEventBus } from "./event-bus.js";
@@ -30,7 +30,7 @@ type QueueJob =
   | (JobBase & { kind: "warm"; result: Deferred<InstanceSnapshot> });
 
 export interface ScheduledStream extends AsyncIterable<InferenceDelta> { requestId: string; cancel(): void }
-export interface ScheduledMediaJob { jobId: string; events: AsyncIterable<MediaJobEvent>; cancel(): void }
+export interface ScheduledMediaJob { jobId: string; lane: InferenceLane; events: AsyncIterable<MediaJobEvent>; cancel(): void }
 export interface ScheduledWarmup { requestId: string; result: Promise<InstanceSnapshot>; cancel(): void }
 export interface RecipeEnqueueOptions { unloadAfterCompletion?: boolean; context?: WorkContext }
 export interface MediaEnqueueOptions { jobId: string; context?: WorkContext }
@@ -53,6 +53,8 @@ export interface InferenceSchedulerOptions {
   remoteMedia?: RemoteMediaExecutor;
   streamBufferItems?: number;
   streamBufferBytes?: number;
+  /** Durable accounting sink. Failures in analytics must never fail inference. */
+  recordUsage?: (record: RequestUsageRecord) => void | Promise<void>;
 }
 
 export type InferenceAdmissionReason = "queue_capacity" | "scheduler_closed";
@@ -78,6 +80,7 @@ export class InferenceScheduler {
   readonly #remoteMedia: RemoteMediaExecutor;
   readonly #streamBufferItems: number;
   readonly #streamBufferBytes: number;
+  readonly #recordUsage: InferenceSchedulerOptions["recordUsage"];
 
   constructor(
     readonly routes: RouteResolver,
@@ -88,6 +91,7 @@ export class InferenceScheduler {
     this.#remoteMedia = options.remoteMedia ?? new RemoteMediaExecutor(lifecycle.adapters);
     this.#streamBufferItems = options.streamBufferItems ?? 64;
     this.#streamBufferBytes = options.streamBufferBytes ?? 1024 * 1024;
+    this.#recordUsage = options.recordUsage;
     this.#gpuLane = this.#createLane(1, options.gpuQueueCapacity ?? 256);
     this.#cloudLane = this.#createLane(options.cloudConcurrency ?? 4, options.cloudQueueCapacity ?? 64);
   }
@@ -123,7 +127,7 @@ export class InferenceScheduler {
     const job: QueueJob = { kind: "media", id, routeId, lane, enqueuedAt: new Date().toISOString(), context: options.context ?? {}, mediaRequest: { ...input, id, routeId }, output, controller: new AbortController() };
     this.#attachAbort(job, externalSignal);
     this.#submit(job);
-    return { jobId: id, events: output, cancel: () => this.#lane(lane).cancel(job) };
+    return { jobId: id, lane, events: output, cancel: () => this.#lane(lane).cancel(job) };
   }
 
   enqueueWarm(routeId: string, externalSignal?: AbortSignal, context: WorkContext = {}): ScheduledWarmup {
@@ -167,7 +171,15 @@ export class InferenceScheduler {
       concurrency,
       maxQueued,
       execute: (job) => this.#execute(job),
-      settleQueuedCancellation: (job) => { failJob(job, abortError()); job.detachExternalAbort?.(); },
+      settleQueuedCancellation: (job) => {
+        failJob(job, abortError());
+        if (job.kind === "chat") {
+          let recipe: Recipe | undefined;
+          try { recipe = job.recipeId ? this.routes.resolveRecipe(job.recipeId) : this.routes.resolve(job.routeId).recipe; } catch { /* preserve cancellation when configuration changed */ }
+          void this.#safeRecordUsage(this.#chatUsage(job, recipe, "cancelled", new Date(), undefined));
+        }
+        job.detachExternalAbort?.();
+      },
       onStateChange: (job, status, position, depth) => this.#publishQueue(job, status, position, depth),
       ownerOf: (job) => job.context.ownerUserId ?? "local",
     });
@@ -186,11 +198,21 @@ export class InferenceScheduler {
   }
 
   async #execute(job: QueueJob): Promise<void> {
+    const started = new Date();
+    let chatRecipe: Recipe | undefined;
+    let firstOutput: Date | undefined;
+    let promptTokens: number | undefined;
+    let completionTokens: number | undefined;
     try {
       if (job.kind === "chat") {
-        const recipe = job.recipeId ? this.routes.resolveRecipe(job.recipeId) : this.routes.resolve(job.routeId).recipe;
-        for await (const delta of this.lifecycle.run(recipe, job.request, job.controller.signal)) await job.output.push(delta, job.controller.signal);
-        if (job.unloadAfterCompletion) await this.lifecycle.stop(`recipe-test:${recipe.id}`, "graceful");
+        chatRecipe = job.recipeId ? this.routes.resolveRecipe(job.recipeId) : this.routes.resolve(job.routeId).recipe;
+        for await (const delta of this.lifecycle.run(chatRecipe, job.request, job.controller.signal)) {
+          if (!firstOutput && (delta.text || delta.reasoning || delta.toolCalls?.length)) firstOutput = new Date();
+          if (delta.promptTokens !== undefined) promptTokens = delta.promptTokens;
+          if (delta.completionTokens !== undefined) completionTokens = delta.completionTokens;
+          await job.output.push(delta, job.controller.signal);
+        }
+        if (job.unloadAfterCompletion) await this.lifecycle.stop(`recipe-test:${chatRecipe.id}`, "graceful");
       } else if (job.kind === "media") {
         const recipe = this.routes.resolve(job.routeId).recipe;
         const events = job.lane === "cloud"
@@ -202,12 +224,34 @@ export class InferenceScheduler {
         job.result.resolve(await this.lifecycle.warm(recipe, job.controller.signal));
       }
       closeJob(job);
+      if (job.kind === "chat") await this.#safeRecordUsage(this.#chatUsage(job, chatRecipe, "completed", started, firstOutput, promptTokens, completionTokens));
     } catch (error) {
       failJob(job, error);
+      if (job.kind === "chat") await this.#safeRecordUsage(this.#chatUsage(job, chatRecipe, isAbort(error) ? "cancelled" : "failed", started, firstOutput, promptTokens, completionTokens, error));
       throw error;
     } finally {
       job.detachExternalAbort?.();
     }
+  }
+
+  #chatUsage(job: Extract<QueueJob, { kind: "chat" }>, recipe: Recipe | undefined, status: RequestUsageRecord["status"], started: Date, firstOutput?: Date, promptTokens?: number, completionTokens?: number, error?: unknown): RequestUsageRecord {
+    const completed = new Date();
+    const enqueued = new Date(job.enqueuedAt);
+    return {
+      id: job.id, kind: "chat", status, routeId: job.routeId,
+      ...(recipe ? { recipeId: recipe.id, playbookId: recipe.playbookId, adapter: recipe.adapter, modelId: recipe.modelId } : {}),
+      ...job.context, executionLane: job.lane, enqueuedAt: job.enqueuedAt,
+      startedAt: started.toISOString(), ...(firstOutput ? { firstOutputAt: firstOutput.toISOString() } : {}),
+      completedAt: completed.toISOString(), queueWaitMs: Math.max(0, started.getTime() - enqueued.getTime()),
+      ...(firstOutput ? { ttftMs: Math.max(0, firstOutput.getTime() - started.getTime()), generationMs: Math.max(0, completed.getTime() - firstOutput.getTime()) } : {}),
+      durationMs: Math.max(0, completed.getTime() - started.getTime()),
+      ...(promptTokens !== undefined ? { promptTokens } : {}), ...(completionTokens !== undefined ? { completionTokens } : {}),
+      ...(error ? { errorCode: error instanceof Error ? error.name : "inference_failed" } : {}),
+    };
+  }
+
+  async #safeRecordUsage(record: RequestUsageRecord): Promise<void> {
+    try { await this.#recordUsage?.(record); } catch { /* accounting is fail-open */ }
   }
 
   #attachAbort(job: QueueJob, externalSignal?: AbortSignal): void {
@@ -251,3 +295,4 @@ function closeJob(job: QueueJob): void { if (job.kind !== "warm") job.output.clo
 function abortError(): Error { const error = new Error("Inference request was cancelled"); error.name = "AbortError"; return error }
 function queueItem(job: QueueJob, status: "running" | "queued", position: number): InferenceQueueItem { return { id: job.id, routeId: job.routeId, kind: job.kind, lane: job.lane, status, position, enqueuedAt: job.enqueuedAt, context: job.context } }
 function serializedSize(value: unknown): number { return Buffer.byteLength(JSON.stringify(value), "utf8") }
+function isAbort(error: unknown): boolean { return error instanceof Error && error.name === "AbortError" }

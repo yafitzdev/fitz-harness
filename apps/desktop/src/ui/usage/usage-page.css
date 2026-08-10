@@ -1,0 +1,45 @@
+.usage-page .management-page-content { padding-bottom: 48px; }
+.usage-dashboard { display: grid; gap: 18px; }
+.usage-range { width: max-content; display: flex; gap: 2px; padding: 3px; border-radius: var(--radius-md); background: var(--grey-200); }
+.usage-range button { min-height: 28px; padding: 4px 10px; border-radius: var(--radius-sm); background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; }
+.usage-range button:hover { color: var(--text); }
+.usage-range button.active { background: var(--grey-300); color: var(--text); }
+.usage-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.usage-kpi { min-width: 0; display: grid; gap: 3px; padding: 14px; border: 1px solid var(--border-soft); border-radius: var(--radius-lg); background: var(--tint-1); }
+.usage-kpi > span { color: var(--muted); font-size: 12px; }
+.usage-kpi > strong { overflow: hidden; color: var(--text); font-size: 24px; font-weight: 540; letter-spacing: -.025em; text-overflow: ellipsis; white-space: nowrap; }
+.usage-kpi > small { overflow: hidden; color: var(--subtle); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.usage-panel { min-width: 0; padding: 16px; border: 1px solid var(--border-soft); border-radius: var(--radius-lg); background: var(--tint-1); }
+.usage-panel > header { margin-bottom: 14px; }
+.usage-panel h2 { margin: 0; font-size: 14px; font-weight: 600; }
+.usage-panel header p { margin: 2px 0 0; color: var(--subtle); font-size: 11px; }
+.usage-line-chart { display: block; width: 100%; height: 190px; overflow: visible; }
+.usage-chart-area { fill: rgba(77,163,255,.08); }
+.usage-chart-line { fill: none; stroke: var(--accent-blue); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.usage-line-chart circle { fill: var(--bg); stroke: var(--accent-blue); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.usage-breakdowns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.usage-bars { display: grid; gap: 12px; }
+.usage-bar-row { min-width: 0; display: grid; gap: 5px; }
+.usage-bar-row > div:first-child { min-width: 0; display: flex; justify-content: space-between; gap: 12px; }
+.usage-bar-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-bar-row strong { font-size: 12px; font-weight: 500; }
+.usage-bar-row small { color: var(--subtle); font-size: 10px; }
+.usage-bar-track { height: 4px; overflow: hidden; border-radius: 999px; background: var(--grey-300); }
+.usage-bar-track span { display: block; height: 100%; border-radius: inherit; background: var(--grey-700); }
+.usage-table { display: grid; }
+.usage-table > div { min-width: 0; display: grid; grid-template-columns: minmax(140px, 1.6fr) repeat(3, minmax(70px, .6fr)); gap: 12px; align-items: center; min-height: 36px; border-bottom: 1px solid var(--border-soft); }
+.usage-table > div:last-child { border-bottom: 0; }
+.usage-table strong { color: var(--subtle); font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: .04em; }
+.usage-table span { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.usage-table span:first-child { color: var(--text); }
+.usage-empty { margin: 28px 0; color: var(--subtle); text-align: center; }
+
+@media (max-width: 820px) {
+  .usage-breakdowns { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 560px) {
+  .usage-kpis { grid-template-columns: 1fr; }
+  .usage-table > div { grid-template-columns: minmax(120px, 1fr) repeat(2, 68px); }
+  .usage-table > div > :last-child { display: none; }
+}

@@ -33,6 +33,8 @@ import type {
   MediaJobStatus,
   MediaModality,
   GpuWorkRecord,
+  RequestUsageRecord,
+  UsageReport,
 } from "@fitz/protocol";
 import { MIGRATIONS } from "./migrations.js";
 
@@ -113,6 +115,8 @@ interface GpuWorkRow {
   completed_at: string | null;
   error_code: string | null;
 }
+
+interface UsageAggregateRow { requests: number; successful: number; failed: number; cancelled: number; interrupted: number; prompt_tokens: number; completion_tokens: number; token_reported_requests: number; media_jobs: number; credit_cost_cents: number; average_queue_wait_ms: number | null; average_ttft_ms: number | null; average_duration_ms: number | null }
 
 interface UserRow { id: string; display_name: string; role: UserRecord["role"]; status: UserRecord["status"]; created_at: string; updated_at: string }
 interface DeviceRow { id: string; user_id: string; name: string; token_hash: string; created_at: string; last_used_at: string | null; revoked_at: string | null }
@@ -474,6 +478,104 @@ export class SqliteStore {
       ...(row.completed_at ? { completedAt: row.completed_at } : {}),
       ...(row.error_code ? { errorCode: row.error_code } : {}),
     }));
+  }
+
+  /** Idempotent terminal accounting. The first terminal outcome is immutable;
+   * replays may only enrich fields that were previously unknown. */
+  recordRequestUsage(record: RequestUsageRecord): void {
+    this.#database.prepare(`
+      INSERT INTO request_usage (
+        id, kind, status, route_id, recipe_id, playbook_id, adapter, model_id,
+        owner_user_id, session_id, run_id, execution_lane, enqueued_at,
+        started_at, first_output_at, completed_at, queue_wait_ms, ttft_ms,
+        generation_ms, duration_ms, prompt_tokens, completion_tokens,
+        credit_cost_cents, error_code, metadata_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        recipe_id=COALESCE(excluded.recipe_id, request_usage.recipe_id),
+        playbook_id=COALESCE(excluded.playbook_id, request_usage.playbook_id),
+        adapter=COALESCE(excluded.adapter, request_usage.adapter),
+        model_id=COALESCE(excluded.model_id, request_usage.model_id),
+        owner_user_id=COALESCE(excluded.owner_user_id, request_usage.owner_user_id),
+        session_id=COALESCE(excluded.session_id, request_usage.session_id),
+        run_id=COALESCE(excluded.run_id, request_usage.run_id),
+        started_at=COALESCE(excluded.started_at, request_usage.started_at),
+        first_output_at=COALESCE(excluded.first_output_at, request_usage.first_output_at),
+        queue_wait_ms=COALESCE(excluded.queue_wait_ms, request_usage.queue_wait_ms),
+        ttft_ms=COALESCE(excluded.ttft_ms, request_usage.ttft_ms), generation_ms=COALESCE(excluded.generation_ms, request_usage.generation_ms),
+        duration_ms=COALESCE(excluded.duration_ms, request_usage.duration_ms), prompt_tokens=COALESCE(excluded.prompt_tokens, request_usage.prompt_tokens),
+        completion_tokens=COALESCE(excluded.completion_tokens, request_usage.completion_tokens), credit_cost_cents=COALESCE(excluded.credit_cost_cents, request_usage.credit_cost_cents),
+        error_code=COALESCE(excluded.error_code, request_usage.error_code),
+        metadata_json=CASE WHEN excluded.metadata_json='{}' THEN request_usage.metadata_json ELSE excluded.metadata_json END
+    `).run(
+      record.id, record.kind, record.status, record.routeId, record.recipeId ?? null,
+      record.playbookId ?? null, record.adapter ?? null, record.modelId ?? null,
+      record.ownerUserId ?? null, record.sessionId ?? null, record.runId ?? null,
+      record.executionLane, record.enqueuedAt, record.startedAt ?? null,
+      record.firstOutputAt ?? null, record.completedAt, record.queueWaitMs ?? null,
+      record.ttftMs ?? null, record.generationMs ?? null, record.durationMs ?? null,
+      record.promptTokens ?? null, record.completionTokens ?? null,
+      record.creditCostCents ?? null, record.errorCode ?? null,
+      JSON.stringify(record.metadata ?? {}),
+    );
+  }
+
+  usageReport(options: { from: string; to: string; bucket: "hour" | "day"; ownerUserId?: string }): UsageReport {
+    const filters = ["completed_at >= ?", "completed_at < ?"];
+    const values: SQLInputValue[] = [options.from, options.to];
+    if (options.ownerUserId) { filters.push("owner_user_id = ?"); values.push(options.ownerUserId); }
+    const where = filters.join(" AND ");
+    const totals = this.#database.prepare(`
+      SELECT COUNT(*) requests,
+        SUM(status='completed') successful, SUM(status='failed') failed,
+        SUM(status='cancelled') cancelled, SUM(status='interrupted') interrupted,
+        COALESCE(SUM(prompt_tokens),0) prompt_tokens,
+        COALESCE(SUM(completion_tokens),0) completion_tokens,
+        SUM(prompt_tokens IS NOT NULL OR completion_tokens IS NOT NULL) token_reported_requests,
+        SUM(kind!='chat') media_jobs, COALESCE(SUM(credit_cost_cents),0) credit_cost_cents,
+        AVG(queue_wait_ms) average_queue_wait_ms, AVG(ttft_ms) average_ttft_ms,
+        AVG(duration_ms) average_duration_ms
+      FROM request_usage WHERE ${where}
+    `).get(...values) as unknown as UsageAggregateRow;
+    const bucketExpression = options.bucket === "hour"
+      ? "substr(completed_at,1,13) || ':00:00.000Z'"
+      : "substr(completed_at,1,10) || 'T00:00:00.000Z'";
+    const timeline = this.#database.prepare(`
+      SELECT ${bucketExpression} timestamp, COUNT(*) requests, SUM(status='failed') failed,
+        SUM(status='interrupted') interrupted, SUM(kind!='chat') media_jobs,
+        COALESCE(SUM(prompt_tokens),0) prompt_tokens,
+        COALESCE(SUM(completion_tokens),0) completion_tokens
+      FROM request_usage WHERE ${where} GROUP BY 1 ORDER BY 1
+    `).all(...values) as unknown as UsageReport["timeline"];
+    const breakdown = (keyExpression: string, labelExpression: string): UsageReport["routes"] =>
+      this.#database.prepare(`
+        SELECT ${keyExpression} key, ${labelExpression} label, COUNT(*) requests,
+          SUM(status='failed') failed, SUM(status='interrupted') interrupted,
+          COALESCE(SUM(prompt_tokens),0)+COALESCE(SUM(completion_tokens),0) totalTokens,
+          AVG(ttft_ms) averageTtftMs, AVG(duration_ms) averageDurationMs
+        FROM request_usage WHERE ${where} GROUP BY 1,2 ORDER BY requests DESC LIMIT 12
+      `).all(...values).map((row: any) => ({
+        key: String(row.key), label: String(row.label), requests: Number(row.requests), failed: Number(row.failed), interrupted: Number(row.interrupted),
+        totalTokens: Number(row.totalTokens), ...(row.averageTtftMs !== null ? { averageTtftMs: Number(row.averageTtftMs) } : {}),
+        ...(row.averageDurationMs !== null ? { averageDurationMs: Number(row.averageDurationMs) } : {}),
+      }));
+    const promptTokens = Number(totals.prompt_tokens ?? 0);
+    const completionTokens = Number(totals.completion_tokens ?? 0);
+    return {
+      from: options.from, to: options.to, bucket: options.bucket,
+      totals: {
+        requests: Number(totals.requests ?? 0), successful: Number(totals.successful ?? 0), failed: Number(totals.failed ?? 0), cancelled: Number(totals.cancelled ?? 0), interrupted: Number(totals.interrupted ?? 0),
+        promptTokens, completionTokens, totalTokens: promptTokens + completionTokens,
+        tokenReportedRequests: Number(totals.token_reported_requests ?? 0), mediaJobs: Number(totals.media_jobs ?? 0), creditCostCents: Number(totals.credit_cost_cents ?? 0),
+        ...(totals.average_queue_wait_ms !== null ? { averageQueueWaitMs: Number(totals.average_queue_wait_ms) } : {}),
+        ...(totals.average_ttft_ms !== null ? { averageTtftMs: Number(totals.average_ttft_ms) } : {}),
+        ...(totals.average_duration_ms !== null ? { averageDurationMs: Number(totals.average_duration_ms) } : {}),
+      },
+      timeline: timeline.map((row: any) => ({ timestamp: String(row.timestamp), requests: Number(row.requests), failed: Number(row.failed), interrupted: Number(row.interrupted), mediaJobs: Number(row.media_jobs), promptTokens: Number(row.prompt_tokens), completionTokens: Number(row.completion_tokens) })),
+      routes: breakdown("route_id", "route_id"),
+      recipes: breakdown("COALESCE(recipe_id,'unknown')", "COALESCE(model_id,recipe_id,'Unknown recipe')"),
+      modalities: breakdown("kind", "CASE kind WHEN 'chat' THEN 'Text' WHEN 'image' THEN 'Images' WHEN 'video' THEN 'Videos' ELSE 'Audio' END"),
+    };
   }
 
   createMediaJob(job: MediaJobRecord): void {

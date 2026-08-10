@@ -256,7 +256,13 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     return [recipe.id, recipe] as const;
   })).values()].filter((recipe) => recipe.adapter !== "openai-compatible");
   void Promise.allSettled(localRecipes.map((recipe) => lifecycle.prepare(recipe)));
-  const scheduler = new InferenceScheduler(routes, lifecycle, events, options.schedulerOptions);
+  const scheduler = new InferenceScheduler(routes, lifecycle, events, {
+    ...options.schedulerOptions,
+    recordUsage: async (record) => {
+      store.recordRequestUsage(record);
+      await options.schedulerOptions?.recordUsage?.(record);
+    },
+  });
   const agentRuns = new AgentRunCoordinator(
     store,
     scheduler,
@@ -556,6 +562,23 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       const query = request.query as { limit?: string };
       const limit = Math.min(toNonNegativeInteger(query.limit, 100), 1_000);
       return { data: store.listInferenceRequests(limit) };
+    },
+  );
+
+  app.get(
+    "/api/v1/management/usage",
+    { preHandler: adminGuard(options.adminToken, authMode, principals) },
+    async (request, reply) => {
+      const query = request.query as { from?: string; to?: string; bucket?: string; ownerUserId?: string };
+      const to = query.to ? parseUsageDate(query.to) : new Date();
+      if (!to) return reply.code(400).send({ error: "Usage to must be an ISO date" });
+      const from = query.from ? parseUsageDate(query.from) : new Date(to.getTime() - 7 * 86_400_000);
+      if (!from) return reply.code(400).send({ error: "Usage from must be an ISO date" });
+      if (from >= to) return reply.code(400).send({ error: "Usage range must start before it ends" });
+      if (to.getTime() - from.getTime() > 366 * 86_400_000) return reply.code(400).send({ error: "Usage range cannot exceed 366 days" });
+      if (query.bucket && query.bucket !== "hour" && query.bucket !== "day") return reply.code(400).send({ error: "Usage bucket must be hour or day" });
+      const bucket = query.bucket === "hour" ? "hour" : "day";
+      return { data: store.usageReport({ from: from.toISOString(), to: to.toISOString(), bucket, ...(query.ownerUserId ? { ownerUserId: query.ownerUserId } : {}) }) };
     },
   );
 
@@ -1216,6 +1239,11 @@ function cancelOrphanedProviderJobs(store: SqliteStore, routes: RouteResolver, a
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function parseUsageDate(value: string): Date | undefined {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 }
 
 function validBearerToken(authorization: string | undefined, expected: string | undefined): boolean {
