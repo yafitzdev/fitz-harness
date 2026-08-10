@@ -230,6 +230,7 @@ export class SqliteStore {
         folderName: engine.folderName,
         connectionMode: engine.connectionMode,
         runtime: engine.runtime,
+        performanceMode: engine.performanceMode,
         baseUrl: engine.baseUrl,
         healthPath: engine.healthPath,
         launchCommand: engine.launchCommand,

@@ -26,6 +26,7 @@ import {
   HOST_CONTRACT_VERSION,
   PROTOCOL_VERSION,
   type EngineConnectionMode,
+  type EnginePerformanceMode,
   type EngineRegistration,
   type EngineRuntime,
   type MediaModality,
@@ -206,7 +207,11 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   );
   const configuredEngineRoot = options.engineRoot ?? store.getSetting<string>("engineRoot") ?? join(homedir(), ".llm", "engines");
   store.setSetting("engineRoot", configuredEngineRoot);
-  const routes = new RouteResolver(store.listRoutes(), store.listRecipes());
+  const routes = new RouteResolver(
+    store.listRoutes(),
+    store.listRecipes(),
+    new Map(store.listEngines().map((engine) => [engine.id.toLowerCase(), engine.performanceMode])),
+  );
   ensureMediaRoutes(store, routes);
   const events = new LifecycleEventBus(1_000, store.latestLifecycleSequence());
   const fakeAdapter = options.adapters ? options.fakeAdapter : (options.fakeAdapter ?? new FakeEngineAdapter());
@@ -637,6 +642,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         if (!existsSync(rootPath) || !statSync(rootPath).isDirectory()) throw new TypeError("Engine folder does not exist beneath the configured root");
         const connectionMode = parseConnectionMode(body.connectionMode);
         const runtime = parseEngineRuntime(body.runtime);
+        const performanceMode = parseEnginePerformanceMode(body.performanceMode);
         const baseUrl = connectionMode === "external" ? requireBaseUrl(body.baseUrl) : "http://127.0.0.1";
         const healthPath = requireString(body.healthPath, "healthPath");
         if (!healthPath.startsWith("/") || healthPath.startsWith("//")) throw new TypeError("healthPath must be an absolute URL path");
@@ -646,13 +652,14 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         const workingDirectory = typeof body.workingDirectory === "string" && body.workingDirectory.trim() ? validateWorkingDirectory(rootPath, body.workingDirectory.trim()) : undefined;
         const wslDistribution = typeof body.wslDistribution === "string" && body.wslDistribution.trim() ? body.wslDistribution.trim() : undefined;
         const now = new Date().toISOString();
-        const previous = store.getEngine(folderName);
+        const previous = store.listEngines().find((candidate) => candidate.folderName === folderName);
         const engine: EngineRegistration = {
-          id: folderName,
+          id: previous?.id ?? folderName,
           folderName,
           displayName: requireString(body.displayName, "displayName"),
           connectionMode,
           runtime,
+          performanceMode,
           baseUrl,
           healthPath,
           ...(launchCommand ? { launchCommand } : {}),
@@ -663,6 +670,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
           updatedAt: now,
         };
         store.upsertEngine(engine);
+        routes.setEnginePerformanceMode(engine.id, performanceMode);
         return { data: { ...engine, rootPath } };
       } catch (error) {
         return reply.code(400).send({ error: errorMessage(error) });
@@ -947,6 +955,11 @@ function parseConnectionMode(value: unknown): EngineConnectionMode {
 
 function parseEngineRuntime(value: unknown): EngineRuntime {
   if (value !== "windows" && value !== "wsl") throw new TypeError("runtime must be windows or wsl");
+  return value;
+}
+
+function parseEnginePerformanceMode(value: unknown): EnginePerformanceMode {
+  if (value !== "normal" && value !== "safe") throw new TypeError("performanceMode must be normal or safe");
   return value;
 }
 

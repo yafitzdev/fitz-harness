@@ -464,14 +464,13 @@ describe("InferenceScheduler media jobs", () => {
           totalVramMiB: 32_000,
           usedVramMiB: 30_000,
           freeVramMiB: 2_000,
-          gpuTemperatureC: sample++ === 0 ? 74 : 82,
+          gpuTemperatureC: sample++ === 0 ? 74 : 85,
           gpuPowerLimitW: 450,
           gpuMinPowerLimitW: 400,
           gpuMaxPowerLimitW: 450,
           gpuTelemetryAvailable: true,
         }),
       },
-      { setPowerLimit: async () => undefined },
     );
     const lifecycle = new LifecycleManager({
       adapters: new EngineAdapterRegistry([mediaAdapter]),
@@ -484,7 +483,7 @@ describe("InferenceScheduler media jobs", () => {
 
     await expect(
       collectMedia(scheduler.enqueueMedia("video", mediaInput("video", "hot render"), undefined, mediaOptions()).events),
-    ).rejects.toThrow("hard limit");
+    ).rejects.toThrow("emergency limit");
 
     expect(mediaAdapter.cancelled).toEqual([{ instanceId: expect.any(String), jobId: "provider-1" }]);
     expect(mediaAdapter.stops).toEqual([{ instanceId: expect.any(String), mode: "force" }]);

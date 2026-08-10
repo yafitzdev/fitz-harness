@@ -19,6 +19,7 @@ export interface PlaybookWorkspaceElements {
   engineFolder: HTMLSelectElement;
   engineDisplayName: HTMLInputElement;
   engineConnection: HTMLSelectElement;
+  enginePerformanceMode: HTMLSelectElement;
   engineRuntime: HTMLSelectElement;
   engineBaseUrl: HTMLInputElement;
   engineHealthPath: HTMLInputElement;
@@ -270,6 +271,7 @@ export class PlaybookWorkspaceController {
       await this.options.api(`/api/v1/management/engines/${encodeURIComponent(folderName)}`, "PUT", {
         displayName: this.elements.engineDisplayName.value.trim(),
         connectionMode: this.elements.engineConnection.value.trim(),
+        performanceMode: this.elements.enginePerformanceMode.value.trim(),
         runtime: this.elements.engineRuntime.value.trim(),
         baseUrl: this.elements.engineBaseUrl.value.trim(),
         healthPath: this.elements.engineHealthPath.value.trim(),
@@ -311,6 +313,7 @@ export class PlaybookWorkspaceController {
     const engine = folder?.engine;
     this.elements.engineDisplayName.value = engine?.displayName ?? folderName;
     this.elements.engineConnection.value = engine?.connectionMode ?? "managed";
+    this.elements.enginePerformanceMode.value = engine?.performanceMode ?? (folderName.toLowerCase() === "comfyui" ? "safe" : "normal");
     this.elements.engineRuntime.value = engine?.runtime ?? "windows";
     this.elements.engineBaseUrl.value = engine?.baseUrl ?? "http://127.0.0.1:18080";
     this.elements.engineHealthPath.value = engine?.healthPath ?? "/v1/models";

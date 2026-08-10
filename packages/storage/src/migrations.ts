@@ -412,4 +412,19 @@ export const MIGRATIONS: readonly Migration[] = [
         ON gpu_work_items(status, enqueued_at);
     `,
   },
+  {
+    version: 14,
+    // Engine performance policy belongs to the host, not to individual
+    // consumers or recipes. Existing engines retain normal behavior; the
+    // bundled local media engine starts in the safer paced profile.
+    sql: `
+      UPDATE playbooks
+      SET configuration_json = json_set(
+        configuration_json,
+        '$.performanceMode',
+        CASE WHEN lower(id) = 'comfyui' THEN 'safe' ELSE 'normal' END
+      )
+      WHERE json_extract(configuration_json, '$.performanceMode') IS NULL;
+    `,
+  },
 ] as const;

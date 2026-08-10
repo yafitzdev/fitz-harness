@@ -26,6 +26,7 @@ import { WindowsStartupManager } from "@fitz/connectivity";
 import { resolveRuntimePaths } from "./runtime-paths.js";
 import { AgentSafetyService } from "./agent-safety/index.js";
 import { localComfyUIPaths, localComfyUIRecipeIds, reconcileLocalComfyUIConfiguration } from "./comfyui-reconcile.js";
+import { ensureComfyUISafeModeExtension } from "./comfyui-safe-mode.js";
 import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
 import { HostInstanceLock } from "./host-instance-lock.js";
 import { installGracefulShutdown } from "./graceful-shutdown.js";
@@ -55,6 +56,7 @@ const restoredStorage = await applyPendingStorageRestore(runtimePaths);
 if (restoredStorage) console.info("Scheduled storage restore applied", restoredStorage);
 mkdirSync(dirname(databasePath), { recursive: true });
 for (const directory of [runtimePaths.piAgentDir, runtimePaths.logsDir, runtimePaths.cacheDir, runtimePaths.engineRoot, runtimePaths.modelRoot, runtimePaths.snapshotsDir, runtimePaths.artifactsDir, runtimePaths.backupsDir]) mkdirSync(directory, { recursive: true });
+ensureComfyUISafeModeExtension(localComfyUIPaths(runtimePaths).baseDir);
 const engineOptions = engineModeOptions(engineMode);
 const store = new SqliteStore(databasePath);
 const artifacts = new ArtifactRepository(store, new LocalBlobStore(runtimePaths.artifactsDir), { quotaBytes: () => store.getSetting<number>("artifactStorageQuotaBytes") });
@@ -150,7 +152,9 @@ runtime.app.addHook("onClose", async () => {
 // On a fresh database createHost seeds the complete engine-mode recipe set first;
 // reconcile afterward so ComfyUI also gets its Playbooks registration without
 // suppressing the normal chat defaults.
-if (storeInitiallyEmpty) reconcileLocalComfyUIConfiguration(store, runtimePaths);
+if (storeInitiallyEmpty && reconcileLocalComfyUIConfiguration(store, runtimePaths)) {
+  runtime.routes.setEnginePerformanceMode("comfyui", "safe");
+}
 if (storeInitiallyEmpty) enforceModelResidency(store);
 
 await runtime.app.listen({ host, port });
@@ -204,7 +208,7 @@ function installedLocalComfyUIPlaybook() {
   return createComfyUIPlaybook({
     engineDir: local.engineDir,
     executable: local.executable,
-    launchArgs: ["--extra-model-paths-config", local.modelConfigPath, "--output-directory", local.outputDir],
+    launchArgs: ["--base-directory", local.baseDir, "--extra-model-paths-config", local.modelConfigPath, "--output-directory", local.outputDir],
     recipeIds,
   });
 }
@@ -281,6 +285,8 @@ function comfyuiOptions() {
     ...(process.env.FITZ_COMFYUI_BASE_URL ? { baseUrl: process.env.FITZ_COMFYUI_BASE_URL } : {}),
     ...(!process.env.FITZ_COMFYUI_BASE_URL ? {
       launchArgs: [
+        "--base-directory",
+        local.baseDir,
         "--extra-model-paths-config",
         process.env.FITZ_COMFYUI_MODEL_CONFIG ?? local.modelConfigPath,
         "--output-directory",

@@ -45,7 +45,7 @@ function sampleConfiguration(): Json {
       {
         folderName: "ninfer", rootPath: "C:\\Users\\me\\.llm\\engines\\ninfer",
         engine: {
-          displayName: "NiNfer", connectionMode: "managed", runtime: "windows", baseUrl: "http://127.0.0.1:18080",
+          displayName: "NiNfer", connectionMode: "managed", runtime: "windows", performanceMode: "normal", baseUrl: "http://127.0.0.1:18080",
           healthPath: "/v1/models", launchCommand: "run.bat", launchArguments: ["--host", "127.0.0.1"], workingDirectory: ".", wslDistribution: "Ubuntu",
         },
         registered: true,
@@ -67,7 +67,7 @@ function setup(
     page: node("section"), list: node("div"), search: node("input"), title: node("h1"), description: node("p"),
     browser: node("div"), editor: node("section"), closeEditorButtons: [node("button"), node("button")],
     refresh: node("button"),
-    engineForm: node("form"), engineFolder: node("select"), engineDisplayName: node("input"), engineConnection: node("select"),
+    engineForm: node("form"), engineFolder: node("select"), engineDisplayName: node("input"), engineConnection: node("select"), enginePerformanceMode: node("select"),
     engineRuntime: node("select"), engineBaseUrl: node("input"), engineHealthPath: node("input"), engineCommand: node("input"),
     engineArguments: node("textarea"), engineWorkingDirectory: node("input"), engineWslDistribution: node("input"),
     engineManagedFields: node("div"), engineRuntimeField: node("div"), engineBaseUrlField: node("div"), engineWslField: node("div"),
@@ -82,6 +82,7 @@ function setup(
   // Mirror the static markup in renderer/index.html so that setting
   // select.value behaves like it does in the real page.
   for (const value of ["managed", "external"]) elements.engineConnection.add(new Option(value, value));
+  for (const value of ["normal", "safe"]) elements.enginePerformanceMode.add(new Option(value, value));
   for (const value of ["windows", "wsl"]) elements.engineRuntime.add(new Option(value, value));
   const showStatus = vi.fn();
   const reloadConfiguration = vi.fn(async () => configuration);

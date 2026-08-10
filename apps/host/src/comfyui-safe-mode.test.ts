@@ -1,0 +1,22 @@
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { ensureComfyUISafeModeExtension } from "./comfyui-safe-mode.js";
+
+const roots: string[] = [];
+afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+
+describe("ComfyUI Safe mode extension", () => {
+  it("installs idempotently beneath Fitz application data", () => {
+    const root = mkdtempSync(join(tmpdir(), "fitz-comfy-safe-"));
+    roots.push(root);
+    const first = ensureComfyUISafeModeExtension(root);
+    const source = readFileSync(first, "utf8");
+    const second = ensureComfyUISafeModeExtension(root);
+    expect(second).toBe(first);
+    expect(existsSync(join(root, "custom_nodes", "fitz_safe_sampler", "__init__.py"))).toBe(true);
+    expect(source).toContain("FitzSafeSamplerCustomAdvanced");
+    expect(readFileSync(second, "utf8")).toBe(source);
+  });
+});

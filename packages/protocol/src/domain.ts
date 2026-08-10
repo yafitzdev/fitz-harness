@@ -65,6 +65,7 @@ export interface Recipe {
 
 export type EngineConnectionMode = "managed" | "external";
 export type EngineRuntime = "windows" | "wsl";
+export type EnginePerformanceMode = "normal" | "safe";
 
 export interface EngineRegistration {
   id: string;
@@ -72,6 +73,9 @@ export interface EngineRegistration {
   displayName: string;
   connectionMode: EngineConnectionMode;
   runtime: EngineRuntime;
+  /** Host-owned workload profile. Safe mode is adapter-specific and may trade
+   * throughput for lower sustained local accelerator load. */
+  performanceMode: EnginePerformanceMode;
   baseUrl: string;
   healthPath: string;
   launchCommand?: string;

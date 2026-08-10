@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Recipe } from "@fitz/protocol";
 import {
   ComfyUIEngineAdapter,
+  applyComfyUIPerformanceMode,
   readComfyUIConfiguration,
   substituteWorkflow,
   validateComfyUIConfiguration,
@@ -126,6 +127,32 @@ describe("substituteWorkflow", () => {
     const original = structuredClone(VIDEO_WORKFLOW);
     substituteWorkflow(VIDEO_WORKFLOW, { prompt: "changed" });
     expect(VIDEO_WORKFLOW).toEqual(original);
+  });
+});
+
+describe("ComfyUI performance profiles", () => {
+  const workflow = {
+    "1": { class_type: "SamplerCustomAdvanced", inputs: { noise: ["2", 0] } },
+    "2": { class_type: "KSampler", inputs: { steps: 20 } },
+    "3": { class_type: "SaveImage", inputs: { images: ["2", 0] } },
+  };
+
+  it("leaves normal workflows semantically unchanged", () => {
+    expect(applyComfyUIPerformanceMode(workflow, { performanceMode: "normal" })).toEqual(workflow);
+  });
+
+  it("replaces supported samplers with paced Fitz nodes in safe mode", () => {
+    expect(applyComfyUIPerformanceMode(workflow, { performanceMode: "safe", safeDutyCycle: 0.65 })).toEqual({
+      "1": { class_type: "FitzSafeSamplerCustomAdvanced", inputs: { noise: ["2", 0], safe_duty_cycle: 0.65 } },
+      "2": { class_type: "FitzSafeKSampler", inputs: { steps: 20, safe_duty_cycle: 0.65 } },
+      "3": { class_type: "SaveImage", inputs: { images: ["2", 0] } },
+    });
+    expect(workflow["1"].class_type).toBe("SamplerCustomAdvanced");
+  });
+
+  it("refuses to pretend an unsupported workflow is paced", () => {
+    expect(() => applyComfyUIPerformanceMode(VIDEO_WORKFLOW, { performanceMode: "safe" }))
+      .toThrow("requires a KSampler");
   });
 });
 

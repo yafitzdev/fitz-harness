@@ -5,6 +5,7 @@ import type { FitzRuntimePaths } from "./runtime-paths.js";
 import { createComfyUIPlaybook, type ComfyUIRecipeId } from "./comfyui-playbook.js";
 
 export interface LocalComfyUIPaths {
+  baseDir: string;
   engineDir: string;
   executable: string;
   modelConfigPath: string;
@@ -13,6 +14,7 @@ export interface LocalComfyUIPaths {
 
 export function localComfyUIPaths(paths: FitzRuntimePaths): LocalComfyUIPaths {
   return {
+    baseDir: join(paths.dataRoot, "comfyui"),
     engineDir: join(paths.engineRoot, "ComfyUI"),
     executable: join(paths.llmRoot, "runtimes", "comfyui", process.platform === "win32" ? "Scripts/python.exe" : "bin/python"),
     modelConfigPath: join(paths.llmRoot, "config", "comfyui-extra-model-paths.yaml"),
@@ -64,7 +66,7 @@ export function reconcileLocalComfyUIConfiguration(store: SqliteStore, paths: Fi
   const playbook = createComfyUIPlaybook({
     engineDir: local.engineDir,
     executable: local.executable,
-    launchArgs: ["--extra-model-paths-config", local.modelConfigPath, "--output-directory", local.outputDir],
+    launchArgs: ["--base-directory", local.baseDir, "--extra-model-paths-config", local.modelConfigPath, "--output-directory", local.outputDir],
     recipeIds,
   });
   const now = new Date().toISOString();
@@ -76,10 +78,11 @@ export function reconcileLocalComfyUIConfiguration(store: SqliteStore, paths: Fi
       displayName: playbook.displayName,
       connectionMode: "managed",
       runtime: "windows",
+      performanceMode: "safe",
       baseUrl: "http://127.0.0.1",
       healthPath: "/system_stats",
       launchCommand: local.executable,
-      launchArguments: ["main.py", "--extra-model-paths-config", local.modelConfigPath, "--output-directory", local.outputDir],
+      launchArguments: ["main.py", "--base-directory", local.baseDir, "--extra-model-paths-config", local.modelConfigPath, "--output-directory", local.outputDir],
       workingDirectory: ".",
       createdAt: now,
       updatedAt: now,

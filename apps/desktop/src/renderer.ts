@@ -443,6 +443,7 @@ const playbookWorkspace = new PlaybookWorkspaceController({
   engineFolder: element("engine-folder") as HTMLSelectElement,
   engineDisplayName: element("engine-display-name") as HTMLInputElement,
   engineConnection: element("engine-connection") as HTMLSelectElement,
+  enginePerformanceMode: element("engine-performance-mode") as HTMLSelectElement,
   engineRuntime: element("engine-runtime") as HTMLSelectElement,
   engineBaseUrl: element("engine-base-url") as HTMLInputElement,
   engineHealthPath: element("engine-health-path") as HTMLInputElement,

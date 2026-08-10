@@ -1,8 +1,7 @@
 import { GpuThermalGuard } from "@fitz/inference-core";
 
-/** GPU-safe deterministic thermal guard for fixture/in-process media tests.
- * Production never imports this module. The reported card is already at the
- * enforced envelope, so no real NVIDIA command can be issued by a test. */
+/** GPU-safe deterministic emergency guard for fixture/in-process media tests.
+ * Production never imports this module. */
 export function testThermalGuard(): GpuThermalGuard {
   return new GpuThermalGuard({
     snapshot: async () => ({
