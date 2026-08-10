@@ -449,11 +449,12 @@ export function applyComfyUIPerformanceMode(
 ): Record<string, unknown> {
   const clone = structuredClone(graph) as Record<string, Record<string, unknown>>;
   if ((config.performanceMode ?? "normal") === "normal") return clone;
-  // Safe is intentionally conservative. This is a work/rest duty target, not
+  // Safe is intentionally paced. This is a work/rest duty target, not
   // an NVIDIA utilization setting: compatible samplers synchronize after each
-  // diffusion step and spend the remaining cycle idle. A 35% default gives
-  // large video models enough cooling time on consumer cards.
-  const safeDutyCycle = config.safeDutyCycle ?? 0.35;
+  // diffusion step and spend the remaining cycle idle. The 50% default keeps
+  // media throughput useful while the runtime applies additional heat-aware
+  // throttling at the host boundary.
+  const safeDutyCycle = config.safeDutyCycle ?? 0.50;
   let replacements = 0;
   for (const node of Object.values(clone)) {
     if (!isRecord(node) || typeof node.class_type !== "string" || !isRecord(node.inputs)) continue;

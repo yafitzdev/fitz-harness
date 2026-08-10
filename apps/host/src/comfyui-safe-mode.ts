@@ -29,18 +29,18 @@ class _PacedCallback:
         work_seconds = max(0.0, now - self.resumed_at)
         temperature = _gpu_temperature_c()
         effective_duty = self.duty_cycle
-        if temperature is not None and temperature >= 70:
-            effective_duty = min(effective_duty, 0.10)
-        elif temperature is not None and temperature >= 65:
-            effective_duty = min(effective_duty, 0.20)
+        if temperature is not None and temperature >= 75:
+            effective_duty = min(effective_duty, 0.15)
+        elif temperature is not None and temperature >= 72:
+            effective_duty = min(effective_duty, 0.30)
         rest_seconds = min(60.0, work_seconds * ((1.0 / effective_duty) - 1.0))
         if rest_seconds >= 0.01:
             time.sleep(rest_seconds)
         # Safe mode cools before queuing the next diffusion step. This is
         # unprivileged telemetry only; no clocks or board power state change.
-        if temperature is not None and temperature >= 70:
+        if temperature is not None and temperature >= 75:
             deadline = time.monotonic() + 120.0
-            while temperature > 65 and time.monotonic() < deadline:
+            while temperature > 70 and time.monotonic() < deadline:
                 time.sleep(2.0)
                 temperature = _gpu_temperature_c()
                 if temperature is None:
@@ -103,7 +103,7 @@ class FitzSafeKSampler:
             "positive": ("CONDITIONING",), "negative": ("CONDITIONING",),
             "latent_image": ("LATENT",),
             "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-            "safe_duty_cycle": ("FLOAT", {"default": 0.35, "min": 0.10, "max": 0.95, "step": 0.05}),
+            "safe_duty_cycle": ("FLOAT", {"default": 0.50, "min": 0.10, "max": 0.95, "step": 0.05}),
         }}
     RETURN_TYPES = ("LATENT",)
     FUNCTION = "sample"
@@ -131,7 +131,7 @@ class FitzSafeKSamplerAdvanced:
             "start_at_step": ("INT", {"default": 0, "min": 0, "max": 10000}),
             "end_at_step": ("INT", {"default": 10000, "min": 0, "max": 10000}),
             "return_with_leftover_noise": (["disable", "enable"],),
-            "safe_duty_cycle": ("FLOAT", {"default": 0.35, "min": 0.10, "max": 0.95, "step": 0.05}),
+            "safe_duty_cycle": ("FLOAT", {"default": 0.50, "min": 0.10, "max": 0.95, "step": 0.05}),
         }}
     RETURN_TYPES = ("LATENT",)
     FUNCTION = "sample"
@@ -154,7 +154,7 @@ class FitzSafeSamplerCustomAdvanced:
         return {"required": {
             "noise": ("NOISE",), "guider": ("GUIDER",), "sampler": ("SAMPLER",),
             "sigmas": ("SIGMAS",), "latent_image": ("LATENT",),
-            "safe_duty_cycle": ("FLOAT", {"default": 0.35, "min": 0.10, "max": 0.95, "step": 0.05}),
+            "safe_duty_cycle": ("FLOAT", {"default": 0.50, "min": 0.10, "max": 0.95, "step": 0.05}),
         }}
     RETURN_TYPES = ("LATENT", "LATENT")
     RETURN_NAMES = ("output", "denoised_output")
