@@ -11,6 +11,7 @@ import { ConversationLanding } from "./ui/chat/conversation-landing.js";
 import { ConversationMessageFeed } from "./ui/chat/conversation-message-feed.js";
 import { ConversationTranscript } from "./ui/chat/conversation-transcript.js";
 import { PromptSubmissionController } from "./ui/chat/prompt-submission.js";
+import { MediaCreationForm } from "./ui/chat/media-creation-form.js";
 import { ConnectionWorkspaceController, FIXED_ROUTES, type FixedRouteId } from "./ui/connections/connection-workspace.js";
 import { InspectorPanel } from "./ui/inspector/inspector-panel.js";
 import { AdaptiveWorkspace } from "./ui/layout/adaptive-workspace.js";
@@ -175,8 +176,10 @@ const composer = new Composer({
   onRouteChange: () => handleRouteChange(),
   onCompact: compactCurrentSession,
   onSubmit: (submission) => {
-    if (agentRuns.active) {
-      if (submission.mediaCommand) { showStatus("Media commands start after the current task finishes", "error"); return; }
+    // Media commands submit straight to the media-job pipeline, which runs on
+    // its own queue, so they are allowed while the agent is busy. Everything
+    // else steers or cancels the active run.
+    if (agentRuns.active && !submission.mediaCommand) {
       if (submission.content.trim().length > 0) void steerPrompt(submission.content);
       else void agentRuns.cancel();
     } else void sendPrompt(submission);
@@ -377,6 +380,10 @@ const mediaJobs = new MediaJobTracker({
     if (artifact) await inspectorPanel.previewArtifact(artifact);
   },
 });
+// Pre-submission media creation UI embedded in the chat: /image, /video, and
+// /audio commands render this card so the user reviews prompt + parameters
+// before the job is created.
+const mediaCreationForm = new MediaCreationForm({ messages });
 const agentRuns = new AgentRunController({
   messages,
   activity: activityTimeline,
@@ -436,6 +443,22 @@ const promptSubmission = new PromptSubmissionController({
   refreshContext: updateContextMeter,
   refreshControls: refreshComposerState,
   runId: () => agentRuns.runId,
+  submitMedia: async ({ routeId, modality, prompt, sessionId, refs }) => {
+    const response = await api("/api/v1/media/jobs", "POST", {
+      routeId,
+      modality,
+      params: { prompt, ...(refs && refs.length > 0 ? { refs } : {}) },
+      sessionId,
+    });
+    return response.data as { id: string };
+  },
+  onMediaJobSubmitted: (jobId, modality) => {
+    mediaJobFeed.render({ id: jobId, modality, status: "queued" });
+    mediaJobs.watch(jobId);
+  },
+  showMediaCreation: ({ modality, prompt, refs, submit }) => {
+    mediaCreationForm.show({ modality, prompt, refs, onCreate: submit });
+  },
   startRun: (request) => agentRuns.start(request),
   steerRun: (content) => agentRuns.steer(content),
   showError: (message) => { appendMessage("system", message); },

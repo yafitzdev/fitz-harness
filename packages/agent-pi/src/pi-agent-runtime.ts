@@ -1,5 +1,5 @@
 import type { AgentRuntime, AgentRuntimeEvent, AgentRuntimeRun, AgentRuntimeRunOptions } from "@fitz/agent-core";
-import type { AgentRunRequest, ToolAccessMode } from "@fitz/protocol";
+import type { AgentRunRequest, MediaModality, ToolAccessMode } from "@fitz/protocol";
 import type { Model } from "@earendil-works/pi-ai/compat";
 import type { AgentToolResult, ToolDefinition } from "@earendil-works/pi-coding-agent";
 export type { ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -544,7 +544,35 @@ function isCompletedMediaHandoff(event: PiEvent): boolean {
   return Boolean(details && typeof details === "object" && "mediaJobId" in details && typeof details.mediaJobId === "string" && details.mediaJobId);
 }
 function piFailure(event: PiEvent): Error | undefined { return event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason === "error" ? new Error(event.message.errorMessage ?? "Pi model request failed") : undefined; }
-function formatPrompt(request: AgentRunRequest): string { return request.messages.map((message) => `${message.role.toUpperCase()}: ${extractTextFromContent(message.content)}`).join("\n\n"); }
+function formatPrompt(request: AgentRunRequest): string {
+  const mediaCommand = request.mediaCommand;
+  if (!mediaCommand) {
+    return request.messages.map((message) => `${message.role.toUpperCase()}: ${extractTextFromContent(message.content)}`).join("\n\n");
+  }
+  // A media command run exposes exactly one tool (`generate_<modality>`, see the
+  // activeTools allowlist above), and the host no longer forces tool_choice because
+  // thinking-mode providers reject it. Rewrite the command into an explicit tool-call
+  // instruction so the model deterministically invokes the media tool instead of
+  // answering in prose. An empty prompt (bare `/video` + Enter) gets a default so the
+  // media tool's required prompt field is always populated.
+  const toolName = `generate_${mediaCommand}`;
+  return request.messages.map((message, index) => {
+    const text = extractTextFromContent(message.content);
+    if (index !== request.messages.length - 1) return `${message.role.toUpperCase()}: ${text}`;
+    const prompt = stripMediaCommandPrefix(text) || DEFAULT_MEDIA_PROMPTS[mediaCommand];
+    return `USER: The user issued the /${mediaCommand} media command. Call the ${toolName} tool immediately with the following prompt, and reply with nothing but the tool call:\n\n${prompt}`;
+  }).join("\n\n");
+}
+
+const DEFAULT_MEDIA_PROMPTS: Record<MediaModality, string> = {
+  image: "a vivid, detailed image",
+  video: "a short video clip",
+  audio: "a short audio clip",
+};
+
+function stripMediaCommandPrefix(text: string): string {
+  return text.replace(/^\/(?:video|audio|image)(?:\s|$)/i, "").trim();
+}
 function extractTextFromContent(content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>): string {
   if (typeof content === "string") return content;
   return content.filter((part) => part.type === "text").map((part) => part.text ?? "").join(" ");

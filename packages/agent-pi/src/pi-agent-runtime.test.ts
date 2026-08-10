@@ -170,6 +170,32 @@ describe("PiAgentRuntime", () => {
     expect(seen).toEqual([{ tools: [], activeTools: ["generate_image"], workContext: { runId: "run-media", forcedToolName: "generate_image" } }]);
   });
 
+  it("rewrites media commands into an explicit tool instruction with a default prompt when empty", async () => {
+    const prompts: string[] = [];
+    const runtime = new PiAgentRuntime({
+      customTools: () => [],
+      createSession: async () => {
+        let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+        return {
+          subscribe: (next) => { listener = next; return () => undefined; },
+          prompt: async (prompt) => {
+            prompts.push(prompt);
+            listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "ok" } });
+          },
+          abort: async () => undefined,
+          dispose: () => undefined,
+        };
+      },
+    });
+    for await (const _ of runtime.run({ model: "smart", mediaCommand: "video", messages: [{ role: "user", content: "/video a cat playing piano" }] })) { /* consume */ }
+    for await (const _ of runtime.run({ model: "smart", mediaCommand: "video", messages: [{ role: "user", content: "/video" }] })) { /* consume */ }
+    expect(prompts[0]).toContain("generate_video");
+    expect(prompts[0]).toContain("a cat playing piano");
+    expect(prompts[0]).not.toContain("USER: /video a cat playing piano");
+    expect(prompts[1]).toContain("generate_video");
+    expect(prompts[1]).toContain("a short video clip");
+  });
+
   it("forwards steering messages to the live session and emits user.steer at delivery", async () => {
     let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
     let releasePrompt!: () => void;

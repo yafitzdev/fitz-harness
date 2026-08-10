@@ -87,9 +87,12 @@ export function registerOpenAIRoutes(options: OpenAIRouteOptions): void {
         ...(body.top_p !== undefined ? { topP: body.top_p } : {}),
         ...(body.stop !== undefined ? { stop: body.stop } : {}),
         ...(body.tools !== undefined ? { tools: body.tools } : {}),
-        ...(internalContext?.forcedToolName
-          ? { toolChoice: { type: "function" as const, function: { name: internalContext.forcedToolName } } }
-          : body.tool_choice !== undefined ? { toolChoice: body.tool_choice } : {}),
+        // Media-command runs no longer force a specific function tool_choice here:
+        // thinking-mode providers reject forced tool_choice with a 400. Determinism
+        // is handled by the agent runtime instead — the run exposes only the
+        // generate_<modality> tool (activeTools allowlist) and the prompt is
+        // rewritten into an explicit tool-call instruction.
+        ...(body.tool_choice !== undefined ? { toolChoice: body.tool_choice } : {}),
         ...(body.parallel_tool_calls !== undefined ? { parallelToolCalls: body.parallel_tool_calls } : {}),
         ...(principal ? { userId: principal.user.id } : internalContext?.ownerUserId ? { userId: internalContext.ownerUserId } : body.user !== undefined ? { userId: body.user } : {}),
       }, undefined, { ...(principal ? { ownerUserId: principal.user.id } : {}), ...internalContext, label: `${model} completion` });

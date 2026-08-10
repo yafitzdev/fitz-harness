@@ -190,7 +190,15 @@ export class Composer {
   }
 
   get value(): string { return this.prompt.value; }
-  get submission(): ComposerSubmission { return { content: this.prompt.value, ...(this.mediaCommand ? { mediaCommand: this.mediaCommand } : {}) }; }
+  get submission(): ComposerSubmission {
+    const value = this.prompt.value;
+    if (this.mediaCommand) return { content: value, mediaCommand: this.mediaCommand };
+    // A bare slash command with no trailing space never shows the tag bubble, but
+    // submitting it still routes to the media flow (e.g. `/video` + Enter).
+    const bare = /^\/(video|audio|image)$/i.exec(value);
+    if (bare) return { content: "", mediaCommand: bare[1]!.toLowerCase() as MediaModality };
+    return { content: value };
+  }
 
   focus(): void { this.prompt.focus(); }
 
@@ -446,7 +454,7 @@ export class Composer {
 
   private captureMediaCommand(): void {
     if (this.mediaCommand) return;
-    const match = /^\/(video|audio|image)(?=$|\s)/i.exec(this.prompt.value);
+    const match = /^\/(video|audio|image)(?=\s)/i.exec(this.prompt.value);
     if (!match) return;
     this.setMediaCommand(match[1]!.toLowerCase() as MediaModality);
     this.prompt.value = this.prompt.value.slice(match[0].length).replace(/^\s/, "");

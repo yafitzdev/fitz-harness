@@ -50,6 +50,7 @@ const styles = [
   readFileSync(new URL("./ui/primitives/scroll-surface.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/message-actions.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/activity-timeline.css", import.meta.url), "utf8"),
+  readFileSync(new URL("./ui/chat/media-creation-form.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/reasoning-view.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/composer-controls.css", import.meta.url), "utf8"),
   composerCss,
@@ -366,7 +367,9 @@ describe("desktop renderer shell", () => {
     expect(projects).toContain('this.options.api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" })');
     expect(promptSubmission).toContain("max_tokens: settings.maxTokens");
     expect(renderer).toContain("if (submission.content.trim().length > 0) void steerPrompt(submission.content)");
-    expect(renderer).toContain('if (submission.mediaCommand) { showStatus("Media commands start after the current task finishes", "error"); return; }');
+    // Media commands bypass the agent entirely, so they submit while a task is running.
+    expect(renderer).toContain('if (agentRuns.active && !submission.mediaCommand) {');
+    expect(renderer).toContain('mediaJobFeed.render({ id: jobId, modality, status: "queued" })');
     expect(renderer).toContain("else void agentRuns.cancel()");
     expect(renderer).toContain("appendSteer: (content) => activityTimeline.appendSteer(content)");
     expect(agentRunController).toContain('this.#options.api(`/api/v1/agent/runs/${this.#runId}`, "DELETE")');
@@ -941,6 +944,14 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("animation: run-activity-spinner 900ms linear infinite");
     expect(styles).toContain(".media-result-message > .media-job-notice { margin: 0; }");
     expect(styles).not.toContain("animation: spin 900ms linear infinite");
+  });
+
+  it("embeds the pre-submission media creation card in the chat for media commands", () => {
+    expect(renderer).toContain('const mediaCreationForm = new MediaCreationForm({ messages })');
+    expect(renderer).toContain("mediaCreationForm.show({ modality, prompt, refs, onCreate: submit })");
+    expect(renderer).toContain('api("/api/v1/media/jobs", "POST"');
+    expect(renderer).toContain("mediaJobFeed.render({ id: jobId, modality, status: \"queued\" })");
+    expect(renderer).toContain("mediaJobs.watch(jobId)");
   });
 
   it("pairs a desktop without exposing its durable bearer credential to the renderer", () => {

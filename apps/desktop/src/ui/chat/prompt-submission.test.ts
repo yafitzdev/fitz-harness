@@ -11,10 +11,17 @@ function setup(overrides: Partial<PromptSubmissionOptions> = {}) {
     ensureSession: vi.fn(async () => "session-1"), openNewChat: vi.fn(), clearDraft: vi.fn(), setDraft: vi.fn(), resetWarmup: vi.fn(),
     uploadAttachment: vi.fn(async () => ({ id: "artifact-1" })), clearLanding: vi.fn(), appendUser: vi.fn(), appendSteer: vi.fn(() => row),
     pushHistory: vi.fn(), addTokenEstimate: vi.fn(), refreshContext: vi.fn(), refreshControls: vi.fn(), runId: () => "run-1",
-    startRun: vi.fn(async () => undefined), steerRun: vi.fn(async () => undefined), showError: vi.fn(), errorMessage: (error) => String(error),
+    startRun: vi.fn(async () => undefined), submitMedia: vi.fn(async () => ({ id: "job-1" })), onMediaJobSubmitted: vi.fn(),
+    showMediaCreation: vi.fn(),
+    steerRun: vi.fn(async () => undefined), showError: vi.fn(), errorMessage: (error) => String(error),
     ...overrides,
   };
   return { controller: new PromptSubmissionController(options), options, row };
+}
+
+/** Returns the request captured by the showMediaCreation option. */
+function mediaCreationRequest(options: PromptSubmissionOptions) {
+  return (options.showMediaCreation as ReturnType<typeof vi.fn>).mock.calls[0]![0];
 }
 
 beforeEach(() => document.body.replaceChildren());
@@ -41,20 +48,88 @@ describe("PromptSubmissionController", () => {
     expect(options.setDraft).toHaveBeenCalledWith("one more thing");
   });
 
-  it("preserves an explicit media command and forwards deterministic modality metadata", async () => {
+  it("sends the media command as a chat message and shows the inline creation card", async () => {
     const { controller, options } = setup({ draft: () => ({ content: "a cat with a hat", mediaCommand: "video" }) });
     await controller.submit();
+    const request = mediaCreationRequest(options);
+    expect(request.modality).toBe("video");
+    expect(request.prompt).toBe("a cat with a hat");
+    expect(request.refs).toEqual([]);
+    // The command appears in the chat immediately; only the job waits for the card.
+    expect(options.clearDraft).toHaveBeenCalled();
     expect(options.appendUser).toHaveBeenCalledWith("/video a cat with a hat");
     expect(options.pushHistory).toHaveBeenCalledWith("/video a cat with a hat");
-    expect(options.startRun).toHaveBeenCalledWith(expect.objectContaining({
-      mediaCommand: "video",
-      messages: [{ role: "user", content: "/video a cat with a hat" }],
-    }));
+    expect(options.startRun).not.toHaveBeenCalled();
+    expect(options.submitMedia).not.toHaveBeenCalled();
+
+    // Confirming the card submits the job straight to the media pipeline.
+    await request.submit({ prompt: "a cat with a hat", durationSeconds: 4, fps: 24 });
+    expect(options.submitMedia).toHaveBeenCalledWith({
+      routeId: "video",
+      modality: "video",
+      prompt: "a cat with a hat",
+      sessionId: "session-1",
+      durationSeconds: 4,
+      fps: 24,
+    });
+    expect(options.onMediaJobSubmitted).toHaveBeenCalledWith("job-1", "video");
+    expect(options.appendUser).toHaveBeenCalledTimes(1);
   });
 
   it("does nothing for empty submissions without attachments", async () => {
     const { controller, options } = setup({ draft: () => ({ content: "   " }) });
     await controller.submit();
+    expect(options.startRun).not.toHaveBeenCalled();
+    expect(options.submitMedia).not.toHaveBeenCalled();
+  });
+
+  it("shows the inline creation card for a bare media command with a default prompt", async () => {
+    const { controller, options } = setup({ draft: () => ({ content: "", mediaCommand: "video" }) });
+    await controller.submit();
+    const request = mediaCreationRequest(options);
+    expect(request.prompt).toBe("a short video clip");
+    expect(options.appendUser).toHaveBeenCalledWith("/video");
+
+    await request.submit({ prompt: "a short video clip" });
+    expect(options.submitMedia).toHaveBeenCalledWith(expect.objectContaining({ prompt: "a short video clip" }));
+    expect(options.onMediaJobSubmitted).toHaveBeenCalledWith("job-1", "video");
+    expect(options.startRun).not.toHaveBeenCalled();
+  });
+
+  it("passes pasted reference images into the creation card and submits them as refs", async () => {
+    const attachment = { kind: "image" as const, dataUrl: "data:image/png;base64,AAAA", mimeType: "image/png", name: "ref.png" };
+    const { controller, options } = setup({ consumeAttachments: () => [attachment], draft: () => ({ content: "make it match", mediaCommand: "image" }) });
+    await controller.submit();
+    const request = mediaCreationRequest(options);
+    expect(options.uploadAttachment).toHaveBeenCalledWith("session-1", attachment);
+    expect(request.refs).toEqual([{ artifactId: "artifact-1" }]);
+
+    await request.submit({ prompt: "make it match" });
+    expect(options.submitMedia).toHaveBeenCalledWith(expect.objectContaining({ refs: [{ artifactId: "artifact-1" }] }));
+    expect(options.startRun).not.toHaveBeenCalled();
+  });
+
+  it("does not upload refs for audio commands", async () => {
+    const attachment = { kind: "image" as const, dataUrl: "data:image/png;base64,AAAA", mimeType: "image/png", name: "ref.png" };
+    const { controller, options } = setup({ consumeAttachments: () => [attachment], draft: () => ({ content: "narrate this", mediaCommand: "audio" }) });
+    await controller.submit();
+    expect(options.uploadAttachment).not.toHaveBeenCalled();
+    expect(mediaCreationRequest(options).refs).toEqual([]);
+
+    await mediaCreationRequest(options).submit({ prompt: "narrate this" });
+    expect(options.submitMedia).toHaveBeenCalledWith(expect.not.objectContaining({ refs: expect.anything() }));
+  });
+
+  it("shows an error when the media submission fails and does not track a job", async () => {
+    const { controller, options } = setup({
+      draft: () => ({ content: "boom", mediaCommand: "video" }),
+      submitMedia: vi.fn(async () => { throw new Error("route unavailable"); }),
+    });
+    await controller.submit();
+    const request = mediaCreationRequest(options);
+    await expect(request.submit({ prompt: "boom" })).rejects.toThrow("route unavailable");
+    expect(options.showError).toHaveBeenCalledWith("Error: route unavailable");
+    expect(options.onMediaJobSubmitted).not.toHaveBeenCalled();
     expect(options.startRun).not.toHaveBeenCalled();
   });
 });

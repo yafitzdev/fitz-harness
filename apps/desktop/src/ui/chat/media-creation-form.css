@@ -1,0 +1,41 @@
+/* Inline media creation card embedded in the chat (opened by /image, /video,
+   /audio commands). Reuses the .media-approval-* field styles from
+   activity-timeline.css. */
+.media-creation-card {
+  width: min(560px, 100%);
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  background: var(--tint-2);
+  color: var(--muted);
+}
+.media-creation-card h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+.media-creation-form {
+  display: grid;
+  gap: 10px;
+}
+.media-creation-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+.media-creation-actions button {
+  min-height: 29px;
+  padding: 5px 10px;
+  border-radius: var(--radius-md);
+  background: var(--tint-4);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+}
+.media-creation-actions button:hover { background: var(--tint-7); }
+.media-creation-submit { background: var(--grey-900); color: var(--grey-200); }
+.media-creation-submit:hover { background: var(--text); }
+.media-creation-actions button:disabled { opacity: 0.55; cursor: default; }

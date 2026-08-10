@@ -119,9 +119,23 @@ describe("Fitz host", () => {
     } finally { await runtime.app.close(); }
   });
 
-  it("honors trusted media-command tool choice without exposing the override publicly", async () => {
+  it("passes media-command tool choice through without forcing a function override", async () => {
     const adapter = new FakeEngineAdapter();
-    const runtime = createHost({ fakeAdapter: adapter, internalAgentToken: "agent-secret" });
+    const runtime = createHost({
+      fakeAdapter: adapter,
+      internalAgentToken: "agent-secret",
+      resourceMonitor: {
+        snapshot: async () => ({
+          capturedAt: new Date(0).toISOString(),
+          totalRamMiB: 64_000,
+          freeRamMiB: 32_000,
+          totalVramMiB: 32_000,
+          usedVramMiB: 1_000,
+          freeVramMiB: 31_000,
+          gpuTelemetryAvailable: true,
+        }),
+      },
+    });
     const payload = {
       model: "default",
       stream: false,
@@ -144,12 +158,15 @@ describe("Fitz host", () => {
       });
       expect(recipe.statusCode, recipe.body).toBe(200);
 
+      // Media runs no longer force a specific function tool_choice (thinking-mode
+      // providers reject it); the agent runtime drives determinism via the
+      // activeTools allowlist and a rewritten prompt instead.
       const internal = await runtime.app.inject({
         method: "POST", url: "/v1/chat/completions",
         headers: { authorization: "Bearer agent-secret", "x-fitz-forced-tool": "generate_image" }, payload,
       });
       expect(internal.statusCode, internal.body).toBe(200);
-      expect(adapter.requests.at(-1)?.toolChoice).toEqual({ type: "function", function: { name: "generate_image" } });
+      expect(adapter.requests.at(-1)?.toolChoice).toBe("auto");
 
       const publicCall = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", headers: { "x-fitz-forced-tool": "generate_image" }, payload });
       expect(publicCall.statusCode, publicCall.body).toBe(200);

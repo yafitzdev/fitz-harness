@@ -103,6 +103,26 @@ describe("Composer", () => {
     expect(calls.onSubmit).toHaveBeenCalledWith({ content: "create a watercolor fox", mediaCommand: "image" });
   });
 
+  it("keeps the tag hidden for a bare media command but still routes the submission", () => {
+    const { composer, calls } = setup();
+    const prompt = promptOf(composer);
+    const tag = composer.root.querySelector<HTMLButtonElement>("#media-command-tag")!;
+
+    type(prompt, "/video");
+    expect(tag.hidden).toBe(true);
+    expect(prompt.value).toBe("/video");
+    expect(composer.submission).toEqual({ content: "", mediaCommand: "video" });
+
+    composer.root.querySelector<HTMLFormElement>("#composer")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    expect(calls.onSubmit).toHaveBeenCalledWith({ content: "", mediaCommand: "video" });
+
+    type(prompt, "/video a cat");
+    expect(tag.hidden).toBe(false);
+    expect(tag.textContent).toBe("video");
+    expect(prompt.value).toBe("a cat");
+    expect(composer.submission).toEqual({ content: "a cat", mediaCommand: "video" });
+  });
+
   it("restores media commands from history and removes the tag without deleting the prompt", () => {
     const { composer } = setup();
     composer.rebuildHistory(["/video a cat in a forest"]);
