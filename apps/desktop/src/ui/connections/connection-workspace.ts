@@ -41,8 +41,8 @@ export const FIXED_ROUTES: readonly { id: FixedRouteId; label: string; icon: str
  *  modalities; incompatible toggles are disabled (§5.10). */
 export const MEDIA_ROUTES: readonly { id: MediaModality; label: string; icon: string }[] = [
   { id: "image", label: "Image", icon: '<g class="route-icon-outline"><path d="M3.5 14.5 8 9l3 3 2.5-2.5 3.5 5z"></path><circle cx="14.4" cy="5.6" r="1.6"></circle></g><path class="route-icon-filled" fill-rule="evenodd" d="M4.5 3.25h11a2.25 2.25 0 0 1 2.25 2.25v9a2.25 2.25 0 0 1-2.25 2.25h-11a2.25 2.25 0 0 1-2.25-2.25v-9A2.25 2.25 0 0 1 4.5 3.25Zm9.8 2a1.7 1.7 0 1 0 0 3.4 1.7 1.7 0 0 0 0-3.4ZM4 14.6h12l-3.25-4.05-2.15 2.2-2.65-3.1L4 14.6Z"></path>' },
-  { id: "video", label: "Video", icon: '<g class="route-icon-outline"><rect x="3" y="5.5" width="14" height="9" rx="2"></rect><path d="m9.5 8 3.5 2-3.5 2z"></path></g><g class="route-icon-filled"><rect x="2.5" y="5" width="15" height="10" rx="2.5"></rect><path class="route-icon-cut" d="m8.75 7.8 4 2.2-4 2.2z"></path></g>' },
-  { id: "audio", label: "Audio", icon: '<g class="route-icon-outline"><path d="M3.5 8v4h2.8L10 14.6V5.4L6.3 8z"></path><path d="M13.8 8.2a3.2 3.2 0 0 1 0 3.6"></path></g><g class="route-icon-filled"><path d="M3 7.5v5h3l4.75 3.15V4.35L6 7.5z"></path><path class="route-icon-cut" d="M13.5 7.5a3.6 3.6 0 0 1 0 5M15.7 5.65a6.2 6.2 0 0 1 0 8.7"></path></g>' },
+  { id: "video", label: "Video", icon: '<g class="route-icon-outline"><rect x="3" y="5.5" width="14" height="9" rx="2"></rect><path d="m9.5 8 3.5 2-3.5 2z"></path></g><g class="route-icon-filled"><rect x="2.5" y="5" width="15" height="10" rx="2.5"></rect><path class="route-icon-negative" d="m8.75 7.8 4 2.2-4 2.2z"></path></g>' },
+  { id: "audio", label: "Audio", icon: '<g class="route-icon-outline"><path d="M3.5 8v4h2.8L10 14.6V5.4L6.3 8z"></path><path d="M13.8 8.2a3.2 3.2 0 0 1 0 3.6"></path></g><g class="route-icon-filled"><path d="M3 7.5v5h3l4.75 3.15V4.35L6 7.5z"></path><path class="route-icon-wave" d="M13.1 7.5a3.6 3.6 0 0 1 0 5M15.25 5.65a6.2 6.2 0 0 1 0 8.7"></path></g>' },
 ];
 
 export const CONSUMER_TEMPLATES: readonly { id: string; label: string; description: string }[] = [

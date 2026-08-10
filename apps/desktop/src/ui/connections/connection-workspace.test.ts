@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ConnectionWorkspaceController, type ConnectionWorkspaceBridge } from "./connection-workspace.js";
+import { ConnectionWorkspaceController, MEDIA_ROUTES, type ConnectionWorkspaceBridge } from "./connection-workspace.js";
 
 function memoryStorage(initial: Record<string, string> = {}): Storage {
   const values = new Map(Object.entries(initial));
@@ -241,6 +241,8 @@ describe("ConnectionWorkspaceController", () => {
     expect(imageToggles[1]!.disabled).toBe(true);
     expect(imageToggles[2]!.disabled).toBe(true);
     expect(imageToggles[1]!.title).toContain("does not generate video");
+    expect(MEDIA_ROUTES.find((route) => route.id === "video")?.icon).toContain("route-icon-negative");
+    expect(MEDIA_ROUTES.find((route) => route.id === "audio")?.icon).toContain("route-icon-wave");
   });
 
   it("assigns a well-known media route and passes acceptExperimental for experimental recipes", async () => {
