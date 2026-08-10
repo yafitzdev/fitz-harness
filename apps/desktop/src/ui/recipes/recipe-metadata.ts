@@ -17,7 +17,6 @@ export interface RecipeMetadataOptions {
       limits?: MediaLimits;
     };
   };
-  experimental?: boolean;
 }
 
 /**
@@ -38,7 +37,6 @@ export function recipeMetadata(options: RecipeMetadataOptions): HTMLElement[] {
   if (!modalities.includes("text")) {
     for (const badge of mediaLimitBadges(options.capabilities?.modalities?.limits)) labels.push(label(badge, "media-limit-badge"));
   }
-  if (options.experimental) labels.push(label("Experimental", "media-experimental-badge"));
   return labels;
 }
 

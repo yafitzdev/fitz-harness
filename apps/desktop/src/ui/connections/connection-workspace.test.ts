@@ -245,7 +245,7 @@ describe("ConnectionWorkspaceController", () => {
     expect(MEDIA_ROUTES.find((route) => route.id === "audio")?.icon).toContain("route-icon-wave");
   });
 
-  it("assigns a well-known media route and passes acceptExperimental for experimental recipes", async () => {
+  it("assigns a well-known media route", async () => {
     const mediaRemote = {
       id: "media-1", displayName: "Media", baseUrl: "https://media.test/v1", authType: "none" as const, hasCredential: false, template: "openai-media" as const,
       models: [],
@@ -266,40 +266,6 @@ describe("ConnectionWorkspaceController", () => {
       expect(fresh.classList.contains("active")).toBe(true);
     });
     expect(calls.showStatus).toHaveBeenCalledWith("Image route updated", "success");
-
-    // Hosted experimental media recipe: card hidden by default, shown after the
-    // toggle, and its assignment carries acceptExperimental.
-    let configuration = {
-      hostName: "YanPC",
-      recipes: [{
-        id: "h3-image", displayName: "H3 ComfyUI", modelId: "comfyui-flux", contextTokens: 0,
-        adapter: "comfyui", capabilities: { chatCompletions: false, modalities: { output: ["image"] } },
-        configuration: { experimental: true },
-      }],
-      routes: [] as Array<Record<string, unknown>>,
-    };
-    const calls2 = {
-      api: vi.fn(async (path: string) => { if (path === "/api/v1/management/routes/image") configuration = { ...configuration, routes: [{ id: "image", recipeId: "h3-image" }] }; return { data: {} }; }),
-      reloadConfiguration: vi.fn(async () => configuration),
-      testRecipe: vi.fn(async () => undefined),
-      renderRecipeTestState: vi.fn(),
-      closePopovers: vi.fn(),
-      showStatus: vi.fn(),
-      errorMessage: vi.fn((error: unknown) => error instanceof Error ? error.message : String(error)),
-    };
-    const experimental = new ConnectionWorkspaceController({ mount: node("div"), bridge: { syncConsumerConnections: vi.fn(async () => []), listConsumerConnections: vi.fn(async () => []), saveConsumerConnection: vi.fn(), removeConsumerConnection: vi.fn(async () => undefined) }, ...calls2 });
-    experimental.setConfiguration(configuration);
-    experimental.render();
-    const hosted = experimental.elements.connections.querySelector<HTMLElement>(".consumer-playbook-card")!;
-    expect(hosted.querySelectorAll(".media-recipe-card")).toHaveLength(0);
-
-    experimental.elements.experimentalToggle.checked = true;
-    experimental.elements.experimentalToggle.dispatchEvent(new Event("change", { bubbles: true }));
-    const experimentalCard = experimental.elements.connections.querySelector<HTMLElement>(".consumer-playbook-card")!.querySelector<HTMLElement>(".media-recipe-card")!;
-    expect(experimentalCard).toBeTruthy();
-    expect(experimentalCard.querySelector(".media-experimental-badge")?.textContent).toBe("Experimental");
-    click(experimentalCard.querySelector<HTMLButtonElement>(".route-image")!);
-    await vi.waitFor(() => expect(calls2.api).toHaveBeenCalledWith("/api/v1/management/routes/image", "PUT", expect.objectContaining({ recipeId: "h3-image", acceptExperimental: true })));
   });
 
   it("hides the base URL for fal/replicate templates and sends model IDs", async () => {

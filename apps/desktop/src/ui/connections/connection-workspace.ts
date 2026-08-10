@@ -61,7 +61,6 @@ interface MediaModelView {
   /** Output modalities the recipe can generate — one well-known route toggle each. */
   modalities: MediaModality[];
   limits?: { maxDurationSeconds?: number; maxResolution?: string; maxRefs?: number; maxFrames?: number };
-  experimental?: boolean;
   template: string;
 }
 type HostedConnectionView = Omit<ConsumerConnectionSummary, "models" | "mediaModels"> & { hosted: true; availableModels: ConnectionModelView[]; availableMediaModels: MediaModelView[] };
@@ -97,7 +96,6 @@ export interface ConnectionWorkspaceElements {
   newConnection: HTMLButtonElement;
   editorBack: HTMLButtonElement;
   cancelEdit: HTMLButtonElement;
-  experimentalToggle: HTMLInputElement;
 }
 
 export interface ConnectionWorkspaceOptions {
@@ -136,15 +134,12 @@ export class ConnectionWorkspaceController {
     const connectionsList = document.createElement("div");
     connectionsList.id = "consumer-connections";
     connectionsList.className = "playbook-list";
-    const experimentalFilter = document.createElement("label");
-    experimentalFilter.className = "experimental-filter";
-    experimentalFilter.innerHTML = `<input id="show-experimental-media" type="checkbox"><span>Show experimental media models</span>`;
     layout.addContent({
       id: "connection-list-view",
       title: "Connections",
       description: "Provider and self-hosted OpenAI-compatible APIs.",
       search: { id: "connection-search", placeholder: "Search connections" },
-      body: [experimentalFilter, connectionsList],
+      body: [connectionsList],
     });
     this.root.insertAdjacentHTML("beforeend", CONNECTION_EDITOR_TEMPLATE);
     this.elements = {
@@ -169,7 +164,6 @@ export class ConnectionWorkspaceController {
       newConnection: this.require("new-connection"),
       editorBack: this.require("connection-editor-back"),
       cancelEdit: this.require("cancel-connection-edit"),
-      experimentalToggle: this.require("show-experimental-media"),
     };
     this.bind();
     this.resetForm();
@@ -215,10 +209,8 @@ export class ConnectionWorkspaceController {
       return;
     }
     const routes = this.configuration?.routes ?? [];
-    const showExperimental = this.elements.experimentalToggle.checked;
     for (const connection of visible) {
-      const mediaModels = showExperimental ? connection.availableMediaModels : connection.availableMediaModels.filter((model) => !model.experimental);
-      this.elements.connections.append(this.connectionCard(connection, routes, mediaModels));
+      this.elements.connections.append(this.connectionCard(connection, routes, connection.availableMediaModels));
     }
   }
 
@@ -255,7 +247,6 @@ export class ConnectionWorkspaceController {
     this.elements.search.addEventListener("input", () => this.render());
     this.elements.auth.addEventListener("change", () => this.updateAuthField());
     this.elements.template.addEventListener("change", () => this.updateTemplateFields());
-    this.elements.experimentalToggle.addEventListener("change", () => this.render());
     this.elements.form.addEventListener("submit", (event) => { event.preventDefault(); void this.save(); });
   }
 
@@ -346,7 +337,6 @@ export class ConnectionWorkspaceController {
   private mediaModelCard(model: MediaModelView, routes: Json[]): HTMLElement {
     const card = document.createElement("article");
     card.className = "recipe-card media-recipe-card";
-    if (model.experimental) card.classList.add("experimental");
     const details = document.createElement("div");
     details.className = "recipe-card-details";
     const name = document.createElement("span");
@@ -357,7 +347,6 @@ export class ConnectionWorkspaceController {
     labels.append(...recipeMetadata({
       modelId: model.modelId,
       capabilities: { chatCompletions: false, modalities: { output: model.modalities, ...(model.limits ? { limits: model.limits } : {}) } },
-      ...(model.experimental ? { experimental: true } : {}),
     }));
     details.append(name, labels);
     const actions = document.createElement("div");
@@ -514,7 +503,6 @@ export class ConnectionWorkspaceController {
         displayName: definition.label,
         recipeId: model.recipeId,
         enabled: true,
-        ...(model.experimental ? { acceptExperimental: true } : {}),
       });
       this.configuration = await this.options.reloadConfiguration();
       this.render();
@@ -591,7 +579,6 @@ function hostedMediaViews(recipes: Json[]): MediaModelView[] {
       modelId: String(recipe.modelId ?? recipe.id),
       modalities: recipe.capabilities.modalities.output.filter((modality: unknown) => modality === "image" || modality === "video" || modality === "audio"),
       ...(recipe.capabilities?.modalities?.limits ? { limits: recipe.capabilities.modalities.limits } : {}),
-      ...(recipe.configuration?.experimental === true ? { experimental: true } : {}),
       template: String(recipe.adapter ?? "openai-compatible"),
     }));
 }

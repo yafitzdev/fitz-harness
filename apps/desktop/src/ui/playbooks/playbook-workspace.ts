@@ -239,7 +239,6 @@ export class PlaybookWorkspaceController {
       modelId: String(recipe.modelId ?? recipe.id),
       contextTokens: Number(recipe.contextTokens),
       capabilities: recipe.capabilities,
-      experimental: recipe.configuration?.experimental === true,
     }));
     recipeDetails.append(name, labels);
     const recipeActions = document.createElement("div");

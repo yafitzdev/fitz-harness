@@ -826,9 +826,6 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
             if (!recipe.capabilities.modalities?.output.includes(kind)) {
               throw new TypeError(`Recipe ${recipe.id} does not generate ${kind}; cannot assign it to the ${route.id} route`);
             }
-            if (recipe.configuration.experimental === true && !(isRecord(request.body) && request.body.acceptExperimental === true)) {
-              throw new TypeError(`Recipe ${recipe.id} is experimental; pass acceptExperimental: true to assign it explicitly`);
-            }
           }
         }
         store.upsertRoute(route);
