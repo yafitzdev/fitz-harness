@@ -37,6 +37,14 @@ describe("ConversationMessageFeed", () => {
     expect(activity.finishWork).toHaveBeenCalledWith("2026-08-09T06:35:47.809Z", "completed");
   });
 
+  it("appends asynchronous peer results without closing unrelated restored work", () => {
+    const { feed, messages, activity, actions } = setup();
+    feed.appendDetached("assistant", "media failed", "2026-08-09T06:36:07.922Z");
+    expect(messages.textContent).toBe("media failed");
+    expect(actions.attach).toHaveBeenCalledOnce();
+    expect(activity.finishWork).not.toHaveBeenCalled();
+  });
+
   it("routes commentary through the activity timeline", () => {
     const { feed, activity } = setup(true);
     const body = feed.appendCommentary("**Checking**", "then");

@@ -1,6 +1,7 @@
 import { svgIcon } from "../primitives/dom.js";
 import type { ActionFeedback } from "../primitives/action-status.js";
 import { ReasoningView } from "./reasoning-view.js";
+import { mediaJobIdFromToolResult } from "./media-job-tracker.js";
 import { activityKind, burstIconPath, describeTool, iconPathFor, summarizeBurst, toolPath } from "./tool-activity.js";
 import { scrollToLatestIfFollowing } from "./conversation-scroll.js";
 
@@ -161,6 +162,8 @@ export class ActivityTimeline {
     const wasRunning = row.classList.contains("running");
     row.classList.remove("running");
     row.classList.toggle("failed", isError);
+    const mediaJobId = mediaJobIdFromToolResult(result);
+    if (mediaJobId) row.dataset.mediaJobId = mediaJobId;
     const label = row.querySelector<HTMLElement>(".agent-activity-label");
     if (label) { const description = describeTool(toolName, input, false); label.textContent = isError ? `${description} (failed)` : description; label.title = label.textContent; }
     const resultValue = row.querySelector<HTMLElement>(".tool-activity-result .tool-activity-value");

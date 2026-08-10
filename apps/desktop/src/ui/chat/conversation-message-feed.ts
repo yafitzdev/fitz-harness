@@ -27,8 +27,19 @@ export class ConversationMessageFeed {
   constructor(options: ConversationMessageFeedOptions) { this.#options = options; }
 
   append(role: string, text: string, createdAt?: string): HTMLElement {
+    return this.#append(role, text, createdAt, true);
+  }
+
+  /** Appends a peer message without treating it as an agent-run boundary.
+   * Durable asynchronous results use this after their originating run has
+   * already closed (or while a restored transcript is still being rebuilt). */
+  appendDetached(role: string, text: string, createdAt?: string): HTMLElement {
+    return this.#append(role, text, createdAt, false);
+  }
+
+  #append(role: string, text: string, createdAt: string | undefined, closesWork: boolean): HTMLElement {
     this.clearLanding();
-    if (role !== "commentary" && !this.#options.runActive()) {
+    if (closesWork && role !== "commentary" && !this.#options.runActive()) {
       this.#options.activity.finishWork(createdAt, role === "user" ? "next-message" : "completed");
     }
     const article = document.createElement("article");

@@ -46,17 +46,39 @@ describe("MediaJobFeed", () => {
     expect(calls.finishWork).toHaveBeenCalledWith("now");
   });
 
-  it("restores terminal failure timing from durable job timestamps", () => {
-    const { feed, calls } = setup();
+  it("promotes restored terminal failures outside agent work", () => {
+    const { feed, calls, messages } = setup();
     feed.render({
       id: "job-1",
       modality: "image",
       status: "failed",
+      params: { prompt: "a fox", size: "1024x1024", seed: 42 },
       enqueuedAt: "2026-08-09T06:35:57.783Z",
       completedAt: "2026-08-09T06:36:07.922Z",
     }, "GPU unavailable");
-    expect(calls.appendWork).toHaveBeenCalledWith(expect.any(HTMLElement), "2026-08-09T06:35:57.783Z");
-    expect(calls.finishWork).toHaveBeenCalledWith("2026-08-09T06:36:07.922Z");
+    expect(calls.appendWork).not.toHaveBeenCalled();
+    expect(calls.finishWork).not.toHaveBeenCalled();
+    expect(calls.appendAssistant).toHaveBeenCalledWith("I couldn't generate your image.", "2026-08-09T06:36:07.922Z");
+    const row = messages.querySelector<HTMLElement>(".media-result-message .media-job-notice.failed")!;
+    expect(row).not.toBeNull();
+    row.click();
+    expect(row.getAttribute("aria-expanded")).toBe("true");
+    expect(row.textContent).toContain("a fox");
+    expect(row.textContent).toContain("1024x1024");
+    expect(row.textContent).toContain("42");
+  });
+
+  it("anchors restored terminal media after its originating work summary", () => {
+    const { feed, messages } = setup();
+    const work = document.createElement("section");
+    work.className = "work-summary";
+    const details = document.createElement("div");
+    details.className = "work-summary-details";
+    const tool = document.createElement("div");
+    tool.dataset.mediaJobId = "job-1";
+    details.append(tool); work.append(details); messages.append(work, document.createElement("hr"));
+    feed.render({ id: "job-1", modality: "video", status: "failed", params: { prompt: "dog" } }, "GPU unavailable");
+    expect(work.nextElementSibling?.classList.contains("media-result-message")).toBe(true);
   });
 
   it("retries terminal failures through the injected lifecycle", async () => {
@@ -67,5 +89,13 @@ describe("MediaJobFeed", () => {
     await vi.waitFor(() => expect(calls.retry).toHaveBeenCalledOnce());
     expect(calls.watch).toHaveBeenCalledWith("job-2");
     expect(messages.textContent).toContain("Video generation in progress");
+  });
+
+  it("does not unfold a terminal card when its action button is clicked", () => {
+    const { feed, messages, calls } = setup();
+    feed.render({ id: "job-1", modality: "video", status: "completed", params: { prompt: "dog" } }, undefined, { id: "artifact", name: "dog.mp4" });
+    messages.querySelector<HTMLButtonElement>(".media-job-open")!.click();
+    expect(calls.openArtifact).toHaveBeenCalledOnce();
+    expect(messages.querySelector(".media-job-notice")?.getAttribute("aria-expanded")).toBe("false");
   });
 });

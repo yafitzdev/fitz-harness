@@ -348,7 +348,7 @@ const mediaJobFeed = new MediaJobFeed({
   messages,
   appendWork: (row, createdAt) => activityTimeline.appendWork(row, createdAt),
   finishWork: (completedAt) => activityTimeline.finishWork(completedAt),
-  appendAssistant: (text, createdAt) => appendMessage("assistant", text, createdAt),
+  appendAssistant: (text, createdAt) => conversationMessages.appendDetached("assistant", text, createdAt),
   openArtifact: (artifact) => inspectorPanel.previewArtifact(artifact),
   retry: async (job) => (await api(`/api/v1/media/jobs/${encodeURIComponent(job.id)}/retry`, "POST")).data as MediaJobSummary,
   watch: (jobId) => mediaJobs.watch(jobId),
@@ -907,10 +907,12 @@ async function loadMediaJobs(sessionId: string, sessionArtifacts: Json[], isCurr
   const response = await api(`/api/v1/media/jobs?sessionId=${encodeURIComponent(sessionId)}&limit=100`);
   if (!isCurrent()) return;
   const jobs = Array.isArray(response.data) ? [...response.data].reverse() as MediaJobSummary[] : [];
+  let hasActiveJob = false;
   for (const job of jobs) {
     if (!isCurrent()) return;
     const artifact = job.artifactId ? sessionArtifacts.find((item) => item.id === job.artifactId) : undefined;
     if (["queued", "started", "progressing"].includes(job.status)) {
+      hasActiveJob = true;
       mediaJobFeed.render(job, undefined, artifact);
       mediaJobs.watch(job.id);
       continue;
@@ -922,6 +924,9 @@ async function loadMediaJobs(sessionId: string, sessionArtifacts: Json[], isCurr
     mediaJobFeed.render(job, failure, artifact);
   }
   if (!isCurrent()) return;
+  // Transcript replay owns the single reasoning summary. Terminal media jobs
+  // render as detached peer results and must not manufacture one summary each.
+  if (!hasActiveJob) activityTimeline.finishWork(undefined, "next-message");
   messages.scrollTop = messages.scrollHeight;
 }
 

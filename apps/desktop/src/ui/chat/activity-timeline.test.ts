@@ -187,6 +187,13 @@ describe("ActivityTimeline", () => {
     expect(messages.querySelector(".work-summary-label")?.textContent).toBe("Worked for 22s");
   });
 
+  it("marks restored media tools with their durable job id for result anchoring", () => {
+    const { timeline } = setup();
+    const row = timeline.appendTool("generate_video", { prompt: "dog" }, "tool-1", true);
+    timeline.completeTool(row, "generate_video", { prompt: "dog" }, { details: { mediaJobId: "job-video" } }, false);
+    expect(row.dataset.mediaJobId).toBe("job-video");
+  });
+
   it("switches to hours at the 60-minute boundary", () => {
     const { messages, timeline } = setup();
     timeline.appendTool("bash", { command: "pnpm test" }, "tool-1", true, "2026-08-03T08:00:00.000Z");

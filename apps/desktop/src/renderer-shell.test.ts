@@ -720,7 +720,7 @@ describe("desktop renderer shell", () => {
     expect(agentRunController).not.toContain('this.#options.activity.setRun(activity, "Loading model"');
     expect(activityTimeline).toContain("this.#formatElapsed(Date.now() - startedAt)");
     expect(agentRunController).toContain('this.#options.api("/api/v1/management/status")');
-    expect(conversationMessageFeed).toContain('if (role !== "commentary" && !this.#options.runActive())');
+    expect(conversationMessageFeed).toContain('if (closesWork && role !== "commentary" && !this.#options.runActive())');
     expect(conversationMessageFeed).toContain('this.#options.activity.finishWork(createdAt, role === "user" ? "next-message" : "completed")');
     expect(agentRunController).toContain("this.#options.activity.finishWork()");
   });
@@ -933,9 +933,9 @@ describe("desktop renderer shell", () => {
 
   it("keeps generated media out of composer attachments and animates media progress", () => {
     expect(artifactController).toContain("if (!artifact.metadata?.mediaJobId)");
-    expect(mediaJobFeed).toContain("this.#options.finishWork(job.completedAt)");
+    expect(mediaJobFeed).toContain("if (wasTracked && this.#terminal(job.status)) this.#options.finishWork");
     expect(mediaJobFeed).toContain("this.#options.appendWork(row, job.startedAt ?? job.enqueuedAt)");
-    expect(mediaJobFeed).toContain('this.#options.appendAssistant(`Here is your ${job.modality}!`, job.completedAt)');
+    expect(mediaJobFeed).toContain("this.#options.appendAssistant(this.#terminalMessage(job)");
     expect(mediaJobFeed).toContain('answer.classList.add("media-result-message")');
     expect(styles).toContain("animation: run-activity-spinner 900ms linear infinite");
     expect(styles).toContain(".media-result-message > .media-job-notice { margin: 0; }");
