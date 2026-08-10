@@ -950,6 +950,14 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('const mediaCreationForm = new MediaCreationForm({ messages })');
     expect(renderer).toContain("mediaCreationForm.show({ modality, prompt, refs, onCreate: submit })");
     expect(renderer).toContain('api("/api/v1/media/jobs", "POST"');
+    // Every form-collected parameter must reach the job: duration/fps/size/seed/
+    // negative prompt are otherwise silently dropped and the engine falls back to
+    // its recipe defaults (e.g. a 2 s / 24 fps video for a requested 10 s @ 30 fps).
+    expect(renderer).toContain("...(size !== undefined ? { size } : {})");
+    expect(renderer).toContain("...(seed !== undefined ? { seed } : {})");
+    expect(renderer).toContain("...(negativePrompt !== undefined ? { negativePrompt } : {})");
+    expect(renderer).toContain("...(durationSeconds !== undefined ? { durationSeconds } : {})");
+    expect(renderer).toContain("...(fps !== undefined ? { fps } : {})");
     expect(renderer).toContain("mediaJobFeed.render({ id: jobId, modality, status: \"queued\" })");
     expect(renderer).toContain("mediaJobs.watch(jobId)");
   });

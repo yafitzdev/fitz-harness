@@ -190,6 +190,33 @@ describe("Fitz host media jobs", () => {
     }
   });
 
+  it("passes the media creation card's duration and fps straight through to the engine", async () => {
+    // Mirrors the desktop renderer's submitMedia payload after the param-forwarding
+    // fix: { prompt, durationSeconds, fps } must reach the engine untouched, or the
+    // H3 recipe falls back to its 2 s / 24 fps defaults.
+    const mediaFake = new FakeMediaEngineAdapter();
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), mediaFake] });
+    try {
+      await registerMediaRecipe(runtime, "h3-video", ["video"]);
+      await assignRoute(runtime, "video", "h3-video");
+
+      const submitted = await runtime.app.inject({
+        method: "POST",
+        url: "/api/v1/media/jobs",
+        payload: { routeId: "video", modality: "video", params: { prompt: "dog swimming", durationSeconds: 3, fps: 30 } },
+      });
+      expect(submitted.statusCode, submitted.body).toBe(202);
+      expect(submitted.json().data.params).toEqual({ prompt: "dog swimming", durationSeconds: 3, fps: 30 });
+
+      const job = await waitForJobStatus(runtime, submitted.json().data.id as string, "completed");
+      expect(job.params).toEqual({ prompt: "dog swimming", durationSeconds: 3, fps: 30 });
+      await waitFor(() => mediaFake.submitted.length === 1);
+      expect(mediaFake.submitted[0]?.params).toEqual({ prompt: "dog swimming", durationSeconds: 3, fps: 30 });
+    } finally {
+      await runtime.app.close();
+    }
+  });
+
   it("constrains generic video requests to the selected recipe's declared limits", async () => {
     const mediaFake = new FakeMediaEngineAdapter();
     const runtime = createHost({ adapters: [new FakeEngineAdapter(), mediaFake] });

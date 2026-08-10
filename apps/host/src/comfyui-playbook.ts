@@ -54,7 +54,10 @@ function h3VideoWorkflow(unetName: string) {
     "107": {
       class_type: "ComfyMathExpression",
       inputs: {
-        expression: "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17",
+        // H3 `length` is a frame count; the duration→frames conversion must use the
+        // requested fps ({{fps}} resolves to the recipe default 24 when unset) or a
+        // 30/60 fps request would play back shorter than the requested duration.
+        expression: "max(5, round(a * {{fps}})) + (5 - (max(5, round(a * {{fps}})) % 17)) % 17",
         "values.a": ["111", 0],
       },
     },

@@ -128,6 +128,23 @@ describe("substituteWorkflow", () => {
     substituteWorkflow(VIDEO_WORKFLOW, { prompt: "changed" });
     expect(VIDEO_WORKFLOW).toEqual(original);
   });
+
+  it("substitutes {{fps}} inside embedded expressions (H3 frame count)", () => {
+    const workflow = {
+      "111": { class_type: "PrimitiveFloat", inputs: { value: "{{duration_seconds}}" } },
+      "107": {
+        class_type: "ComfyMathExpression",
+        inputs: {
+          expression: "max(5, round(a * {{fps}})) + (5 - (max(5, round(a * {{fps}})) % 17)) % 17",
+          "values.a": ["111", 0],
+        },
+      },
+      "91": { class_type: "CreateVideo", inputs: { fps: "{{fps}}" } },
+    };
+    const graph = substituteWorkflow(workflow, { prompt: "x", durationSeconds: 10, fps: 30 });
+    expect(graph["107"].inputs.expression).toBe("max(5, round(a * 30)) + (5 - (max(5, round(a * 30)) % 17)) % 17");
+    expect(graph["91"].inputs.fps).toBe(30);
+  });
 });
 
 describe("ComfyUI performance profiles", () => {

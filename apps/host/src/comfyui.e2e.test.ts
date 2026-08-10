@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { FakeEngineAdapter } from "@fitz/engine-fake";
-import { ComfyUIEngineAdapter } from "@fitz/engine-comfyui";
+import { ComfyUIEngineAdapter, substituteWorkflow } from "@fitz/engine-comfyui";
 import { createHost, type HostRuntime } from "./create-app.js";
 import { createComfyUIPlaybook } from "./comfyui-playbook.js";
 import { testThermalGuard } from "./test-thermal.js";
@@ -68,6 +68,29 @@ describe("MiniMax H3 via ComfyUI (PR 7)", () => {
     }
     expect(playbook.routes).toContainEqual(expect.objectContaining({ id: "video", recipeId: "h3-video" }));
     expect(playbook.routes).toContainEqual(expect.objectContaining({ id: "image", recipeId: "krea2-turbo-image" }));
+  });
+
+  it("computes the H3 frame count from the requested fps, not a hardcoded 24", () => {
+    const playbook = createComfyUIPlaybook({ engineDir: "/engines/comfyui", executable: "python" });
+    const h3Video = playbook.recipes.find((recipe) => recipe.id === "h3-video")!;
+    const workflow = h3Video.configuration.comfyuiWorkflow as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+
+    // H3 `length` is a frame count. At the recipe default (24 fps) the formula
+    // matches the old hardcoded expression; at 30 fps the duration→frames
+    // conversion must follow the requested fps or playback runs short.
+    // (substituteWorkflow receives params after applyGenerationDefaults, so the
+    // default fps must be passed explicitly here, as the adapter does.)
+    const defaults = substituteWorkflow(workflow, { prompt: "x", fps: 24 });
+    const atDefault = (defaults["107"].inputs.expression as string);
+    expect(atDefault).toContain("round(a * 24)");
+
+    const at30 = substituteWorkflow(workflow, { prompt: "x", durationSeconds: 10, fps: 30 });
+    const expression = at30["107"].inputs.expression as string;
+    expect(expression).toBe("max(5, round(a * 30)) + (5 - (max(5, round(a * 30)) % 17)) % 17");
+    // 10 s at 30 fps → ~300 frames, which is what feeds MiniMaxH3ImageToVideo.length.
+    expect(at30["104"].inputs.length).toEqual(["107", 1]);
+    // CreateVideo carries the requested container fps.
+    expect(at30["91"].inputs.fps).toBe(30);
   });
 
   it("routes PinkCherry when it is the only installed video recipe", () => {

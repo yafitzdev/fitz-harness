@@ -443,11 +443,19 @@ const promptSubmission = new PromptSubmissionController({
   refreshContext: updateContextMeter,
   refreshControls: refreshComposerState,
   runId: () => agentRuns.runId,
-  submitMedia: async ({ routeId, modality, prompt, sessionId, refs }) => {
+  submitMedia: async ({ routeId, modality, prompt, sessionId, size, seed, negativePrompt, durationSeconds, fps, refs }) => {
     const response = await api("/api/v1/media/jobs", "POST", {
       routeId,
       modality,
-      params: { prompt, ...(refs && refs.length > 0 ? { refs } : {}) },
+      params: {
+        prompt,
+        ...(size !== undefined ? { size } : {}),
+        ...(seed !== undefined ? { seed } : {}),
+        ...(negativePrompt !== undefined ? { negativePrompt } : {}),
+        ...(durationSeconds !== undefined ? { durationSeconds } : {}),
+        ...(fps !== undefined ? { fps } : {}),
+        ...(refs && refs.length > 0 ? { refs } : {}),
+      },
       sessionId,
     });
     return response.data as { id: string };
