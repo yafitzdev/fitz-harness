@@ -68,4 +68,34 @@ describe("local ComfyUI reconciliation", () => {
     expect(store.listRoutes()).toContainEqual(expect.objectContaining({ id: "image", recipeId: "krea2-turbo-image" }));
     store.close();
   });
+
+  it("preserves user-edited recipe names when startup discovery refreshes operational configuration", () => {
+    const root = mkdtempSync(join(tmpdir(), "fitz-comfy-reconcile-name-")); roots.push(root);
+    const paths: FitzRuntimePaths = {
+      dataRoot: join(root, "data"), databasePath: join(root, "data", "fitz.db"), piAgentDir: join(root, "data", "pi"),
+      logsDir: join(root, "data", "logs"), cacheDir: join(root, "data", "cache"), llmRoot: join(root, "llm"),
+      engineRoot: join(root, "llm", "engines"), modelRoot: join(root, "llm", "models"), snapshotsDir: join(root, "data", "snapshots"),
+    };
+    const local = localComfyUIPaths(paths);
+    for (const file of [
+      join(local.engineDir, "main.py"), local.executable, local.modelConfigPath,
+      join(paths.modelRoot, "comfyui", "diffusion_models", "minimax_h3_fl2va_pruned_int8_convrot.safetensors"),
+      join(paths.modelRoot, "comfyui", "text_encoders", "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"),
+      join(paths.modelRoot, "comfyui", "vae", "minimax_h3_video_vae_fp16.safetensors"),
+      join(paths.modelRoot, "comfyui", "vae", "minimax_h3_audio_vae_fp32.safetensors"),
+    ]) { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, "fixture"); }
+
+    const store = SqliteStore.memory();
+    reconcileLocalComfyUIConfiguration(store, paths);
+    const recipe = store.listRecipes().find((candidate) => candidate.id === "h3-video")!;
+    store.upsertRecipe({ ...recipe, displayName: "My H3 video model", configuration: { stale: true } });
+
+    reconcileLocalComfyUIConfiguration(store, paths);
+
+    expect(store.listRecipes().find((candidate) => candidate.id === "h3-video")).toMatchObject({
+      displayName: "My H3 video model",
+      configuration: expect.not.objectContaining({ stale: true }),
+    });
+    store.close();
+  });
 });

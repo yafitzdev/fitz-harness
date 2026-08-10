@@ -61,13 +61,13 @@
 .media-command-tag[hidden] { display: none; }
 #prompt { position: relative; z-index: 1; display: block; min-width: 0; width: 100%; min-height: 54px; max-height: 180px; padding: 16px 18px 6px; resize: none; border: 0; outline: 0; background: transparent; color: var(--text); line-height: 1.5; }
 #prompt::placeholder { color: var(--grey-600); }
-#prompt:disabled { cursor: not-allowed; }
+#prompt:disabled { cursor: default; }
 .composer-toolbar { position: relative; z-index: 1; min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 10px 8px; }
 .run-status { max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
 .run-status[data-state="active"] { color: var(--green); }
 .run-status[data-state="error"] { color: var(--danger); }
 .send-button { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: var(--accent); color: var(--accent-text); cursor: pointer; }
-.send-button:disabled { opacity: .35; cursor: not-allowed; }
+.send-button:disabled { opacity: .35; cursor: default; }
 .send-button .stop-icon { display: none; fill: currentColor; stroke: none; }
 .send-button.running .send-icon { display: none; }
 .send-button.running .stop-icon { display: block; }

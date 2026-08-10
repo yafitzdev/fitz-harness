@@ -88,7 +88,13 @@ export function reconcileLocalComfyUIConfiguration(store: SqliteStore, paths: Fi
       updatedAt: now,
     });
   }
-  for (const recipe of playbook.recipes) store.upsertRecipe(recipe);
+  const existingRecipes = new Map(store.listRecipes().map((recipe) => [recipe.id, recipe]));
+  for (const recipe of playbook.recipes) {
+    const existing = existingRecipes.get(recipe.id);
+    // Discovery owns the executable model contract, while the display name is
+    // user-owned. Reapplying the manifest must never undo a rename on restart.
+    store.upsertRecipe(existing ? { ...recipe, displayName: existing.displayName } : recipe);
+  }
 
   const recipes = store.listRecipes();
   for (const route of playbook.routes) {

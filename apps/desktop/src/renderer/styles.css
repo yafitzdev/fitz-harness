@@ -51,7 +51,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .sidebar-collapsed .sidebar-resizer { display: none; }
 .icon-button { width: var(--control-size); height: var(--control-size); display: inline-grid; place-items: center; padding: 0; border-radius: var(--radius-md); color: var(--muted); background: transparent; cursor: pointer; }
 .icon-button:hover:not(:disabled), .quiet-button:hover { background: var(--grey-250); color: var(--text); }
-.icon-button:disabled { opacity: .3; cursor: not-allowed; }
+.icon-button:disabled { opacity: .3; cursor: default; }
 .sidebar-brand { min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 7px 0 9px; color: var(--grey-850); font-size: 17px; font-weight: 650; letter-spacing: -.02em; }
 .nav-action { width: 100%; display: flex; align-items: center; gap: 9px; padding: 8px 9px; color: var(--text); background: transparent; border-radius: var(--sidebar-item-radius); cursor: pointer; text-align: left; }
 .nav-action:hover { background: var(--tint-5); }

@@ -25,6 +25,6 @@
 .media-modality-badge.media-audio { color: var(--orange); }
 .media-limit-badge { color: var(--subtle); border: 1px dashed var(--grey-400); }
 .media-experimental-badge { color: var(--orange); background: var(--tint-4); }
-.route-symbol.route-media.active { background: var(--grey-300); color: var(--accent-blue); }
-.route-symbol:disabled { opacity: 0.38; cursor: not-allowed; }
+.route-symbol.route-media.active { background: var(--grey-300); color: var(--grey-900); }
+.route-symbol:disabled { opacity: 0.38; cursor: default; }
 .route-symbol:disabled:hover { background: transparent; color: var(--grey-550); }
