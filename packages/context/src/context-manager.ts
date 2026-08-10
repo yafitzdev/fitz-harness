@@ -67,7 +67,49 @@ function contentCharLength(content: string | ChatContentPart[]): number {
   if (typeof content === "string") return content.length;
   return content.filter((p) => p.type === "text").reduce((t, p) => t + (p.text ?? "").length, 0);
 }
-function transcriptMessages(entries: readonly TranscriptEntryRecord[]): ChatMessage[] { return entries.filter((entry) => entry.kind === "message" && entry.role && typeof entry.content.text === "string").map((entry) => ({ role: entry.role!, content: entry.content.text as string })); }
+interface SemanticTranscriptMessage { sequence: number; message: ChatMessage }
+
+/**
+ * Reconstruct only the semantic conversation seen by the next model run. Ordinary tool
+ * traffic stays out of model history, but a durable media handoff is also the terminal
+ * assistant action for its turn: the Pi run deliberately ends once the asynchronous job
+ * has been accepted. Representing that handoff as an assistant message prevents the next
+ * request from seeing a stack of apparently unanswered media prompts.
+ */
+function semanticTranscriptMessages(entries: readonly TranscriptEntryRecord[]): SemanticTranscriptMessage[] {
+  return entries.flatMap((entry): SemanticTranscriptMessage[] => {
+    if (entry.kind === "message" && entry.role && typeof entry.content.text === "string") {
+      return [{ sequence: entry.sequence, message: { role: entry.role, content: entry.content.text } }];
+    }
+    const mediaHandoff = mediaHandoffMessage(entry);
+    return mediaHandoff ? [{ sequence: entry.sequence, message: mediaHandoff }] : [];
+  });
+}
+
+function transcriptMessages(entries: readonly TranscriptEntryRecord[]): ChatMessage[] {
+  return semanticTranscriptMessages(entries).map(({ message }) => message);
+}
+
+function mediaHandoffMessage(entry: TranscriptEntryRecord): ChatMessage | undefined {
+  if (entry.kind !== "tool-result") return undefined;
+  const toolName = entry.content.toolName;
+  if (toolName !== "generate_image" && toolName !== "generate_video" && toolName !== "generate_audio") return undefined;
+  const result = asRecord(entry.content.result);
+  const details = asRecord(result?.details);
+  const jobId = details?.mediaJobId;
+  if (typeof jobId !== "string" || !jobId.trim()) return undefined;
+  const rawStatus = details?.status;
+  const status = typeof rawStatus === "string" && rawStatus.trim() ? rawStatus.trim() : "accepted";
+  const modality = toolName.slice("generate_".length);
+  return {
+    role: "assistant",
+    content: `Media generation handoff accepted: submitted asynchronous ${modality} job ${jobId} (status: ${status}). The preceding user request is being handled asynchronously and is not awaiting an assistant response.`,
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
 function allTranscriptEntries(store: SqliteStore, sessionId: string): TranscriptEntryRecord[] { const entries: TranscriptEntryRecord[] = []; let after = 0; while (true) { const page = store.transcriptAfter(sessionId, after, 1000); entries.push(...page); if (page.length < 1000) return entries; after = page.at(-1)!.sequence; } }
 function sessionContextEntries(store: SqliteStore, sessionId: string): TranscriptEntryRecord[] {
   const checkpoint = store.latestTranscriptCompaction(sessionId);
@@ -95,7 +137,7 @@ function findCheckpoint(entries: readonly TranscriptEntryRecord[]): TranscriptEn
 /** Sequence of the last transcript entry fully covered by the summary: everything up to here (including interleaved tool activity) is checkpointed. */
 function lastSummarizedSequence(entries: readonly TranscriptEntryRecord[], checkpoint: TranscriptEntryRecord | undefined, transcriptRecentCount: number): number {
   const afterCheckpoint = checkpoint ? entries.filter((entry) => entry.sequence > Number(checkpoint.content.throughSequence)) : entries;
-  const messageEntries = afterCheckpoint.filter((entry) => entry.kind === "message" && entry.role && typeof entry.content.text === "string");
+  const messageEntries = semanticTranscriptMessages(afterCheckpoint);
   const floor = checkpoint ? Number(checkpoint.content.throughSequence) : 0;
   const recentIndex = Math.max(0, messageEntries.length - transcriptRecentCount);
   if (recentIndex === 0) return Math.max(floor, afterCheckpoint.at(-1)?.sequence ?? floor);

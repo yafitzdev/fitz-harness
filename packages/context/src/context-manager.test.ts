@@ -25,6 +25,40 @@ describe("ContextManager", () => {
     store.close();
   });
 
+  it("closes an asynchronous media turn in canonical model context", async () => {
+    const store = SqliteStore.memory(); const now = new Date(0).toISOString(); store.createProject({ id: "p", name: "P", createdAt: now, updatedAt: now }); store.createSession({ id: "s", projectId: "p", title: "S", status: "active", createdAt: now, updatedAt: now });
+    store.appendTranscriptEntry({ id: "u", sessionId: "s", kind: "message", role: "user", content: { text: "create a video of a dog" }, createdAt: now });
+    store.appendTranscriptEntry({ id: "tc", sessionId: "s", kind: "tool-call", role: "tool", content: { toolName: "generate_video", input: { prompt: "dog" } }, createdAt: now });
+    store.appendTranscriptEntry({ id: "tr", sessionId: "s", kind: "tool-result", role: "tool", content: { toolName: "generate_video", result: { content: [{ type: "text", text: "Submitted video generation job media-1" }], details: { mediaJobId: "media-1", status: "queued" } } }, createdAt: now });
+    const prepared = await new ContextManager(store).prepare({ model: "fast", sessionId: "s", messages: [{ role: "user", content: "create an image of a tree" }] }, 10_000);
+    expect(prepared.request.messages).toEqual([
+      { role: "user", content: "create a video of a dog" },
+      { role: "assistant", content: expect.stringMatching(/asynchronous video job media-1 \(status: queued\).*not awaiting an assistant response/) },
+      { role: "user", content: "create an image of a tree" },
+    ]);
+    store.close();
+  });
+
+  it("does not fabricate a completed media handoff for denied or failed tool results", async () => {
+    const store = SqliteStore.memory(); const now = new Date(0).toISOString(); store.createProject({ id: "p", name: "P", createdAt: now, updatedAt: now }); store.createSession({ id: "s", projectId: "p", title: "S", status: "active", createdAt: now, updatedAt: now });
+    store.appendTranscriptEntry({ id: "u", sessionId: "s", kind: "message", role: "user", content: { text: "create a video" }, createdAt: now });
+    store.appendTranscriptEntry({ id: "denied", sessionId: "s", kind: "tool-result", role: "tool", content: { toolName: "generate_video", result: { content: [{ type: "text", text: "Denied" }], details: { denied: true } } }, createdAt: now });
+    store.appendTranscriptEntry({ id: "bash", sessionId: "s", kind: "tool-result", role: "tool", content: { toolName: "bash", result: { details: { mediaJobId: "not-media" } } }, createdAt: now });
+    const prepared = await new ContextManager(store).prepare({ model: "fast", sessionId: "s", messages: [{ role: "user", content: "next" }] }, 10_000);
+    expect(prepared.request.messages.map((message) => message.content)).toEqual(["create a video", "next"]);
+    store.close();
+  });
+
+  it("includes durable media handoffs in manual compaction summaries", async () => {
+    const store = SqliteStore.memory(); const now = new Date(0).toISOString(); store.createProject({ id: "p", name: "P", createdAt: now, updatedAt: now }); store.createSession({ id: "s", projectId: "p", title: "S", status: "active", createdAt: now, updatedAt: now });
+    store.appendTranscriptEntry({ id: "u", sessionId: "s", kind: "message", role: "user", content: { text: "create an image" }, createdAt: now });
+    store.appendTranscriptEntry({ id: "tr", sessionId: "s", kind: "tool-result", role: "tool", content: { toolName: "generate_image", result: { details: { mediaJobId: "image-1", status: "queued" } } }, createdAt: now });
+    const compacted = await new ContextManager(store).compactSession("s", 10_000);
+    expect(compacted.originalMessageCount).toBe(2);
+    expect(compacted.entry.content.summary).toEqual(expect.stringContaining("asynchronous image job image-1"));
+    store.close();
+  });
+
   it("creates a manual checkpoint while preserving the canonical transcript", async () => {
     const store = SqliteStore.memory(); const now = new Date(0).toISOString(); store.createProject({ id: "p", name: "P", createdAt: now, updatedAt: now }); store.createSession({ id: "s", projectId: "p", title: "S", status: "active", createdAt: now, updatedAt: now });
     store.appendTranscriptEntry({ id: "old-user", sessionId: "s", kind: "message", role: "user", content: { text: "old question" }, createdAt: now }); store.appendTranscriptEntry({ id: "old-assistant", sessionId: "s", kind: "message", role: "assistant", content: { text: "old answer" }, createdAt: now });
