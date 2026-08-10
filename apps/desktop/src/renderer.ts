@@ -6,7 +6,7 @@ import { AgentRunController } from "./ui/chat/agent-run-controller.js";
 import { RunRecoveryView } from "./ui/chat/run-recovery-view.js";
 import { MediaJobFeed } from "./ui/chat/media-job-feed.js";
 import { MediaJobTracker, type MediaJobSummary } from "./ui/chat/media-job-tracker.js";
-import { Composer } from "./ui/chat/composer.js";
+import { Composer, type ComposerSubmission } from "./ui/chat/composer.js";
 import { ConversationLanding } from "./ui/chat/conversation-landing.js";
 import { ConversationMessageFeed } from "./ui/chat/conversation-message-feed.js";
 import { ConversationTranscript } from "./ui/chat/conversation-transcript.js";
@@ -163,11 +163,12 @@ const composer = new Composer({
   closeAllPopovers: closePopovers,
   onRouteChange: () => handleRouteChange(),
   onCompact: compactCurrentSession,
-  onSubmit: (content) => {
+  onSubmit: (submission) => {
     if (agentRuns.active) {
-      if (content.trim().length > 0) void steerPrompt(content);
+      if (submission.mediaCommand) { showStatus("Media commands start after the current task finishes", "error"); return; }
+      if (submission.content.trim().length > 0) void steerPrompt(submission.content);
       else void agentRuns.cancel();
-    } else void sendPrompt(content);
+    } else void sendPrompt(submission);
   },
   onInput: (text) => {
     updateContextMeter();
@@ -394,7 +395,7 @@ const runRecovery = new RunRecoveryView({
   resume: (runId, confirmUnsafe) => agentRuns.resume(runId, confirmUnsafe),
 });
 const promptSubmission = new PromptSubmissionController({
-  draft: () => composer.value,
+  draft: () => composer.submission,
   consumeAttachments: () => composer.consumePastedAttachments(),
   sessionId: () => projects.currentSessionId,
   settings: () => ({
@@ -873,7 +874,7 @@ function syncComposerContext(): void {
 
 function closePopovers(): void { appMenus.close(); }
 
-async function sendPrompt(submittedContent?: string, existingUserMessage?: HTMLElement): Promise<void> {
+async function sendPrompt(submittedContent?: string | ComposerSubmission, existingUserMessage?: HTMLElement): Promise<void> {
   await promptSubmission.submit(submittedContent, existingUserMessage);
 }
 

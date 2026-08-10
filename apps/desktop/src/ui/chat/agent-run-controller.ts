@@ -1,5 +1,6 @@
 import { reconnectDelay } from "@fitz/connectivity/reconnect";
 import type { ActionFeedback } from "../primitives/action-status.js";
+import type { MediaModality } from "@fitz/protocol";
 
 import { mediaJobIdFromToolResult } from "./media-job-tracker.js";
 import { scrollToLatestIfFollowing } from "./conversation-scroll.js";
@@ -28,6 +29,7 @@ export interface AgentRunRequest {
   sessionId: string;
   accessMode: string;
   clientRequestId?: string;
+  mediaCommand?: MediaModality;
   messages: Array<{ role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> }>;
 }
 

@@ -286,7 +286,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const unsubscribeMetrics = events.subscribe((event) => metrics.observeLifecycleEvent(event));
   const requestStarts = new WeakMap<object, number>();
   const principals = new WeakMap<object, AuthenticatedPrincipal>();
-  const internalWorkContexts = new WeakMap<object, { runId?: string; ownerUserId?: string; sessionId?: string }>();
+  const internalWorkContexts = new WeakMap<object, { runId?: string; ownerUserId?: string; sessionId?: string; forcedToolName?: string }>();
   const consumerConnections = (): ConsumerConnectionRegistration[] => store.getSetting<ConsumerConnectionRegistration[]>("consumerConnections") ?? [];
   const activeRoutes = (): Route[] => routes.listRoutes();
   const publicRoutes = (): Route[] => activeRoutes().filter((route) => PUBLIC_ROUTE_IDS.has(route.id));
@@ -1225,7 +1225,7 @@ function validBearerToken(authorization: string | undefined, expected: string | 
   return timingSafeEqual(actualHash, expectedHash);
 }
 
-function trustedInternalWorkContext(headers: Record<string, string | string[] | undefined>): { runId?: string; ownerUserId?: string; sessionId?: string } {
+function trustedInternalWorkContext(headers: Record<string, string | string[] | undefined>): { runId?: string; ownerUserId?: string; sessionId?: string; forcedToolName?: string } {
   const value = (name: string): string | undefined => {
     const candidate = headers[name];
     return typeof candidate === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(candidate) ? candidate : undefined;
@@ -1233,7 +1233,11 @@ function trustedInternalWorkContext(headers: Record<string, string | string[] | 
   const runId = value("x-fitz-run-id");
   const ownerUserId = value("x-fitz-owner-user-id");
   const sessionId = value("x-fitz-session-id");
-  return { ...(runId ? { runId } : {}), ...(ownerUserId ? { ownerUserId } : {}), ...(sessionId ? { sessionId } : {}) };
+  const requestedTool = value("x-fitz-forced-tool");
+  const forcedToolName = requestedTool === "generate_image" || requestedTool === "generate_video" || requestedTool === "generate_audio"
+    ? requestedTool
+    : undefined;
+  return { ...(runId ? { runId } : {}), ...(ownerUserId ? { ownerUserId } : {}), ...(sessionId ? { sessionId } : {}), ...(forcedToolName ? { forcedToolName } : {}) };
 }
 
 function adminGuard(expectedToken: string | undefined, authMode: "disabled" | "required", principals: WeakMap<object, AuthenticatedPrincipal>) {

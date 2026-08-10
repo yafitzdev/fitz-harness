@@ -1,4 +1,5 @@
-import type { PastedAttachment } from "./composer.js";
+import type { MediaModality } from "@fitz/protocol";
+import type { ComposerSubmission, PastedAttachment } from "./composer.js";
 
 export type PromptMessageContent = string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
 
@@ -10,7 +11,7 @@ export interface PromptRunSettings {
 }
 
 export interface PromptSubmissionOptions {
-  draft: () => string;
+  draft: () => ComposerSubmission;
   consumeAttachments: () => PastedAttachment[];
   sessionId: () => string | undefined;
   settings: () => PromptRunSettings;
@@ -34,6 +35,7 @@ export interface PromptSubmissionOptions {
     temperature: number;
     sessionId: string;
     accessMode: string;
+    mediaCommand?: MediaModality;
     messages: Array<{ role: "user"; content: PromptMessageContent }>;
   }) => Promise<void>;
   steerRun: (content: string) => Promise<void>;
@@ -47,8 +49,10 @@ export class PromptSubmissionController {
 
   constructor(options: PromptSubmissionOptions) { this.#options = options; }
 
-  async submit(submittedContent?: string, existingUserMessage?: HTMLElement): Promise<void> {
-    const content = (submittedContent ?? this.#options.draft()).trim();
+  async submit(submitted?: string | ComposerSubmission, existingUserMessage?: HTMLElement): Promise<void> {
+    const draft = typeof submitted === "string" ? { content: submitted } : (submitted ?? this.#options.draft());
+    const content = draft.content.trim();
+    const mediaCommand = draft.mediaCommand;
     const attachments = this.#options.consumeAttachments();
     if (!content && attachments.length === 0) return;
     const settings = this.#options.settings();
@@ -70,19 +74,21 @@ export class PromptSubmissionController {
       } catch (error) { this.#options.showError(this.#options.errorMessage(error)); }
     }
     this.#options.clearLanding();
-    if (!existingUserMessage) this.#options.appendUser(content);
-    if (content && !existingUserMessage) this.#options.pushHistory(content);
-    this.#options.addTokenEstimate(content);
+    const displayContent = mediaCommand ? `/${mediaCommand}${content ? ` ${content}` : ""}` : content;
+    if (!existingUserMessage) this.#options.appendUser(displayContent);
+    if (displayContent && !existingUserMessage) this.#options.pushHistory(displayContent);
+    this.#options.addTokenEstimate(displayContent);
     this.#options.refreshContext();
     const messageContent: PromptMessageContent = imageParts.length > 0
-      ? [{ type: "text", text: content }, ...imageParts]
-      : content;
+      ? [{ type: "text", text: displayContent }, ...imageParts]
+      : displayContent;
     await this.#options.startRun({
       model: settings.routeId,
       max_tokens: settings.maxTokens,
       temperature: settings.temperature,
       sessionId,
       accessMode: settings.accessMode,
+      ...(mediaCommand ? { mediaCommand } : {}),
       messages: [{ role: "user", content: messageContent }],
     });
   }

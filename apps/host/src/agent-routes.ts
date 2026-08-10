@@ -249,6 +249,7 @@ function parseAgentRunRequest(value: unknown): AgentRunRequest {
     ...(parsed.temperature !== undefined ? { temperature: parsed.temperature } : {}),
     ...(typeof source.sessionId === "string" ? { sessionId: source.sessionId } : {}),
     accessMode,
+    ...(source.mediaCommand === "image" || source.mediaCommand === "video" || source.mediaCommand === "audio" ? { mediaCommand: source.mediaCommand } : {}),
     ...(typeof source.clientRequestId === "string" && source.clientRequestId.trim() ? { clientRequestId: validateClientRequestId(source.clientRequestId) } : {}),
   };
 }

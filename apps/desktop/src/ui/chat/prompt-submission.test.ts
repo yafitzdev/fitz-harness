@@ -6,7 +6,7 @@ function setup(overrides: Partial<PromptSubmissionOptions> = {}) {
   const row = document.createElement("div");
   document.body.append(row);
   const options: PromptSubmissionOptions = {
-    draft: () => "build it", consumeAttachments: () => [], sessionId: () => "session-1",
+    draft: () => ({ content: "build it" }), consumeAttachments: () => [], sessionId: () => "session-1",
     settings: () => ({ routeId: "smart", maxTokens: 8192, temperature: 0.4, accessMode: "full" }),
     ensureSession: vi.fn(async () => "session-1"), openNewChat: vi.fn(), clearDraft: vi.fn(), setDraft: vi.fn(), resetWarmup: vi.fn(),
     uploadAttachment: vi.fn(async () => ({ id: "artifact-1" })), clearLanding: vi.fn(), appendUser: vi.fn(), appendSteer: vi.fn(() => row),
@@ -41,8 +41,19 @@ describe("PromptSubmissionController", () => {
     expect(options.setDraft).toHaveBeenCalledWith("one more thing");
   });
 
+  it("preserves an explicit media command and forwards deterministic modality metadata", async () => {
+    const { controller, options } = setup({ draft: () => ({ content: "a cat with a hat", mediaCommand: "video" }) });
+    await controller.submit();
+    expect(options.appendUser).toHaveBeenCalledWith("/video a cat with a hat");
+    expect(options.pushHistory).toHaveBeenCalledWith("/video a cat with a hat");
+    expect(options.startRun).toHaveBeenCalledWith(expect.objectContaining({
+      mediaCommand: "video",
+      messages: [{ role: "user", content: "/video a cat with a hat" }],
+    }));
+  });
+
   it("does nothing for empty submissions without attachments", async () => {
-    const { controller, options } = setup({ draft: () => "   " });
+    const { controller, options } = setup({ draft: () => ({ content: "   " }) });
     await controller.submit();
     expect(options.startRun).not.toHaveBeenCalled();
   });

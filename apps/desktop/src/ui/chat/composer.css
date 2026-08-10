@@ -55,7 +55,11 @@
 .file-chip .file-name { max-width: 100%; }
 .attachment-remove { position: absolute; top: -7px; right: -7px; width: 22px; height: 22px; display: grid; place-items: center; padding: 0 0 2px; border: 1px solid var(--grey-500); border-radius: 50%; background: var(--grey-900); color: var(--grey-200); font-size: 17px; line-height: 1; cursor: pointer; }
 .attachment-remove:hover { background: var(--text); transform: scale(1.06); }
-#prompt { position: relative; z-index: 1; display: block; width: 100%; min-height: 54px; max-height: 180px; padding: 16px 18px 6px; resize: none; border: 0; outline: 0; background: transparent; color: var(--text); line-height: 1.5; }
+.prompt-row { position: relative; z-index: 1; display: flex; align-items: flex-start; min-width: 0; }
+.media-command-tag { flex: 0 0 auto; margin: 14px -7px 0 14px; padding: 4px 8px; border: 1px solid var(--grey-450); border-radius: 7px; background: var(--grey-350); color: var(--text); font-size: 12px; font-weight: 600; line-height: 1.15; cursor: pointer; }
+.media-command-tag:hover { background: var(--grey-400); }
+.media-command-tag[hidden] { display: none; }
+#prompt { position: relative; z-index: 1; display: block; min-width: 0; width: 100%; min-height: 54px; max-height: 180px; padding: 16px 18px 6px; resize: none; border: 0; outline: 0; background: transparent; color: var(--text); line-height: 1.5; }
 #prompt::placeholder { color: var(--grey-600); }
 #prompt:disabled { cursor: not-allowed; }
 .composer-toolbar { position: relative; z-index: 1; min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 10px 8px; }

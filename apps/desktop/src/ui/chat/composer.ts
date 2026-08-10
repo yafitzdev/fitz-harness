@@ -2,8 +2,10 @@ import { ComposerControls, type ComposerControlsElements } from "./composer-cont
 import { svgIcon as svg, textBlock } from "../primitives/dom.js";
 import { togglePopover } from "../primitives/popover.js";
 import type { DesktopBridge } from "../../preload.js";
+import type { MediaModality } from "@fitz/protocol";
 
 export type PastedAttachment = { dataUrl: string; mimeType: string; name: string; kind: "image" | "pdf" | "file" };
+export interface ComposerSubmission { content: string; mediaCommand?: MediaModality }
 
 export interface ComposerOptions {
   mount: HTMLElement;
@@ -12,7 +14,7 @@ export interface ComposerOptions {
   closeAllPopovers: () => void;
   onRouteChange: () => void;
   onCompact: () => void | Promise<void>;
-  onSubmit: (content: string) => void;
+  onSubmit: (submission: ComposerSubmission) => void;
   onInput: (text: string) => void;
   onValueChange: (text: string) => void;
   onAttach: () => void;
@@ -60,7 +62,10 @@ const COMPOSER_TEMPLATE = `
         </div>
       </div>
     </div>
-    <textarea id="prompt" rows="1" placeholder="Do anything" aria-label="Message" disabled></textarea>
+    <div class="prompt-row">
+      <button id="media-command-tag" class="media-command-tag" type="button" hidden></button>
+      <textarea id="prompt" rows="1" placeholder="Do anything" aria-label="Message" disabled></textarea>
+    </div>
     <div class="composer-toolbar">
       <div class="composer-tools">
         <button id="attach" class="icon-button" type="button" title="Attach a file" aria-label="Attach a file" disabled>
@@ -118,6 +123,7 @@ export class Composer {
   readonly controls: ComposerControls;
   private readonly options: ComposerOptions;
   private readonly prompt: HTMLTextAreaElement;
+  private readonly mediaCommandTag: HTMLButtonElement;
   private readonly form: HTMLFormElement;
   private readonly composerAttachments: HTMLElement;
   private readonly newChatContext: HTMLElement;
@@ -144,6 +150,7 @@ export class Composer {
   private promptDraft = "";
   private currentBranch = "main";
   private availableBranches: string[] = [];
+  private mediaCommand: MediaModality | undefined;
 
   constructor(options: ComposerOptions) {
     this.options = options;
@@ -173,6 +180,7 @@ export class Composer {
     this.sendButton = this.el<HTMLButtonElement>("#send");
     this.attachButton = this.el<HTMLButtonElement>("#attach");
     this.prompt = this.el<HTMLTextAreaElement>("#prompt");
+    this.mediaCommandTag = this.el<HTMLButtonElement>("#media-command-tag");
     this.controls = new ComposerControls(this.controlsElements(), {
       closeAllPopovers: options.closeAllPopovers,
       onRouteChange: options.onRouteChange,
@@ -182,17 +190,19 @@ export class Composer {
   }
 
   get value(): string { return this.prompt.value; }
+  get submission(): ComposerSubmission { return { content: this.prompt.value, ...(this.mediaCommand ? { mediaCommand: this.mediaCommand } : {}) }; }
 
   focus(): void { this.prompt.focus(); }
 
   setDraft(text: string): void {
-    this.prompt.value = text;
+    this.applyDraft(text);
     this.resize();
-    this.options.onInput(text);
+    this.options.onInput(this.value);
   }
 
   clearDraft(): void {
     this.prompt.value = "";
+    this.setMediaCommand(undefined);
     this.resize();
   }
 
@@ -239,6 +249,7 @@ export class Composer {
     this.newChatProject.textContent = projectName ?? "";
     this.newChatProjectControl.hidden = projectName === undefined;
     this.prompt.value = "";
+    this.setMediaCommand(undefined);
     this.resize();
     this.resetHistory();
     this.composerAttachments.replaceChildren();
@@ -363,10 +374,11 @@ export class Composer {
   private bind(): void {
     this.form.addEventListener("submit", (event) => {
       event.preventDefault();
-      this.options.onSubmit(this.value);
+      this.options.onSubmit(this.submission);
     });
     this.prompt.addEventListener("input", () => {
       if (this.promptHistoryIndex !== -1) { this.promptHistoryIndex = -1; this.promptDraft = ""; }
+      this.captureMediaCommand();
       this.resize();
       this.options.onInput(this.value);
     });
@@ -375,6 +387,17 @@ export class Composer {
       if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
         event.preventDefault();
         this.form.requestSubmit();
+        return;
+      }
+      if (event.key === "Backspace" && this.mediaCommand && this.prompt.selectionStart === 0 && this.prompt.selectionEnd === 0) {
+        event.preventDefault();
+        const prefix = `/${this.mediaCommand} `;
+        const restored = `${prefix}${this.prompt.value}`;
+        this.setMediaCommand(undefined);
+        this.prompt.value = restored;
+        this.prompt.selectionStart = this.prompt.selectionEnd = prefix.length;
+        this.resize();
+        this.options.onInput(this.value);
         return;
       }
       if ((event.key === "ArrowUp" || event.key === "ArrowDown") && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !event.isComposing) {
@@ -386,6 +409,11 @@ export class Composer {
       }
     });
     this.attachButton.addEventListener("click", () => this.options.onAttach());
+    this.mediaCommandTag.addEventListener("click", () => {
+      this.setMediaCommand(undefined);
+      this.options.onValueChange(this.value);
+      this.prompt.focus();
+    });
     this.newChatProjectControl.addEventListener("click", (event) => {
       event.stopPropagation();
       this.newChatProjectControl.hidden = true;
@@ -413,6 +441,28 @@ export class Composer {
   private resize(): void {
     this.prompt.style.height = "auto";
     this.prompt.style.height = `${Math.min(this.prompt.scrollHeight, 180)}px`;
+  }
+
+  private applyDraft(text: string): void {
+    this.setMediaCommand(undefined);
+    this.prompt.value = text;
+    this.captureMediaCommand();
+  }
+
+  private captureMediaCommand(): void {
+    if (this.mediaCommand) return;
+    const match = /^\/(video|audio|image)(?=$|\s)/i.exec(this.prompt.value);
+    if (!match) return;
+    this.setMediaCommand(match[1]!.toLowerCase() as MediaModality);
+    this.prompt.value = this.prompt.value.slice(match[0].length).replace(/^\s/, "");
+  }
+
+  private setMediaCommand(command: MediaModality | undefined): void {
+    this.mediaCommand = command;
+    this.mediaCommandTag.hidden = !command;
+    this.mediaCommandTag.textContent = command ?? "";
+    this.mediaCommandTag.title = command ? `Remove /${command}` : "";
+    this.mediaCommandTag.setAttribute("aria-label", command ? `Remove ${command} command` : "Media command");
   }
 
   private refreshAttachments(): void {
@@ -519,7 +569,7 @@ export class Composer {
     if (!this.promptHistory.length) return false;
     if (direction === -1) {
       if (this.promptHistoryIndex === -1) {
-        this.promptDraft = this.prompt.value;
+        this.promptDraft = this.mediaCommand ? `/${this.mediaCommand} ${this.prompt.value}` : this.prompt.value;
         this.promptHistoryIndex = this.promptHistory.length - 1;
       } else if (this.promptHistoryIndex > 0) {
         this.promptHistoryIndex--;
@@ -533,13 +583,13 @@ export class Composer {
       } else {
         // Past the newest entry: restore the draft the user was typing.
         this.promptHistoryIndex = -1;
-        this.prompt.value = this.promptDraft;
+        this.applyDraft(this.promptDraft);
         this.promptDraft = "";
         this.afterPromptHistoryChange();
         return true;
       }
     }
-    this.prompt.value = this.promptHistory[this.promptHistoryIndex] ?? "";
+    this.applyDraft(this.promptHistory[this.promptHistoryIndex] ?? "");
     this.afterPromptHistoryChange();
     return true;
   }

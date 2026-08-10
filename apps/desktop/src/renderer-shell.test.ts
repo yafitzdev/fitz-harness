@@ -365,7 +365,8 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("sessionTokenEstimate += estimateTokens");
     expect(projects).toContain('this.options.api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" })');
     expect(promptSubmission).toContain("max_tokens: settings.maxTokens");
-    expect(renderer).toContain("if (content.trim().length > 0) void steerPrompt(content)");
+    expect(renderer).toContain("if (submission.content.trim().length > 0) void steerPrompt(submission.content)");
+    expect(renderer).toContain('if (submission.mediaCommand) { showStatus("Media commands start after the current task finishes", "error"); return; }');
     expect(renderer).toContain("else void agentRuns.cancel()");
     expect(renderer).toContain("appendSteer: (content) => activityTimeline.appendSteer(content)");
     expect(agentRunController).toContain('this.#options.api(`/api/v1/agent/runs/${this.#runId}`, "DELETE")');
@@ -593,9 +594,9 @@ describe("desktop renderer shell", () => {
     expect(composer).toContain("promptDraft = \"\"");
     expect(composer).toContain('event.key === "ArrowUp" || event.key === "ArrowDown"');
     expect(composer).toContain('navigatePromptHistory(event.key === "ArrowUp" ? -1 : 1)');
-    expect(composer).toContain("this.promptDraft = this.prompt.value");
-    expect(composer).toContain("this.prompt.value = this.promptDraft");
-    expect(composer).toContain("this.prompt.value = this.promptHistory[this.promptHistoryIndex] ?? \"\"");
+    expect(composer).toContain("this.promptDraft = this.mediaCommand ? `/${this.mediaCommand} ${this.prompt.value}` : this.prompt.value");
+    expect(composer).toContain("this.applyDraft(this.promptDraft)");
+    expect(composer).toContain("this.applyDraft(this.promptHistory[this.promptHistoryIndex] ?? \"\")");
     expect(composer).toContain("rebuildHistory(texts: string[])");
     expect(conversationTranscript).toContain('entry.kind === "message" && entry.role === "user"');
     expect(composer).toContain("this.promptHistory.push(text)");

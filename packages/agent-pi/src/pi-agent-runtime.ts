@@ -18,6 +18,7 @@ type PiEvent =
 /** Pi thinking levels. Maps to the SDK's `ThinkingLevel`; kept local so the runtime boundary stays SDK-free. */
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export interface PiSession { subscribe(listener: (event: PiEvent) => void): () => void; prompt(text: string): Promise<void>; steer(text: string): Promise<void>; abort(): Promise<void>; dispose(): void }
+type PiWorkContext = AgentRuntimeRunOptions & { forcedToolName?: string };
 export interface PiToolCall { toolCallId: string; toolName: string; input: unknown }
 export interface PiToolApprovalResult { allowed: boolean; reason?: string }
 export interface ToolApprovalHandle { approvalId: string; decision: Promise<"approved" | "denied"> }
@@ -50,6 +51,8 @@ export type PiSessionReader = (sessionId: string, options?: { after?: number; li
 export type PiSessionFactory = (options: {
   cwd: string;
   tools?: readonly string[];
+  /** Strict active-tool allowlist for deterministic command runs. */
+  activeTools?: readonly string[];
   routeId: string;
   baseUrl: string;
   apiKey: string;
@@ -69,7 +72,7 @@ export type PiSessionFactory = (options: {
   /** Extra tools registered per run (e.g. `fitz_trash`). */
   customTools?: ToolDefinition[];
   /** Trusted localhost-only correlation propagated to the Fitz completion gateway. */
-  workContext?: AgentRuntimeRunOptions;
+  workContext?: PiWorkContext;
 }) => Promise<PiSession>;
 export interface PiAgentRuntimeOptions {
   cwd?: string | ((request: AgentRunRequest) => string);
@@ -152,10 +155,11 @@ export class PiAgentRuntime implements AgentRuntime {
     const cancel = () => { controller.abort(); void session?.abort(); }; if (signal) { if (signal.aborted) cancel(); else signal.addEventListener("abort", cancel, { once: true }); }
     const cwd = typeof this.#cwd === "function" ? this.#cwd(request) : this.#cwd;
     const contextWindow = typeof this.#contextWindow === "function" ? this.#contextWindow(request) : this.#contextWindow;
+    const forcedToolName = request.mediaCommand ? `generate_${request.mediaCommand}` : undefined;
     const sessionTask = (async () => {
       const created = await this.#createSession({
         cwd,
-        ...(this.#tools ? { tools: this.#tools } : {}),
+        ...(forcedToolName ? { tools: [], activeTools: [forcedToolName] } : this.#tools ? { tools: this.#tools } : {}),
         routeId: request.model,
         baseUrl: this.#baseUrl,
         apiKey: this.#apiKey,
@@ -174,7 +178,7 @@ export class PiAgentRuntime implements AgentRuntime {
           : {}),
         ...(this.#redactToolResult ? { redactResult: this.#redactToolResult } : {}),
         ...(this.#customTools ? { customTools: this.#customTools({ cwd, ...(options?.runId ? { runId: options.runId } : {}) }) } : {}),
-        ...(this.#forwardWorkContext && options ? { workContext: options } : {}),
+        ...(this.#forwardWorkContext && options ? { workContext: { ...options, ...(forcedToolName ? { forcedToolName } : {}) } } : {}),
       }); session = created; if (controller.signal.aborted) { await created.abort(); throw abortError(); }
       return created;
     })();
@@ -352,7 +356,9 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
     ...(options.sessionReader ? [SESSION_LOOKUP_TOOL] : []),
     ...(options.customTools?.map((tool) => tool.name) ?? []),
   ];
-  const enabledTools = [...new Set([...(options.tools ?? CODING_TOOLS), ...extensionTools, ...customToolNames])];
+  const enabledTools = options.activeTools
+    ? [...new Set(options.activeTools)]
+    : [...new Set([...(options.tools ?? CODING_TOOLS), ...extensionTools, ...customToolNames])];
   const result = await sdk.createAgentSession({
     cwd: options.cwd,
     tools: enabledTools,
@@ -379,11 +385,12 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
   };
 }
 
-function workContextHeaders(context: AgentRuntimeRunOptions): Record<string, string> {
+function workContextHeaders(context: PiWorkContext): Record<string, string> {
   return {
     ...(context.runId ? { "x-fitz-run-id": context.runId } : {}),
     ...(context.ownerUserId ? { "x-fitz-owner-user-id": context.ownerUserId } : {}),
     ...(context.sessionId ? { "x-fitz-session-id": context.sessionId } : {}),
+    ...(context.forcedToolName ? { "x-fitz-forced-tool": context.forcedToolName } : {}),
   };
 }
 

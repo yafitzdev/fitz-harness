@@ -146,6 +146,30 @@ describe("PiAgentRuntime", () => {
     expect(seen).toEqual([context, undefined]);
   });
 
+  it("turns a structured media command into a single active tool and trusted forced choice", async () => {
+    const seen: unknown[] = [];
+    const runtime = new PiAgentRuntime({
+      forwardWorkContext: true,
+      customTools: () => [],
+      createSession: async (options) => {
+        seen.push({ tools: options.tools, activeTools: options.activeTools, workContext: options.workContext });
+        let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+        return {
+          subscribe: (next) => { listener = next; return () => undefined; },
+          prompt: async () => { listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "ok" } }); },
+          abort: async () => undefined,
+          dispose: () => undefined,
+        };
+      },
+    });
+    for await (const _ of runtime.run(
+      { model: "smart", mediaCommand: "image", messages: [{ role: "user", content: "/image a tree on fire" }] },
+      undefined,
+      { runId: "run-media" },
+    )) { /* consume */ }
+    expect(seen).toEqual([{ tools: [], activeTools: ["generate_image"], workContext: { runId: "run-media", forcedToolName: "generate_image" } }]);
+  });
+
   it("forwards steering messages to the live session and emits user.steer at delivery", async () => {
     let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
     let releasePrompt!: () => void;

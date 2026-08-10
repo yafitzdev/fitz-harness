@@ -19,6 +19,7 @@ interface InternalWorkContext {
   runId?: string;
   ownerUserId?: string;
   sessionId?: string;
+  forcedToolName?: string;
 }
 
 export interface OpenAIRouteOptions {
@@ -68,6 +69,8 @@ export function registerOpenAIRoutes(options: OpenAIRouteOptions): void {
       if (!resolved.recipe.capabilities.chatCompletions) throw new TypeError(`Route ${model} does not support chat completions`);
       if (body.stream !== false && !resolved.recipe.capabilities.streaming) throw new TypeError(`Route ${model} does not support streaming`);
       if (body.tools?.length && !resolved.recipe.capabilities.toolCalls) throw new TypeError(`Route ${model} does not support tool calls`);
+      const forcedToolName = internalWorkContexts.get(request)?.forcedToolName;
+      if (forcedToolName && !body.tools?.some((tool) => tool.function.name === forcedToolName)) throw new TypeError(`Forced tool ${forcedToolName} is unavailable`);
     } catch (error) {
       const statusCode = error instanceof RouteNotFoundError ? 404 : error instanceof SecurityPolicyError ? 429 : 400;
       return reply.code(statusCode).send(openAIError(error, "invalid_request_error"));
@@ -84,7 +87,9 @@ export function registerOpenAIRoutes(options: OpenAIRouteOptions): void {
         ...(body.top_p !== undefined ? { topP: body.top_p } : {}),
         ...(body.stop !== undefined ? { stop: body.stop } : {}),
         ...(body.tools !== undefined ? { tools: body.tools } : {}),
-        ...(body.tool_choice !== undefined ? { toolChoice: body.tool_choice } : {}),
+        ...(internalContext?.forcedToolName
+          ? { toolChoice: { type: "function" as const, function: { name: internalContext.forcedToolName } } }
+          : body.tool_choice !== undefined ? { toolChoice: body.tool_choice } : {}),
         ...(body.parallel_tool_calls !== undefined ? { parallelToolCalls: body.parallel_tool_calls } : {}),
         ...(principal ? { userId: principal.user.id } : internalContext?.ownerUserId ? { userId: internalContext.ownerUserId } : body.user !== undefined ? { userId: body.user } : {}),
       }, undefined, { ...(principal ? { ownerUserId: principal.user.id } : {}), ...internalContext, label: `${model} completion` });

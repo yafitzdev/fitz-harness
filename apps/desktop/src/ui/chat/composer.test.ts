@@ -77,7 +77,7 @@ describe("Composer", () => {
     const { composer, calls } = setup();
     promptOf(composer).value = "  do the thing  ";
     composer.root.querySelector<HTMLFormElement>("#composer")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    expect(calls.onSubmit).toHaveBeenCalledWith("  do the thing  ");
+    expect(calls.onSubmit).toHaveBeenCalledWith({ content: "  do the thing  " });
   });
 
   it("submits with the Enter key", () => {
@@ -85,7 +85,45 @@ describe("Composer", () => {
     const prompt = promptOf(composer);
     prompt.value = "hello";
     prompt.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    expect(calls.onSubmit).toHaveBeenCalledWith("hello");
+    expect(calls.onSubmit).toHaveBeenCalledWith({ content: "hello" });
+  });
+
+  it("promotes explicit media commands into a visual tag and structured submission", () => {
+    const { composer, calls } = setup();
+    const prompt = promptOf(composer);
+    type(prompt, "/image create a watercolor fox");
+
+    const tag = composer.root.querySelector<HTMLButtonElement>("#media-command-tag")!;
+    expect(tag.hidden).toBe(false);
+    expect(tag.textContent).toBe("image");
+    expect(prompt.value).toBe("create a watercolor fox");
+    expect(composer.submission).toEqual({ content: "create a watercolor fox", mediaCommand: "image" });
+
+    composer.root.querySelector<HTMLFormElement>("#composer")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    expect(calls.onSubmit).toHaveBeenCalledWith({ content: "create a watercolor fox", mediaCommand: "image" });
+  });
+
+  it("restores media commands from history and removes the tag without deleting the prompt", () => {
+    const { composer } = setup();
+    composer.rebuildHistory(["/video a cat in a forest"]);
+    const prompt = promptOf(composer);
+    prompt.selectionStart = 0;
+    prompt.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+    expect(composer.submission).toEqual({ content: "a cat in a forest", mediaCommand: "video" });
+
+    click(composer.root.querySelector("#media-command-tag")!);
+    expect(composer.submission).toEqual({ content: "a cat in a forest" });
+    expect(prompt.value).toBe("a cat in a forest");
+  });
+
+  it("puts a tagged command back into editable text when backspacing against it", () => {
+    const { composer } = setup();
+    const prompt = promptOf(composer);
+    type(prompt, "/audio a quiet forest");
+    prompt.selectionStart = prompt.selectionEnd = 0;
+    prompt.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }));
+    expect(composer.submission).toEqual({ content: "/audio a quiet forest" });
+    expect(prompt.selectionStart).toBe("/audio ".length);
   });
 
   it("reports typed input and resizes the prompt", () => {

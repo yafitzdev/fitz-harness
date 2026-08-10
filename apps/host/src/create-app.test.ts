@@ -92,6 +92,51 @@ describe("Fitz host", () => {
     } finally { await runtime.app.close(); }
   });
 
+  it("honors trusted media-command tool choice without exposing the override publicly", async () => {
+    const adapter = new FakeEngineAdapter();
+    const runtime = createHost({ fakeAdapter: adapter, internalAgentToken: "agent-secret" });
+    const payload = {
+      model: "default",
+      stream: false,
+      messages: [{ role: "user", content: "/image a tree on fire" }],
+      tools: [{ type: "function", function: { name: "generate_image", parameters: { type: "object", properties: {} } } }],
+      tool_choice: "auto",
+    };
+    try {
+      const recipe = await runtime.app.inject({
+        method: "PUT", url: "/api/v1/management/recipes/fake-best", payload: {
+          playbookId: "fake-development",
+          displayName: "Fake Best Model",
+          adapter: "fake",
+          modelId: "fake-best-v1",
+          contextTokens: 100_000,
+          capabilities: { chatCompletions: true, streaming: true, toolCalls: true, responseFormat: false, minP: false, maxConcurrentGenerations: 1 },
+          lifecycle: { loadPolicy: "onDemand", evictionPolicy: "idle-ttl", idleTtlSeconds: 600, minimumResidencySeconds: 1 },
+          configuration: {},
+        },
+      });
+      expect(recipe.statusCode, recipe.body).toBe(200);
+
+      const internal = await runtime.app.inject({
+        method: "POST", url: "/v1/chat/completions",
+        headers: { authorization: "Bearer agent-secret", "x-fitz-forced-tool": "generate_image" }, payload,
+      });
+      expect(internal.statusCode, internal.body).toBe(200);
+      expect(adapter.requests.at(-1)?.toolChoice).toEqual({ type: "function", function: { name: "generate_image" } });
+
+      const publicCall = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", headers: { "x-fitz-forced-tool": "generate_image" }, payload });
+      expect(publicCall.statusCode, publicCall.body).toBe(200);
+      expect(adapter.requests.at(-1)?.toolChoice).toBe("auto");
+
+      const unsupportedInternalOverride = await runtime.app.inject({
+        method: "POST", url: "/v1/chat/completions",
+        headers: { authorization: "Bearer agent-secret", "x-fitz-forced-tool": "bash" }, payload,
+      });
+      expect(unsupportedInternalOverride.statusCode, unsupportedInternalOverride.body).toBe(200);
+      expect(adapter.requests.at(-1)?.toolChoice).toBe("auto");
+    } finally { await runtime.app.close(); }
+  });
+
   it("discovers an external API and routes sessions through the global route model", async () => {
     const upstream = createServer((request, response) => {
       if (request.url === "/v1/models") { response.writeHead(200, { "content-type": "application/json" }); response.end('{"data":[{"id":"upstream-model"},{"id":"explicit-chat-model","endpoints":["chat"]},{"id":"embed-v4.0"},{"id":"rerank-v3.5"},{"id":"cohere-transcribe-03-2026"},{"id":"provider-embedding","endpoints":["embed"]}]}'); return; }
