@@ -33,14 +33,22 @@ class _PacedCallback:
             effective_duty = min(effective_duty, 0.15)
         elif temperature is not None and temperature >= 72:
             effective_duty = min(effective_duty, 0.30)
-        rest_seconds = min(60.0, work_seconds * ((1.0 / effective_duty) - 1.0))
+        # Honor the duty target even for heavy steps. The old 60 s ceiling let
+        # long diffusion steps (e.g. a 10 s H3 clip) enqueue their next burst
+        # before the GPU had shed its heat, so the temperature ratcheted up to
+        # the emergency limit. 300 s bounds a single rest without starving it.
+        rest_seconds = min(300.0, work_seconds * ((1.0 / effective_duty) - 1.0))
         if rest_seconds >= 0.01:
             time.sleep(rest_seconds)
         # Safe mode cools before queuing the next diffusion step. This is
         # unprivileged telemetry only; no clocks or board power state change.
-        if temperature is not None and temperature >= 75:
-            deadline = time.monotonic() + 120.0
-            while temperature > 70 and time.monotonic() < deadline:
+        # The post-step reading is the peak, so re-measure after the duty rest
+        # and only proceed once the GPU is back below the resume threshold; a
+        # hot start is what lets heavy jobs ratchet toward the hard stop.
+        temperature = _gpu_temperature_c()
+        if temperature is not None and temperature >= 68:
+            deadline = time.monotonic() + 600.0
+            while temperature > 65 and time.monotonic() < deadline:
                 time.sleep(2.0)
                 temperature = _gpu_temperature_c()
                 if temperature is None:

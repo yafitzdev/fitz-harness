@@ -9,6 +9,7 @@
 // an error status instead of outputs.
 
 import { createServer } from "node:http";
+import { appendFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
 const valueAfter = (name) => {
@@ -19,6 +20,8 @@ const host = valueAfter("--listen") ?? "127.0.0.1";
 const port = Number(valueAfter("--port"));
 const progressPerPoll = Number(valueAfter("--progress-per-poll") ?? 0.25);
 const failOn = valueAfter("--fail-on");
+// Optional: when set, every submitted prompt graph is appended as one JSON line.
+const graphFile = valueAfter("--graph-file");
 
 const VIDEO_BYTES = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f, 0x66, 0x69, 0x74, 0x7a]);
 const IMAGE_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52]);
@@ -43,6 +46,7 @@ const server = createServer(async (request, response) => {
       const promptId = randomUUID();
       const modality = modalityOf(body.prompt);
       running.set(promptId, { progress: 0, prompt: promptOf(body.prompt), modality });
+      if (graphFile) appendFileSync(graphFile, JSON.stringify(body.prompt) + "\n", "utf8");
       json(response, { prompt_id: promptId, number: running.size, node_errors: {} });
       return;
     }

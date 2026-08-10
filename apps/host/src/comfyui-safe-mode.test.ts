@@ -22,7 +22,11 @@ describe("ComfyUI Safe mode extension", () => {
     expect(source).toContain('"default": 0.50');
     expect(source).toContain("temperature >= 75");
     expect(source).toContain("temperature >= 72");
-    expect(source).toContain("temperature > 70");
+    // The duty rest must be honored for heavy steps and the cooldown must bring
+    // the GPU back below its resume threshold before the next step starts hot.
+    expect(source).toContain("min(300.0");
+    expect(source).toContain("temperature > 65");
+    expect(source).toContain("deadline = time.monotonic() + 600.0");
     expect(readFileSync(second, "utf8")).toBe(source);
   });
 });
