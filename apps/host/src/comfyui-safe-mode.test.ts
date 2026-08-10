@@ -17,6 +17,9 @@ describe("ComfyUI Safe mode extension", () => {
     expect(second).toBe(first);
     expect(existsSync(join(root, "custom_nodes", "fitz_safe_sampler", "__init__.py"))).toBe(true);
     expect(source).toContain("FitzSafeSamplerCustomAdvanced");
+    expect(source).toContain("torch.cuda.synchronize()");
+    expect(source).toContain("--query-gpu=temperature.gpu");
+    expect(source).toContain('"default": 0.35');
     expect(readFileSync(second, "utf8")).toBe(source);
   });
 });

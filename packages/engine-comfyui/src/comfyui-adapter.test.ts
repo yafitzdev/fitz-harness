@@ -150,6 +150,15 @@ describe("ComfyUI performance profiles", () => {
     expect(workflow["1"].class_type).toBe("SamplerCustomAdvanced");
   });
 
+  it("uses a conservative duty target when Safe mode has no override", () => {
+    expect(applyComfyUIPerformanceMode({
+      "1": { class_type: "KSampler", inputs: { steps: 20 } },
+    }, { performanceMode: "safe" })["1"]).toEqual({
+      class_type: "FitzSafeKSampler",
+      inputs: { steps: 20, safe_duty_cycle: 0.35 },
+    });
+  });
+
   it("refuses to pretend an unsupported workflow is paced", () => {
     expect(() => applyComfyUIPerformanceMode(VIDEO_WORKFLOW, { performanceMode: "safe" }))
       .toThrow("requires a KSampler");

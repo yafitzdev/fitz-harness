@@ -1,7 +1,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-const EXTENSION_SOURCE = String.raw`import time
+const EXTENSION_SOURCE = String.raw`import subprocess
+import time
 import torch
 import comfy.model_management
 import comfy.nested_tensor
@@ -14,17 +15,49 @@ import latent_preview
 class _PacedCallback:
     def __init__(self, callback, duty_cycle):
         self.callback = callback
-        self.duty_cycle = max(0.25, min(0.95, float(duty_cycle)))
+        self.duty_cycle = max(0.10, min(0.95, float(duty_cycle)))
         self.resumed_at = time.monotonic()
 
     def __call__(self, *args, **kwargs):
         self.callback(*args, **kwargs)
+        # CUDA work is asynchronous. Without this synchronization the old
+        # implementation measured only CPU enqueue time, slept too briefly,
+        # and could leave the GPU at a continuous 100% workload.
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         now = time.monotonic()
         work_seconds = max(0.0, now - self.resumed_at)
-        rest_seconds = min(5.0, work_seconds * ((1.0 / self.duty_cycle) - 1.0))
+        temperature = _gpu_temperature_c()
+        effective_duty = self.duty_cycle
+        if temperature is not None and temperature >= 70:
+            effective_duty = min(effective_duty, 0.10)
+        elif temperature is not None and temperature >= 65:
+            effective_duty = min(effective_duty, 0.20)
+        rest_seconds = min(60.0, work_seconds * ((1.0 / effective_duty) - 1.0))
         if rest_seconds >= 0.01:
             time.sleep(rest_seconds)
+        # Safe mode cools before queuing the next diffusion step. This is
+        # unprivileged telemetry only; no clocks or board power state change.
+        if temperature is not None and temperature >= 70:
+            deadline = time.monotonic() + 120.0
+            while temperature > 65 and time.monotonic() < deadline:
+                time.sleep(2.0)
+                temperature = _gpu_temperature_c()
+                if temperature is None:
+                    break
         self.resumed_at = time.monotonic()
+
+
+def _gpu_temperature_c():
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=temperature.gpu",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=2.0, check=True)
+        return int(result.stdout.strip().splitlines()[0])
+    except (OSError, IndexError, ValueError,
+            subprocess.SubprocessError):
+        return None
 
 
 def _common_ksampler(model, seed, steps, cfg, sampler_name, scheduler, positive,
@@ -70,7 +103,7 @@ class FitzSafeKSampler:
             "positive": ("CONDITIONING",), "negative": ("CONDITIONING",),
             "latent_image": ("LATENT",),
             "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-            "safe_duty_cycle": ("FLOAT", {"default": 0.70, "min": 0.25, "max": 0.95, "step": 0.05}),
+            "safe_duty_cycle": ("FLOAT", {"default": 0.35, "min": 0.10, "max": 0.95, "step": 0.05}),
         }}
     RETURN_TYPES = ("LATENT",)
     FUNCTION = "sample"
@@ -98,7 +131,7 @@ class FitzSafeKSamplerAdvanced:
             "start_at_step": ("INT", {"default": 0, "min": 0, "max": 10000}),
             "end_at_step": ("INT", {"default": 10000, "min": 0, "max": 10000}),
             "return_with_leftover_noise": (["disable", "enable"],),
-            "safe_duty_cycle": ("FLOAT", {"default": 0.70, "min": 0.25, "max": 0.95, "step": 0.05}),
+            "safe_duty_cycle": ("FLOAT", {"default": 0.35, "min": 0.10, "max": 0.95, "step": 0.05}),
         }}
     RETURN_TYPES = ("LATENT",)
     FUNCTION = "sample"
@@ -121,7 +154,7 @@ class FitzSafeSamplerCustomAdvanced:
         return {"required": {
             "noise": ("NOISE",), "guider": ("GUIDER",), "sampler": ("SAMPLER",),
             "sigmas": ("SIGMAS",), "latent_image": ("LATENT",),
-            "safe_duty_cycle": ("FLOAT", {"default": 0.70, "min": 0.25, "max": 0.95, "step": 0.05}),
+            "safe_duty_cycle": ("FLOAT", {"default": 0.35, "min": 0.10, "max": 0.95, "step": 0.05}),
         }}
     RETURN_TYPES = ("LATENT", "LATENT")
     RETURN_NAMES = ("output", "denoised_output")
