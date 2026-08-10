@@ -391,13 +391,8 @@ export class Composer {
       }
       if (event.key === "Backspace" && this.mediaCommand && this.prompt.selectionStart === 0 && this.prompt.selectionEnd === 0) {
         event.preventDefault();
-        const prefix = `/${this.mediaCommand} `;
-        const restored = `${prefix}${this.prompt.value}`;
         this.setMediaCommand(undefined);
-        this.prompt.value = restored;
-        this.prompt.selectionStart = this.prompt.selectionEnd = prefix.length;
-        this.resize();
-        this.options.onInput(this.value);
+        this.options.onValueChange(this.value);
         return;
       }
       if ((event.key === "ArrowUp" || event.key === "ArrowDown") && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !event.isComposing) {

@@ -116,14 +116,15 @@ describe("Composer", () => {
     expect(prompt.value).toBe("a cat in a forest");
   });
 
-  it("puts a tagged command back into editable text when backspacing against it", () => {
-    const { composer } = setup();
+  it("deletes a tagged command when backspacing against it", () => {
+    const { composer, calls } = setup();
     const prompt = promptOf(composer);
     type(prompt, "/audio a quiet forest");
     prompt.selectionStart = prompt.selectionEnd = 0;
     prompt.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }));
-    expect(composer.submission).toEqual({ content: "/audio a quiet forest" });
-    expect(prompt.selectionStart).toBe("/audio ".length);
+    expect(composer.submission).toEqual({ content: "a quiet forest" });
+    expect(composer.root.querySelector<HTMLButtonElement>("#media-command-tag")!.hidden).toBe(true);
+    expect(calls.onValueChange).toHaveBeenCalledWith("a quiet forest");
   });
 
   it("reports typed input and resizes the prompt", () => {
