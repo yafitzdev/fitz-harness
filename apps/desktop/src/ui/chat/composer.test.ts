@@ -217,6 +217,25 @@ describe("Composer", () => {
     expect(send.classList.contains("running")).toBe(true);
   });
 
+  it("turns the send button into a stop button while a media job generates", () => {
+    const { composer } = setup();
+    const prompt = promptOf(composer);
+    const send = composer.root.querySelector<HTMLButtonElement>("#send")!;
+
+    composer.setState({ ready: true, running: false, generating: true, hasSession: true });
+    expect(send.disabled).toBe(false);
+    expect(send.title).toBe("Stop task");
+    expect(send.classList.contains("running")).toBe(true);
+
+    // Typing while a media job generates keeps the normal send button: steering
+    // only applies to agent runs, so a message is a plain new submission.
+    prompt.value = "plan the next step";
+    composer.setState({ ready: true, running: false, generating: true, hasSession: true });
+    expect(send.disabled).toBe(false);
+    expect(send.title).toBe("Send message");
+    expect(send.classList.contains("running")).toBe(false);
+  });
+
   it("sets the run status label", () => {
     const { composer } = setup();
     composer.setStatus("Working", "running");

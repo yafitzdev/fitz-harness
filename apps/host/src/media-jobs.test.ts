@@ -222,7 +222,8 @@ describe("Fitz host media jobs", () => {
     const runtime = createHost({ adapters: [new FakeEngineAdapter(), mediaFake] });
     try {
       const recipe = mediaRecipe("h3-video", ["video"]);
-      recipe.capabilities.modalities!.limits = { maxDurationSeconds: 15, maxResolution: "1344x768", maxRefs: 1 };
+      recipe.capabilities.modalities!.limits = { maxDurationSeconds: 6, maxFps: 30, maxResolution: "1280x720", maxRefs: 1 };
+      recipe.configuration = { sizeGrid: 16 };
       const registered = await runtime.app.inject({ method: "PUT", url: "/api/v1/management/recipes/h3-video", payload: recipe });
       expect(registered.statusCode, registered.body).toBe(200);
       await assignRoute(runtime, "video", "h3-video");
@@ -230,12 +231,12 @@ describe("Fitz host media jobs", () => {
       const submitted = await runtime.app.inject({
         method: "POST",
         url: "/api/v1/media/jobs",
-        payload: { routeId: "video", modality: "video", params: { prompt: "robot", size: "1920x1080", durationSeconds: 30 } },
+        payload: { routeId: "video", modality: "video", params: { prompt: "robot", size: "1920x1080", durationSeconds: 30, fps: 60 } },
       });
       expect(submitted.statusCode, submitted.body).toBe(202);
-      expect(submitted.json().data.params).toEqual(expect.objectContaining({ size: "1344x768", durationSeconds: 15 }));
+      expect(submitted.json().data.params).toEqual(expect.objectContaining({ size: "1280x720", durationSeconds: 6, fps: 30 }));
       await waitFor(() => mediaFake.submitted.length === 1);
-      expect(mediaFake.submitted[0]?.params).toEqual(expect.objectContaining({ size: "1344x768", durationSeconds: 15 }));
+      expect(mediaFake.submitted[0]?.params).toEqual(expect.objectContaining({ size: "1280x720", durationSeconds: 6, fps: 30 }));
     } finally {
       await runtime.app.close();
     }
@@ -257,7 +258,7 @@ describe("Fitz host media jobs", () => {
 
       expect(retry.statusCode, retry.body).toBe(202);
       expect(retry.json().data.id).not.toBe(failed.id);
-      expect(retry.json().data.params).toEqual(expect.objectContaining({ prompt: "first attempt", size: "1344x768" }));
+      expect(retry.json().data.params).toEqual(expect.objectContaining({ prompt: "first attempt", size: "1344x756" }));
     } finally {
       await runtime.app.close();
     }

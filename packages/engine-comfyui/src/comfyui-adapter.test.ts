@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { Recipe } from "@fitz/protocol";
+import type { MediaGenerationRequest, Recipe } from "@fitz/protocol";
 import {
   ComfyUIEngineAdapter,
-  applyComfyUIPerformanceMode,
   readComfyUIConfiguration,
   substituteWorkflow,
   validateComfyUIConfiguration,
 } from "./comfyui-adapter.js";
+import { ComfyUIProgressListener, type ComfyUIWebSocket } from "./comfyui-client.js";
 
 const VIDEO_WORKFLOW = {
   "1": { class_type: "HailuoVideoGenerate", inputs: { prompt: "{{prompt}}", seed: "{{seed}}", fps: "{{fps}}", width: "{{width}}", height: "{{height}}" } },
@@ -147,41 +147,6 @@ describe("substituteWorkflow", () => {
   });
 });
 
-describe("ComfyUI performance profiles", () => {
-  const workflow = {
-    "1": { class_type: "SamplerCustomAdvanced", inputs: { noise: ["2", 0] } },
-    "2": { class_type: "KSampler", inputs: { steps: 20 } },
-    "3": { class_type: "SaveImage", inputs: { images: ["2", 0] } },
-  };
-
-  it("leaves normal workflows semantically unchanged", () => {
-    expect(applyComfyUIPerformanceMode(workflow, { performanceMode: "normal" })).toEqual(workflow);
-  });
-
-  it("replaces supported samplers with paced Fitz nodes in safe mode", () => {
-    expect(applyComfyUIPerformanceMode(workflow, { performanceMode: "safe", safeDutyCycle: 0.65 })).toEqual({
-      "1": { class_type: "FitzSafeSamplerCustomAdvanced", inputs: { noise: ["2", 0], safe_duty_cycle: 0.65 } },
-      "2": { class_type: "FitzSafeKSampler", inputs: { steps: 20, safe_duty_cycle: 0.65 } },
-      "3": { class_type: "SaveImage", inputs: { images: ["2", 0] } },
-    });
-    expect(workflow["1"].class_type).toBe("SamplerCustomAdvanced");
-  });
-
-  it("uses a balanced duty target when Safe mode has no override", () => {
-    expect(applyComfyUIPerformanceMode({
-      "1": { class_type: "KSampler", inputs: { steps: 20 } },
-    }, { performanceMode: "safe" })["1"]).toEqual({
-      class_type: "FitzSafeKSampler",
-      inputs: { steps: 20, safe_duty_cycle: 0.50 },
-    });
-  });
-
-  it("refuses to pretend an unsupported workflow is paced", () => {
-    expect(() => applyComfyUIPerformanceMode(VIDEO_WORKFLOW, { performanceMode: "safe" }))
-      .toThrow("requires a KSampler");
-  });
-});
-
 describe("ComfyUIEngineAdapter configuration surface", () => {
   it("reads the configuration with typed validation", () => {
     const config = readComfyUIConfiguration(recipeFor({
@@ -242,4 +207,215 @@ function recipeFor(configuration: Record<string, unknown>): Recipe {
     lifecycle: { loadPolicy: "onDemand", evictionPolicy: "idle-ttl", idleTtlSeconds: 60, minimumResidencySeconds: 0 },
     configuration,
   };
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket progress (modern ComfyUI builds stream progress over /ws; there is
+// no HTTP /progress route, see comfyui-client.ts)
+// ---------------------------------------------------------------------------
+
+class FakeWebSocket implements ComfyUIWebSocket {
+  readyState = 0;
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: unknown }) => void) | null = null;
+  onerror: ((event: unknown) => void) | null = null;
+  onclose: (() => void) | null = null;
+  url = "";
+  closed = false;
+
+  emit(payload: unknown): void {
+    this.onmessage?.({ data: JSON.stringify(payload) });
+  }
+
+  emitRaw(data: unknown): void {
+    this.onmessage?.({ data });
+  }
+
+  close(): void {
+    this.closed = true;
+  }
+}
+
+describe("ComfyUIProgressListener", () => {
+  it("tracks the latest progress fraction per prompt from /ws messages", () => {
+    const sockets: FakeWebSocket[] = [];
+    const listener = new ComfyUIProgressListener({
+      baseUrl: "http://127.0.0.1:8188",
+      clientId: "client-1",
+      createSocket: (url) => {
+        const socket = new FakeWebSocket();
+        socket.url = url;
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    const socket = sockets[0]!;
+    expect(socket.url).toBe("ws://127.0.0.1:8188/ws?clientId=client-1");
+
+    // Non-progress envelopes, binary preview frames, malformed JSON, and
+    // progress without a prompt id are all ignored.
+    expect(listener.progress("p1")).toBeUndefined();
+    socket.emit({ type: "status", data: { status: { exec_info: {} } } });
+    socket.emitRaw(new Uint8Array([0x00, 0x01, 0x02]));
+    socket.emitRaw("not json");
+    socket.emitRaw('{"type":"progress","data":{"value":1,"max":10}}');
+    expect(listener.progress("p1")).toBeUndefined();
+
+    socket.emit({ type: "progress", data: { value: 5, max: 20, prompt_id: "p1", node: "9" } });
+    expect(listener.progress("p1")).toBeCloseTo(0.25);
+    socket.emit({ type: "progress", data: { value: 25, max: 20, prompt_id: "p1", node: "9" } });
+    expect(listener.progress("p1")).toBe(1); // clamped to 1
+    socket.emit({ type: "progress", data: { value: 1, max: 10, prompt_id: "p2", node: "5" } });
+    expect(listener.progress("p2")).toBeCloseTo(0.1);
+    expect(listener.progress("p1")).toBe(1); // per-prompt isolation
+
+    listener.close();
+    expect(socket.closed).toBe(true);
+    listener.close(); // idempotent
+    expect(socket.closed).toBe(true);
+  });
+});
+
+describe("ComfyUIEngineAdapter progress streaming", () => {
+  it("reports WebSocket-streamed progress for a running job", async () => {
+    const sockets: FakeWebSocket[] = [];
+    let submitted: Record<string, unknown> | undefined;
+    const adapter = new ComfyUIEngineAdapter({
+      validatePaths: false,
+      createWebSocket: (url) => {
+        const socket = new FakeWebSocket();
+        socket.url = url;
+        sockets.push(socket);
+        return socket;
+      },
+      fetch: stubFetch({ captureSubmit: (body) => { submitted = body; } }),
+    });
+    const recipe = recipeFor({ baseUrl: "http://127.0.0.1:8188", comfyuiWorkflow: VIDEO_WORKFLOW });
+    const spec = await adapter.buildLaunchSpec(recipe, { host: "127.0.0.1", port: 0 });
+    const instance = await adapter.start(recipe, spec, new AbortController().signal);
+
+    const job = await adapter.submit(instance, mediaRequest("video", { prompt: "a red cube" }), new AbortController().signal);
+    expect(job.id).toBe("job-1");
+    expect(sockets).toHaveLength(1);
+    // The WS connection uses the same clientId that POST /prompt was tagged with.
+    const clientId = new URL(sockets[0]!.url).searchParams.get("clientId");
+    expect(clientId).toBeTruthy();
+    expect(submitted?.client_id).toBe(clientId);
+
+    sockets[0]!.emit({ type: "progress", data: { value: 5, max: 20, prompt_id: job.id, node: "9" } });
+    const poll = await adapter.poll(instance, job, new AbortController().signal);
+    expect(poll).toEqual({ status: "progressing", progress: 0.25 });
+  });
+
+  it("falls back to the HTTP /progress endpoint when no WS progress has arrived", async () => {
+    const adapter = new ComfyUIEngineAdapter({
+      validatePaths: false,
+      createWebSocket: () => new FakeWebSocket(), // never emits
+      fetch: stubFetch({ progress: { running: { "job-1": { progress: 37 } }, completed: {}, queue_remaining: 0 } }),
+    });
+    const recipe = recipeFor({ baseUrl: "http://127.0.0.1:8188", comfyuiWorkflow: VIDEO_WORKFLOW });
+    const spec = await adapter.buildLaunchSpec(recipe, { host: "127.0.0.1", port: 0 });
+    const instance = await adapter.start(recipe, spec, new AbortController().signal);
+    const job = await adapter.submit(instance, mediaRequest("video", { prompt: "a red cube" }), new AbortController().signal);
+
+    const poll = await adapter.poll(instance, job, new AbortController().signal);
+    expect(poll).toEqual({ status: "progressing", progress: 0.37 });
+  });
+
+  it("closes the progress socket when a job completes or fails", async () => {
+    const sockets: FakeWebSocket[] = [];
+    const history: Record<string, unknown> = {};
+    const adapter = new ComfyUIEngineAdapter({
+      validatePaths: false,
+      createWebSocket: (url) => {
+        const socket = new FakeWebSocket();
+        socket.url = url;
+        sockets.push(socket);
+        return socket;
+      },
+      fetch: stubFetch({ history, viewBytes: new Uint8Array([0x1a, 0x45, 0xdf, 0xa3]) }),
+    });
+    const recipe = recipeFor({ baseUrl: "http://127.0.0.1:8188", comfyuiWorkflow: VIDEO_WORKFLOW });
+    const spec = await adapter.buildLaunchSpec(recipe, { host: "127.0.0.1", port: 0 });
+    const instance = await adapter.start(recipe, spec, new AbortController().signal);
+
+    const job = await adapter.submit(instance, mediaRequest("video", { prompt: "a red cube" }), new AbortController().signal);
+    history["job-1"] = {
+      outputs: { "9": { videos: [{ filename: "o.mp4", subfolder: "video", type: "output", format: "video/h264-mp4" }] } },
+      status: { status_str: "success", completed: true },
+    };
+    const completed = await adapter.poll(instance, job, new AbortController().signal);
+    expect(completed.status).toBe("completed");
+    expect(sockets[0]!.closed).toBe(true);
+
+    const job2 = await adapter.submit(instance, mediaRequest("video", { prompt: "boom" }), new AbortController().signal);
+    history["job-1"] = { outputs: {}, status: { status_str: "error" } };
+    const failed = await adapter.poll(instance, job2, new AbortController().signal);
+    expect(failed.status).toBe("failed");
+    expect(sockets[1]!.closed).toBe(true);
+  });
+
+  it("closes the progress socket on cancel", async () => {
+    const sockets: FakeWebSocket[] = [];
+    const adapter = new ComfyUIEngineAdapter({
+      validatePaths: false,
+      createWebSocket: (url) => {
+        const socket = new FakeWebSocket();
+        socket.url = url;
+        sockets.push(socket);
+        return socket;
+      },
+      fetch: stubFetch({}),
+    });
+    const recipe = recipeFor({ baseUrl: "http://127.0.0.1:8188", comfyuiWorkflow: VIDEO_WORKFLOW });
+    const spec = await adapter.buildLaunchSpec(recipe, { host: "127.0.0.1", port: 0 });
+    const instance = await adapter.start(recipe, spec, new AbortController().signal);
+    const job = await adapter.submit(instance, mediaRequest("video", { prompt: "a red cube" }), new AbortController().signal);
+
+    await adapter.cancel(instance, job);
+    expect(sockets[0]!.closed).toBe(true);
+  });
+});
+
+function mediaRequest(modality: "image" | "video" | "audio", params: Record<string, unknown>): MediaGenerationRequest {
+  return { id: "request-1", routeId: modality, modality, params: params as MediaGenerationRequest["params"] };
+}
+
+interface StubFetchOptions {
+  promptId?: string;
+  history?: Record<string, unknown>;
+  progress?: Record<string, unknown>;
+  viewBytes?: Uint8Array;
+  captureSubmit?: (body: Record<string, unknown>) => void;
+}
+
+function stubFetch(options: StubFetchOptions): typeof fetch {
+  return async (input, init) => {
+    const raw = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+    const url = new URL(raw);
+    if (url.pathname === "/prompt") {
+      if (typeof init?.body === "string") {
+        try {
+          options.captureSubmit?.(JSON.parse(init.body) as Record<string, unknown>);
+        } catch {
+          // ignore malformed capture
+        }
+      }
+      return jsonResponse({ prompt_id: options.promptId ?? "job-1" });
+    }
+    if (url.pathname.startsWith("/history/")) {
+      return jsonResponse(options.history ?? {});
+    }
+    if (url.pathname === "/progress") {
+      return jsonResponse(options.progress ?? { running: {}, completed: {}, queue_remaining: 0 });
+    }
+    if (url.pathname === "/view") {
+      return new Response(options.viewBytes ?? new Uint8Array([0x1a, 0x45, 0xdf, 0xa3]), { status: 200 });
+    }
+    return jsonResponse({ error: "not found" }, 404);
+  };
+}
+
+function jsonResponse(payload: unknown, status = 200): Response {
+  return new Response(JSON.stringify(payload), { status, headers: { "content-type": "application/json" } });
 }

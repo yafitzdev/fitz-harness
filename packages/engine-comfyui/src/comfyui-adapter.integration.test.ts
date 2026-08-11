@@ -108,6 +108,43 @@ describe("ComfyUIEngineAdapter integration", () => {
     running.pop();
     child.kill("SIGKILL");
   });
+
+  it("streams live progress over WebSocket when the server has no /progress endpoint", async () => {
+    const port = await unusedPort();
+    // Modern ComfyUI builds have no HTTP /progress route — progress is pushed
+    // over /ws only. --no-progress-endpoint makes the fixture behave like the
+    // real checkout, so progress must arrive through the WebSocket listener.
+    const child = spawn(process.execPath, [
+      FIXTURE, "--listen", "127.0.0.1", "--port", String(port),
+      "--no-progress-endpoint", "--progress-per-poll", "0.2", "--ws-tick-ms", "10",
+    ]);
+    running.push({ process: child });
+    await waitForHttp(port);
+
+    const recipe = recipeFor({ baseUrl: `http://127.0.0.1:${port}`, comfyuiWorkflow: VIDEO_WORKFLOW });
+    const adapter = new ComfyUIEngineAdapter({ validatePaths: false, pollIntervalMs: 10, defaultPollIntervalMs: 5, readinessTimeoutMs: 5_000 });
+    const spec = await adapter.buildLaunchSpec(recipe, { host: "127.0.0.1", port: 0 });
+    const instance = await adapter.start(recipe, spec, new AbortController().signal);
+    await adapter.waitUntilReady(instance, new AbortController().signal);
+
+    const job = await adapter.submit(instance, request("video", { prompt: "a red cube rotating" }), new AbortController().signal);
+    let sawProgress = false;
+    let terminal: MediaJobPoll | undefined;
+    for (let attempt = 0; attempt < 300; attempt += 1) {
+      const poll = await adapter.poll(instance, job, new AbortController().signal);
+      if (poll.status === "progressing" && (poll.progress ?? 0) > 0) sawProgress = true;
+      if (poll.status === "completed" || poll.status === "failed") {
+        terminal = poll;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(sawProgress).toBe(true);
+    expect(terminal?.status).toBe("completed");
+    expect(terminal?.progress).toBe(1);
+    running.pop();
+    child.kill("SIGKILL");
+  });
 });
 
 async function pollUntil(

@@ -78,7 +78,11 @@ export class MediaJobFeed {
         : job.status === "cancelled" ? `${label} generation cancelled`
           : `${label} generation in progress`;
     const detail = document.createElement("small");
-    detail.textContent = failure ?? (artifact?.name ? artifact.name : completed ? "Generated artifact" : "Fitz is following this job in the background.");
+    if (!this.#terminal(job.status) && typeof job.progress === "number") {
+      detail.textContent = `Generating… ${Math.round(Math.min(1, Math.max(0, job.progress)) * 100)}%`;
+    } else {
+      detail.textContent = failure ?? (artifact?.name ? artifact.name : completed ? "Generated artifact" : "Fitz is following this job in the background.");
+    }
     copy.append(title, detail);
     row.append(icon, copy);
 
@@ -89,6 +93,23 @@ export class MediaJobFeed {
 
     if (artifact) row.append(this.#action("Open", () => this.#options.openArtifact(artifact)));
     else if (["failed", "cancelled", "interrupted"].includes(job.status)) row.append(this.#action("Retry", (button) => this.#retry(job, button)));
+
+    // Thin progress bar across the bottom of the card while the job is active.
+    // ComfyUI reports diffusion progress as a fixed step count, so the fill is a
+    // real 0..1 measurement rather than an indeterminate spinner.
+    if (!this.#terminal(job.status)) {
+      const progress = document.createElement("div");
+      progress.className = "media-job-progress";
+      progress.setAttribute("role", "progressbar");
+      progress.setAttribute("aria-valuemin", "0");
+      progress.setAttribute("aria-valuemax", "100");
+      if (typeof job.progress === "number") {
+        const percent = Math.round(Math.min(1, Math.max(0, job.progress)) * 100);
+        progress.style.setProperty("--progress", `${percent}%`);
+        progress.setAttribute("aria-valuenow", String(percent));
+      }
+      row.append(progress);
+    }
 
     const specification = this.#specification(job);
     specification.hidden = !wasOpen;
@@ -149,6 +170,19 @@ export class MediaJobFeed {
     details.hidden = !open;
     row.classList.toggle("open", open);
     row.setAttribute("aria-expanded", String(open));
+    if (open) this.#revealRow(row);
+  }
+
+  /** After expanding a card, scroll the chat so the card's bottom edge is
+   *  visible. Cards near the bottom of the chat open downwards into the fold,
+   *  and without this the user must scroll down again to see the details. */
+  #revealRow(row: HTMLElement): void {
+    const { messages } = this.#options;
+    const rowRect = row.getBoundingClientRect();
+    const containerRect = messages.getBoundingClientRect();
+    const overflow = rowRect.bottom - containerRect.bottom;
+    if (overflow <= 0) return; // already fully visible
+    messages.scrollTop += overflow;
   }
 
   #specification(job: MediaJobSummary): HTMLElement {

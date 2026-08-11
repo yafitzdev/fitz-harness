@@ -7,11 +7,17 @@ export interface MediaJobSummary extends Json {
   status: string;
   artifactId?: string;
   errorCode?: string;
+  /** 0..1 diffusion progress reported by the engine (persisted on the job). */
+  progress?: number;
 }
 
 export interface MediaJobTrackerOptions {
   api: (path: string, method?: string, body?: unknown) => Promise<Json>;
   onTerminal: (job: MediaJobSummary, failure?: string) => void | Promise<void>;
+  /** Fired whenever the set of active (non-terminal) watched jobs changes. */
+  onActiveChange?: () => void;
+  /** Fired while a watched job is queued/started/progressing so the job card can re-render its status bar. */
+  onProgress?: (job: MediaJobSummary) => void;
   pollIntervalMs?: number;
 }
 
@@ -25,19 +31,41 @@ const TERMINAL = new Set(["completed", "failed", "cancelled", "interrupted"]);
 export class MediaJobTracker {
   readonly #options: MediaJobTrackerOptions;
   readonly #watched = new Map<string, number>();
+  readonly #state = new Map<string, { status: string; progress?: number }>();
+  readonly #activeOrder: string[] = [];
   #generation = 0;
 
   constructor(options: MediaJobTrackerOptions) { this.#options = options; }
 
+  /** True while any watched job is queued, started, or progressing. */
+  get active(): boolean { return this.#activeOrder.length > 0; }
+
+  /** The most recently watched non-terminal job; the one a stop button should cancel. */
+  get activeJobId(): string | undefined { return this.#activeOrder[this.#activeOrder.length - 1]; }
+
   reset(): void {
     this.#generation += 1;
     this.#watched.clear();
+    this.#state.clear();
+    this.#activeOrder.length = 0;
+    this.#options.onActiveChange?.();
+  }
+
+  /** Cancels the most recently watched active job (POST /cancel on the host). */
+  async cancelActive(): Promise<boolean> {
+    const jobId = this.activeJobId;
+    if (!jobId) return false;
+    await this.#options.api(`/api/v1/media/jobs/${encodeURIComponent(jobId)}/cancel`, "POST");
+    return true;
   }
 
   watch(jobId: string): void {
     if (!jobId || this.#watched.has(jobId)) return;
     const generation = this.#generation;
     this.#watched.set(jobId, generation);
+    this.#state.set(jobId, { status: "queued" });
+    this.#activeOrder.push(jobId);
+    this.#options.onActiveChange?.();
     void this.#follow(jobId, generation);
   }
 
@@ -62,12 +90,14 @@ export class MediaJobTracker {
           failures = 0;
           const job = response.data as MediaJobSummary;
           if (TERMINAL.has(String(job.status))) {
+            this.#forget(jobId);
             const failure = job.status === "completed"
               ? undefined
               : await this.failureMessage(job.id, job.errorCode ?? `Media generation ${job.status}`);
             if (generation === this.#generation) await this.#options.onTerminal(job, failure);
             return;
           }
+          this.#observe(job);
         } catch (error) {
           failures += 1;
           if (failures >= 12) throw error;
@@ -76,12 +106,32 @@ export class MediaJobTracker {
       }
     } catch (error) {
       if (generation === this.#generation) {
+        this.#forget(jobId);
         const message = error instanceof Error ? error.message : String(error);
         await this.#options.onTerminal({ id: jobId, modality: "video", status: "failed" }, `Could not follow media job: ${message}`);
       }
     } finally {
       if (this.#watched.get(jobId) === generation) this.#watched.delete(jobId);
     }
+  }
+
+  /** Re-render the card only on meaningful changes: status transitions or ≥1% progress moves. */
+  #observe(job: MediaJobSummary): void {
+    const status = String(job.status);
+    const progress = typeof job.progress === "number" ? job.progress : undefined;
+    const previous = this.#state.get(job.id);
+    const changed = !previous || status !== previous.status
+      || (progress !== undefined && (previous.progress === undefined || Math.abs(progress - previous.progress) >= 0.01));
+    const next: { status: string; progress?: number } = { status };
+    if (progress !== undefined) next.progress = progress;
+    this.#state.set(job.id, next);
+    if (changed) this.#options.onProgress?.(job);
+  }
+
+  #forget(jobId: string): void {
+    const index = this.#activeOrder.indexOf(jobId);
+    if (index >= 0) this.#activeOrder.splice(index, 1);
+    if (this.#state.delete(jobId)) this.#options.onActiveChange?.();
   }
 }
 

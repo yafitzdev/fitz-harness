@@ -219,19 +219,26 @@ export class Composer {
     this.status.dataset.state = state;
   }
 
-  setState(state: { ready: boolean; running: boolean; hasSession: boolean }): void {
-    const { ready, running, hasSession } = state;
+  setState(state: { ready: boolean; running: boolean; generating?: boolean; hasSession: boolean }): void {
+    const { ready, running, generating = false, hasSession } = state;
     const hasText = this.value.trim().length > 0;
+    const busy = running || generating;
     // The composer stays unlocked while the agent is reasoning so the user can write
     // a steering message; sending routes it into the running conversation instead of
-    // canceling. With an empty draft the send button becomes the stop control.
+    // canceling. With an empty draft the send button becomes the stop control. A
+    // media job in flight behaves the same way: empty draft stops the job, typed
+    // text sends a regular message (steering only applies to agent runs).
     this.prompt.disabled = !ready;
     this.controls.updateState({ running, hasSession });
     this.attachButton.disabled = !hasSession || running;
-    this.sendButton.classList.toggle("running", running && !hasText);
-    this.sendButton.title = running ? (hasText ? "Send to the running agent" : "Stop task") : "Send message";
+    const stopVisible = busy && !hasText;
+    this.sendButton.classList.toggle("running", stopVisible);
+    this.sendButton.title = running
+      ? (hasText ? "Send to the running agent" : "Stop task")
+      : generating && !hasText ? "Stop task"
+      : "Send message";
     this.sendButton.setAttribute("aria-label", this.sendButton.title);
-    this.sendButton.disabled = running ? false : !ready || !hasText;
+    this.sendButton.disabled = busy ? false : !ready || !hasText;
   }
 
   rebuildHistory(texts: string[]): void {

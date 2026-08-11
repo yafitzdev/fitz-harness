@@ -390,16 +390,57 @@ function constrainMediaParams(params: MediaGenerationParams, recipe: Recipe): Me
   if (typeof limits.maxDurationSeconds === "number" && typeof next.durationSeconds === "number") {
     next.durationSeconds = Math.min(next.durationSeconds, limits.maxDurationSeconds);
   }
-  const requested = parseResolution(next.size);
-  const maximumResolution = limits.maxResolution;
-  const maximum = parseResolution(maximumResolution);
-  if (requested && maximum && (requested.width > maximum.width || requested.height > maximum.height)) {
-    next.size = maximumResolution!;
+  if (typeof limits.maxFps === "number" && typeof next.fps === "number") {
+    next.fps = Math.min(next.fps, limits.maxFps);
+  }
+  if (typeof next.size === "string") {
+    const grid = typeof recipe.configuration.sizeGrid === "number" ? recipe.configuration.sizeGrid : undefined;
+    const constrained = constrainResolution(next.size, parseResolution(limits.maxResolution), grid);
+    if (constrained !== undefined) next.size = constrained;
   }
   if (typeof limits.maxRefs === "number" && next.refs && next.refs.length > limits.maxRefs) {
     next.refs = next.refs.slice(0, limits.maxRefs);
   }
   return next;
+}
+
+/**
+ * Fits a requested resolution inside the recipe's maximum box, then snaps it
+ * to the model's spatial grid. The box is orientation-agnostic — the two
+ * numbers are the longest and shortest allowed side — so landscape AND
+ * portrait 720p both fit "1280x720". The grid (H3's latent needs multiples
+ * of 16) keeps latent dims integral: without it a request like "1920x1080"
+ * would reach the model off-grid and fail mid-job.
+ */
+function constrainResolution(
+  size: string,
+  maximum: { width: number; height: number } | undefined,
+  grid: number | undefined,
+): string | undefined {
+  const requested = parseResolution(size);
+  if (!requested || !maximum) return size;
+  const maxLong = Math.max(maximum.width, maximum.height);
+  const maxShort = Math.min(maximum.width, maximum.height);
+  let { width, height } = requested;
+  const long = Math.max(width, height);
+  const short = Math.min(width, height);
+  if (long > maxLong || short > maxShort) {
+    const scale = Math.min(maxLong / long, maxShort / short);
+    width = Math.round(width * scale);
+    height = Math.round(height * scale);
+  }
+  if (grid && grid > 0) {
+    width = Math.max(grid, Math.round(width / grid) * grid);
+    height = Math.max(grid, Math.round(height / grid) * grid);
+    const snappedLong = Math.max(width, height);
+    const snappedShort = Math.min(width, height);
+    if (snappedLong > maxLong || snappedShort > maxShort) {
+      const scale = Math.min(maxLong / snappedLong, maxShort / snappedShort);
+      width = Math.max(grid, Math.floor((width * scale) / grid) * grid);
+      height = Math.max(grid, Math.floor((height * scale) / grid) * grid);
+    }
+  }
+  return `${width}x${height}`;
 }
 
 function parseResolution(value: string | undefined): { width: number; height: number } | undefined {

@@ -1,16 +1,26 @@
 // Simulated ComfyUI server for engine-comfyui tests.
 // Implements the API surface the adapter drives: GET /system_stats,
-// POST /prompt, GET /progress, GET /history/{promptId}, GET /view, POST /queue.
+// POST /prompt, GET /progress, GET /history/{promptId}, GET /view, POST /queue,
+// plus a WebSocket endpoint at /ws that streams {"type":"progress",...} frames
+// like the real server's ProgressBar hook (modern ComfyUI builds have no HTTP
+// /progress route — progress is WebSocket-only).
 //
-// Progress advances per /progress poll (progressPerPoll, default 0.25); a job
-// lands in /history once it reaches 1. The output modality is derived from the
-// submitted graph's class_type values (contains "Audio" -> audio, "Image" ->
-// image, otherwise video). A prompt containing --fail-on moves to history with
-// an error status instead of outputs.
+// Progress advances per tick (progressPerPoll, default 0.25); a job lands in
+// /history once it reaches 1. The output modality is derived from the submitted
+// graph's class_type values (contains "Audio" -> audio, "Image" -> image,
+// otherwise video). A prompt containing --fail-on moves to history with an
+// error status instead of outputs.
+//
+// Flags:
+//   --no-progress-endpoint  GET /progress returns 404 (realistic for current
+//                           ComfyUI builds; exercises the WebSocket path)
+//   --ws-tick-ms <n>        interval between WS progress frames (default 25)
 
 import { createServer } from "node:http";
 import { appendFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+
+const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 const valueAfter = (name) => {
   const index = process.argv.indexOf(name);
@@ -19,6 +29,8 @@ const valueAfter = (name) => {
 const host = valueAfter("--listen") ?? "127.0.0.1";
 const port = Number(valueAfter("--port"));
 const progressPerPoll = Number(valueAfter("--progress-per-poll") ?? 0.25);
+const wsTickMs = Number(valueAfter("--ws-tick-ms") ?? 25);
+const noProgressEndpoint = process.argv.includes("--no-progress-endpoint");
 const failOn = valueAfter("--fail-on");
 // Optional: when set, every submitted prompt graph is appended as one JSON line.
 const graphFile = valueAfter("--graph-file");
@@ -29,6 +41,17 @@ const AUDIO_BYTES = Buffer.from([0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00,
 
 const running = new Map(); // prompt_id -> { progress, prompt, modality }
 const history = new Map(); // prompt_id -> { entry }
+const clientIdByPromptId = new Map(); // prompt_id -> client_id (POST /prompt body)
+
+function advanceJobs() {
+  for (const [promptId, job] of running) {
+    job.progress = Math.min(1, job.progress + progressPerPoll);
+    if (job.progress >= 1) {
+      running.delete(promptId);
+      history.set(promptId, makeHistoryEntry(promptId, job));
+    }
+  }
+}
 
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, `http://${host}:${port}`);
@@ -46,18 +69,19 @@ const server = createServer(async (request, response) => {
       const promptId = randomUUID();
       const modality = modalityOf(body.prompt);
       running.set(promptId, { progress: 0, prompt: promptOf(body.prompt), modality });
+      if (typeof body.client_id === "string" && body.client_id) {
+        clientIdByPromptId.set(promptId, body.client_id);
+      }
       if (graphFile) appendFileSync(graphFile, JSON.stringify(body.prompt) + "\n", "utf8");
       json(response, { prompt_id: promptId, number: running.size, node_errors: {} });
       return;
     }
     if (request.method === "GET" && url.pathname === "/progress") {
-      for (const [promptId, job] of running) {
-        job.progress = Math.min(1, job.progress + progressPerPoll);
-        if (job.progress >= 1) {
-          running.delete(promptId);
-          history.set(promptId, makeHistoryEntry(promptId, job));
-        }
+      if (noProgressEndpoint) {
+        json(response, { error: "not found" }, 404);
+        return;
       }
+      advanceJobs();
       const progress = Object.fromEntries(
         [...running].map(([promptId, job]) => [promptId, { progress: Math.round(job.progress * 100), eta: 10 }]),
       );
@@ -96,6 +120,53 @@ const server = createServer(async (request, response) => {
   }
 });
 
+// Minimal RFC6455 server: answers the upgrade with the accept key, then pushes
+// one progress frame per tick for jobs submitted with this connection's
+// clientId. Client frames (masked) are ignored except ping/close replies.
+server.on("upgrade", (request, socket) => {
+  const url = new URL(request.url, `http://${host}:${port}`);
+  if (url.pathname !== "/ws") {
+    socket.destroy();
+    return;
+  }
+  const key = request.headers["sec-websocket-key"];
+  if (!key) {
+    socket.destroy();
+    return;
+  }
+  const clientId = url.searchParams.get("clientId") ?? "";
+  const accept = createHash("sha1").update(key + WS_GUID).digest("base64");
+  socket.write(
+    "HTTP/1.1 101 Switching Protocols\r\n" +
+      "Upgrade: websocket\r\n" +
+      "Connection: Upgrade\r\n" +
+      `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+  );
+  socket.setNoDelay(true);
+  const interval = setInterval(() => {
+    advanceJobs();
+    for (const [promptId, job] of running) {
+      if (clientIdByPromptId.get(promptId) === clientId) {
+        writeFrame(socket, JSON.stringify({
+          type: "progress",
+          data: { value: Math.round(job.progress * 100), max: 100, prompt_id: promptId, node: "sampler" },
+        }));
+      }
+    }
+  }, wsTickMs);
+  socket.on("data", (chunk) => {
+    const opcode = chunk[0] & 0x0f;
+    if (opcode === 0x9) {
+      socket.write(Buffer.from([0x8a, 0x00])); // ping -> pong
+    } else if (opcode === 0x8) {
+      socket.write(Buffer.from([0x88, 0x00])); // close -> ack
+      socket.end();
+    }
+  });
+  socket.on("close", () => clearInterval(interval));
+  socket.on("error", () => clearInterval(interval));
+});
+
 server.listen(port, host);
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
@@ -103,6 +174,12 @@ process.on("SIGINT", stop);
 function stop() {
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 1_000).unref();
+}
+
+function writeFrame(socket, text) {
+  const payload = Buffer.from(text, "utf8");
+  if (payload.length > 125) return; // progress payloads are small; skip oversize
+  socket.write(Buffer.concat([Buffer.from([0x81, payload.length]), payload]));
 }
 
 function modalityOf(graph) {

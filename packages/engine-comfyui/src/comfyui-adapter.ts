@@ -24,7 +24,7 @@ import type {
   ValidationIssue,
   ValidationReport,
 } from "@fitz/protocol";
-import { ComfyUIClient, type ComfyUIFileRef, type ComfyUIHistoryEntry } from "./comfyui-client.js";
+import { ComfyUIClient, ComfyUIProgressListener, type ComfyUIFileRef, type ComfyUIHistoryEntry, type ComfyUIWebSocketFactory } from "./comfyui-client.js";
 
 /** Node-id → inputs overrides for injecting generation params into a pinned
  *  workflow without {{placeholder}} strings (H3 workflows are complex graphs;
@@ -39,11 +39,6 @@ export interface ComfyUIWorkflowOverrides {
 }
 
 export interface ComfyUIConfiguration {
-  /** Host-owned execution profile. Safe mode replaces supported sampler nodes
-   * with Fitz paced variants without changing model, seed, or quality inputs. */
-  performanceMode?: "normal" | "safe";
-  /** Fraction of wall time spent sampling in safe mode (default 0.70). */
-  safeDutyCycle?: number;
   /** Managed mode: executable that launches the ComfyUI server (e.g. a venv
    *  python or a launcher script). Mutually exclusive with `baseUrl`. */
   executable?: string;
@@ -89,10 +84,15 @@ export interface ComfyUIHandle extends EngineInstanceHandle {
   /** Managed-mode child process; external-mode handles omit it. */
   process?: ChildProcessWithoutNullStreams;
   logs?: string[];
+  /** WebSocket progress listeners keyed by ComfyUI prompt id. */
+  progressListeners?: Map<string, ComfyUIProgressListener>;
 }
 
 export interface ComfyUIAdapterOptions {
   fetch?: typeof globalThis.fetch;
+  /** WebSocket factory for streaming progress; defaults to the runtime's
+   *  global `WebSocket` (Node ≥ 22). Tests inject a fake. */
+  createWebSocket?: ComfyUIWebSocketFactory;
   validatePaths?: boolean;
   /** Readiness-poll interval (default 250 ms). */
   pollIntervalMs?: number;
@@ -104,7 +104,8 @@ export interface ComfyUIAdapterOptions {
 
 /** First real local media engine (§5.4, KD-1): drives a ComfyUI server — spawned
  *  and owned in managed mode, or an external endpoint in connection mode — via
- *  `/prompt` → `/history/{id}` with progress from `/progress`, and downloads
+ *  `/prompt` → `/history/{id}` with progress streamed over the WebSocket
+ *  (`/ws`, with an HTTP `/progress` fallback for older servers), and downloads
  *  output files through `/view`. The workflow is pinned per recipe and generation
  *  params are injected through {{placeholders}} and/or node-id overrides. */
 export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
@@ -112,6 +113,7 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
   readonly modalities: MediaModality[] = ["image", "video", "audio"];
   readonly defaultPollIntervalMs: number;
   readonly #fetch: typeof globalThis.fetch;
+  readonly #createWebSocket: ComfyUIWebSocketFactory | undefined;
   readonly #validatePaths: boolean;
   readonly #pollIntervalMs: number;
   readonly #readinessTimeoutMs: number;
@@ -119,6 +121,7 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
 
   constructor(options: ComfyUIAdapterOptions = {}) {
     this.#fetch = options.fetch ?? globalThis.fetch;
+    this.#createWebSocket = options.createWebSocket;
     this.#validatePaths = options.validatePaths ?? true;
     this.#pollIntervalMs = options.pollIntervalMs ?? 250;
     this.defaultPollIntervalMs = options.defaultPollIntervalMs ?? 1_000;
@@ -204,6 +207,7 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
         config,
         client: new ComfyUIClient({ fetch: this.#fetch }),
         readinessTimeoutMs: config.readinessTimeoutMs ?? this.#readinessTimeoutMs,
+        progressListeners: new Map(),
       };
     }
     const child = spawn(spec.executable, spec.args, {
@@ -229,6 +233,7 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
       readinessTimeoutMs: config.readinessTimeoutMs ?? this.#readinessTimeoutMs,
       process: child,
       logs,
+      progressListeners: new Map(),
     };
   }
 
@@ -257,9 +262,18 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
     const overrides = instance.config.comfyuiOverrides;
     const params = applyGenerationDefaults(request.params, instance.config.defaults);
     const substituted = substituteWorkflow(graph, params, overrides);
-    const profiled = applyComfyUIPerformanceMode(substituted, instance.config);
-    const promptId = await instance.client.submitPrompt(instance.baseUrl, profiled, randomUUID(), signal);
-    return { id: promptId, modality: request.modality };
+    const clientId = randomUUID();
+    // Open the progress socket before POSTing so it is (likely) connected by
+    // the time the server starts executing the prompt.
+    const listener = this.#openProgressListener(instance, clientId);
+    try {
+      const promptId = await instance.client.submitPrompt(instance.baseUrl, substituted, clientId, signal);
+      if (listener !== undefined) instance.progressListeners?.set(promptId, listener);
+      return { id: promptId, modality: request.modality };
+    } catch (error) {
+      listener?.close();
+      throw error;
+    }
   }
 
   async poll(instance: ComfyUIHandle, job: MediaJobHandle, signal: AbortSignal): Promise<MediaJobPoll> {
@@ -268,12 +282,17 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
     const entry = history[job.id];
     if (entry) {
       if (entry.status?.status_str === "error") {
+        this.#closeListener(instance, job.id);
         return { status: "failed", error: "ComfyUI workflow execution failed" };
       }
       const file = pickOutputFile(entry, job.modality);
-      if (!file) return { status: "failed", error: "ComfyUI job finished without output files" };
+      if (!file) {
+        this.#closeListener(instance, job.id);
+        return { status: "failed", error: "ComfyUI job finished without output files" };
+      }
       const bytes = await instance.client.view(instance.baseUrl, file, signal);
       const mimeType = mimeTypeForOutput(file);
+      this.#closeListener(instance, job.id);
       return {
         status: "completed",
         progress: 1,
@@ -286,6 +305,12 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
         },
       };
     }
+    // Progress first from the WebSocket stream (modern ComfyUI builds), then
+    // fall back to the legacy HTTP /progress endpoint (older builds).
+    const wsProgress = instance.progressListeners?.get(job.id)?.progress(job.id);
+    if (wsProgress !== undefined && wsProgress > 0) {
+      return { status: "progressing", progress: wsProgress };
+    }
     const state = await instance.client.progress(instance.baseUrl, signal);
     const running = state.running[job.id];
     if (running && running.progress > 0) {
@@ -295,10 +320,13 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
   }
 
   async cancel(instance: ComfyUIHandle, job: MediaJobHandle, signal?: AbortSignal): Promise<void> {
+    this.#closeListener(instance, job.id);
     await instance.client.cancel(instance.baseUrl, job.id, signal);
   }
 
   async stop(instance: ComfyUIHandle, mode: StopMode): Promise<StopReport> {
+    for (const listener of instance.progressListeners?.values() ?? []) listener.close();
+    instance.progressListeners?.clear();
     if (!instance.process) return { stopped: true, detail: "External endpoint left running" };
     if (hasExited(instance.process)) return { stopped: true };
     instance.process.kill(mode === "force" ? "SIGKILL" : "SIGTERM");
@@ -334,6 +362,27 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
     }
     throw new Error(`Recipe ${instance.recipeId} has no pinned workflow`);
   }
+
+  /** Opens a WebSocket progress listener for a submit; returns undefined when
+   *  no WebSocket is available (progress then falls back to HTTP /progress). */
+  #openProgressListener(instance: ComfyUIHandle, clientId: string): ComfyUIProgressListener | undefined {
+    try {
+      return new ComfyUIProgressListener({
+        baseUrl: instance.baseUrl,
+        clientId,
+        ...(this.#createWebSocket !== undefined ? { createSocket: this.#createWebSocket } : {}),
+      });
+    } catch {
+      return undefined;
+    }
+  }
+
+  #closeListener(instance: ComfyUIHandle, promptId: string): void {
+    const listener = instance.progressListeners?.get(promptId);
+    if (listener === undefined) return;
+    listener.close();
+    instance.progressListeners?.delete(promptId);
+  }
 }
 
 /** Reads and validates the ComfyUI-specific recipe configuration. */
@@ -341,8 +390,6 @@ export function readComfyUIConfiguration(recipe: Recipe): ComfyUIConfiguration {
   if (recipe.adapter !== "comfyui") throw new TypeError("Recipe adapter must be comfyui");
   const value = recipe.configuration;
   return {
-    ...(value.performanceMode !== undefined ? { performanceMode: performanceMode(value.performanceMode) } : {}),
-    ...(value.safeDutyCycle !== undefined ? { safeDutyCycle: dutyCycle(value.safeDutyCycle) } : {}),
     ...(value.executable !== undefined ? { executable: stringValue(value.executable, "executable") } : {}),
     ...(value.cwd !== undefined ? { cwd: stringValue(value.cwd, "cwd") } : {}),
     ...(value.entrypoint !== undefined ? { entrypoint: stringValue(value.entrypoint, "entrypoint") } : {}),
@@ -430,42 +477,6 @@ export function substituteWorkflow(
       inputs = { ...inputs, seed: params.seed };
     }
     node.inputs = substituteInputs(inputs, params, size);
-  }
-  return clone;
-}
-
-const SAFE_SAMPLER_CLASSES: Readonly<Record<string, string>> = {
-  KSampler: "FitzSafeKSampler",
-  KSamplerAdvanced: "FitzSafeKSamplerAdvanced",
-  SamplerCustomAdvanced: "FitzSafeSamplerCustomAdvanced",
-};
-
-/** Applies the host-owned profile at the last possible boundary, after user
- * parameters have been substituted. Normal mode returns the existing graph
- * unchanged; safe mode only swaps compatible sampling nodes. */
-export function applyComfyUIPerformanceMode(
-  graph: Readonly<Record<string, unknown>>,
-  config: Pick<ComfyUIConfiguration, "performanceMode" | "safeDutyCycle">,
-): Record<string, unknown> {
-  const clone = structuredClone(graph) as Record<string, Record<string, unknown>>;
-  if ((config.performanceMode ?? "normal") === "normal") return clone;
-  // Safe is intentionally paced. This is a work/rest duty target, not
-  // an NVIDIA utilization setting: compatible samplers synchronize after each
-  // diffusion step and spend the remaining cycle idle. The 50% default keeps
-  // media throughput useful while the runtime applies additional heat-aware
-  // throttling at the host boundary.
-  const safeDutyCycle = config.safeDutyCycle ?? 0.50;
-  let replacements = 0;
-  for (const node of Object.values(clone)) {
-    if (!isRecord(node) || typeof node.class_type !== "string" || !isRecord(node.inputs)) continue;
-    const replacement = SAFE_SAMPLER_CLASSES[node.class_type];
-    if (!replacement) continue;
-    node.class_type = replacement;
-    node.inputs = { ...node.inputs, safe_duty_cycle: safeDutyCycle };
-    replacements += 1;
-  }
-  if (replacements === 0) {
-    throw new Error("ComfyUI Safe mode requires a KSampler, KSamplerAdvanced, or SamplerCustomAdvanced node in the workflow");
   }
   return clone;
 }
@@ -741,18 +752,6 @@ function stringArray(value: unknown, name: string): string[] {
 function nonNegativeNumber(value: unknown, name: string): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
     throw new TypeError(`${name} must be a finite non-negative number`);
-  }
-  return value;
-}
-
-function performanceMode(value: unknown): "normal" | "safe" {
-  if (value !== "normal" && value !== "safe") throw new TypeError("performanceMode must be normal or safe");
-  return value;
-}
-
-function dutyCycle(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0.25 || value > 0.95) {
-    throw new TypeError("safeDutyCycle must be between 0.25 and 0.95");
   }
   return value;
 }

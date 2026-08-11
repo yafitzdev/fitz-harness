@@ -98,4 +98,56 @@ describe("MediaJobFeed", () => {
     expect(calls.openArtifact).toHaveBeenCalledOnce();
     expect(messages.querySelector(".media-job-notice")?.getAttribute("aria-expanded")).toBe("false");
   });
+
+  it("renders a thin progress bar while a job is generating", () => {
+    const { feed, messages } = setup();
+    feed.render({ id: "job-1", modality: "video", status: "progressing", progress: 0.42 });
+    const bar = messages.querySelector<HTMLElement>(".media-job-progress")!;
+    expect(bar).not.toBeNull();
+    expect(bar.style.getPropertyValue("--progress")).toBe("42%");
+    expect(bar.getAttribute("aria-valuenow")).toBe("42");
+    expect(messages.textContent).toContain("Generating… 42%");
+
+    // The bar disappears once the job reaches a terminal state.
+    feed.render({ id: "job-1", modality: "video", status: "completed", progress: 1 });
+    expect(messages.querySelector(".media-job-progress")).toBeNull();
+  });
+
+  it("shows an empty track while a job is queued before progress arrives", () => {
+    const { feed, messages } = setup();
+    feed.render({ id: "job-1", modality: "video", status: "queued" });
+    const bar = messages.querySelector<HTMLElement>(".media-job-progress")!;
+    expect(bar).not.toBeNull();
+    expect(bar.style.getPropertyValue("--progress")).toBe("");
+    expect(messages.textContent).not.toContain("Generating…");
+  });
+
+  it("scrolls a bottom card into view when it is expanded", () => {
+    const { feed, messages } = setup();
+    feed.render({ id: "job-1", modality: "video", status: "completed", params: { prompt: "dog", size: "1280x720" } }, undefined, { id: "artifact", name: "dog.mp4" });
+    const row = messages.querySelector<HTMLElement>(".media-job-notice")!;
+    Object.defineProperties(messages, { scrollHeight: { get: () => 1_000 }, clientHeight: { get: () => 400 } });
+    // The card sits at the bottom of the chat; expanding it pushes its bottom
+    // edge 300px past the visible viewport bottom (600).
+    row.getBoundingClientRect = () => ({ top: 300, bottom: 900, height: 600, left: 0, right: 600, x: 0, y: 300, width: 600, toJSON: () => ({}) }) as DOMRect;
+    messages.getBoundingClientRect = () => ({ top: 0, bottom: 600, height: 600, left: 0, right: 800, x: 0, y: 0, width: 800, toJSON: () => ({}) }) as DOMRect;
+
+    row.click();
+    expect(row.getAttribute("aria-expanded")).toBe("true");
+    expect(messages.scrollTop).toBe(300); // 900 - 600
+  });
+
+  it("does not scroll when the expanded card is already fully visible", () => {
+    const { feed, messages } = setup();
+    feed.render({ id: "job-1", modality: "video", status: "completed", params: { prompt: "dog" } }, undefined, { id: "artifact", name: "dog.mp4" });
+    const row = messages.querySelector<HTMLElement>(".media-job-notice")!;
+    Object.defineProperties(messages, { scrollHeight: { get: () => 1_000 }, clientHeight: { get: () => 400 } });
+    messages.scrollTop = 120; // reviewing mid-chat, not at the bottom
+    row.getBoundingClientRect = () => ({ top: 100, bottom: 500, height: 400, left: 0, right: 600, x: 0, y: 100, width: 600, toJSON: () => ({}) }) as DOMRect;
+    messages.getBoundingClientRect = () => ({ top: 0, bottom: 600, height: 600, left: 0, right: 800, x: 0, y: 0, width: 800, toJSON: () => ({}) }) as DOMRect;
+
+    row.click();
+    expect(row.getAttribute("aria-expanded")).toBe("true");
+    expect(messages.scrollTop).toBe(120); // left untouched
+  });
 });
