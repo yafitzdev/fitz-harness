@@ -1,9 +1,9 @@
-import { join } from "node:path";
 import type { Recipe, Route } from "@fitz/protocol";
 
 export const COMFYUI_PLAYBOOK_ID = "comfyui";
-export const COMFYUI_RECIPE_IDS = ["h3-video", "pinkcherry-h3-video", "krea2-turbo-image"] as const;
+export const COMFYUI_RECIPE_IDS = ["h3-video", "krea2-turbo-image", "krea2-nsfw-image", "qwen-image"] as const;
 export type ComfyUIRecipeId = (typeof COMFYUI_RECIPE_IDS)[number];
+export const RETIRED_COMFYUI_RECIPE_IDS = ["pinkcherry-h3-video"] as const;
 
 export interface ComfyUIPlaybook {
   id: string;
@@ -32,11 +32,10 @@ export interface ComfyUIPlaybookOptions {
 }
 
 const OFFICIAL_H3_MODEL = "minimax_h3_fl2va_pruned_int8_convrot.safetensors";
-const PINKCHERRY_H3_MODEL = join(
-  "pinkcherry-h3",
-  "alpha-0.5-testing",
-  "PinkCherry_h3_fl2va_pruned_int8_v0.5-alpha.safetensors",
-);
+const KREA2_NSFW_LORA = "KNP_V2_copy_copy.safetensors";
+const QWEN_IMAGE_MODEL = "qwen_image_2512_fp8_e4m3fn.safetensors";
+const QWEN_IMAGE_EDIT_MODEL = "qwen_image_edit_2511_int8_convrot.safetensors";
+const QWEN_IMAGE_ENCODER = "qwen_2.5_vl_7b_fp8_scaled.safetensors";
 
 function h3VideoWorkflow(unetName: string) {
   return {
@@ -96,46 +95,110 @@ function h3VideoWorkflow(unetName: string) {
   };
 }
 
-/** Minimal API-form translation of Comfy-Org's official Krea 2 Turbo T2I
- * workflow. Prompt enhancement and optional LoRAs intentionally remain agent
- * concerns; the media recipe is deterministic and contains only native nodes. */
-const KREA2_TURBO_IMAGE_WORKFLOW = {
-  "1": {
-    class_type: "UNETLoader",
-    inputs: { unet_name: "krea2_turbo_nvfp4.safetensors", weight_dtype: "default" },
-  },
-  "2": {
-    class_type: "CLIPLoader",
-    inputs: { clip_name: "qwen3vl_4b_fp8_scaled.safetensors", type: "krea2", device: "default" },
-  },
-  "3": { class_type: "VAELoader", inputs: { vae_name: "qwen_image_vae.safetensors" } },
-  "4": { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: "{{prompt}}" } },
-  "5": { class_type: "ConditioningZeroOut", inputs: { conditioning: ["4", 0] } },
-  "6": {
-    class_type: "EmptyLatentImage",
-    inputs: { width: "{{width}}", height: "{{height}}", batch_size: 1 },
-  },
-  "7": {
-    class_type: "KSampler",
-    inputs: {
-      model: ["1", 0],
-      positive: ["4", 0],
-      negative: ["5", 0],
-      latent_image: ["6", 0],
-      seed: "{{seed}}",
-      steps: "{{steps}}",
-      cfg: "{{guidance}}",
-      sampler_name: "{{sampler}}",
-      scheduler: "simple",
-      denoise: 1,
+/** API-form translation of Comfy-Org's Krea 2 Turbo T2I workflow. An optional
+ * model-only LoRA creates a distinct recipe without duplicating the base model. */
+function krea2TurboImageWorkflow(loraName?: string) {
+  const model = loraName ? ["10", 0] : ["1", 0];
+  return {
+    "1": {
+      class_type: "UNETLoader",
+      inputs: { unet_name: "krea2_turbo_nvfp4.safetensors", weight_dtype: "default" },
     },
-  },
-  "8": { class_type: "VAEDecode", inputs: { samples: ["7", 0], vae: ["3", 0] } },
-  "9": { class_type: "SaveImage", inputs: { images: ["8", 0], filename_prefix: "fitz-krea2" } },
-};
+    "2": {
+      class_type: "CLIPLoader",
+      inputs: { clip_name: "qwen3vl_4b_fp8_scaled.safetensors", type: "krea2", device: "default" },
+    },
+    "3": { class_type: "VAELoader", inputs: { vae_name: "qwen_image_vae.safetensors" } },
+    "4": { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: "{{prompt}}" } },
+    "5": { class_type: "ConditioningZeroOut", inputs: { conditioning: ["4", 0] } },
+    "6": {
+      class_type: "EmptyLatentImage",
+      inputs: { width: "{{width}}", height: "{{height}}", batch_size: 1 },
+    },
+    "7": {
+      class_type: "KSampler",
+      inputs: {
+        model,
+        positive: ["4", 0],
+        negative: ["5", 0],
+        latent_image: ["6", 0],
+        seed: "{{seed}}",
+        steps: "{{steps}}",
+        cfg: "{{guidance}}",
+        sampler_name: "{{sampler}}",
+        scheduler: "simple",
+        denoise: 1,
+      },
+    },
+    "8": { class_type: "VAEDecode", inputs: { samples: ["7", 0], vae: ["3", 0] } },
+    "9": {
+      class_type: "SaveImage",
+      inputs: { images: ["8", 0], filename_prefix: loraName ? "fitz-krea2-nsfw" : "fitz-krea2" },
+    },
+    ...(loraName
+      ? {
+          "10": {
+            class_type: "LoraLoaderModelOnly",
+            inputs: { model: ["1", 0], lora_name: loraName, strength_model: 1 },
+          },
+        }
+      : {}),
+  };
+}
 
-/** Local ComfyUI media playbook. H3 variants share the official 1280×720
- * text-to-video plus stereo-audio graph; Krea 2 Turbo owns text-to-image.
+function qwenImageWorkflow() {
+  return {
+    "1": { class_type: "UNETLoader", inputs: { unet_name: QWEN_IMAGE_MODEL, weight_dtype: "default" } },
+    "2": { class_type: "CLIPLoader", inputs: { clip_name: QWEN_IMAGE_ENCODER, type: "qwen_image", device: "default" } },
+    "3": { class_type: "VAELoader", inputs: { vae_name: "qwen_image_vae.safetensors" } },
+    "4": { class_type: "ModelSamplingAuraFlow", inputs: { model: ["1", 0], shift: 3.1 } },
+    "5": { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: "{{prompt}}" } },
+    "6": { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: "{{negative_prompt}}" } },
+    "7": { class_type: "EmptySD3LatentImage", inputs: { width: "{{width}}", height: "{{height}}", batch_size: 1 } },
+    "8": {
+      class_type: "KSampler",
+      inputs: {
+        model: ["4", 0], positive: ["5", 0], negative: ["6", 0], latent_image: ["7", 0],
+        seed: "{{seed}}", steps: "{{steps}}", cfg: "{{guidance}}", sampler_name: "{{sampler}}",
+        scheduler: "simple", denoise: 1,
+      },
+    },
+    "9": { class_type: "VAEDecode", inputs: { samples: ["8", 0], vae: ["3", 0] } },
+    "10": { class_type: "SaveImage", inputs: { images: ["9", 0], filename_prefix: "fitz-qwen-image" } },
+  };
+}
+
+/** One-reference edit path. Fitz uploads the durable artifact to ComfyUI's
+ * input store and substitutes its returned filename into {{ref_0}}. */
+function qwenImageEditWorkflow() {
+  return {
+    "1": { class_type: "UNETLoader", inputs: { unet_name: QWEN_IMAGE_EDIT_MODEL, weight_dtype: "default" } },
+    "2": { class_type: "CLIPLoader", inputs: { clip_name: QWEN_IMAGE_ENCODER, type: "qwen_image", device: "default" } },
+    "3": { class_type: "VAELoader", inputs: { vae_name: "qwen_image_vae.safetensors" } },
+    "4": { class_type: "ModelSamplingAuraFlow", inputs: { model: ["1", 0], shift: 3.0 } },
+    "5": { class_type: "CFGNorm", inputs: { model: ["4", 0], strength: 1 } },
+    "6": { class_type: "LoadImage", inputs: { image: "{{ref_0}}" } },
+    "7": { class_type: "FluxKontextImageScale", inputs: { image: ["6", 0] } },
+    "8": { class_type: "TextEncodeQwenImageEditPlus", inputs: { clip: ["2", 0], prompt: "{{prompt}}", vae: ["3", 0], image1: ["7", 0] } },
+    "9": { class_type: "TextEncodeQwenImageEditPlus", inputs: { clip: ["2", 0], prompt: "{{negative_prompt}}" } },
+    "10": { class_type: "FluxKontextMultiReferenceLatentMethod", inputs: { conditioning: ["8", 0], reference_latents_method: "index_timestep_zero" } },
+    "11": { class_type: "FluxKontextMultiReferenceLatentMethod", inputs: { conditioning: ["9", 0], reference_latents_method: "index_timestep_zero" } },
+    "12": { class_type: "VAEEncode", inputs: { pixels: ["7", 0], vae: ["3", 0] } },
+    "13": {
+      class_type: "KSampler",
+      inputs: {
+        model: ["5", 0], positive: ["10", 0], negative: ["11", 0], latent_image: ["12", 0],
+        seed: "{{seed}}", steps: "{{steps}}", cfg: "{{guidance}}", sampler_name: "{{sampler}}",
+        scheduler: "simple", denoise: 1,
+      },
+    },
+    "14": { class_type: "VAEDecode", inputs: { samples: ["13", 0], vae: ["3", 0] } },
+    "15": { class_type: "SaveImage", inputs: { images: ["14", 0], filename_prefix: "fitz-qwen-edit" } },
+  };
+}
+
+/** Local ComfyUI media playbook. H3 owns the official 1280×720 text-to-video
+ * plus stereo-audio graph; Krea 2 Turbo and its optional LoRA own text-to-image.
  * Every independently downloaded weight remains in Fitz's external registry. */
 export function createComfyUIPlaybook(options: ComfyUIPlaybookOptions): ComfyUIPlaybook {
   const { engineDir, executable, entrypoint, baseUrl, expectedVramMiB, launchArgs } = options;
@@ -170,24 +233,6 @@ export function createComfyUIPlaybook(options: ComfyUIPlaybookOptions): ComfyUIP
       },
     }));
   }
-  if (recipeIds.has("pinkcherry-h3-video")) {
-    recipes.push(recipe({
-      id: "pinkcherry-h3-video",
-      displayName: "PinkCherry MiniMax H3 v0.5 · Text to Video + Audio",
-      modelId: "pinkcherry-minimax-h3-v0.5-pruned-int8",
-      modalities: { input: ["text"], output: ["video", "audio"] },
-      limits: { maxDurationSeconds: 6, maxFps: 30, maxResolution: "1280x720" },
-      configuration: {
-        ...launch,
-        expectedVramMiB: expectedVramMiB ?? 24_576,
-        readinessTimeoutMs: 300_000,
-        comfyuiWorkflow: h3VideoWorkflow(PINKCHERRY_H3_MODEL),
-        outputFormats: ["mp4"],
-        sizeGrid: 32,
-        defaults: { resolution: "1280x720", fps: 24, durationSeconds: 2, sampler: "res_multistep", steps: 20 },
-      },
-    }));
-  }
   if (recipeIds.has("krea2-turbo-image")) {
     recipes.push(recipe({
       id: "krea2-turbo-image",
@@ -199,18 +244,49 @@ export function createComfyUIPlaybook(options: ComfyUIPlaybookOptions): ComfyUIP
         ...launch,
         expectedVramMiB: 18_432,
         readinessTimeoutMs: 300_000,
-        comfyuiWorkflow: KREA2_TURBO_IMAGE_WORKFLOW,
+        comfyuiWorkflow: krea2TurboImageWorkflow(),
         outputFormats: ["png"],
         defaults: { resolution: "1024x1024", sampler: "euler", steps: 8, guidance: 1 },
       },
     }));
   }
+  if (recipeIds.has("krea2-nsfw-image")) {
+    recipes.push(recipe({
+      id: "krea2-nsfw-image",
+      displayName: "Krea 2 Turbo NVFP4 + NSFW LoRA · Text to Image",
+      modelId: "krea2-turbo-nvfp4-nsfw",
+      modalities: { input: ["text"], output: ["image"] },
+      limits: { maxResolution: "2048x2048" },
+      configuration: {
+        ...launch,
+        expectedVramMiB: 18_432,
+        readinessTimeoutMs: 300_000,
+        comfyuiWorkflow: krea2TurboImageWorkflow(KREA2_NSFW_LORA),
+        outputFormats: ["png"],
+        defaults: { resolution: "1024x1024", sampler: "euler", steps: 8, guidance: 1 },
+      },
+    }));
+  }
+  if (recipeIds.has("qwen-image")) {
+    recipes.push(recipe({
+      id: "qwen-image",
+      displayName: "Qwen Image 2512 + Edit 2511",
+      modelId: "qwen-image-2512-edit-2511",
+      modalities: { input: ["text", "image"], output: ["image"] },
+      limits: { maxResolution: "2048x2048", maxRefs: 1 },
+      configuration: {
+        ...launch,
+        expectedVramMiB: 30_720,
+        readinessTimeoutMs: 300_000,
+        comfyuiWorkflow: qwenImageWorkflow(),
+        comfyuiEditWorkflow: qwenImageEditWorkflow(),
+        outputFormats: ["png"],
+        defaults: { resolution: "1024x1024", sampler: "euler", steps: 40, guidance: 4 },
+      },
+    }));
+  }
   const routes: Route[] = [];
-  const defaultVideoRecipeId = recipeIds.has("h3-video")
-    ? "h3-video"
-    : recipeIds.has("pinkcherry-h3-video")
-      ? "pinkcherry-h3-video"
-      : undefined;
+  const defaultVideoRecipeId = recipeIds.has("h3-video") ? "h3-video" : undefined;
   if (defaultVideoRecipeId) {
     routes.push({
       id: "video",
@@ -221,12 +297,19 @@ export function createComfyUIPlaybook(options: ComfyUIPlaybookOptions): ComfyUIP
       enabled: true,
     });
   }
-  if (recipeIds.has("krea2-turbo-image")) {
+  const defaultImageRecipeId = recipeIds.has("qwen-image")
+    ? "qwen-image"
+    : recipeIds.has("krea2-turbo-image")
+    ? "krea2-turbo-image"
+    : recipeIds.has("krea2-nsfw-image")
+      ? "krea2-nsfw-image"
+      : undefined;
+  if (defaultImageRecipeId) {
     routes.push({
       id: "image",
       displayName: "Image generation",
-      description: "Krea 2 Turbo via local ComfyUI",
-      recipeId: "krea2-turbo-image",
+      description: defaultImageRecipeId === "qwen-image" ? "Qwen Image generation and editing via local ComfyUI" : "Krea 2 Turbo via local ComfyUI",
+      recipeId: defaultImageRecipeId,
       kind: "image",
       enabled: true,
     });

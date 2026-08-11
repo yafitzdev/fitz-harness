@@ -11,6 +11,7 @@ and generated output do not pollute that repository.
 | Upstream ComfyUI checkout | `%USERPROFILE%/.llm/engines/ComfyUI` |
 | Isolated Python runtime | `%USERPROFILE%/.llm/runtimes/comfyui` |
 | H3 model files | `%USERPROFILE%/.llm/models/comfyui` |
+| ComfyUI LoRAs | `%USERPROFILE%/.llm/models/comfyui/loras` |
 | ComfyUI model-path config | `%USERPROFILE%/.llm/config/comfyui-extra-model-paths.yaml` |
 | Generated intermediates | Fitz data root `cache/comfyui-output` |
 

@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { SqliteStore } from "@fitz/storage";
 import type { FitzRuntimePaths } from "./runtime-paths.js";
+import { createComfyUIPlaybook } from "./comfyui-playbook.js";
 import { localComfyUIPaths, localComfyUIRecipeIds, reconcileLocalComfyUIConfiguration } from "./comfyui-reconcile.js";
 
 const roots: string[] = [];
@@ -36,7 +37,7 @@ describe("local ComfyUI reconciliation", () => {
     store.close();
   });
 
-  it("discovers and registers video variants and text-to-image independently", () => {
+  it("discovers H3, Krea variants, and the unified Qwen generation/edit recipe", () => {
     const root = mkdtempSync(join(tmpdir(), "fitz-comfy-reconcile-all-")); roots.push(root);
     const paths: FitzRuntimePaths = {
       dataRoot: join(root, "data"), databasePath: join(root, "data", "fitz.db"), piAgentDir: join(root, "data", "pi"),
@@ -47,25 +48,56 @@ describe("local ComfyUI reconciliation", () => {
     for (const file of [
       join(local.engineDir, "main.py"), local.executable, local.modelConfigPath,
       join(paths.modelRoot, "comfyui", "diffusion_models", "minimax_h3_fl2va_pruned_int8_convrot.safetensors"),
-      join(paths.modelRoot, "comfyui", "diffusion_models", "pinkcherry-h3", "alpha-0.5-testing", "PinkCherry_h3_fl2va_pruned_int8_v0.5-alpha.safetensors"),
       join(paths.modelRoot, "comfyui", "diffusion_models", "krea2_turbo_nvfp4.safetensors"),
+      join(paths.modelRoot, "comfyui", "diffusion_models", "qwen_image_2512_fp8_e4m3fn.safetensors"),
+      join(paths.modelRoot, "comfyui", "diffusion_models", "qwen_image_edit_2511_int8_convrot.safetensors"),
+      join(paths.modelRoot, "comfyui", "loras", "KNP_V2_copy_copy.safetensors"),
       join(paths.modelRoot, "comfyui", "text_encoders", "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"),
       join(paths.modelRoot, "comfyui", "text_encoders", "qwen3vl_4b_fp8_scaled.safetensors"),
+      join(paths.modelRoot, "comfyui", "text_encoders", "qwen_2.5_vl_7b_fp8_scaled.safetensors"),
       join(paths.modelRoot, "comfyui", "vae", "minimax_h3_video_vae_fp16.safetensors"),
       join(paths.modelRoot, "comfyui", "vae", "minimax_h3_audio_vae_fp32.safetensors"),
       join(paths.modelRoot, "comfyui", "vae", "qwen_image_vae.safetensors"),
     ]) { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, "fixture"); }
 
-    expect(localComfyUIRecipeIds(paths)).toEqual(["h3-video", "pinkcherry-h3-video", "krea2-turbo-image"]);
+    expect(localComfyUIRecipeIds(paths)).toEqual(["h3-video", "krea2-turbo-image", "krea2-nsfw-image", "qwen-image"]);
     const store = SqliteStore.memory();
     expect(reconcileLocalComfyUIConfiguration(store, paths)).toBe(true);
     expect(store.listRecipes().filter((recipe) => recipe.playbookId === "comfyui").map((recipe) => recipe.id).sort()).toEqual([
       "h3-video",
+      "krea2-nsfw-image",
       "krea2-turbo-image",
-      "pinkcherry-h3-video",
+      "qwen-image",
     ]);
     expect(store.listRoutes()).toContainEqual(expect.objectContaining({ id: "video", recipeId: "h3-video" }));
-    expect(store.listRoutes()).toContainEqual(expect.objectContaining({ id: "image", recipeId: "krea2-turbo-image" }));
+    expect(store.listRoutes()).toContainEqual(expect.objectContaining({ id: "image", recipeId: "qwen-image" }));
+    store.close();
+  });
+
+  it("removes the retired PinkCherry recipe and repairs its route", () => {
+    const root = mkdtempSync(join(tmpdir(), "fitz-comfy-reconcile-retired-")); roots.push(root);
+    const paths: FitzRuntimePaths = {
+      dataRoot: join(root, "data"), databasePath: join(root, "data", "fitz.db"), piAgentDir: join(root, "data", "pi"),
+      logsDir: join(root, "data", "logs"), cacheDir: join(root, "data", "cache"), llmRoot: join(root, "llm"),
+      engineRoot: join(root, "llm", "engines"), modelRoot: join(root, "llm", "models"), snapshotsDir: join(root, "data", "snapshots"),
+    };
+    const local = localComfyUIPaths(paths);
+    for (const file of [
+      join(local.engineDir, "main.py"), local.executable, local.modelConfigPath,
+      join(paths.modelRoot, "comfyui", "diffusion_models", "minimax_h3_fl2va_pruned_int8_convrot.safetensors"),
+      join(paths.modelRoot, "comfyui", "text_encoders", "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"),
+      join(paths.modelRoot, "comfyui", "vae", "minimax_h3_video_vae_fp16.safetensors"),
+      join(paths.modelRoot, "comfyui", "vae", "minimax_h3_audio_vae_fp32.safetensors"),
+    ]) { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, "fixture"); }
+
+    const store = SqliteStore.memory();
+    const retired = createComfyUIPlaybook({ engineDir: local.engineDir }).recipes[0]!;
+    store.upsertRecipe({ ...retired, id: "pinkcherry-h3-video", modelId: "retired-pinkcherry" });
+    store.upsertRoute({ id: "video", displayName: "Video generation", recipeId: "pinkcherry-h3-video", kind: "video", enabled: true });
+
+    expect(reconcileLocalComfyUIConfiguration(store, paths)).toBe(true);
+    expect(store.listRecipes().some((recipe) => recipe.id === "pinkcherry-h3-video")).toBe(false);
+    expect(store.listRoutes()).toContainEqual(expect.objectContaining({ id: "video", recipeId: "h3-video" }));
     store.close();
   });
 

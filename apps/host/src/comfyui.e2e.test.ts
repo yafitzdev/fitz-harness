@@ -39,23 +39,24 @@ describe("MiniMax H3 via ComfyUI (PR 7)", () => {
     expect(playbook.routes).not.toContainEqual(expect.objectContaining({ id: "image" }));
   });
 
-  it("onboards independently installed PinkCherry H3 and Krea 2 recipes", async () => {
+  it("onboards Krea 2 base and NSFW LoRA as independent image recipes", async () => {
     const playbook = createComfyUIPlaybook({
       engineDir: "/engines/comfyui",
       executable: "python",
-      recipeIds: ["h3-video", "pinkcherry-h3-video", "krea2-turbo-image"],
+      recipeIds: ["h3-video", "krea2-turbo-image", "krea2-nsfw-image"],
     });
     const adapter = new ComfyUIEngineAdapter({ validatePaths: false });
 
     expect(playbook.recipes.map((recipe) => recipe.id)).toEqual([
       "h3-video",
-      "pinkcherry-h3-video",
       "krea2-turbo-image",
+      "krea2-nsfw-image",
     ]);
-    expect(playbook.recipes.find((recipe) => recipe.id === "pinkcherry-h3-video")).toMatchObject({
-      modelId: "pinkcherry-minimax-h3-v0.5-pruned-int8",
+    expect(playbook.recipes.find((recipe) => recipe.id === "krea2-nsfw-image")).toMatchObject({
+      modelId: "krea2-turbo-nvfp4-nsfw",
       lifecycle: { evictionPolicy: "immediate", idleTtlSeconds: 0 },
-      capabilities: { modalities: { output: ["video", "audio"] } },
+      capabilities: { modalities: { output: ["image"] } },
+      configuration: { defaults: { resolution: "1024x1024", sampler: "euler", steps: 8, guidance: 1 } },
     });
     expect(playbook.recipes.find((recipe) => recipe.id === "krea2-turbo-image")).toMatchObject({
       modelId: "krea2-turbo-nvfp4",
@@ -68,6 +69,14 @@ describe("MiniMax H3 via ComfyUI (PR 7)", () => {
     }
     expect(playbook.routes).toContainEqual(expect.objectContaining({ id: "video", recipeId: "h3-video" }));
     expect(playbook.routes).toContainEqual(expect.objectContaining({ id: "image", recipeId: "krea2-turbo-image" }));
+
+    const nsfw = playbook.recipes.find((recipe) => recipe.id === "krea2-nsfw-image")!;
+    const workflow = nsfw.configuration.comfyuiWorkflow as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+    expect(workflow["10"]).toEqual({
+      class_type: "LoraLoaderModelOnly",
+      inputs: { model: ["1", 0], lora_name: "KNP_V2_copy_copy.safetensors", strength_model: 1 },
+    });
+    expect(workflow["7"].inputs.model).toEqual(["10", 0]);
   });
 
   it("computes the H3 frame count from the requested fps, not a hardcoded 24", () => {
@@ -93,14 +102,14 @@ describe("MiniMax H3 via ComfyUI (PR 7)", () => {
     expect(at30["91"].inputs.fps).toBe(30);
   });
 
-  it("routes PinkCherry when it is the only installed video recipe", () => {
+  it("routes the NSFW LoRA when it is the only installed image recipe", () => {
     const playbook = createComfyUIPlaybook({
       engineDir: "/engines/comfyui",
       executable: "python",
-      recipeIds: ["pinkcherry-h3-video"],
+      recipeIds: ["krea2-nsfw-image"],
     });
-    expect(playbook.recipes.map((recipe) => recipe.id)).toEqual(["pinkcherry-h3-video"]);
-    expect(playbook.routes).toEqual([expect.objectContaining({ id: "video", recipeId: "pinkcherry-h3-video" })]);
+    expect(playbook.recipes.map((recipe) => recipe.id)).toEqual(["krea2-nsfw-image"]);
+    expect(playbook.routes).toEqual([expect.objectContaining({ id: "image", recipeId: "krea2-nsfw-image" })]);
   });
 
   it("runs a video generation end-to-end through the host pipeline", async () => {
