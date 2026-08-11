@@ -16,7 +16,9 @@ function show(form: MediaCreationForm, overrides: Partial<MediaCreationRequest> 
 }
 
 function cardOf(messages: HTMLElement): HTMLElement {
-  return messages.querySelector<HTMLElement>(".media-creation-card")!;
+  const card = messages.querySelector<HTMLElement>(".media-creation-card")!;
+  expect(card.classList.contains("media-card")).toBe(true);
+  return card;
 }
 
 function formOf(messages: HTMLElement): HTMLFormElement {

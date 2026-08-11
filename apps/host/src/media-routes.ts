@@ -299,8 +299,10 @@ function parseMediaStatus(value: string | undefined): MediaJobStatus | undefined
 function parseMediaParams(value: unknown): MediaGenerationParams {
   const body = requireRecord(value);
   const prompt = requireString(body.prompt, "prompt");
+  const operation = parseMediaOperation(body.operation);
   return {
     prompt,
+    ...(operation ? { operation } : {}),
     ...(typeof body.negativePrompt === "string" ? { negativePrompt: body.negativePrompt } : {}),
     ...(Array.isArray(body.refs) ? {
       refs: body.refs.map((ref) => {
@@ -318,6 +320,12 @@ function parseMediaParams(value: unknown): MediaGenerationParams {
     ...(typeof body.steps === "number" ? { steps: body.steps } : {}),
     ...(typeof body.guidance === "number" ? { guidance: body.guidance } : {}),
   };
+}
+
+function parseMediaOperation(value: unknown): "generate" | "edit" | undefined {
+  if (value === undefined) return undefined;
+  if (value === "generate" || value === "edit") return value;
+  throw new TypeError("params.operation must be generate or edit");
 }
 
 function parseImageGenerationRequest(value: unknown): ImageGenerationRequest {

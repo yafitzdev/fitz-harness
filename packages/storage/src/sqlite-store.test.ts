@@ -208,7 +208,11 @@ describe("SqliteStore", () => {
     const store = SqliteStore.memory(); const now = new Date(0).toISOString();
     store.createProject({ id: "media-project", name: "Media", createdAt: now, updatedAt: now });
     store.createSession({ id: "session-1", projectId: "media-project", title: "Media", status: "active", createdAt: now, updatedAt: now });
-    const job: MediaJobRecord = { id: "job-1", sessionId: "session-1", routeId: "video", modality: "video", status: "queued", params: { prompt: "a cat", durationSeconds: 5 }, enqueuedAt: now, createdByUserId: "user-1", creditCostCents: 3 };
+    const job: MediaJobRecord = {
+      id: "job-1", sessionId: "session-1", routeId: "video", modality: "video", status: "queued",
+      execution: { recipeId: "h3", recipeDisplayName: "MiniMax H3", modelId: "minimax-h3", adapter: "media-fake" },
+      params: { prompt: "a cat", durationSeconds: 5 }, enqueuedAt: now, createdByUserId: "user-1", creditCostCents: 3,
+    };
     store.createMediaJob(job);
     expect(store.getMediaJob("job-1")).toEqual(job);
     store.updateMediaJob("job-1", { status: "started", startedAt: now, providerJobId: "provider-1", progress: 0.25 });

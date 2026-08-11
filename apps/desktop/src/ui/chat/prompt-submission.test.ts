@@ -141,7 +141,7 @@ describe("PromptSubmissionController", () => {
     expect(request.refs).toEqual([{ artifactId: "artifact-1" }]);
 
     await request.submit({ prompt: "make it match" });
-    expect(options.submitMedia).toHaveBeenCalledWith(expect.objectContaining({ refs: [{ artifactId: "artifact-1" }] }));
+    expect(options.submitMedia).toHaveBeenCalledWith(expect.objectContaining({ operation: "edit", refs: [{ artifactId: "artifact-1" }] }));
     expect(options.startRun).not.toHaveBeenCalled();
   });
 

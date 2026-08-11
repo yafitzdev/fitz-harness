@@ -367,6 +367,29 @@ const mediaJobFeed = new MediaJobFeed({
   appendAssistant: (text, createdAt) => conversationMessages.appendDetached("assistant", text, createdAt),
   openArtifact: (artifact) => inspectorPanel.previewArtifact(artifact),
   retry: async (job) => (await api(`/api/v1/media/jobs/${encodeURIComponent(job.id)}/retry`, "POST")).data as MediaJobSummary,
+  editImage: async (job, sourceArtifactId, prompt) => {
+    const routeId = typeof job.routeId === "string" && job.routeId ? job.routeId : "image";
+    const sessionId = job.sessionId ?? projects.currentSessionId;
+    if (!sessionId) throw new Error("Image editing requires an active chat");
+    const previous = job.params && typeof job.params === "object" ? { ...job.params } : {};
+    delete previous.prompt;
+    delete previous.operation;
+    delete previous.refs;
+    delete previous.durationSeconds;
+    delete previous.fps;
+    const response = await api("/api/v1/media/jobs", "POST", {
+      routeId,
+      modality: "image",
+      sessionId,
+      params: {
+        ...previous,
+        operation: "edit",
+        prompt,
+        refs: [{ artifactId: sourceArtifactId }],
+      },
+    });
+    return response.data as MediaJobSummary;
+  },
   watch: (jobId) => mediaJobs.watch(jobId),
   showStatus,
   errorMessage,
@@ -450,12 +473,13 @@ const promptSubmission = new PromptSubmissionController({
   refreshContext: updateContextMeter,
   refreshControls: refreshComposerState,
   runId: () => agentRuns.runId,
-  submitMedia: async ({ routeId, modality, prompt, sessionId, size, seed, negativePrompt, durationSeconds, fps, refs }) => {
+  submitMedia: async ({ routeId, modality, operation, prompt, sessionId, size, seed, negativePrompt, durationSeconds, fps, refs }) => {
     const response = await api("/api/v1/media/jobs", "POST", {
       routeId,
       modality,
       params: {
         prompt,
+        ...(operation !== undefined ? { operation } : {}),
         ...(size !== undefined ? { size } : {}),
         ...(seed !== undefined ? { seed } : {}),
         ...(negativePrompt !== undefined ? { negativePrompt } : {}),

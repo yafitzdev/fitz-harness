@@ -17,4 +17,11 @@ describe("validateMediaGenerationParams", () => {
   ] as const)("rejects invalid provider-independent values: %o", (params, field) => {
     expect(() => validateMediaGenerationParams(params)).toThrow(field);
   });
+
+  it("requires a source image for an explicit edit", () => {
+    expect(() => validateMediaGenerationParams({ prompt: "make it blue", operation: "edit" })).toThrow("source image reference");
+    expect(validateMediaGenerationParams({ prompt: "make it blue", operation: "edit", refs: [{ artifactId: "source" }] })).toEqual({
+      prompt: "make it blue", operation: "edit", refs: [{ artifactId: "source" }],
+    });
+  });
 });

@@ -27,6 +27,7 @@ import type {
   ToolActionRecord,
   TrashEntryRecord,
   MediaCreditRecord,
+  MediaExecutionMetadata,
   MediaGenerationParams,
   MediaJobEvent,
   MediaJobRecord,
@@ -77,6 +78,7 @@ interface MediaJobRow {
   modality: MediaModality;
   status: MediaJobStatus;
   params_json: string;
+  execution_json: string | null;
   progress: number | null;
   artifact_id: string | null;
   provider_job_id: string | null;
@@ -608,10 +610,10 @@ export class SqliteStore {
     this.#database
       .prepare(
         `INSERT INTO media_jobs (
-          id, session_id, route_id, modality, status, params_json, progress,
+          id, session_id, route_id, modality, status, params_json, execution_json, progress,
           artifact_id, provider_job_id, error_code, enqueued_at, started_at,
           completed_at, cancelled_at, created_by_user_id, credit_cost_cents
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         job.id,
@@ -620,6 +622,7 @@ export class SqliteStore {
         job.modality,
         job.status,
         JSON.stringify(job.params),
+        job.execution ? JSON.stringify(job.execution) : null,
         job.progress ?? null,
         job.artifactId ?? null,
         job.providerJobId ?? null,
@@ -636,7 +639,7 @@ export class SqliteStore {
   getMediaJob(id: string): MediaJobRecord | undefined {
     const row = this.#database
       .prepare(
-        `SELECT id, session_id, route_id, modality, status, params_json, progress,
+        `SELECT id, session_id, route_id, modality, status, params_json, execution_json, progress,
                 artifact_id, provider_job_id, error_code, enqueued_at, started_at,
                 completed_at, cancelled_at, created_by_user_id, credit_cost_cents
          FROM media_jobs WHERE id = ?`,
@@ -657,6 +660,7 @@ export class SqliteStore {
     set("modality", patch.modality);
     set("status", patch.status);
     set("params_json", patch.params === undefined ? undefined : JSON.stringify(patch.params));
+    set("execution_json", patch.execution === undefined ? undefined : JSON.stringify(patch.execution));
     set("progress", patch.progress);
     set("artifact_id", patch.artifactId);
     set("provider_job_id", patch.providerJobId);
@@ -680,7 +684,7 @@ export class SqliteStore {
     const limit = options.limit ?? 100;
     const rows = this.#database
       .prepare(
-        `SELECT id, session_id, route_id, modality, status, params_json, progress,
+        `SELECT id, session_id, route_id, modality, status, params_json, execution_json, progress,
                 artifact_id, provider_job_id, error_code, enqueued_at, started_at,
                 completed_at, cancelled_at, created_by_user_id, credit_cost_cents
          FROM media_jobs ${where} ORDER BY enqueued_at DESC LIMIT ?`,
@@ -1086,6 +1090,7 @@ function mapMediaJob(row: MediaJobRow): MediaJobRecord {
     modality: row.modality,
     status: row.status,
     params: JSON.parse(row.params_json) as MediaGenerationParams,
+    ...(row.execution_json ? { execution: JSON.parse(row.execution_json) as MediaExecutionMetadata } : {}),
     enqueuedAt: row.enqueued_at,
     ...(row.session_id ? { sessionId: row.session_id } : {}),
     ...(row.progress !== null ? { progress: row.progress } : {}),

@@ -489,4 +489,10 @@ export const MIGRATIONS: readonly Migration[] = [
       FROM media_jobs WHERE status IN ('completed', 'failed', 'cancelled', 'interrupted');
     `,
   },
+  {
+    version: 16,
+    // Pin the engine identity selected at admission separately from mutable
+    // route assignments. Effective generation parameters remain in params_json.
+    sql: `ALTER TABLE media_jobs ADD COLUMN execution_json TEXT;`,
+  },
 ] as const;

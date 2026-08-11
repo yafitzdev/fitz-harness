@@ -22,6 +22,10 @@ function setup() {
     }),
     openArtifact: vi.fn(),
     retry: vi.fn(async () => ({ id: "job-2", modality: "video" as const, status: "queued" })),
+    editImage: vi.fn(async (_job: any, _artifactId: string, prompt: string) => ({
+      id: "job-edit", routeId: "image", sessionId: "session-1", modality: "image" as const,
+      status: "queued", params: { operation: "edit", prompt },
+    })),
     watch: vi.fn(),
     showStatus: vi.fn(),
     errorMessage: vi.fn((error: unknown) => String(error)),
@@ -61,6 +65,13 @@ describe("MediaJobFeed", () => {
     expect(calls.appendAssistant).toHaveBeenCalledWith("I couldn't generate your image.", "2026-08-09T06:36:07.922Z");
     const row = messages.querySelector<HTMLElement>(".media-result-message .media-job-notice.failed")!;
     expect(row).not.toBeNull();
+    expect(row.classList.contains("media-card")).toBe(true);
+    expect(row.querySelector(".media-job-actions .media-job-open")?.textContent).toBe("Retry");
+    expect(row.querySelector(".media-job-specification")).not.toBeNull();
+    expect([...row.querySelectorAll(":scope > .media-job-specification > .media-job-section")].map((section) => section.className)).toEqual([
+      "media-job-section media-job-settings",
+      "media-job-section media-job-prompts",
+    ]);
     row.click();
     expect(row.getAttribute("aria-expanded")).toBe("true");
     expect(row.textContent).toContain("a fox");
@@ -97,6 +108,110 @@ describe("MediaJobFeed", () => {
     messages.querySelector<HTMLButtonElement>(".media-job-open")!.click();
     expect(calls.openArtifact).toHaveBeenCalledOnce();
     expect(messages.querySelector(".media-job-notice")?.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("edits a completed image inline and starts a chained media job", async () => {
+    const { feed, messages, calls } = setup();
+    const source = { id: "artifact-source", name: "dog.png" };
+    feed.render({
+      id: "job-source", routeId: "image", sessionId: "session-1", modality: "image", status: "completed",
+      params: { prompt: "a dog swimming", size: "1024x1024" },
+    }, undefined, source);
+
+    const sourceCard = messages.querySelector<HTMLElement>("[data-media-job-id='job-source']")!;
+    expect(sourceCard.querySelector<HTMLElement>(".media-job-specification")?.hidden).toBe(true);
+    sourceCard.click();
+    const prompt = messages.querySelector<HTMLTextAreaElement>("[name='editPrompt']")!;
+    expect(prompt).not.toBeNull();
+    expect(prompt.tagName).toBe("TEXTAREA");
+    expect(prompt.getAttribute("rows")).toBe("1");
+    expect(prompt.placeholder).toBe("Describe what should change");
+    const editButton = messages.querySelector<HTMLButtonElement>(".media-job-edit-submit")!;
+    expect(editButton.textContent).toBe("Edit");
+    expect(editButton.classList.contains("media-job-open")).toBe(true);
+    prompt.value = "change the dog";
+    prompt.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true }));
+    expect(calls.editImage).not.toHaveBeenCalled();
+    prompt.value = "change the dog\nto a cat";
+    prompt.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+
+    await vi.waitFor(() => expect(calls.editImage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "job-source" }), "artifact-source", "change the dog\nto a cat",
+    ));
+    expect(calls.watch).toHaveBeenCalledWith("job-edit");
+    expect(messages.textContent).toContain("Image edit in progress");
+    expect(sourceCard.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("places settings above the edit control inside expanded card details", () => {
+    const { feed, messages } = setup();
+    feed.render({
+      id: "job-image", routeId: "image", modality: "image", status: "completed",
+      execution: { recipeId: "qwen-image", recipeDisplayName: "Qwen Image 2512 + Edit 2511", modelId: "qwen-image-2512-edit-2511", adapter: "comfyui" },
+      params: { prompt: "a dog", size: "1024x1024", seed: 42, sampler: "euler", steps: 40, guidance: 4, negativePrompt: "" },
+    }, undefined, { id: "artifact-image", name: "dog.png" });
+    const card = messages.querySelector<HTMLElement>("[data-media-job-id='job-image']")!;
+    expect(card.querySelector<HTMLElement>(".media-job-specification")?.hidden).toBe(true);
+    card.click();
+    const details = card.querySelector<HTMLElement>(".media-job-specification")!;
+    const edit = details.querySelector<HTMLElement>(".media-job-edit")!;
+    expect(details.hidden).toBe(false);
+    expect(edit).not.toBeNull();
+    const content = details.textContent ?? "";
+    expect([...details.querySelectorAll(":scope > .media-job-section")].map((section) => section.className)).toEqual([
+      "media-job-section media-job-settings",
+      "media-job-section media-job-edit",
+      "media-job-section media-job-prompts",
+    ]);
+    expect(details.querySelector(".media-job-settings")?.getAttribute("aria-label")).toBe("Settings");
+    expect(details.querySelector(".media-job-edit")?.getAttribute("aria-label")).toBe("Edit image");
+    expect(details.querySelector(".media-job-prompts")?.getAttribute("aria-label")).toBe("Prompt chain");
+    expect(details.querySelector(".media-job-section > strong")).toBeNull();
+    expect(content).toContain("Qwen Image 2512 + Edit 2511");
+    expect(content).toContain("qwen-image-2512-edit-2511");
+    expect(content).toContain("1024x1024");
+    expect(content).toContain("42");
+    expect(content).toContain("euler");
+    expect(content).toContain("40");
+    expect(content).toContain("None");
+    expect(content).not.toContain("Route defaults");
+  });
+
+  it("only offers inline editing for completed image artifacts", () => {
+    const { feed, messages } = setup();
+    feed.render({ id: "job-video", modality: "video", status: "completed" }, undefined, { id: "video", name: "clip.mp4" });
+    expect(messages.querySelector("[name='editPrompt']")).toBeNull();
+  });
+
+  it("shows readable prompt lineage without exposing raw artifact references", () => {
+    const { feed, messages } = setup();
+    feed.render({
+      id: "job-original", modality: "image", status: "completed", params: { prompt: "a dog swimming" },
+    }, undefined, { id: "artifact-original", name: "dog.png" });
+    feed.render({
+      id: "job-edit", modality: "image", status: "completed",
+      params: { operation: "edit", prompt: "change the dog to a cat", refs: [{ artifactId: "artifact-original" }] },
+    }, undefined, { id: "artifact-edit", name: "cat.png" });
+
+    const originalCard = messages.querySelector<HTMLElement>("[data-media-job-id='job-original']")!;
+    const scrollIntoView = vi.fn();
+    originalCard.scrollIntoView = scrollIntoView;
+    const editedCard = messages.querySelector<HTMLElement>("[data-media-job-id='job-edit']")!;
+    editedCard.click();
+    expect(editedCard.textContent).toContain("Original");
+    expect(editedCard.textContent).toContain("a dog swimming");
+    expect(editedCard.textContent).toContain("Edit 1");
+    expect(editedCard.textContent).toContain("change the dog to a cat");
+    expect(editedCard.textContent).not.toContain("artifact-original");
+    const originalPrompt = [...editedCard.querySelectorAll<HTMLButtonElement>(".media-job-prompt-link")]
+      .find((button) => button.textContent === "a dog swimming")!;
+    originalPrompt.click();
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "center" });
+    expect(document.activeElement).toBe(originalCard);
+    expect(originalCard.classList.contains("jump-target")).toBe(true);
+    expect(originalCard.getAttribute("aria-expanded")).toBe("true");
+    expect(originalCard.querySelector<HTMLElement>(".media-job-specification")?.hidden).toBe(false);
+    expect(editedCard.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("renders a thin progress bar while a job is generating", () => {

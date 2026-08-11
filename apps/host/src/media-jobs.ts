@@ -113,7 +113,8 @@ export class MediaJobCoordinator {
       });
     }
 
-    const params = constrainMediaParams(validateMediaGenerationParams(input.params), recipe);
+    const requestedParams = constrainMediaParams(validateMediaGenerationParams(input.params), recipe);
+    const params = this.#scheduler.resolveMediaParams(route.id, requestedParams);
     const executionParams = await this.#materializeReferences(params);
     const id = randomUUID();
     const now = new Date().toISOString();
@@ -122,6 +123,12 @@ export class MediaJobCoordinator {
       routeId: route.id,
       modality: input.modality,
       status: "queued",
+      execution: {
+        recipeId: recipe.id,
+        recipeDisplayName: recipe.displayName,
+        modelId: recipe.modelId,
+        adapter: recipe.adapter,
+      },
       params,
       enqueuedAt: now,
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
@@ -311,6 +318,10 @@ export class MediaJobCoordinator {
           modality: job.modality,
           routeId: job.routeId,
           mediaJobId: id,
+          operation: job.params.operation ?? "generate",
+          ...(job.params.operation === "edit" && job.params.refs?.[0] && "artifactId" in job.params.refs[0]
+            ? { sourceArtifactId: job.params.refs[0].artifactId }
+            : {}),
           ...(result.width !== undefined ? { width: result.width } : {}),
           ...(result.height !== undefined ? { height: result.height } : {}),
           ...(result.durationSeconds !== undefined ? { durationSeconds: result.durationSeconds } : {}),

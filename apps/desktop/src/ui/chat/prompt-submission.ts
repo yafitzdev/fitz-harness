@@ -44,6 +44,7 @@ export interface PromptSubmissionOptions {
   submitMedia: (request: {
     routeId: string;
     modality: MediaModality;
+    operation?: "generate" | "edit";
     prompt: string;
     sessionId: string;
     size?: string;
@@ -143,6 +144,7 @@ export class PromptSubmissionController {
             const job = await this.#options.submitMedia({
               routeId: mediaCommand,
               modality: mediaCommand,
+              ...(mediaCommand === "image" && refs.length > 0 ? { operation: "edit" } : {}),
               prompt: params.prompt,
               sessionId,
               ...(params.size ? { size: params.size } : {}),

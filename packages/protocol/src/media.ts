@@ -9,8 +9,13 @@ export type MediaJobStatus =
   | "cancelled"
   | "interrupted";
 
+export type MediaGenerationOperation = "generate" | "edit";
+
 export interface MediaGenerationParams {
   prompt: string;
+  /** Explicit intent for unified image routes. Edit jobs must also carry the
+   * source artifact in `refs`; adapters must not infer editing from refs alone. */
+  operation?: MediaGenerationOperation;
   negativePrompt?: string;
   /** image-to-video / reference editing. `url` may be a provider URL or a Fitz artifact download URL. */
   refs?: Array<{ artifactId: string } | { url: string }>;
@@ -42,12 +47,22 @@ export interface MediaGenerationResult {
   height?: number;
 }
 
+export interface MediaExecutionMetadata {
+  recipeId: string;
+  recipeDisplayName: string;
+  modelId: string;
+  adapter: string;
+}
+
 export interface MediaJobRecord {
   id: string;
   sessionId?: string;
   routeId: string;
   modality: MediaModality;
   status: MediaJobStatus;
+  /** Immutable engine identity selected when the job was admitted. */
+  execution?: MediaExecutionMetadata;
+  /** Effective parameters after recipe defaults are resolved. */
   params: MediaGenerationParams;
   progress?: number; // 0..1
   artifactId?: string; // set on completion, via SqliteStore.createArtifact
@@ -126,4 +141,3 @@ export interface VideoGenerationResponse {
   error?: string;
   createdAt: string;
 }
-

@@ -94,6 +94,9 @@ export interface MediaEngineAdapter<THandle extends EngineInstanceHandle = Engin
   /** Where generation compute runs. Local is the safe default so newly added
    *  media engines automatically inherit host GPU thermal protection. */
   executionLocation?(recipe: Recipe): "local" | "remote";
+  /** Resolve adapter/recipe defaults before durable admission so the job and
+   * UI record the exact parameters that will reach the engine. */
+  resolveParams?(recipe: Recipe, params: MediaGenerationRequest["params"]): MediaGenerationRequest["params"];
   prepare?(recipe: Recipe, signal: AbortSignal): Promise<void>;
   validateRecipe(recipe: Recipe): Promise<ValidationReport>;
   estimateResources(recipe: Recipe): Promise<ResourceEstimate>;

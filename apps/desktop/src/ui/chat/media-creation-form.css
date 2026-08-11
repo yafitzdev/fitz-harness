@@ -6,10 +6,6 @@
   display: grid;
   gap: 12px;
   padding: 14px 16px;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-lg);
-  background: var(--tint-2);
-  color: var(--muted);
 }
 .media-creation-card h2 {
   margin: 0;

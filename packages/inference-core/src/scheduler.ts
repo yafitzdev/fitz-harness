@@ -104,6 +104,12 @@ export class InferenceScheduler {
 
   get queueDepth(): number { return this.#gpuLane.depth + this.#cloudLane.depth }
 
+  resolveMediaParams(routeId: string, params: MediaGenerationRequest["params"]): MediaGenerationRequest["params"] {
+    const recipe = this.routes.resolve(routeId).recipe;
+    const adapter = this.lifecycle.adapters.getMedia(recipe.adapter);
+    return adapter.resolveParams?.(recipe, params) ?? params;
+  }
+
   enqueue(routeId: string, input: Omit<InferenceRequest, "id" | "routeId">, externalSignal?: AbortSignal, context: WorkContext = {}): ScheduledStream {
     return this.#enqueue(routeId, input, externalSignal, undefined, undefined, context);
   }

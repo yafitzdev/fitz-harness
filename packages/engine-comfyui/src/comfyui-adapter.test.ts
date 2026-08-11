@@ -12,6 +12,10 @@ const VIDEO_WORKFLOW = {
   "1": { class_type: "HailuoVideoGenerate", inputs: { prompt: "{{prompt}}", seed: "{{seed}}", fps: "{{fps}}", width: "{{width}}", height: "{{height}}" } },
   "2": { class_type: "SaveVideo", inputs: { filename_prefix: "h3" } },
 };
+const EDIT_WORKFLOW = {
+  "8": { class_type: "LoadImage", inputs: { image: "{{ref_0}}" } },
+  "9": { class_type: "ImageEdit", inputs: { image: ["8", 0], prompt: "{{prompt}}" } },
+};
 
 describe("validateComfyUIConfiguration", () => {
   it("accepts a valid managed recipe with an inline workflow", () => {
@@ -77,6 +81,26 @@ describe("validateComfyUIConfiguration", () => {
       executable: "python", cwd: "/e", comfyuiWorkflow: VIDEO_WORKFLOW,
       defaults: { steps: "many" }, outputFormats: [1],
     }))).toEqual([expect.objectContaining({ code: "invalid_configuration" })]);
+  });
+});
+
+describe("ComfyUI effective generation parameters", () => {
+  it("resolves recipe defaults and a durable random seed before submission", () => {
+    const adapter = new ComfyUIEngineAdapter({ validatePaths: false });
+    const params = adapter.resolveParams(recipeFor({
+      baseUrl: "http://127.0.0.1:8188",
+      comfyuiWorkflow: VIDEO_WORKFLOW,
+      defaults: { resolution: "1024x1024", sampler: "euler", steps: 40, guidance: 4 },
+    }), { prompt: "a dog" });
+    expect(params).toEqual({
+      prompt: "a dog",
+      negativePrompt: "",
+      size: "1024x1024",
+      sampler: "euler",
+      steps: 40,
+      guidance: 4,
+      seed: expect.any(Number),
+    });
   });
 });
 
@@ -305,6 +329,38 @@ describe("ComfyUIProgressListener", () => {
 });
 
 describe("ComfyUIEngineAdapter progress streaming", () => {
+  it("selects the edit graph only for an explicit edit operation", async () => {
+    let submitted: Record<string, unknown> | undefined;
+    const adapter = new ComfyUIEngineAdapter({
+      validatePaths: false,
+      createWebSocket: () => new FakeWebSocket(),
+      fetch: stubFetch({ captureSubmit: (body) => { submitted = body; } }),
+    });
+    const recipe = recipeFor({
+      baseUrl: "http://127.0.0.1:8188", comfyuiWorkflow: VIDEO_WORKFLOW, comfyuiEditWorkflow: EDIT_WORKFLOW,
+    });
+    const spec = await adapter.buildLaunchSpec(recipe, { host: "127.0.0.1", port: 0 });
+    const instance = await adapter.start(recipe, spec, new AbortController().signal);
+    await adapter.submit(instance, mediaRequest("image", {
+      operation: "edit", prompt: "make it blue", refs: [{ url: "data:image/png;base64,AA==" }],
+    }), new AbortController().signal);
+
+    expect(submitted?.prompt).toEqual({
+      "8": { class_type: "LoadImage", inputs: { image: "uploaded-reference.png" } },
+      "9": { class_type: "ImageEdit", inputs: { image: ["8", 0], prompt: "make it blue" } },
+    });
+  });
+
+  it("rejects explicit edits when the recipe has no edit graph", async () => {
+    const adapter = new ComfyUIEngineAdapter({ validatePaths: false, fetch: stubFetch({}) });
+    const recipe = recipeFor({ baseUrl: "http://127.0.0.1:8188", comfyuiWorkflow: VIDEO_WORKFLOW });
+    const spec = await adapter.buildLaunchSpec(recipe, { host: "127.0.0.1", port: 0 });
+    const instance = await adapter.start(recipe, spec, new AbortController().signal);
+    await expect(adapter.submit(instance, mediaRequest("image", {
+      operation: "edit", prompt: "make it blue", refs: [{ url: "data:image/png;base64,AA==" }],
+    }), new AbortController().signal)).rejects.toThrow("does not configure an image edit workflow");
+  });
+
   it("reports WebSocket-streamed progress for a running job", async () => {
     const sockets: FakeWebSocket[] = [];
     let submitted: Record<string, unknown> | undefined;
@@ -421,6 +477,9 @@ function stubFetch(options: StubFetchOptions): typeof fetch {
   return async (input, init) => {
     const raw = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     const url = new URL(raw);
+    if (url.protocol === "data:") {
+      return new Response(new Uint8Array([0]), { status: 200, headers: { "content-type": "image/png" } });
+    }
     if (url.pathname === "/prompt") {
       if (typeof init?.body === "string") {
         try {
@@ -430,6 +489,9 @@ function stubFetch(options: StubFetchOptions): typeof fetch {
         }
       }
       return jsonResponse({ prompt_id: options.promptId ?? "job-1" });
+    }
+    if (url.pathname === "/upload/image") {
+      return jsonResponse({ name: "uploaded-reference.png", subfolder: "", type: "input" });
     }
     if (url.pathname.startsWith("/history/")) {
       return jsonResponse(options.history ?? {});

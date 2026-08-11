@@ -61,9 +61,9 @@ export interface ComfyUIConfiguration {
    *  placement is manual; the recipe pins the graph that ComfyUI runs). The
    *  configuration reader resolves JSON strings to the graph. */
   comfyuiWorkflow?: Readonly<Record<string, unknown>>;
-  /** Optional reference-edit graph. It is selected automatically whenever the
-   * request contains image refs, allowing one image route to own generation and
-   * editing without exposing implementation recipes to the consumer. */
+  /** Optional reference-edit graph. It is selected for an explicit `edit`
+   * operation, allowing one image route to own generation and editing without
+   * making reference presence double as an intent signal. */
   comfyuiEditWorkflow?: Readonly<Record<string, unknown>>;
   /** Pinned workflow: path to a workflow JSON file (absolute, or relative to
    *  `cwd` when managed). Mutually exclusive with `comfyuiWorkflow`. */
@@ -131,6 +131,10 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
     this.defaultPollIntervalMs = options.defaultPollIntervalMs ?? 1_000;
     this.#readinessTimeoutMs = options.readinessTimeoutMs ?? 120_000;
     this.#stopTimeoutMs = options.stopTimeoutMs ?? 10_000;
+  }
+
+  resolveParams(recipe: Recipe, params: MediaGenerationParams): MediaGenerationParams {
+    return applyGenerationDefaults(params, readComfyUIConfiguration(recipe).defaults);
   }
 
   executionLocation(recipe: Recipe): "local" | "remote" {
@@ -262,8 +266,11 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
     signal: AbortSignal,
   ): Promise<MediaJobHandle> {
     if (signal.aborted) throw abortError();
-    const graph = request.params.refs?.length && instance.config.comfyuiEditWorkflow
-      ? instance.config.comfyuiEditWorkflow
+    if (request.params.operation === "edit" && !instance.config.comfyuiEditWorkflow) {
+      throw new Error(`ComfyUI recipe ${instance.recipeId} does not configure an image edit workflow`);
+    }
+    const graph = request.params.operation === "edit"
+      ? instance.config.comfyuiEditWorkflow!
       : await this.#loadWorkflow(instance, signal);
     const overrides = instance.config.comfyuiOverrides;
     const params = applyGenerationDefaults(request.params, instance.config.defaults);
@@ -586,6 +593,7 @@ function applyGenerationDefaults(
   const guidance = params.guidance ?? numberDefault(defaults, "guidance");
   return {
     ...params,
+    negativePrompt: params.negativePrompt ?? "",
     ...(size !== undefined ? { size } : {}),
     ...(durationSeconds !== undefined ? { durationSeconds } : {}),
     ...(fps !== undefined ? { fps } : {}),

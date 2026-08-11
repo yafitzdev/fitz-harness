@@ -83,6 +83,7 @@ export function createMediaTools(options: MediaToolsOptions): (context: { cwd: s
             ...(params.size !== undefined ? { size: params.size } : {}),
             ...(params.seed !== undefined ? { seed: params.seed } : {}),
             ...(params.negative_prompt !== undefined ? { negativePrompt: params.negative_prompt } : {}),
+            ...(params.refs?.length ? { operation: "edit" as const } : {}),
             ...(params.refs !== undefined ? { refs: mapRefs(params.refs) } : {}),
           }, params.route_id);
           return mediaJobResult(job, "image");

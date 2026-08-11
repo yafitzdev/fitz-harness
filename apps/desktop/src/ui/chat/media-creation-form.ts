@@ -59,7 +59,7 @@ export class MediaCreationForm {
     const label = MODALITY_LABELS[request.modality];
 
     const card = document.createElement("article");
-    card.className = "message media-creation-card";
+    card.className = "message media-card media-creation-card";
     const title = document.createElement("h2");
     title.textContent = `Create ${label.toLowerCase()}`;
 

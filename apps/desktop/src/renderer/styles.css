@@ -178,11 +178,13 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .markdown-table th:last-child,
 .markdown-table td:last-child { border-right: 0; }
 .message.system { padding: 10px 12px; overflow-wrap: anywhere; border-left: 2px solid var(--danger); background: var(--danger-tint); color: var(--danger-soft); }
-.media-job-notice { display: grid; grid-template-columns: 26px minmax(0, 1fr) 18px auto; align-items: center; gap: 9px; min-height: 52px; padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: var(--radius-lg); background: var(--tint-2); color: var(--muted); cursor: pointer; position: relative; overflow: hidden; }
+.media-card { border: 1px solid var(--border-soft); border-radius: var(--radius-lg); background: var(--tint-2); color: var(--muted); }
+.media-job-notice { display: grid; grid-template-columns: 26px minmax(0, 1fr) 18px auto; align-items: center; gap: 9px; min-height: 52px; padding: 8px 10px; cursor: pointer; position: relative; overflow: hidden; }
 .media-job-notice:focus-visible { outline: 1px solid var(--focus); outline-offset: 2px; }
 .media-result-message > .message-body { margin-bottom: 9px; }
 .media-result-message > .media-job-notice { margin: 0; }
 .media-job-notice.failed, .media-job-notice.interrupted { border-color: var(--danger); background: var(--danger-tint); }
+.media-job-notice.failed .media-job-icon, .media-job-notice.interrupted .media-job-icon { color: var(--danger); }
 .media-job-icon { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: var(--tint-5); color: var(--subtle); }
 .media-job-icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .media-job-notice.queued .media-job-icon svg, .media-job-notice.started .media-job-icon svg, .media-job-notice.progressing .media-job-icon svg { animation: run-activity-spinner 900ms linear infinite; transform-origin: center; stroke-dasharray: 30 14; }
@@ -197,14 +199,29 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .media-job-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--tint-5); }
 .media-job-progress::before { content: ""; display: block; height: 100%; width: var(--progress, 0%); background: var(--text); opacity: .9; transition: width 300ms ease; }
 .media-job-specification { grid-column: 1 / -1; min-width: 0; margin: 3px 0 1px 35px; padding-top: 10px; border-top: 1px solid var(--border-soft); cursor: default; }
-.media-job-specification > strong { display: block; margin: 0 0 5px; color: var(--subtle); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .045em; }
-.media-job-specification pre { max-height: 190px; margin: 0 0 11px; padding: 8px 10px; overflow: auto; border-radius: var(--radius-md); background: var(--grey-300); color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.55 Consolas, "Cascadia Mono", monospace; }
+.media-job-section + .media-job-section { margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--border-soft); }
 .media-job-specification dl { display: grid; grid-template-columns: minmax(90px, max-content) minmax(0, 1fr); gap: 5px 12px; margin: 0; font-size: 11px; }
 .media-job-specification dt { color: var(--subtle); text-transform: capitalize; }
 .media-job-specification dd { min-width: 0; margin: 0; color: var(--muted); overflow-wrap: anywhere; }
 .media-job-settings-empty { grid-column: 1 / -1; color: var(--subtle); }
 .media-job-open { min-height: 28px; padding: 4px 10px; border: 1px solid var(--border); border-radius: var(--radius-md); color: var(--text); cursor: pointer; }
 .media-job-open:hover { background: var(--tint-5); }
+.media-job-actions { min-width: 0; display: flex; justify-content: flex-end; }
+.media-job-edit { display: grid; gap: 5px; cursor: default; }
+.media-job-edit-field { min-width: 0; display: block; }
+.media-job-edit-controls { min-width: 0; display: flex; align-items: flex-start; gap: 7px; }
+.media-job-edit-controls textarea { box-sizing: border-box; min-width: 0; flex: 1; width: 100%; height: 29px; min-height: 29px; max-height: 96px; resize: none; overflow-y: auto; padding: 4px 9px; border: 1px solid var(--border); border-radius: var(--radius-md); outline: 0; background: var(--surface); color: var(--text); font: 12px/1.4 var(--font-ui); text-transform: none; letter-spacing: normal; }
+.media-job-edit-controls textarea:focus { border-color: var(--subtle); }
+.media-job-edit-submit { flex: none; }
+.media-job-edit-submit:disabled, .media-job-edit-controls textarea:disabled { opacity: .55; cursor: default; }
+.media-job-edit-error { color: var(--danger); font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: normal; }
+.media-job-prompt-chain { display: grid; gap: 7px; margin: 0 0 11px; padding: 0; list-style: none; }
+.media-job-prompt-chain li { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; align-items: start; }
+.media-job-prompt-chain li > span { padding-top: 7px; color: var(--subtle); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .035em; }
+.media-job-prompt-link { width: 100%; margin: 0; padding: 6px 9px; border: 0; border-radius: var(--radius-md); background: var(--grey-300); color: var(--muted); overflow-wrap: anywhere; text-align: left; cursor: pointer; font: 11px/1.45 Consolas, "Cascadia Mono", monospace; }
+.media-job-prompt-link:hover { background: var(--tint-7); color: var(--text); }
+.media-job-prompt-link:focus-visible { outline: 1px solid var(--focus); outline-offset: 1px; }
+.media-job-notice.jump-target { border-color: var(--focus); box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 24%, transparent); transition: border-color 160ms ease, box-shadow 160ms ease; }
 .message-meta { margin-bottom: 5px; color: var(--subtle); font-size: 11px; text-transform: capitalize; }
 
 .visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0,0,0,0) !important; white-space: nowrap !important; border: 0 !important; }

@@ -41,6 +41,9 @@ describe("Fitz host media jobs", () => {
       expect(submitted.statusCode, submitted.body).toBe(202);
       const jobId = submitted.json().data.id as string;
       expect(submitted.json().data).toEqual(expect.objectContaining({ routeId: "image", modality: "image", status: "queued" }));
+      expect(submitted.json().data.execution).toEqual({
+        recipeId: "h3-img", recipeDisplayName: "h3-img", modelId: "h3-img-model", adapter: "media-fake",
+      });
 
       const job = await waitForJobStatus(runtime, jobId, "completed");
       expect(job.artifactId).toEqual(expect.any(String));
@@ -68,6 +71,43 @@ describe("Fitz host media jobs", () => {
       // Media jobs never create inference_request rows (kind guard in the persistence subscriber).
       const inferenceRequestIds = runtime.store.listInferenceRequests(100).map((request) => request.id);
       expect(inferenceRequestIds).not.toContain(jobId);
+    } finally {
+      await runtime.app.close();
+    }
+  });
+
+  it("preserves explicit image-edit provenance on the job and output artifact", async () => {
+    const mediaFake = new FakeMediaEngineAdapter();
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), mediaFake] });
+    try {
+      await registerMediaRecipe(runtime, "h3-img", ["image"]);
+      await assignRoute(runtime, "image", "h3-img");
+      const originalResponse = await runtime.app.inject({
+        method: "POST", url: "/api/v1/media/jobs",
+        payload: { routeId: "image", modality: "image", params: { prompt: "a dog swimming" } },
+      });
+      const original = await waitForJobStatus(runtime, originalResponse.json().data.id, "completed");
+
+      const editResponse = await runtime.app.inject({
+        method: "POST", url: "/api/v1/media/jobs",
+        payload: {
+          routeId: "image", modality: "image",
+          params: { operation: "edit", prompt: "change the dog to a cat", refs: [{ artifactId: original.artifactId }] },
+        },
+      });
+      expect(editResponse.statusCode, editResponse.body).toBe(202);
+      expect(editResponse.json().data.params).toEqual({
+        operation: "edit", prompt: "change the dog to a cat", refs: [{ artifactId: original.artifactId }],
+      });
+      const edited = await waitForJobStatus(runtime, editResponse.json().data.id, "completed");
+      const artifact = runtime.store.getArtifact(edited.artifactId);
+      expect(artifact?.metadata).toMatchObject({
+        operation: "edit", sourceArtifactId: original.artifactId, mediaJobId: edited.id,
+      });
+      expect(mediaFake.submitted.at(-1)?.params).toMatchObject({
+        operation: "edit", prompt: "change the dog to a cat",
+        refs: [{ url: expect.stringMatching(/^data:image\/png;base64,/) }],
+      });
     } finally {
       await runtime.app.close();
     }
