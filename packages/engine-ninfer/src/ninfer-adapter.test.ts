@@ -81,6 +81,25 @@ describe("NInferEngineAdapter launch contract", () => {
     );
   });
 
+  it("includes redacted stderr when the engine exits during startup", async () => {
+    const adapter = new NInferEngineAdapter();
+    const instance = {
+      id: "failed",
+      recipeId: "recipe",
+      modelId: "model",
+      baseUrl: "http://127.0.0.1:19001",
+      startedAt: new Date(),
+      apiKey: "secret-key",
+      process: { exitCode: 1, signalCode: null },
+      logs: ["stderr: cannot open /opt/fitz/llm/logs/ninfer-requests.jsonl", "stderr: secret-key"],
+      readinessTimeoutMs: 30,
+    } as unknown as NInferInstanceHandle;
+
+    await expect(adapter.waitUntilReady(instance, new AbortController().signal)).rejects.toThrow(
+      /code 1.*cannot open.*\[REDACTED\]/,
+    );
+  });
+
   it("forwards tools and returns streamed function-call deltas", async () => {
     let requestBody: any;
     const encoder = new TextEncoder();

@@ -9,6 +9,7 @@ describe("Fitz runtime paths", () => {
     expect(paths.llmRoot).toBe(resolve(homedir(), ".llm"));
     expect(paths.engineRoot).toBe(resolve(homedir(), ".llm", "engines"));
     expect(paths.modelRoot).toBe(resolve(homedir(), ".llm", "models"));
+    expect(paths.runtimeRoot).toBe(resolve(homedir(), ".llm", "runtimes"));
   });
 
   it("keeps mutable host state and Pi packages outside the installation", () => {
@@ -20,6 +21,7 @@ describe("Fitz runtime paths", () => {
     expect(paths.backupsDir).toContain("backups");
     expect(paths.engineRoot).toBe("C:\\Users\\tester\\llm\\engines");
     expect(paths.modelRoot).toBe("C:\\Users\\tester\\llm\\models");
+    expect(paths.runtimeRoot).toBe("C:\\Users\\tester\\llm\\runtimes");
   });
 
   it("derives the database from the data root and allows canonical roots to be overridden", () => {

@@ -89,11 +89,15 @@ export class PlaybookWorkspaceController {
     const folders = configuration.engineFolders ?? [];
     const query = this.elements.search.value.trim().toLowerCase();
     const matches = (...values: unknown[]) => !query || values.some((value) => String(value ?? "").toLowerCase().includes(query));
+    const runtime = configuration.ninferRuntime;
+    if (runtime && matches("ninfer", "linux runtime", runtime.state, runtime.detail, runtime.hostRoot)) {
+      this.elements.list.append(this.renderNInferRuntimeCard(runtime));
+    }
     const visibleFolders = folders.filter((folder: Json) => {
       const engineRecipes = recipes.filter((recipe: Json) => samePlaybook(recipe.playbookId, folder.folderName));
       return matches(folder.folderName, folder.rootPath, folder.engine?.displayName, ...engineRecipes.flatMap((recipe: Json) => [recipe.displayName, recipe.modelId]));
     });
-    if (!visibleFolders.length) { this.elements.list.append(emptyState(`No engine folders found in ${configuration.engineRoot ?? "the configured root"}`)); return; }
+    if (!visibleFolders.length && !runtime) { this.elements.list.append(emptyState(`No engine folders found in ${configuration.engineRoot ?? "the configured root"}`)); return; }
     for (const folder of visibleFolders) this.elements.list.append(this.renderFolderCard(folder, recipes));
   }
 
@@ -220,6 +224,78 @@ export class PlaybookWorkspaceController {
       if (engine) for (const recipe of playbookRecipes) section.appendBody(this.renderRecipeCard(recipe));
     }
     return section.root;
+  }
+
+  private renderNInferRuntimeCard(runtime: Json): HTMLElement {
+    const card = document.createElement("article");
+    card.className = `ninfer-runtime-card ninfer-runtime-${runtime.state ?? "unknown"}`;
+    const copy = document.createElement("div");
+    copy.className = "ninfer-runtime-copy";
+    const heading = document.createElement("h3");
+    heading.textContent = "NInfer Linux runtime";
+    const detail = document.createElement("p");
+    detail.textContent = String(runtime.detail ?? "Managed Linux storage for NInfer");
+    const location = document.createElement("code");
+    location.textContent = String(runtime.hostRoot ?? "");
+    copy.append(heading, detail, location);
+    const actions = document.createElement("div");
+    actions.className = "ninfer-runtime-actions";
+    if (runtime.state === "working") {
+      const progress = document.createElement("progress");
+      progress.max = 100;
+      progress.value = Number(runtime.progress ?? 0);
+      progress.setAttribute("aria-label", `${runtime.progress ?? 0}% ${runtime.stage ?? "working"}`);
+      const label = document.createElement("span");
+      label.textContent = `${runtime.progress ?? 0}%`;
+      actions.append(progress, label);
+      void this.pollNInferRuntime();
+    } else if (runtime.state !== "ready" && runtime.available !== false) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "primary-button compact-button";
+      button.textContent = runtime.state === "failed" ? "Retry setup" : "Set up & move models";
+      button.addEventListener("click", () => void this.provisionNInferRuntime(button));
+      actions.append(button);
+    } else if (runtime.state === "ready") {
+      const ready = document.createElement("span");
+      ready.className = "ninfer-runtime-ready";
+      ready.textContent = "✓ Ready";
+      actions.append(ready);
+    }
+    card.append(copy, actions);
+    return card;
+  }
+
+  private async provisionNInferRuntime(button: HTMLButtonElement): Promise<void> {
+    button.disabled = true;
+    button.textContent = "Starting…";
+    try {
+      const response = await this.options.api("/api/v1/management/ninfer-runtime/provision", "POST", { moveModels: true });
+      if (this.configuration) this.configuration.ninferRuntime = response.data;
+      this.render();
+      this.options.showStatus("NInfer runtime setup started", "success");
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = "Retry setup";
+      this.options.showStatus(this.options.errorMessage(error), "error");
+    }
+  }
+
+  private async pollNInferRuntime(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    try {
+      const response = await this.options.api("/api/v1/management/ninfer-runtime");
+      if (this.configuration) this.configuration.ninferRuntime = response.data;
+      this.render();
+      if (response.data?.state === "ready") {
+        await this.options.reloadConfiguration();
+        this.options.showStatus("NInfer is ready on managed Linux storage", "success");
+      } else if (response.data?.state === "failed") {
+        this.options.showStatus(String(response.data.detail ?? "NInfer runtime setup failed"), "error");
+      }
+    } catch (error) {
+      this.options.showStatus(this.options.errorMessage(error), "error");
+    }
   }
 
   private renderRecipeCard(recipe: Json): HTMLElement {

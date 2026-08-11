@@ -126,6 +126,33 @@ describe("PlaybookWorkspaceController", () => {
     expect(elements.title.textContent).toBe("Playbooks");
   });
 
+  it("sets up and moves NInfer models from the managed-runtime card", async () => {
+    const configuration = sampleConfiguration();
+    configuration.ninferRuntime = {
+      id: "ninfer-linux",
+      available: true,
+      state: "not-installed",
+      detail: "Set up the Linux runtime",
+      hostRoot: "C:\\Users\\me\\.llm\\runtimes\\ninfer-linux",
+    };
+    const api = vi.fn(async () => ({ data: { ...configuration.ninferRuntime, state: "ready", detail: "NInfer is ready" } }));
+    const { controller, elements, showStatus } = setup(configuration, api);
+    controller.render();
+
+    const card = elements.list.querySelector<HTMLElement>(".ninfer-runtime-card")!;
+    expect(card.textContent).toContain("NInfer Linux runtime");
+    expect(card.textContent).toContain(".llm\\runtimes\\ninfer-linux");
+    click(card.querySelector<HTMLButtonElement>("button")!);
+
+    await vi.waitFor(() => expect(api).toHaveBeenCalledWith(
+      "/api/v1/management/ninfer-runtime/provision",
+      "POST",
+      { moveModels: true },
+    ));
+    await vi.waitFor(() => expect(elements.list.querySelector("span.ninfer-runtime-ready")?.textContent).toBe("✓ Ready"));
+    expect(showStatus).toHaveBeenCalledWith("NInfer runtime setup started", "success");
+  });
+
   it("joins Windows engine folders to canonical playbook ids without case drift", () => {
     const configuration = sampleConfiguration();
     configuration.engineFolders = [{ folderName: "ComfyUI", rootPath: "C:\\Users\\me\\.llm\\engines\\ComfyUI", registered: true, engine: { displayName: "comfyui" } }];

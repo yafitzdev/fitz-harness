@@ -1,5 +1,6 @@
 import type { SqliteStore } from "@fitz/storage";
 import { createNInferPlaybook } from "./ninfer-playbook.js";
+import type { NInferRuntimeLayout } from "./ninfer-runtime.js";
 
 /** Well-known media route ids created by `ensureMediaRoutes` (create-app.ts).
  *  The ninfer boot reconcile deletes every route that is not a consumer route or
@@ -11,8 +12,8 @@ const NINFER_MEDIA_ROUTE_EXEMPTIONS = new Set(["image", "video", "audio"]);
  * artifact paths, prunes routes outside the current route contract, and
  * materializes the current templates. It deliberately contains no old-id or
  * old-schema aliases. */
-export function reconcileNInferConfiguration(store: SqliteStore): void {
-  const playbook = createNInferPlaybook();
+export function reconcileNInferConfiguration(store: SqliteStore, runtime?: NInferRuntimeLayout): void {
+  const playbook = createNInferPlaybook(runtime);
   const templatesById = new Map(playbook.recipes.map((recipe) => [recipe.id, recipe]));
   for (const recipe of store.listRecipes()) {
     const template = templatesById.get(recipe.id);
@@ -21,11 +22,19 @@ export function reconcileNInferConfiguration(store: SqliteStore): void {
           ...recipe.configuration,
           executable: template.configuration.executable,
           artifact: template.configuration.artifact,
+          requestLogJsonl: template.configuration.requestLogJsonl,
+          ...(template.configuration.runtimeId ? {
+            runtimeId: template.configuration.runtimeId,
+            runtimeDistribution: template.configuration.runtimeDistribution,
+            engineRef: template.configuration.engineRef,
+            modelRef: template.configuration.modelRef,
+          } : {}),
         }
       : recipe.configuration;
     const configurationChanged = migratedConfiguration !== recipe.configuration
       && (migratedConfiguration.executable !== recipe.configuration.executable
-        || migratedConfiguration.artifact !== recipe.configuration.artifact);
+        || migratedConfiguration.artifact !== recipe.configuration.artifact
+        || migratedConfiguration.requestLogJsonl !== recipe.configuration.requestLogJsonl);
     if (configurationChanged) {
       store.upsertRecipe({ ...recipe, configuration: migratedConfiguration });
     }

@@ -1,4 +1,13 @@
 .playbook-list { display: grid; gap: 12px; }
+.ninfer-runtime-card { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 18px; margin-bottom: 12px; padding: 16px; border: 1px solid var(--grey-350); border-radius: 12px; background: var(--grey-200); }
+.ninfer-runtime-copy { min-width: 0; display: grid; gap: 6px; }
+.ninfer-runtime-copy h3, .ninfer-runtime-copy p { margin: 0; }
+.ninfer-runtime-copy p { color: var(--muted); font-size: 12px; }
+.ninfer-runtime-copy code { overflow: hidden; color: var(--subtle); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+.ninfer-runtime-actions { display: flex; align-items: center; gap: 8px; }
+.ninfer-runtime-actions progress { width: 130px; accent-color: var(--accent); }
+.ninfer-runtime-ready { color: var(--text); font-size: 12px; font-weight: 600; }
+.ninfer-runtime-failed { border-color: color-mix(in srgb, var(--danger-soft) 45%, transparent); }
 .recipe-card { width: 100%; min-height: 66px; display: grid; grid-template-columns: minmax(0,1fr) auto; overflow: hidden; border-radius: 10px; background: var(--grey-250); color: var(--text); transition: background-color 120ms ease; }
 .recipe-card + .recipe-card { margin-top: 7px; }
 .recipe-card:hover, .recipe-card:focus-within { background: var(--grey-250); }
@@ -37,6 +46,7 @@
 .recipe-configuration-grid .advanced-field { padding-top: 4px; border-top: 1px solid var(--border-soft); }
 .editor-actions { position: sticky; bottom: 0; display: flex; justify-content: flex-end; gap: 8px; padding: 16px 0; border-top: 1px solid var(--border-soft); background: var(--bg); }
 @media (max-width: 720px) {
+  .ninfer-runtime-card { grid-template-columns: 1fr; }
   .configuration-grid { grid-template-columns: 1fr 1fr; }
   .recipe-card { grid-template-columns: 1fr; }
   .recipe-card-actions { justify-content: flex-end; margin: 0 10px 9px; }

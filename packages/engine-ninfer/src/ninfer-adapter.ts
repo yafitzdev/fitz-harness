@@ -82,9 +82,10 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
       return;
     }
     await execFileAsync("wsl.exe", [
-      "-d", this.#wslDistribution, "-u", this.#wslUser, "--", "sh", "-c",
-      'test -x "$1" && if [ -f "$2" ]; then cat "$2" >/dev/null; elif [ -d "$2" ]; then find "$2" -type f -exec cat {} + >/dev/null; else exit 1; fi',
-      "fitz-prepare", config.executable, config.artifact,
+      "-d", this.#wslDistribution, "-u", this.#wslUser, "--", "test", "-x", config.executable,
+    ], { windowsHide: true, signal });
+    await execFileAsync("wsl.exe", [
+      "-d", this.#wslDistribution, "-u", this.#wslUser, "--", "test", "-r", config.artifact,
     ], { windowsHide: true, signal });
   }
 
@@ -188,8 +189,9 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
     while (Date.now() < deadline) {
       if (signal.aborted) throw abortError();
       if (hasExited(instance.process)) {
+        const recentLogs = recentInstanceLogs(instance);
         throw new Error(
-          `NInfer exited before becoming ready (code ${instance.process.exitCode ?? instance.process.signalCode})`,
+          `NInfer exited before becoming ready (code ${instance.process.exitCode ?? instance.process.signalCode})${recentLogs ? `. Recent logs: ${recentLogs}` : ""}`,
         );
       }
       const probe = new AbortController();
@@ -215,10 +217,7 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
         await delay(Math.min(this.#pollIntervalMs, deadline - Date.now()), signal);
       }
     }
-    const recentLogs = instance.logs
-      .slice(-6)
-      .map((line) => line.replaceAll(instance.apiKey, "[REDACTED]"))
-      .join(" | ");
+    const recentLogs = recentInstanceLogs(instance);
     throw new Error(
       `Timed out waiting for NInfer at ${instance.baseUrl}${recentLogs ? `. Recent logs: ${recentLogs}` : ""}`,
     );
@@ -314,6 +313,13 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
       // A process that exited between inspection and signaling is already stopped.
     }
   }
+}
+
+function recentInstanceLogs(instance: Pick<NInferInstanceHandle, "logs" | "apiKey">): string {
+  return instance.logs
+    .slice(-6)
+    .map((line) => line.replaceAll(instance.apiKey, "[REDACTED]"))
+    .join(" | ");
 }
 
 export function buildNInferProcessLaunch(spec: LaunchSpec, apiKey: string, wslDistribution?: string, wslUser = "root"): NInferProcessLaunch {

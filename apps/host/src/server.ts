@@ -24,6 +24,7 @@ import { createSessionReader } from "./session-reader.js";
 import { contextTokensForRoute } from "./route-context.js";
 import { WindowsStartupManager } from "@fitz/connectivity";
 import { resolveRuntimePaths } from "./runtime-paths.js";
+import { NInferRuntimeManager } from "./ninfer-runtime.js";
 import { AgentSafetyService } from "./agent-safety/index.js";
 import { localComfyUIPaths, localComfyUIRecipeIds, reconcileLocalComfyUIConfiguration } from "./comfyui-reconcile.js";
 import { ensureComfyUISafeModeExtension } from "./comfyui-safe-mode.js";
@@ -55,8 +56,11 @@ const hostInstanceLock = HostInstanceLock.acquire(join(runtimePaths.dataRoot, "h
 const restoredStorage = await applyPendingStorageRestore(runtimePaths);
 if (restoredStorage) console.info("Scheduled storage restore applied", restoredStorage);
 mkdirSync(dirname(databasePath), { recursive: true });
-for (const directory of [runtimePaths.piAgentDir, runtimePaths.logsDir, runtimePaths.cacheDir, runtimePaths.engineRoot, runtimePaths.modelRoot, runtimePaths.snapshotsDir, runtimePaths.artifactsDir, runtimePaths.backupsDir]) mkdirSync(directory, { recursive: true });
+for (const directory of [runtimePaths.piAgentDir, runtimePaths.logsDir, runtimePaths.cacheDir, runtimePaths.engineRoot, runtimePaths.modelRoot, runtimePaths.runtimeRoot, runtimePaths.snapshotsDir, runtimePaths.artifactsDir, runtimePaths.backupsDir]) mkdirSync(directory, { recursive: true });
 ensureComfyUISafeModeExtension(localComfyUIPaths(runtimePaths).baseDir);
+const ninferRuntime = engineMode === "ninfer" && process.platform === "win32"
+  ? new NInferRuntimeManager({ paths: runtimePaths, sourceDistribution: process.env.FITZ_NINFER_SOURCE_WSL_DISTRIBUTION ?? "Ubuntu" })
+  : undefined;
 const engineOptions = engineModeOptions(engineMode);
 const store = new SqliteStore(databasePath);
 const artifacts = new ArtifactRepository(store, new LocalBlobStore(runtimePaths.artifactsDir), { quotaBytes: () => store.getSetting<number>("artifactStorageQuotaBytes") });
@@ -68,7 +72,7 @@ const authPepper = authMode === "required" ? resolveAuthPepper(store) : undefine
 // One SecurityService shared by HTTP auth, the media coordinator, and the agent media
 // tools: in-process submits build device-less principals via `principalForUser` (§5.9).
 const security = authPepper ? new SecurityService(store, authPepper) : undefined;
-if (engineMode === "ninfer") reconcileNInferConfiguration(store);
+if (engineMode === "ninfer") reconcileNInferConfiguration(store, ninferRuntime?.layout);
 // A fresh store is seeded atomically by createHost from engineOptions. Existing
 // stores need an additive reconcile because seedDefaults is intentionally
 // create-only and must not reset user route assignments.
@@ -79,7 +83,7 @@ enforceModelResidency(store);
 const safety = new AgentSafetyService({
   store,
   snapshotsDir: runtimePaths.snapshotsDir,
-  runtimeDirs: [runtimePaths.piAgentDir, runtimePaths.logsDir, runtimePaths.cacheDir, runtimePaths.engineRoot, runtimePaths.modelRoot, runtimePaths.llmRoot],
+  runtimeDirs: [runtimePaths.piAgentDir, runtimePaths.logsDir, runtimePaths.cacheDir, runtimePaths.engineRoot, runtimePaths.modelRoot, runtimePaths.runtimeRoot, runtimePaths.llmRoot],
 });
 // Late-bound: the media coordinator is constructed inside createHost, but customTools
 // runs per agent run — after host startup — so the closure reads the assigned instance.
@@ -109,6 +113,7 @@ const runtime = createHost({
     modelRoot: runtimePaths.modelRoot,
     ...(process.env.FITZ_HF_ENDPOINT ? { endpoint: process.env.FITZ_HF_ENDPOINT } : {}),
   }),
+  ...(ninferRuntime ? { ninferRuntime } : {}),
   ...(authPepper ? { authPepper } : {}),
   ...engineOptions,
   ...(process.env.FITZ_ADMIN_TOKEN ? { adminToken: process.env.FITZ_ADMIN_TOKEN } : {}),
@@ -189,9 +194,9 @@ function resolveAuthPepper(store: SqliteStore): string {
 }
 
 function ninferOptions() {
-  const playbook = createNInferPlaybook();
+  const playbook = createNInferPlaybook(ninferRuntime?.layout);
   const mediaPlaybook = installedLocalComfyUIPlaybook();
-  const wslDistribution = process.env.FITZ_NINFER_WSL_DISTRIBUTION ?? (process.platform === "win32" ? "Ubuntu" : undefined);
+  const wslDistribution = process.env.FITZ_NINFER_WSL_DISTRIBUTION ?? ninferRuntime?.layout.distribution ?? (process.platform === "win32" ? "Ubuntu" : undefined);
   const adapter = new NInferEngineAdapter({ ...(wslDistribution ? { wslDistribution, wslUser: process.env.FITZ_NINFER_WSL_USER ?? "root" } : {}) });
   return {
     adapters: [adapter, new ComfyUIEngineAdapter(), new ManagedOpenAIEngineAdapter(), new OpenAICompatibleEngineAdapter()],

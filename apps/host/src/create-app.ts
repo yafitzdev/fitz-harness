@@ -41,6 +41,7 @@ import { DEFAULT_QUOTAS, SecurityPolicyError, SecurityService, type Authenticate
 import { ArtifactRepository, MemoryBlobStore, SqliteStore, type StorageDurabilityService } from "@fitz/storage";
 import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
 import type { ModelCatalogService } from "./model-catalog.js";
+import type { NInferRuntimeManager } from "./ninfer-runtime.js";
 import { AgentRunCoordinator } from "./agent-runs.js";
 import { MediaCoordinatorClosedError, MediaJobAdmissionError, MediaJobCoordinator } from "./media-jobs.js";
 import type { AgentRuntime } from "@fitz/agent-core";
@@ -145,6 +146,7 @@ export interface CreateHostOptions {
   mediaImageTimeoutMs?: number;
   piPackages?: PiPackageService;
   modelCatalog?: ModelCatalogService;
+  ninferRuntime?: NInferRuntimeManager;
   /** The host safety layer (policy engine, snapshots, trash, redaction). Optional so tests can run without it. */
   safety?: AgentSafetyService;
   artifacts?: ArtifactRepository;
@@ -278,6 +280,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const startup = options.startupManager;
   const piPackages = options.piPackages;
   const modelCatalog = options.modelCatalog;
+  const ninferRuntime = options.ninferRuntime;
   const safety = options.safety;
   const metrics = new MetricsRegistry();
   const unsubscribePersistence = events.subscribe((event) => {
@@ -431,6 +434,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         hostName: hostname(),
         engineRoot: store.getSetting<string>("engineRoot") ?? configuredEngineRoot,
         engineFolders: scanEngineFolders(store.getSetting<string>("engineRoot") ?? configuredEngineRoot, store.listEngines()),
+        ...(ninferRuntime ? { ninferRuntime: await ninferRuntime.status() } : {}),
         recoveredInterruptedRequests,
         recoveredAgentRuns,
         recoveredToolApprovals,
@@ -846,7 +850,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   );
 
   const administratorGuard = adminGuard(options.adminToken, authMode, principals);
-  registerRuntimeAdministrationRoutes({ app, tailscale, tailscaleServe, authMode, localPort: options.localPort ?? 8787, principals, administratorGuard, ...(startup ? { startup } : {}), ...(security ? { security } : {}) });
+  registerRuntimeAdministrationRoutes({ app, tailscale, tailscaleServe, authMode, localPort: options.localPort ?? 8787, principals, administratorGuard, ...(startup ? { startup } : {}), ...(ninferRuntime ? { ninferRuntime } : {}), ...(security ? { security } : {}) });
   registerCatalogRoutes({ app, principals, administratorGuard, ...(piPackages ? { piPackages } : {}), ...(modelCatalog ? { modelCatalog } : {}), ...(security ? { security } : {}) });
   app.post("/api/v1/management/pairing-codes", { preHandler: administratorGuard }, async (request, reply) => { try { const body = requireRecord(request.body); const role = parseRole(body.intendedRole); const ttlSeconds = body.ttlSeconds === undefined ? 600 : requireInteger(body.ttlSeconds); const pairing = securityRequired(security).issuePairingCode(role, ttlSeconds); security?.audit("pairing-code.issued", principals.get(request)?.user.id, "pairing-code", pairing.id, { intendedRole: role, expiresAt: pairing.expiresAt }); return reply.code(201).send({ data: pairing }); } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
   app.get("/api/v1/management/tool-policies", { preHandler: administratorGuard }, async () => ({ data: store.listToolPolicies() }));

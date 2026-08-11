@@ -18,4 +18,25 @@ describe("production NiNfer playbook", () => {
       expect.objectContaining({ id: "smart", recipeId: playbook.recipes[0]!.id }),
     ]);
   });
+
+  it("resolves logical recipes into the managed Linux runtime", () => {
+    const runtime = {
+      id: "ninfer-linux",
+      distribution: "Fitz-NInfer",
+      hostRoot: "C:\\Users\\tester\\.llm\\runtimes\\ninfer-linux",
+      guestRoot: "/opt/fitz/llm",
+      modelRoot: "/opt/fitz/llm/models/ninfer",
+      executable: "/opt/fitz/llm/engines/ninfer/ninfer-serve",
+    };
+    const playbook = createNInferPlaybook(runtime);
+    expect(playbook.recipes.every((recipe) => recipe.configuration.runtimeId === "ninfer-linux")).toBe(true);
+    expect(playbook.recipes.every((recipe) => recipe.configuration.runtimeDistribution === "Fitz-NInfer")).toBe(true);
+    expect(playbook.recipes[1]!.configuration).toMatchObject({
+      executable: runtime.executable,
+      artifact: "/opt/fitz/llm/models/ninfer/qwen3_6_27b_nvfp4.ninfer",
+      requestLogJsonl: "/opt/fitz/llm/logs/ninfer-requests.jsonl",
+      engineRef: "llm://engines/ninfer",
+      modelRef: "llm://models/qwen3.6-27b",
+    });
+  });
 });

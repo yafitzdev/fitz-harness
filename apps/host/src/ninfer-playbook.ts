@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { buildCurrentNInferRecipe } from "@fitz/engine-ninfer";
 import type { Recipe, Route } from "@fitz/protocol";
+import type { NInferRuntimeLayout } from "./ninfer-runtime.js";
 
 export const NINFER_PLAYBOOK_ID = "ninfer";
 
@@ -12,10 +13,11 @@ export interface NInferPlaybook {
   routes: Route[];
 }
 
-export function createNInferPlaybook(): NInferPlaybook {
+export function createNInferPlaybook(runtime?: NInferRuntimeLayout): NInferPlaybook {
   const llmRoot = process.env.FITZ_LLM_ROOT ?? join(homedir(), ".llm");
-  const modelRoot = process.env.FITZ_NINFER_MODEL_ROOT ?? guestPath(join(llmRoot, "models", "ninfer"));
+  const modelRoot = process.env.FITZ_NINFER_MODEL_ROOT ?? runtime?.modelRoot ?? guestPath(join(llmRoot, "models", "ninfer"));
   const executable = process.env.FITZ_NINFER_EXECUTABLE
+    ?? runtime?.executable
     ?? guestPath(join(llmRoot, "engines", "ninfer", "build", "apps", "ninfer-serve"));
   const recipes = [
     recipe(
@@ -25,6 +27,7 @@ export function createNInferPlaybook(): NInferPlaybook {
       `${modelRoot}/qwen3_6_35b_a3b.ninfer`,
       4,
       executable,
+      runtime,
     ),
     recipe(
       "qwen36-27b-mtp3-100k",
@@ -33,6 +36,7 @@ export function createNInferPlaybook(): NInferPlaybook {
       `${modelRoot}/qwen3_6_27b_nvfp4.ninfer`,
       3,
       executable,
+      runtime,
     ),
   ];
   const routes: Route[] = [
@@ -62,14 +66,24 @@ export function createNInferPlaybook(): NInferPlaybook {
   return { id: NINFER_PLAYBOOK_ID, displayName: "ninfer", recipes, routes };
 }
 
-function recipe(id: string, displayName: string, modelId: string, artifact: string, draftTokens: number, executable: string): Recipe {
+function recipe(id: string, displayName: string, modelId: string, artifact: string, draftTokens: number, executable: string, runtime?: NInferRuntimeLayout): Recipe {
   const value = buildCurrentNInferRecipe(id, modelId, artifact, draftTokens, executable);
   return {
     ...value,
     playbookId: NINFER_PLAYBOOK_ID,
     displayName,
     lifecycle: { ...value.lifecycle, idleTtlSeconds: 600 },
-    configuration: { ...value.configuration, readinessTimeoutMs: 180_000 },
+    configuration: {
+      ...value.configuration,
+      readinessTimeoutMs: 180_000,
+      ...(runtime ? {
+        requestLogJsonl: `${runtime.guestRoot}/logs/ninfer-requests.jsonl`,
+        runtimeId: runtime.id,
+        runtimeDistribution: runtime.distribution,
+        engineRef: "llm://engines/ninfer",
+        modelRef: `llm://models/${modelId}`,
+      } : {}),
+    },
   };
 }
 

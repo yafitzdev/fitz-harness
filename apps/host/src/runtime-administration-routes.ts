@@ -1,6 +1,7 @@
 import type { FastifyInstance, preHandlerHookHandler } from "fastify";
 import type { TailscaleMonitor, TailscaleServeManager, WindowsStartupManager } from "@fitz/connectivity";
 import type { AuthenticatedPrincipal, SecurityService } from "@fitz/security";
+import type { NInferRuntimeManager } from "./ninfer-runtime.js";
 
 export interface RuntimeAdministrationRouteOptions {
   app: FastifyInstance;
@@ -12,10 +13,11 @@ export interface RuntimeAdministrationRouteOptions {
   administratorGuard: preHandlerHookHandler;
   authMode: "disabled" | "required";
   localPort: number;
+  ninferRuntime?: NInferRuntimeManager;
 }
 
 export function registerRuntimeAdministrationRoutes(options: RuntimeAdministrationRouteOptions): void {
-  const { app, tailscale, tailscaleServe, startup, security, principals, administratorGuard, authMode, localPort } = options;
+  const { app, tailscale, tailscaleServe, startup, security, principals, administratorGuard, authMode, localPort, ninferRuntime } = options;
   const preHandler = administratorGuard;
 
   app.get("/api/v1/management/connectivity/status", { preHandler }, async () => {
@@ -57,6 +59,24 @@ export function registerRuntimeAdministrationRoutes(options: RuntimeAdministrati
       security?.audit("host-startup.removed", principals.get(request)?.user.id, "host", "startup");
       return { data: result };
     } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); }
+  });
+  app.get("/api/v1/management/ninfer-runtime", { preHandler }, async (_request, reply) => {
+    if (!ninferRuntime) return reply.code(404).send({ error: "Managed NInfer runtime is unavailable" });
+    return { data: await ninferRuntime.status() };
+  });
+  app.post("/api/v1/management/ninfer-runtime/provision", { preHandler }, async (request, reply) => {
+    if (!ninferRuntime) return reply.code(404).send({ error: "Managed NInfer runtime is unavailable" });
+    try {
+      const body = request.body === undefined ? {} : requireRecord(request.body);
+      const moveModels = body.moveModels === undefined ? true : body.moveModels === true;
+      if (body.moveModels !== undefined && typeof body.moveModels !== "boolean") throw new TypeError("moveModels must be a boolean");
+      const status = ninferRuntime.startProvisioning(moveModels);
+      security?.audit("ninfer-runtime.provision-requested", principals.get(request)?.user.id, "runtime", "ninfer-linux", { moveModels });
+      return reply.code(202).send({ data: status });
+    } catch (error) {
+      const active = errorMessage(error).includes("already in progress");
+      return reply.code(active ? 409 : 503).send({ error: errorMessage(error) });
+    }
   });
 }
 
