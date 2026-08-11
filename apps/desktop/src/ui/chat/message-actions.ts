@@ -1,4 +1,5 @@
 import { createCopyButton } from "../primitives/copy-button.js";
+import type { RequestUsageRecord } from "@fitz/protocol";
 
 export type ActionableMessageRole = "user" | "assistant";
 
@@ -27,6 +28,31 @@ export class MessageActions {
     actions.append(time, this.#copyButton(content));
     if (role === "user") actions.append(this.#actionButton("Edit message", this.#editIcon(), () => this.#startEdit(article, content, actions, originalText)));
     article.append(actions);
+  }
+
+  setPerformance(content: HTMLElement, usage: RequestUsageRecord): void {
+    const time = content.closest("article.message")?.querySelector<HTMLTimeElement>("time.message-time");
+    if (!time) return;
+    const timestamp = time.dataset.timestampLabel ?? time.textContent ?? "";
+    time.dataset.timestampLabel = timestamp;
+    const speed = tokenRate(usage.completionTokens, usage.generationMs);
+    const compact = [timestamp];
+    if (usage.ttftMs !== undefined) compact.push(`${formatDuration(usage.ttftMs)} TTFT`);
+    if (speed !== undefined) compact.push(`${Math.round(speed)} tok/s`);
+    if (usage.promptTokens !== undefined) compact.push(`${formatCompactNumber(usage.promptTokens)} ctx`);
+    const model = usage.modelId ?? usage.recipeId;
+    if (model) compact.push(model);
+    time.textContent = compact.join(" · ");
+
+    const details = [timestamp];
+    if (model) details.push(`Model: ${model}`);
+    if (usage.ttftMs !== undefined) details.push(`Time to first token: ${formatDuration(usage.ttftMs)}`);
+    if (speed !== undefined) details.push(`Generation speed: ${Math.round(speed)} tok/s`);
+    if (usage.promptTokens !== undefined) details.push(`Input tokens: ${formatInteger(usage.promptTokens)}`);
+    if (usage.completionTokens !== undefined) details.push(`Output tokens: ${formatInteger(usage.completionTokens)}`);
+    if (usage.queueWaitMs !== undefined) details.push(`Queue wait: ${formatDuration(usage.queueWaitMs)}`);
+    if (usage.durationMs !== undefined) details.push(`Total model time: ${formatDuration(usage.durationMs)}`);
+    time.title = details.join("\n");
   }
 
   #startEdit(article: HTMLElement, content: HTMLElement, actions: HTMLElement, originalText: string): void {
@@ -108,4 +134,22 @@ export class MessageActions {
   }
 
   #editIcon(): SVGElement { return this.#icon('<path d="m4.2 14.8.7-3.2 7.8-7.8a1.45 1.45 0 0 1 2.05 2.05L7 13.65z"></path><path d="m11.7 4.8 2.05 2.05"></path>'); }
+}
+
+function tokenRate(tokens: number | undefined, generationMs: number | undefined): number | undefined {
+  return tokens !== undefined && generationMs !== undefined && generationMs > 0 ? tokens * 1_000 / generationMs : undefined;
+}
+
+function formatDuration(milliseconds: number): string {
+  if (milliseconds < 1_000) return `${Math.round(milliseconds)}ms`;
+  const seconds = milliseconds / 1_000;
+  return `${seconds < 10 ? Number(seconds.toFixed(1)) : Math.round(seconds)}s`;
+}
+
+function formatInteger(value: number): string { return new Intl.NumberFormat().format(value); }
+
+function formatCompactNumber(value: number): string {
+  if (value < 1_000) return formatInteger(value);
+  if (value < 1_000_000) return `${Number((value / 1_000).toFixed(1))}k`;
+  return `${Number((value / 1_000_000).toFixed(1))}m`;
 }

@@ -37,7 +37,7 @@ export interface AgentRunControllerOptions {
   messages: HTMLElement;
   activity: AgentRunActivity;
   api: (path: string, method?: string, body?: unknown) => Promise<Json>;
-  appendAssistant: () => HTMLElement;
+  appendAssistant: (runId: string, createdAt?: string) => HTMLElement;
   appendAssistantDelta: (target: HTMLElement, delta: string) => void;
   appendSystem: (message: string) => void;
   appendChangeSummary: (files: Array<{ path: string; action: "edited" | "created" }>) => void;
@@ -52,6 +52,7 @@ export interface AgentRunControllerOptions {
   showStatus: ActionFeedback;
   errorMessage: (error: unknown) => string;
   terminalReplayError: (error: unknown) => boolean;
+  refreshAssistantPerformance?: (runId: string) => void | Promise<void>;
   /** Start following an asynchronous image/audio/video job submitted by an agent tool. */
   onMediaJobSubmitted?: (jobId: string, toolName: string) => void;
 }
@@ -248,7 +249,7 @@ export class AgentRunController {
           this.#options.activity.setRun(activity, "Working", startedAt);
         }
         if (event.type === "assistant.delta") {
-          if (!assistant) { activity.remove(); assistant = this.#options.appendAssistant(); }
+          if (!assistant) { activity.remove(); assistant = this.#options.appendAssistant(runId, typeof event.timestamp === "string" ? event.timestamp : undefined); }
           const delta = String(event.data?.text ?? "");
           this.#options.appendAssistantDelta(assistant, delta);
           this.#options.addTokenEstimate(delta);
@@ -355,13 +356,19 @@ export class AgentRunController {
           const management = await this.#options.api("/api/v1/management/status");
           const state = String(management.engine?.state ?? "");
           this.#options.setEngineState(state || "WORKING");
-          if (state === "READY" || state === "BUSY") this.#options.activity.setRun(activity, "Thinking", startedAt);
+          if (state === "PREPARING" || state === "LOADING") {
+            const label = state === "PREPARING" ? "Preparing model" : "Loading model";
+            this.#options.setStatus(label, "loading");
+            this.#options.activity.setRun(activity, label, startedAt);
+          }
+          else if (state === "READY" || state === "BUSY") this.#options.activity.setRun(activity, "Thinking", startedAt);
           else if (state === "FAILED") activity.textContent = `Model failed: ${management.engine?.failureReason ?? "Unknown error"}`;
           else this.#options.activity.setRun(activity, "Working", startedAt);
         } catch { this.#options.activity.setRun(activity, "Working", startedAt); }
       }
       if (!done) await this.#delay(350);
     }
+    if (done) await this.#options.refreshAssistantPerformance?.(runId);
   }
 
   #delay(milliseconds: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }

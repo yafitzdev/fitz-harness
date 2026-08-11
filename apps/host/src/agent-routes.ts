@@ -130,6 +130,14 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
     return { protocolVersion: PROTOCOL_VERSION, data: run };
   });
 
+  app.get("/api/v1/agent/runs/:runId/usage", async (request, reply) => {
+    const runId = (request.params as { runId: string }).runId;
+    const run = agentRuns.get(runId);
+    if (!run) return reply.code(404).send({ error: "Run not found" });
+    if (!canAccessOwner(principals.get(request), run.ownerUserId)) return reply.code(403).send({ error: "Run access denied" });
+    return { protocolVersion: PROTOCOL_VERSION, data: store.listRequestUsageForRun(runId) };
+  });
+
   app.delete("/api/v1/agent/runs/:runId", async (request, reply) => {
     const runId = (request.params as { runId: string }).runId;
     const run = agentRuns.get(runId);

@@ -294,6 +294,20 @@ describe("SqliteStore", () => {
     expect(report.modalities).toEqual(expect.arrayContaining([expect.objectContaining({ key: "image", label: "Images", failed: 1 })]));
     const ownerReport = store.usageReport({ from: "2026-08-09T00:00:00.000Z", to: "2026-08-10T00:00:00.000Z", bucket: "day", ownerUserId: "user-1" });
     expect(ownerReport.totals.requests).toBe(1);
+    expect(store.listRequestUsageForRun("missing")).toEqual([]);
+    store.close();
+  });
+
+  it("lists exact request telemetry for an agent run in model-turn order", () => {
+    const store = SqliteStore.memory();
+    store.recordRequestUsage({ id: "second", kind: "chat", status: "completed", routeId: "local", runId: "run-1", executionLane: "gpu", enqueuedAt: "2026-08-09T10:00:10.000Z", completedAt: "2026-08-09T10:00:12.000Z", ttftMs: 800, generationMs: 1_200, promptTokens: 200, completionTokens: 60 });
+    store.recordRequestUsage({ id: "first", kind: "chat", status: "completed", routeId: "local", runId: "run-1", executionLane: "gpu", enqueuedAt: "2026-08-09T10:00:00.000Z", completedAt: "2026-08-09T10:00:02.000Z", ttftMs: 500, generationMs: 1_500, promptTokens: 100, completionTokens: 30 });
+    store.recordRequestUsage({ id: "other", kind: "chat", status: "completed", routeId: "local", runId: "run-2", executionLane: "gpu", enqueuedAt: "2026-08-09T10:00:00.000Z", completedAt: "2026-08-09T10:00:01.000Z" });
+
+    expect(store.listRequestUsageForRun("run-1")).toEqual([
+      expect.objectContaining({ id: "first", ttftMs: 500, promptTokens: 100 }),
+      expect.objectContaining({ id: "second", generationMs: 1_200, completionTokens: 60 }),
+    ]);
     store.close();
   });
 });

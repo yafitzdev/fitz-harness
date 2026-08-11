@@ -118,6 +118,18 @@ interface GpuWorkRow {
 
 interface UsageAggregateRow { requests: number; successful: number; failed: number; cancelled: number; interrupted: number; prompt_tokens: number; completion_tokens: number; token_reported_requests: number; media_jobs: number; credit_cost_cents: number; average_queue_wait_ms: number | null; average_ttft_ms: number | null; average_duration_ms: number | null }
 
+interface RequestUsageRow {
+  id: string; kind: RequestUsageRecord["kind"]; status: RequestUsageRecord["status"];
+  route_id: string; recipe_id: string | null; playbook_id: string | null;
+  adapter: string | null; model_id: string | null; owner_user_id: string | null;
+  session_id: string | null; run_id: string | null; execution_lane: RequestUsageRecord["executionLane"];
+  enqueued_at: string; started_at: string | null; first_output_at: string | null;
+  completed_at: string; queue_wait_ms: number | null; ttft_ms: number | null;
+  generation_ms: number | null; duration_ms: number | null; prompt_tokens: number | null;
+  completion_tokens: number | null; credit_cost_cents: number | null; error_code: string | null;
+  metadata_json: string;
+}
+
 interface UserRow { id: string; display_name: string; role: UserRecord["role"]; status: UserRecord["status"]; created_at: string; updated_at: string }
 interface DeviceRow { id: string; user_id: string; name: string; token_hash: string; created_at: string; last_used_at: string | null; revoked_at: string | null }
 interface AuditRow { id: string; timestamp: string; actor_user_id: string | null; action: string; target_type: string | null; target_id: string | null; detail_json: string }
@@ -517,6 +529,21 @@ export class SqliteStore {
       record.creditCostCents ?? null, record.errorCode ?? null,
       JSON.stringify(record.metadata ?? {}),
     );
+  }
+
+  /** Exact terminal model requests belonging to one durable agent run. */
+  listRequestUsageForRun(runId: string): RequestUsageRecord[] {
+    const rows = this.#database.prepare(`
+      SELECT id, kind, status, route_id, recipe_id, playbook_id, adapter, model_id,
+        owner_user_id, session_id, run_id, execution_lane, enqueued_at, started_at,
+        first_output_at, completed_at, queue_wait_ms, ttft_ms, generation_ms,
+        duration_ms, prompt_tokens, completion_tokens, credit_cost_cents,
+        error_code, metadata_json
+      FROM request_usage
+      WHERE run_id = ?
+      ORDER BY COALESCE(started_at, enqueued_at), completed_at, id
+    `).all(runId) as unknown as RequestUsageRow[];
+    return rows.map(mapRequestUsage);
   }
 
   usageReport(options: { from: string; to: string; bucket: "hour" | "day"; ownerUserId?: string }): UsageReport {
@@ -1080,6 +1107,31 @@ function mapSession(row: SessionRow): SessionRecord { return { id: row.id, title
 function mapTranscript(row: TranscriptRow): TranscriptEntryRecord { return { id: row.id, sessionId: row.session_id, sequence: row.sequence, kind: row.kind, content: JSON.parse(row.content_json) as Record<string, unknown>, createdAt: row.created_at, ...(row.role ? { role: row.role } : {}) }; }
 function mapApproval(row: ToolApprovalRow): ToolApprovalRecord { return { id: row.id, sessionId: row.session_id, toolCallId: row.tool_call_id, toolName: row.tool_name, status: row.status, request: JSON.parse(row.request_json) as Record<string, unknown>, requestedAt: row.requested_at, ...(row.run_id ? { runId: row.run_id } : {}), ...(row.resolved_at ? { resolvedAt: row.resolved_at } : {}), ...(row.decided_by_user_id ? { decidedByUserId: row.decided_by_user_id } : {}), ...(row.note ? { note: row.note } : {}) }; }
 function mapArtifact(row: ArtifactRow): ArtifactRecord { return { id: row.id, sessionId: row.session_id, name: row.name, mimeType: row.mime_type, kind: row.kind, byteSize: row.byte_size, sha256: row.sha256, createdAt: row.created_at, metadata: JSON.parse(row.metadata_json) as Record<string, unknown>, ...(row.created_by_user_id ? { createdByUserId: row.created_by_user_id } : {}) }; }
+
+function mapRequestUsage(row: RequestUsageRow): RequestUsageRecord {
+  return {
+    id: row.id, kind: row.kind, status: row.status, routeId: row.route_id,
+    executionLane: row.execution_lane, enqueuedAt: row.enqueued_at, completedAt: row.completed_at,
+    ...(row.recipe_id ? { recipeId: row.recipe_id } : {}),
+    ...(row.playbook_id ? { playbookId: row.playbook_id } : {}),
+    ...(row.adapter ? { adapter: row.adapter } : {}),
+    ...(row.model_id ? { modelId: row.model_id } : {}),
+    ...(row.owner_user_id ? { ownerUserId: row.owner_user_id } : {}),
+    ...(row.session_id ? { sessionId: row.session_id } : {}),
+    ...(row.run_id ? { runId: row.run_id } : {}),
+    ...(row.started_at ? { startedAt: row.started_at } : {}),
+    ...(row.first_output_at ? { firstOutputAt: row.first_output_at } : {}),
+    ...(row.queue_wait_ms !== null ? { queueWaitMs: row.queue_wait_ms } : {}),
+    ...(row.ttft_ms !== null ? { ttftMs: row.ttft_ms } : {}),
+    ...(row.generation_ms !== null ? { generationMs: row.generation_ms } : {}),
+    ...(row.duration_ms !== null ? { durationMs: row.duration_ms } : {}),
+    ...(row.prompt_tokens !== null ? { promptTokens: row.prompt_tokens } : {}),
+    ...(row.completion_tokens !== null ? { completionTokens: row.completion_tokens } : {}),
+    ...(row.credit_cost_cents !== null ? { creditCostCents: row.credit_cost_cents } : {}),
+    ...(row.error_code ? { errorCode: row.error_code } : {}),
+    metadata: JSON.parse(row.metadata_json) as Record<string, unknown>,
+  };
+}
 function mapToolAction(row: ToolActionRow): ToolActionRecord { return { runId: row.run_id, sequence: row.sequence, timestamp: row.timestamp, toolName: row.tool_name, effect: row.effect, detail: JSON.parse(row.detail_json) as Record<string, unknown>, ...(row.path ? { path: row.path } : {}) }; }
 function mapSnapshot(row: SnapshotRow): SnapshotRecord { return { runId: row.run_id, workspaceRoot: row.workspace_root, snapshotDir: row.snapshot_dir, createdAt: row.created_at, status: row.status, fileCount: row.file_count }; }
 function mapTrash(row: TrashRow): TrashEntryRecord { return { id: row.id, workspaceRoot: row.workspace_root, originalPath: row.original_path, trashPath: row.trash_path, createdAt: row.created_at, ...(row.run_id ? { runId: row.run_id } : {}), ...(row.restored_at ? { restoredAt: row.restored_at } : {}) }; }

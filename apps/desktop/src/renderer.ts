@@ -1,6 +1,7 @@
 import { appendMarkdown } from "./markdown.js";
 import { estimateTokens } from "./context-estimate.js";
 import { MessageActions } from "./ui/chat/message-actions.js";
+import { AssistantPerformance } from "./ui/chat/assistant-performance.js";
 import { ActivityTimeline } from "./ui/chat/activity-timeline.js";
 import { AgentRunController } from "./ui/chat/agent-run-controller.js";
 import { RunRecoveryView } from "./ui/chat/run-recovery-view.js";
@@ -256,6 +257,7 @@ const projects = new ProjectsController({
   onSessionSelected: async (sessionId) => {
     const isCurrent = () => projects.currentSessionId === sessionId;
     agentRuns.detach();
+    assistantPerformance.reset();
     runRecovery.clear();
     mediaJobs.reset();
     mediaJobFeed.reset();
@@ -393,7 +395,7 @@ const agentRuns = new AgentRunController({
   messages,
   activity: activityTimeline,
   api,
-  appendAssistant: () => appendMessage("assistant", ""),
+  appendAssistant: (runId, createdAt) => appendMessage("assistant", "", createdAt, runId),
   appendAssistantDelta: (target, delta) => appendMarkdown(target, delta),
   appendSystem: (message) => { appendMessage("system", message); },
   appendChangeSummary: (files) => appendChangeSummary(files),
@@ -407,6 +409,7 @@ const agentRuns = new AgentRunController({
   showStatus,
   errorMessage,
   terminalReplayError: (error) => error instanceof HostRequestError,
+  refreshAssistantPerformance: (runId) => assistantPerformance.refresh(runId),
   onMediaJobSubmitted: (jobId, toolName) => {
     const modality = toolName === "generate_image" ? "image" : toolName === "generate_audio" ? "audio" : "video";
     mediaJobFeed.render({ id: jobId, modality, status: "queued" });
@@ -572,6 +575,10 @@ const messageActions = new MessageActions({
   onEditBlocked: () => showStatus("Wait for the current response before editing a message.", "error"),
   copyText: (text) => window.fitz.copyText(text),
   resend: (text, article) => sendPrompt(text, article),
+});
+const assistantPerformance = new AssistantPerformance({
+  api,
+  apply: (target, usage) => messageActions.setPerformance(target, usage),
 });
 const conversationMessages = new ConversationMessageFeed({
   messages,
@@ -1007,8 +1014,10 @@ function showConnectionFailure(detail: string): void {
   conversationLanding.showConnectionFailure(detail);
 }
 
-function appendMessage(role: string, text: string, createdAt?: string): HTMLElement {
-  return conversationMessages.append(role, text, createdAt);
+function appendMessage(role: string, text: string, createdAt?: string, runId?: string): HTMLElement {
+  const content = conversationMessages.append(role, text, createdAt);
+  if (role === "assistant" && runId) assistantPerformance.track(content, runId, createdAt);
+  return content;
 }
 
 function appendCommentary(text: string, createdAt?: string): HTMLElement {

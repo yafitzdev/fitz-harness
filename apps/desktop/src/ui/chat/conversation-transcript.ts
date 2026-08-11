@@ -16,7 +16,7 @@ export interface TranscriptActivity {
 export interface ConversationTranscriptOptions {
   messages: HTMLElement;
   activity: TranscriptActivity;
-  appendMessage: (role: string, text: string, createdAt?: string) => HTMLElement;
+  appendMessage: (role: string, text: string, createdAt?: string, runId?: string) => HTMLElement;
   appendCommentary: (text: string, createdAt?: string) => HTMLElement;
   rebuildHistory: (messages: string[]) => void;
   loadEarlier?: (beforeSequence: number) => Promise<{ data: Json[]; page?: TranscriptPageState }>;
@@ -101,7 +101,11 @@ export class ConversationTranscript {
     if (entry.kind === "message") {
       const text = String(entry.content?.text ?? "");
       if (entry.role === "assistant" && entry.content?.phase === "commentary") this.#options.appendCommentary(text, entry.createdAt);
-      else this.#options.appendMessage(entry.role ?? "system", text, entry.createdAt);
+      else {
+        const runId = typeof entry.content?.runId === "string" ? entry.content.runId : undefined;
+        if (runId) this.#options.appendMessage(entry.role ?? "system", text, entry.createdAt, runId);
+        else this.#options.appendMessage(entry.role ?? "system", text, entry.createdAt);
+      }
       return;
     }
     if (entry.kind === "tool-call") {

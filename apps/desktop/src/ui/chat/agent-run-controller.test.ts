@@ -89,6 +89,25 @@ describe("AgentRunController", () => {
     expect(calls.refreshControls).toHaveBeenCalledTimes(2);
   });
 
+  it("shows the model loading phase while a cold chat start is waiting", async () => {
+    let replays = 0;
+    const api = vi.fn(async (path: string) => {
+      if (path === "/api/v1/agent/runs") return { data: { id: "run-loading" } };
+      if (path === "/api/v1/management/status") return { engine: { state: "LOADING" } };
+      replays += 1;
+      return replays === 1
+        ? { events: [{ sequence: 1, type: "run.started", data: {} }] }
+        : { events: [{ sequence: 2, type: "run.completed", data: {} }] };
+    });
+    const { controller, activity, calls } = setup(api);
+
+    await controller.start(request());
+
+    expect(calls.setEngineState).toHaveBeenCalledWith("LOADING");
+    expect(calls.setStatus).toHaveBeenCalledWith("Loading model", "loading");
+    expect(activity.timeline.setRun).toHaveBeenCalledWith(activity.activity, "Loading model", expect.any(Number));
+  });
+
   it("retries run creation with the same client request identity", async () => {
     vi.useFakeTimers();
     let creations = 0;

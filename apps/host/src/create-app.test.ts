@@ -650,6 +650,9 @@ describe("Fitz host", () => {
     const all = await runtime.app.inject({ method: "GET", url: `/api/v1/agent/runs/${runId}/events?after=0` }); const events = all.json().events as { sequence: number; type: string }[];
     expect(events[0]?.type).toBe("run.created"); expect(events.at(-1)?.type).toBe("run.completed");
     const resumed = await runtime.app.inject({ method: "GET", url: `/api/v1/agent/runs/${runId}/events?after=2` }); expect(resumed.json().events.every((event: { sequence: number }) => event.sequence > 2)).toBe(true);
+    const usage = await runtime.app.inject({ method: "GET", url: `/api/v1/agent/runs/${runId}/usage` });
+    expect(usage.statusCode, usage.body).toBe(200);
+    expect(usage.json().data).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "chat", runId, ttftMs: expect.any(Number), completionTokens: expect.any(Number) })]));
     const sse = await runtime.app.inject({ method: "GET", url: `/api/v1/agent/runs/${runId}/events`, headers: { accept: "text/event-stream", "last-event-id": "2" } }); expect(sse.statusCode).toBe(200); expect(sse.body).toContain("event: run.completed"); expect(sse.body).not.toContain("id: 1\n"); await runtime.app.close();
   });
 
