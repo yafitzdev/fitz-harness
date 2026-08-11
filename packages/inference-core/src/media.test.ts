@@ -75,6 +75,8 @@ class MediaFakeEngineAdapter implements MediaEngineAdapter<FakeInstanceHandle> {
 
   executionLocation(): "local" | "remote" { return this.#options.remote ? "remote" : "local"; }
 
+  resolveParams(_recipe: Recipe, params: MediaGenerationRequest["params"]): MediaGenerationRequest["params"] { return { ...params }; }
+
   async prepare(recipe: Recipe, _signal: AbortSignal): Promise<void> {
     this.preparations.push(recipe.id);
   }
@@ -205,6 +207,28 @@ describe("MediaEngineAdapter registry", () => {
 });
 
 describe("InferenceScheduler media jobs", () => {
+  it("uses an explicitly pinned media recipe instead of a reassigned route recipe", async () => {
+    const mediaAdapter = new MediaFakeEngineAdapter();
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([mediaAdapter]) });
+    const scheduler = new InferenceScheduler(
+      new RouteResolver(
+        [route("image", "replacement", "image")],
+        [mediaRecipe("original", 60), mediaRecipe("replacement", 60)],
+      ),
+      lifecycle,
+    );
+
+    await collectMedia(scheduler.enqueueMedia(
+      "image",
+      mediaInput("image", "edit the original"),
+      undefined,
+      { ...mediaOptions(), recipeId: "original" },
+    ).events);
+
+    expect(mediaAdapter.starts).toEqual([expect.objectContaining({ recipeId: "original", modelId: "original-model" })]);
+    expect(mediaAdapter.preparations).toEqual(["original"]);
+  });
+
   it("lists routes with includeDisabled and keeps disabled media routes inert", async () => {
     const routes = new RouteResolver(
       [route("video", "media-recipe", "video"), route("off", "media-recipe", "video", false)],

@@ -19,6 +19,8 @@ import { classifyArtifact, normalizeMimeType } from "@fitz/media";
 
 export interface MediaSubmitInput {
   routeId: string;
+  recipeId?: string;
+  sourceJobId?: string;
   modality: MediaModality;
   params: MediaGenerationParams;
   sessionId?: string;
@@ -94,7 +96,9 @@ export class MediaJobCoordinator {
    *  slot always agree. Returns the freshly created queued record. */
   async submit(input: MediaSubmitInput, principal?: AuthenticatedPrincipal): Promise<MediaJobRecord> {
     if (!this.#accepting) throw new MediaCoordinatorClosedError();
-    const { route, recipe } = this.#routes.resolve(input.routeId); // throws RouteNotFoundError when missing or disabled
+    const resolved = this.#routes.resolve(input.routeId); // route still owns authorization and modality
+    const route = resolved.route;
+    const recipe = input.recipeId ? this.#routes.resolveRecipe(input.recipeId) : resolved.recipe;
     const kind = route.kind ?? "chat";
     if (kind !== input.modality) {
       throw new TypeError(`Route ${route.id} is a ${kind} route and cannot generate ${input.modality}`);
@@ -114,12 +118,13 @@ export class MediaJobCoordinator {
     }
 
     const requestedParams = constrainMediaParams(validateMediaGenerationParams(input.params), recipe);
-    const params = this.#scheduler.resolveMediaParams(route.id, requestedParams);
+    const params = this.#scheduler.resolveMediaParams(route.id, requestedParams, input.recipeId);
     const executionParams = await this.#materializeReferences(params);
     const id = randomUUID();
     const now = new Date().toISOString();
     const record: MediaJobRecord = {
       id,
+      ...(input.sourceJobId ? { sourceJobId: input.sourceJobId } : {}),
       routeId: route.id,
       modality: input.modality,
       status: "queued",
@@ -144,6 +149,7 @@ export class MediaJobCoordinator {
         ...(principal ? { userId: principal.user.id } : input.userId ? { userId: input.userId } : {}),
       }, undefined, {
         jobId: id,
+        ...(input.recipeId ? { recipeId: input.recipeId } : {}),
         context: { ...(principal ? { ownerUserId: principal.user.id } : input.userId ? { ownerUserId: input.userId } : {}), ...(input.sessionId ? { sessionId: input.sessionId } : {}), label: `${input.modality} generation` },
       });
     } catch (error) {
@@ -193,6 +199,59 @@ export class MediaJobCoordinator {
 
   list(options: { ownerUserId?: string; sessionId?: string; status?: MediaJobStatus; limit?: number } = {}): MediaJobRecord[] {
     return this.#store.listMediaJobs(options);
+  }
+
+  listWithLineage(options: { ownerUserId?: string; sessionId?: string; status?: MediaJobStatus; limit?: number } = {}): MediaJobRecord[] {
+    const selected = this.list(options);
+    const jobs = new Map(selected.map((job) => [job.id, job]));
+    for (const job of selected) {
+      for (const ancestor of this.lineage(job.id)) {
+        if (options.ownerUserId !== undefined && ancestor.createdByUserId !== options.ownerUserId) continue;
+        if (options.sessionId !== undefined && ancestor.sessionId !== options.sessionId) continue;
+        jobs.set(ancestor.id, ancestor);
+      }
+    }
+    return [...jobs.values()].sort((left, right) => right.enqueuedAt.localeCompare(left.enqueuedAt));
+  }
+
+  lineage(id: string): MediaJobRecord[] {
+    const lineage: MediaJobRecord[] = [];
+    const seen = new Set<string>();
+    let current = this.get(id);
+    while (current && !seen.has(current.id)) {
+      seen.add(current.id);
+      lineage.unshift(current);
+      current = current.sourceJobId ? this.get(current.sourceJobId) : undefined;
+    }
+    return lineage;
+  }
+
+  submitEdit(source: MediaJobRecord, prompt: string, principal?: AuthenticatedPrincipal): Promise<MediaJobRecord> {
+    if (source.modality !== "image" || source.status !== "completed" || !source.artifactId) {
+      throw new TypeError("Only completed image jobs can be edited");
+    }
+    const inherited = inheritedImageEditParams(source.params);
+    return this.submit({
+      routeId: source.routeId,
+      ...(source.execution?.recipeId ? { recipeId: source.execution.recipeId } : {}),
+      sourceJobId: source.id,
+      modality: "image",
+      params: { ...inherited, operation: "edit", prompt, refs: [{ artifactId: source.artifactId }] },
+      ...(source.sessionId ? { sessionId: source.sessionId } : {}),
+      ...(!principal && source.createdByUserId ? { userId: source.createdByUserId } : {}),
+    }, principal);
+  }
+
+  retry(original: MediaJobRecord, principal?: AuthenticatedPrincipal): Promise<MediaJobRecord> {
+    return this.submit({
+      routeId: original.routeId,
+      ...(original.execution?.recipeId ? { recipeId: original.execution.recipeId } : {}),
+      ...(original.sourceJobId ? { sourceJobId: original.sourceJobId } : {}),
+      modality: original.modality,
+      params: original.params,
+      ...(original.sessionId ? { sessionId: original.sessionId } : {}),
+      ...(!principal && original.createdByUserId ? { userId: original.createdByUserId } : {}),
+    }, principal);
   }
 
   eventsAfter(id: string, after: number): MediaJobEventEnvelope[] {
@@ -304,29 +363,35 @@ export class MediaJobCoordinator {
       const source = await resolveResultSource(result);
       const mimeType = normalizeMimeType(result.mimeType);
       const extension = extensionFor(mimeType);
-      const name = `${id}${extension}`;
+      const artifactId = randomUUID();
+      const name = `${artifactTimestamp(new Date())}_${artifactId}${extension}`;
       try {
-      return await this.#artifacts.create({
-        id: randomUUID(),
-        sessionId: job.sessionId ?? this.#syntheticSession(job),
-        name,
-        mimeType,
-        kind: classifyArtifact(mimeType, name),
-        createdAt: new Date().toISOString(),
-        ...(job.createdByUserId ? { createdByUserId: job.createdByUserId } : {}),
-        metadata: {
-          modality: job.modality,
-          routeId: job.routeId,
-          mediaJobId: id,
-          operation: job.params.operation ?? "generate",
-          ...(job.params.operation === "edit" && job.params.refs?.[0] && "artifactId" in job.params.refs[0]
-            ? { sourceArtifactId: job.params.refs[0].artifactId }
-            : {}),
-          ...(result.width !== undefined ? { width: result.width } : {}),
-          ...(result.height !== undefined ? { height: result.height } : {}),
-          ...(result.durationSeconds !== undefined ? { durationSeconds: result.durationSeconds } : {}),
-        },
-      }, source, { maxBytes: limit });
+        return await this.#artifacts.create({
+          id: artifactId,
+          sessionId: job.sessionId ?? this.#syntheticSession(job),
+          name,
+          mimeType,
+          kind: classifyArtifact(mimeType, name),
+          createdAt: new Date().toISOString(),
+          ...(job.createdByUserId ? { createdByUserId: job.createdByUserId } : {}),
+          metadata: {
+            modality: job.modality,
+            routeId: job.routeId,
+            mediaJobId: id,
+            operation: job.params.operation ?? "generate",
+            ...(job.execution ? {
+              recipeId: job.execution.recipeId,
+              modelId: job.execution.modelId,
+              adapter: job.execution.adapter,
+            } : {}),
+            ...(job.params.operation === "edit" && job.params.refs?.[0] && "artifactId" in job.params.refs[0]
+              ? { sourceArtifactId: job.params.refs[0].artifactId }
+              : {}),
+            ...(result.width !== undefined ? { width: result.width } : {}),
+            ...(result.height !== undefined ? { height: result.height } : {}),
+            ...(result.durationSeconds !== undefined ? { durationSeconds: result.durationSeconds } : {}),
+          },
+        }, source, { maxBytes: limit });
       } catch (error) {
         if (error instanceof BlobSizeLimitError) throw new ArtifactTooLargeError(job.modality, error.byteSize, limit);
         throw error;
@@ -383,7 +448,11 @@ export class MediaJobCoordinator {
     const job = this.#store.getMediaJob(id);
     if (!job) return;
     let recipe: Recipe | undefined;
-    try { recipe = this.#routes.resolve(job.routeId).recipe; } catch { /* A removed route must not erase terminal accounting. */ }
+    try {
+      recipe = job.execution?.recipeId
+        ? this.#routes.resolveRecipe(job.execution.recipeId)
+        : this.#routes.resolve(job.routeId).recipe;
+    } catch { /* A removed route or recipe must not erase terminal accounting. */ }
     const finishedAt = job.completedAt ?? job.cancelledAt ?? new Date().toISOString();
     const enqueued = Date.parse(job.enqueuedAt);
     const started = job.startedAt ? Date.parse(job.startedAt) : undefined;
@@ -514,6 +583,21 @@ function extensionFor(mimeType: string): string {
     "audio/webm": ".weba",
   };
   return table[mimeType] ?? `.${mimeType.split("/")[1]?.replace(/[^a-z0-9]/gi, "") ?? "bin"}`.slice(0, MAX_ARTIFACT_NAME_LENGTH);
+}
+
+function artifactTimestamp(value: Date): string {
+  return value.toISOString().replace("T", "_").replaceAll(":", "-").replace(".", "-");
+}
+
+function inheritedImageEditParams(params: MediaGenerationParams): Omit<MediaGenerationParams, "prompt" | "operation" | "refs"> {
+  return {
+    ...(params.negativePrompt !== undefined ? { negativePrompt: params.negativePrompt } : {}),
+    ...(params.size !== undefined ? { size: params.size } : {}),
+    ...(params.seed !== undefined ? { seed: params.seed } : {}),
+    ...(params.sampler !== undefined ? { sampler: params.sampler } : {}),
+    ...(params.steps !== undefined ? { steps: params.steps } : {}),
+    ...(params.guidance !== undefined ? { guidance: params.guidance } : {}),
+  };
 }
 
 function isAbortError(error: unknown): boolean {

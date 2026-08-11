@@ -1,7 +1,10 @@
+import { isTerminalMediaJobStatus } from "@fitz/protocol";
 import { svgIcon } from "../primitives/dom.js";
 import type { ActionFeedback } from "../primitives/action-status.js";
 import type { MediaJobSummary } from "./media-job-tracker.js";
 import { scrollToLatestIfFollowing } from "./conversation-scroll.js";
+import { createMediaCard, createMediaCardSection } from "./media-card.js";
+import { mediaCardPresentation, mediaExecutionSettings, mediaPromptChain } from "./media-card-model.js";
 
 type Json = Record<string, any>;
 
@@ -14,7 +17,7 @@ export interface MediaJobFeedOptions {
   appendAssistant: (text: string, createdAt?: string) => HTMLElement;
   openArtifact: (artifact: Json) => void | Promise<void>;
   retry: (job: MediaJobSummary) => Promise<MediaJobSummary>;
-  editImage: (job: MediaJobSummary, sourceArtifactId: string, prompt: string) => Promise<MediaJobSummary>;
+  editImage: (job: MediaJobSummary, prompt: string) => Promise<MediaJobSummary>;
   watch: (jobId: string) => void;
   showStatus: ActionFeedback;
   errorMessage: (error: unknown) => string;
@@ -25,23 +28,24 @@ export class MediaJobFeed {
   readonly #options: MediaJobFeedOptions;
   readonly #rows = new Map<string, HTMLElement>();
   readonly #anchors = new Map<string, HTMLElement>();
+  readonly #jobsById = new Map<string, MediaJobSummary>();
   readonly #jobsByArtifactId = new Map<string, MediaJobSummary>();
 
   constructor(options: MediaJobFeedOptions) { this.#options = options; }
 
-  reset(): void { this.#rows.clear(); this.#anchors.clear(); this.#jobsByArtifactId.clear(); }
+  reset(): void { this.#rows.clear(); this.#anchors.clear(); this.#jobsById.clear(); this.#jobsByArtifactId.clear(); }
 
   render(job: MediaJobSummary, failure?: string, artifact?: Json): void {
     const { messages } = this.#options;
     if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
     const completed = job.status === "completed";
+    this.#jobsById.set(job.id, job);
     if (artifact?.id) this.#jobsByArtifactId.set(String(artifact.id), job);
-    const label = `${job.modality[0]!.toUpperCase()}${job.modality.slice(1)}`;
+    const presentation = mediaCardPresentation(job, failure, artifact?.name);
     let row = this.#rows.get(job.id);
     const wasTracked = Boolean(row);
     if (!row) {
-      row = document.createElement("article");
-      row.className = "message media-card media-job-notice";
+      row = createMediaCard("media-job-notice");
       row.dataset.mediaJobId = job.id;
       row.tabIndex = 0;
       row.setAttribute("role", "button");
@@ -78,11 +82,7 @@ export class MediaJobFeed {
     const copy = document.createElement("span");
     copy.className = "media-job-copy";
     const title = document.createElement("strong");
-    const operation = job.params?.operation === "edit" ? "edit" : "generation";
-    title.textContent = completed ? `${label} ready`
-      : job.status === "failed" || job.status === "interrupted" ? `${label} ${operation} failed`
-        : job.status === "cancelled" ? `${label} ${operation} cancelled`
-          : `${label} ${operation} in progress`;
+    title.textContent = presentation.title;
     const detail = document.createElement("small");
     const displayProgress = this.#displayProgress(job);
     if (!this.#terminal(job.status) && displayProgress !== undefined) {
@@ -90,7 +90,7 @@ export class MediaJobFeed {
         ? `Preparing model… ${displayProgress}%`
         : `Generating… ${displayProgress}%`;
     } else {
-      detail.textContent = failure ?? (artifact?.name ? artifact.name : completed ? "Generated artifact" : "Fitz is following this job in the background.");
+      detail.textContent = presentation.detail;
     }
     copy.append(title, detail);
     row.append(icon, copy);
@@ -122,8 +122,8 @@ export class MediaJobFeed {
       row.append(progress);
     }
 
-    const editableArtifactId = completed && job.modality === "image" && artifact?.id ? String(artifact.id) : undefined;
-    const specification = this.#specification(job, editableArtifactId);
+    const editable = completed && job.modality === "image" && Boolean(artifact?.id);
+    const specification = this.#specification(job, editable);
     specification.hidden = !wasOpen;
     row.append(specification);
 
@@ -154,7 +154,7 @@ export class MediaJobFeed {
   }
 
   #terminal(status: string): boolean {
-    return ["completed", "failed", "cancelled", "interrupted"].includes(status);
+    return isTerminalMediaJobStatus(status);
   }
 
   #displayProgress(job: MediaJobSummary): number | undefined {
@@ -210,28 +210,25 @@ export class MediaJobFeed {
     messages.scrollTop += overflow;
   }
 
-  #specification(job: MediaJobSummary, editableArtifactId?: string): HTMLElement {
+  #specification(job: MediaJobSummary, editable: boolean): HTMLElement {
     const details = document.createElement("div");
     details.className = "media-job-specification";
-    const params = job.params && typeof job.params === "object" ? job.params as Record<string, unknown> : {};
     const list = document.createElement("dl");
-    for (const [key, value] of this.#executionSettings(job, params)) {
+    for (const [key, value] of mediaExecutionSettings(job)) {
       const term = document.createElement("dt");
       term.textContent = key;
       const definition = document.createElement("dd");
       definition.textContent = value;
       list.append(term, definition);
     }
-    const settingsSection = document.createElement("section");
-    settingsSection.className = "media-job-section media-job-settings";
-    settingsSection.setAttribute("aria-label", "Settings");
+    const settingsSection = createMediaCardSection("media-job-settings", "Settings");
     settingsSection.append(list);
     details.append(settingsSection);
     // The expanded card reads execution facts → next action → provenance.
-    if (editableArtifactId) details.append(this.#editForm(job, editableArtifactId));
+    if (editable) details.append(this.#editForm(job));
     const chain = document.createElement("ol");
     chain.className = "media-job-prompt-chain";
-    for (const item of this.#promptChain(job)) {
+    for (const item of mediaPromptChain(job, (current) => this.#parentJob(current as MediaJobSummary))) {
       const row = document.createElement("li");
       const stage = document.createElement("span");
       stage.textContent = item.label;
@@ -248,64 +245,20 @@ export class MediaJobFeed {
       row.append(stage, prompt);
       chain.append(row);
     }
-    const promptSection = document.createElement("section");
-    promptSection.className = "media-job-section media-job-prompts";
-    promptSection.setAttribute("aria-label", "Prompt chain");
+    const promptSection = createMediaCardSection("media-job-prompts", "Prompt chain");
     promptSection.append(chain);
     details.append(promptSection);
     return details;
   }
 
-  #executionSettings(job: MediaJobSummary, params: Record<string, unknown>): Array<[string, string]> {
-    const execution = job.execution && typeof job.execution === "object" ? job.execution as Record<string, unknown> : {};
-    const settings: Array<[string, string]> = [];
-    if (typeof execution.recipeDisplayName === "string") settings.push(["Model", execution.recipeDisplayName]);
-    if (typeof execution.modelId === "string") settings.push(["Checkpoint", execution.modelId]);
-    if (typeof execution.recipeId === "string") settings.push(["Recipe", execution.recipeId]);
-    if (typeof execution.adapter === "string") settings.push(["Engine", execution.adapter === "comfyui" ? "ComfyUI" : execution.adapter]);
-    if (Object.keys(execution).length === 0) settings.push(["Execution details", "Not recorded for this earlier job"]);
-    if (typeof job.routeId === "string") settings.push(["Route", job.routeId]);
-    settings.push(["Operation", params.operation === "edit" ? "Edit" : "Generate"]);
-    const labels: Record<string, string> = {
-      size: "Resolution",
-      seed: "Seed",
-      sampler: "Sampler",
-      steps: "Steps",
-      guidance: "Guidance",
-      negativePrompt: "Negative prompt",
-      durationSeconds: "Duration (seconds)",
-      fps: "Frame rate (fps)",
-    };
-    for (const [key, value] of Object.entries(params)) {
-      if (["prompt", "operation", "refs"].includes(key) || value === undefined) continue;
-      const label = labels[key] ?? key.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ");
-      settings.push([label, value === "" ? "None" : typeof value === "string" ? value : JSON.stringify(value)]);
-    }
-    return settings;
-  }
-
-  #promptChain(job: MediaJobSummary): Array<{ jobId: string; label: string; prompt: string }> {
-    const lineage: Array<{ jobId: string; operation: string; prompt: string }> = [];
-    const seen = new Set<string>();
-    let current: MediaJobSummary | undefined = job;
-    while (current && !seen.has(current.id)) {
-      seen.add(current.id);
-      const params: Record<string, unknown> = current.params && typeof current.params === "object" ? current.params as Record<string, unknown> : {};
-      lineage.unshift({
-        jobId: current.id,
-        operation: params.operation === "edit" ? "edit" : "generate",
-        prompt: typeof params.prompt === "string" ? params.prompt : "Not recorded",
-      });
-      const refs: unknown[] = Array.isArray(params.refs) ? params.refs : [];
-      const source: { artifactId: string } | undefined = refs.find((ref: unknown): ref is { artifactId: string } => Boolean(ref && typeof ref === "object" && typeof (ref as { artifactId?: unknown }).artifactId === "string"));
-      current = source ? this.#jobsByArtifactId.get(source.artifactId) : undefined;
-    }
-    let editNumber = 0;
-    return lineage.map((item, index) => {
-      if (item.operation !== "edit" && index === 0) return { jobId: item.jobId, label: "Original", prompt: item.prompt };
-      editNumber += 1;
-      return { jobId: item.jobId, label: lineage.length === 1 ? "Edit" : `Edit ${editNumber}`, prompt: item.prompt };
-    });
+  #parentJob(job: MediaJobSummary): MediaJobSummary | undefined {
+    if (typeof job.sourceJobId === "string") return this.#jobsById.get(job.sourceJobId);
+    const params = job.params && typeof job.params === "object" ? job.params as Record<string, unknown> : {};
+    const refs: unknown[] = Array.isArray(params.refs) ? params.refs : [];
+    const source = refs.find((ref: unknown): ref is { artifactId: string } => Boolean(
+      ref && typeof ref === "object" && typeof (ref as { artifactId?: unknown }).artifactId === "string",
+    ));
+    return source ? this.#jobsByArtifactId.get(source.artifactId) : undefined;
   }
 
   #jumpToJob(jobId: string): void {
@@ -321,10 +274,8 @@ export class MediaJobFeed {
     window.setTimeout(() => target.classList.remove("jump-target"), 1_200);
   }
 
-  #editForm(job: MediaJobSummary, sourceArtifactId: string): HTMLFormElement {
-    const form = document.createElement("form");
-    form.className = "media-job-section media-job-edit";
-    form.setAttribute("aria-label", "Edit image");
+  #editForm(job: MediaJobSummary): HTMLFormElement {
+    const form = createMediaCardSection("media-job-edit", "Edit image", "form") as HTMLFormElement;
     const label = document.createElement("label");
     label.className = "media-job-edit-field";
     const controls = document.createElement("span");
@@ -354,7 +305,7 @@ export class MediaJobFeed {
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      void this.#edit(job, sourceArtifactId, prompt, submit, error);
+      void this.#edit(job, prompt, submit, error);
     });
     prompt.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
@@ -364,7 +315,7 @@ export class MediaJobFeed {
     return form;
   }
 
-  async #edit(job: MediaJobSummary, sourceArtifactId: string, prompt: HTMLTextAreaElement, submit: HTMLButtonElement, error: HTMLElement): Promise<void> {
+  async #edit(job: MediaJobSummary, prompt: HTMLTextAreaElement, submit: HTMLButtonElement, error: HTMLElement): Promise<void> {
     const instruction = prompt.value.trim();
     if (!instruction) {
       prompt.setCustomValidity("Describe what should change");
@@ -376,7 +327,7 @@ export class MediaJobFeed {
     submit.disabled = true;
     error.hidden = true;
     try {
-      const edited = await this.#options.editImage(job, sourceArtifactId, instruction);
+      const edited = await this.#options.editImage(job, instruction);
       prompt.value = "";
       prompt.style.height = "29px";
       this.render(edited);

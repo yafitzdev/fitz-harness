@@ -1,13 +1,19 @@
 import type { MediaModality } from "./domain.js";
 
-export type MediaJobStatus =
-  | "queued"
-  | "started"
-  | "progressing"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "interrupted";
+export type ActiveMediaJobStatus = "queued" | "started" | "progressing";
+export type TerminalMediaJobStatus = "completed" | "failed" | "cancelled" | "interrupted";
+export type MediaJobStatus = ActiveMediaJobStatus | TerminalMediaJobStatus;
+
+export const ACTIVE_MEDIA_JOB_STATUSES: readonly ActiveMediaJobStatus[] = ["queued", "started", "progressing"];
+export const TERMINAL_MEDIA_JOB_STATUSES: readonly TerminalMediaJobStatus[] = ["completed", "failed", "cancelled", "interrupted"];
+
+export function isTerminalMediaJobStatus(status: string): status is TerminalMediaJobStatus {
+  return (TERMINAL_MEDIA_JOB_STATUSES as readonly string[]).includes(status);
+}
+
+export function isActiveMediaJobStatus(status: string): status is ActiveMediaJobStatus {
+  return (ACTIVE_MEDIA_JOB_STATUSES as readonly string[]).includes(status);
+}
 
 export type MediaGenerationOperation = "generate" | "edit";
 
@@ -56,6 +62,8 @@ export interface MediaExecutionMetadata {
 
 export interface MediaJobRecord {
   id: string;
+  /** Direct parent job for edit/revision lineage. */
+  sourceJobId?: string;
   sessionId?: string;
   routeId: string;
   modality: MediaModality;

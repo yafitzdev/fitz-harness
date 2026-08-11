@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { MediaJobEvent, MediaJobRecord } from "@fitz/protocol";
+import { ACTIVE_MEDIA_JOB_STATUSES, isActiveMediaJobStatus, isTerminalMediaJobStatus, TERMINAL_MEDIA_JOB_STATUSES, type MediaJobEvent, type MediaJobRecord } from "@fitz/protocol";
 
 describe("media protocol types", () => {
   it("exports media job DTOs that survive JSON round-trips", () => {
@@ -29,5 +29,20 @@ describe("media protocol types", () => {
     }
     const completed = events.find((event): event is Extract<MediaJobEvent, { type: "completed" }> => event.type === "completed");
     expect(completed?.result.mimeType).toBe("video/mp4");
+  });
+
+  it("keeps active and terminal status classification exhaustive and disjoint", () => {
+    expect(ACTIVE_MEDIA_JOB_STATUSES).toEqual(["queued", "started", "progressing"]);
+    expect(TERMINAL_MEDIA_JOB_STATUSES).toEqual(["completed", "failed", "cancelled", "interrupted"]);
+    for (const status of ACTIVE_MEDIA_JOB_STATUSES) {
+      expect(isActiveMediaJobStatus(status)).toBe(true);
+      expect(isTerminalMediaJobStatus(status)).toBe(false);
+    }
+    for (const status of TERMINAL_MEDIA_JOB_STATUSES) {
+      expect(isTerminalMediaJobStatus(status)).toBe(true);
+      expect(isActiveMediaJobStatus(status)).toBe(false);
+    }
+    expect(isActiveMediaJobStatus("unknown")).toBe(false);
+    expect(isTerminalMediaJobStatus("unknown")).toBe(false);
   });
 });

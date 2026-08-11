@@ -1,3 +1,4 @@
+import { isActiveMediaJobStatus } from "@fitz/protocol";
 import { appendMarkdown } from "./markdown.js";
 import { estimateTokens } from "./context-estimate.js";
 import { MessageActions } from "./ui/chat/message-actions.js";
@@ -367,27 +368,8 @@ const mediaJobFeed = new MediaJobFeed({
   appendAssistant: (text, createdAt) => conversationMessages.appendDetached("assistant", text, createdAt),
   openArtifact: (artifact) => inspectorPanel.previewArtifact(artifact),
   retry: async (job) => (await api(`/api/v1/media/jobs/${encodeURIComponent(job.id)}/retry`, "POST")).data as MediaJobSummary,
-  editImage: async (job, sourceArtifactId, prompt) => {
-    const routeId = typeof job.routeId === "string" && job.routeId ? job.routeId : "image";
-    const sessionId = job.sessionId ?? projects.currentSessionId;
-    if (!sessionId) throw new Error("Image editing requires an active chat");
-    const previous = job.params && typeof job.params === "object" ? { ...job.params } : {};
-    delete previous.prompt;
-    delete previous.operation;
-    delete previous.refs;
-    delete previous.durationSeconds;
-    delete previous.fps;
-    const response = await api("/api/v1/media/jobs", "POST", {
-      routeId,
-      modality: "image",
-      sessionId,
-      params: {
-        ...previous,
-        operation: "edit",
-        prompt,
-        refs: [{ artifactId: sourceArtifactId }],
-      },
-    });
+  editImage: async (job, prompt) => {
+    const response = await api(`/api/v1/media/jobs/${encodeURIComponent(job.id)}/edits`, "POST", { prompt });
     return response.data as MediaJobSummary;
   },
   watch: (jobId) => mediaJobs.watch(jobId),
@@ -999,14 +981,14 @@ async function ensurePromptSession(title: string, routeId?: string): Promise<str
 }
 
 async function loadMediaJobs(sessionId: string, sessionArtifacts: Json[], isCurrent: () => boolean = () => true): Promise<void> {
-  const response = await api(`/api/v1/media/jobs?sessionId=${encodeURIComponent(sessionId)}&limit=100`);
+  const response = await api(`/api/v1/media/jobs?sessionId=${encodeURIComponent(sessionId)}&limit=100&includeLineage=true`);
   if (!isCurrent()) return;
   const jobs = Array.isArray(response.data) ? [...response.data].reverse() as MediaJobSummary[] : [];
   let hasActiveJob = false;
   for (const job of jobs) {
     if (!isCurrent()) return;
     const artifact = job.artifactId ? sessionArtifacts.find((item) => item.id === job.artifactId) : undefined;
-    if (["queued", "started", "progressing"].includes(job.status)) {
+    if (isActiveMediaJobStatus(job.status)) {
       hasActiveJob = true;
       mediaJobFeed.render(job, undefined, artifact);
       mediaJobs.watch(job.id);

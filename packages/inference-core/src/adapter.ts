@@ -96,7 +96,7 @@ export interface MediaEngineAdapter<THandle extends EngineInstanceHandle = Engin
   executionLocation?(recipe: Recipe): "local" | "remote";
   /** Resolve adapter/recipe defaults before durable admission so the job and
    * UI record the exact parameters that will reach the engine. */
-  resolveParams?(recipe: Recipe, params: MediaGenerationRequest["params"]): MediaGenerationRequest["params"];
+  resolveParams(recipe: Recipe, params: MediaGenerationRequest["params"]): MediaGenerationRequest["params"];
   prepare?(recipe: Recipe, signal: AbortSignal): Promise<void>;
   validateRecipe(recipe: Recipe): Promise<ValidationReport>;
   estimateResources(recipe: Recipe): Promise<ResourceEstimate>;

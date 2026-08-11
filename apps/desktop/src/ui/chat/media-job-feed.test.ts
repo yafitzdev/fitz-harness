@@ -22,7 +22,7 @@ function setup() {
     }),
     openArtifact: vi.fn(),
     retry: vi.fn(async () => ({ id: "job-2", modality: "video" as const, status: "queued" })),
-    editImage: vi.fn(async (_job: any, _artifactId: string, prompt: string) => ({
+    editImage: vi.fn(async (_job: any, prompt: string) => ({
       id: "job-edit", routeId: "image", sessionId: "session-1", modality: "image" as const,
       status: "queued", params: { operation: "edit", prompt },
     })),
@@ -136,7 +136,7 @@ describe("MediaJobFeed", () => {
     prompt.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
 
     await vi.waitFor(() => expect(calls.editImage).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "job-source" }), "artifact-source", "change the dog\nto a cat",
+      expect.objectContaining({ id: "job-source" }), "change the dog\nto a cat",
     ));
     expect(calls.watch).toHaveBeenCalledWith("job-edit");
     expect(messages.textContent).toContain("Image edit in progress");

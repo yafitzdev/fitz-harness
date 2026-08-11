@@ -239,6 +239,18 @@ describe("SqliteStore", () => {
     store.close();
   });
 
+  it("persists direct media edit ancestry", () => {
+    const store = SqliteStore.memory(); const now = new Date(0).toISOString();
+    store.createMediaJob({ id: "original", routeId: "image", modality: "image", status: "completed", params: { prompt: "dog" }, enqueuedAt: now });
+    store.createMediaJob({
+      id: "edit", sourceJobId: "original", routeId: "image", modality: "image", status: "queued",
+      params: { operation: "edit", prompt: "cat", refs: [{ artifactId: "artifact-original" }] }, enqueuedAt: now,
+    });
+    expect(store.getMediaJob("edit")).toEqual(expect.objectContaining({ sourceJobId: "original" }));
+    expect(store.listMediaJobs({}).find((job) => job.id === "edit")).toEqual(expect.objectContaining({ sourceJobId: "original" }));
+    store.close();
+  });
+
   it("accumulates the media credit ledger per user within a window", () => {
     const store = SqliteStore.memory(); const now = new Date(0).toISOString();
     store.createMediaJob({ id: "job-1", routeId: "image", modality: "image", status: "completed", params: { prompt: "x" }, enqueuedAt: now, createdByUserId: "user-1" });

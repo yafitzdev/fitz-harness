@@ -495,4 +495,10 @@ export const MIGRATIONS: readonly Migration[] = [
     // route assignments. Effective generation parameters remain in params_json.
     sql: `ALTER TABLE media_jobs ADD COLUMN execution_json TEXT;`,
   },
+  {
+    version: 17,
+    // Direct job ancestry makes edit lineage durable and queryable without
+    // reconstructing it from whichever artifact rows happen to be loaded.
+    sql: `ALTER TABLE media_jobs ADD COLUMN source_job_id TEXT REFERENCES media_jobs(id);`,
+  },
 ] as const;

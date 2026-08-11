@@ -1,3 +1,5 @@
+import { isTerminalMediaJobStatus } from "@fitz/protocol";
+
 type Json = Record<string, any>;
 
 export interface MediaJobSummary extends Json {
@@ -20,8 +22,6 @@ export interface MediaJobTrackerOptions {
   onProgress?: (job: MediaJobSummary) => void;
   pollIntervalMs?: number;
 }
-
-const TERMINAL = new Set(["completed", "failed", "cancelled", "interrupted"]);
 
 /**
  * Follows Fitz media jobs after the agent's non-blocking generation tool exits.
@@ -89,7 +89,7 @@ export class MediaJobTracker {
           const response = await this.#options.api(`/api/v1/media/jobs/${encodeURIComponent(jobId)}`);
           failures = 0;
           const job = response.data as MediaJobSummary;
-          if (TERMINAL.has(String(job.status))) {
+          if (isTerminalMediaJobStatus(String(job.status))) {
             this.#forget(jobId);
             const failure = job.status === "completed"
               ? undefined

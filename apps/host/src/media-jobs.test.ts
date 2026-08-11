@@ -76,7 +76,7 @@ describe("Fitz host media jobs", () => {
     }
   });
 
-  it("preserves explicit image-edit provenance on the job and output artifact", async () => {
+  it("pins edits to the source recipe and preserves durable lineage and sortable artifact names", async () => {
     const mediaFake = new FakeMediaEngineAdapter();
     const runtime = createHost({ adapters: [new FakeEngineAdapter(), mediaFake] });
     try {
@@ -87,15 +87,20 @@ describe("Fitz host media jobs", () => {
         payload: { routeId: "image", modality: "image", params: { prompt: "a dog swimming" } },
       });
       const original = await waitForJobStatus(runtime, originalResponse.json().data.id, "completed");
+      const originalArtifact = runtime.store.getArtifact(original.artifactId);
+      expect(originalArtifact?.name).toMatch(new RegExp(`^\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2}-\\d{3}Z_${original.artifactId}\\.png$`));
+
+      // Route reassignment must not silently change the model used by an edit.
+      await registerMediaRecipe(runtime, "replacement-img", ["image"]);
+      await assignRoute(runtime, "image", "replacement-img");
 
       const editResponse = await runtime.app.inject({
-        method: "POST", url: "/api/v1/media/jobs",
-        payload: {
-          routeId: "image", modality: "image",
-          params: { operation: "edit", prompt: "change the dog to a cat", refs: [{ artifactId: original.artifactId }] },
-        },
+        method: "POST", url: `/api/v1/media/jobs/${original.id}/edits`,
+        payload: { prompt: "change the dog to a cat" },
       });
       expect(editResponse.statusCode, editResponse.body).toBe(202);
+      expect(editResponse.json().data.sourceJobId).toBe(original.id);
+      expect(editResponse.json().data.execution.recipeId).toBe("h3-img");
       expect(editResponse.json().data.params).toEqual({
         operation: "edit", prompt: "change the dog to a cat", refs: [{ artifactId: original.artifactId }],
       });
@@ -103,11 +108,18 @@ describe("Fitz host media jobs", () => {
       const artifact = runtime.store.getArtifact(edited.artifactId);
       expect(artifact?.metadata).toMatchObject({
         operation: "edit", sourceArtifactId: original.artifactId, mediaJobId: edited.id,
+        recipeId: "h3-img", modelId: "h3-img-model", adapter: "media-fake",
       });
+      expect(artifact?.name).toMatch(new RegExp(`^\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2}-\\d{3}Z_${edited.artifactId}\\.png$`));
       expect(mediaFake.submitted.at(-1)?.params).toMatchObject({
         operation: "edit", prompt: "change the dog to a cat",
         refs: [{ url: expect.stringMatching(/^data:image\/png;base64,/) }],
       });
+      const lineageResponse = await runtime.app.inject({ method: "GET", url: `/api/v1/media/jobs/${edited.id}/lineage` });
+      expect(lineageResponse.statusCode, lineageResponse.body).toBe(200);
+      expect(lineageResponse.json().data.map((job: { id: string }) => job.id)).toEqual([original.id, edited.id]);
+      const recentWithLineage = await runtime.app.inject({ method: "GET", url: "/api/v1/media/jobs?limit=1&includeLineage=true" });
+      expect(recentWithLineage.json().data.map((job: { id: string }) => job.id)).toEqual([edited.id, original.id]);
     } finally {
       await runtime.app.close();
     }

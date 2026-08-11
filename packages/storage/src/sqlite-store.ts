@@ -73,6 +73,7 @@ export interface MediaJobEventEnvelope {
 
 interface MediaJobRow {
   id: string;
+  source_job_id: string | null;
   session_id: string | null;
   route_id: string;
   modality: MediaModality;
@@ -610,13 +611,14 @@ export class SqliteStore {
     this.#database
       .prepare(
         `INSERT INTO media_jobs (
-          id, session_id, route_id, modality, status, params_json, execution_json, progress,
+          id, source_job_id, session_id, route_id, modality, status, params_json, execution_json, progress,
           artifact_id, provider_job_id, error_code, enqueued_at, started_at,
           completed_at, cancelled_at, created_by_user_id, credit_cost_cents
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         job.id,
+        job.sourceJobId ?? null,
         job.sessionId ?? null,
         job.routeId,
         job.modality,
@@ -639,7 +641,7 @@ export class SqliteStore {
   getMediaJob(id: string): MediaJobRecord | undefined {
     const row = this.#database
       .prepare(
-        `SELECT id, session_id, route_id, modality, status, params_json, execution_json, progress,
+        `SELECT id, source_job_id, session_id, route_id, modality, status, params_json, execution_json, progress,
                 artifact_id, provider_job_id, error_code, enqueued_at, started_at,
                 completed_at, cancelled_at, created_by_user_id, credit_cost_cents
          FROM media_jobs WHERE id = ?`,
@@ -655,6 +657,7 @@ export class SqliteStore {
     const set = (column: string, value: SQLInputValue | undefined): void => {
       if (value !== undefined) { assignments.push(`${column} = ?`); values.push(value); }
     };
+    set("source_job_id", patch.sourceJobId);
     set("session_id", patch.sessionId);
     set("route_id", patch.routeId);
     set("modality", patch.modality);
@@ -684,7 +687,7 @@ export class SqliteStore {
     const limit = options.limit ?? 100;
     const rows = this.#database
       .prepare(
-        `SELECT id, session_id, route_id, modality, status, params_json, execution_json, progress,
+        `SELECT id, source_job_id, session_id, route_id, modality, status, params_json, execution_json, progress,
                 artifact_id, provider_job_id, error_code, enqueued_at, started_at,
                 completed_at, cancelled_at, created_by_user_id, credit_cost_cents
          FROM media_jobs ${where} ORDER BY enqueued_at DESC LIMIT ?`,
@@ -1086,6 +1089,7 @@ function mapUser(row: UserRow): UserRecord { return { id: row.id, displayName: r
 function mapMediaJob(row: MediaJobRow): MediaJobRecord {
   return {
     id: row.id,
+    ...(row.source_job_id ? { sourceJobId: row.source_job_id } : {}),
     routeId: row.route_id,
     modality: row.modality,
     status: row.status,

@@ -1,6 +1,7 @@
 import type { MediaModality } from "@fitz/protocol";
 import { validateMediaGenerationParams } from "@fitz/media";
 import { scrollToLatestIfFollowing } from "./conversation-scroll.js";
+import { createMediaCard } from "./media-card.js";
 
 /** Parameters collected from the media creation form, keyed like MediaGenerationParams. */
 export interface MediaCreationParams {
@@ -58,8 +59,7 @@ export class MediaCreationForm {
     this.#onCreate = request.onCreate;
     const label = MODALITY_LABELS[request.modality];
 
-    const card = document.createElement("article");
-    card.className = "message media-card media-creation-card";
+    const card = createMediaCard("media-creation-card");
     const title = document.createElement("h2");
     title.textContent = `Create ${label.toLowerCase()}`;
 

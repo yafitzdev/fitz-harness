@@ -103,6 +103,10 @@ export class FakeMediaEngineAdapter implements MediaEngineAdapter<FakeInstanceHa
     this.#resultByteLength = options.resultByteLength;
   }
 
+  resolveParams(_recipe: Recipe, params: MediaGenerationRequest["params"]): MediaGenerationRequest["params"] {
+    return { ...params };
+  }
+
   async prepare(recipe: Recipe, _signal: AbortSignal): Promise<void> {
     this.preparations.push(recipe.id);
   }

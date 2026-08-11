@@ -1,6 +1,8 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { RouteNotFoundError } from "@fitz/inference-core";
 import {
+  isActiveMediaJobStatus,
+  isTerminalMediaJobStatus,
   type ImageGenerationRequest,
   type ImageGenerationResponse,
   type MediaGenerationParams,
@@ -53,10 +55,11 @@ export function registerMediaRoutes(options: RegisterMediaRoutesOptions): void {
 
   app.get("/api/v1/media/jobs", async (request) => {
     const principal = principals.get(request);
-    const query = request.query as { sessionId?: string; status?: string; limit?: string };
+    const query = request.query as { sessionId?: string; status?: string; limit?: string; includeLineage?: string };
     const status = parseMediaStatus(query.status);
+    const list = query.includeLineage === "true" ? mediaJobs.listWithLineage.bind(mediaJobs) : mediaJobs.list.bind(mediaJobs);
     return {
-      data: mediaJobs.list({
+      data: list({
         ...(principal === undefined || principal.user.role === "administrator" ? {} : { ownerUserId: principal.user.id }),
         ...(typeof query.sessionId === "string" && query.sessionId ? { sessionId: query.sessionId } : {}),
         ...(status ? { status } : {}),
@@ -71,6 +74,33 @@ export function registerMediaRoutes(options: RegisterMediaRoutesOptions): void {
     if (!job) return reply.code(404).send({ error: "Media job not found" });
     if (!canAccessMediaJob(principals.get(request), job)) return reply.code(403).send({ error: "Media job access denied" });
     return { data: job };
+  });
+
+  app.get("/api/v1/media/jobs/:jobId/lineage", async (request, reply) => {
+    const jobId = (request.params as { jobId: string }).jobId;
+    const job = mediaJobs.get(jobId);
+    if (!job) return reply.code(404).send({ error: "Media job not found" });
+    const principal = principals.get(request);
+    if (!canAccessMediaJob(principal, job)) return reply.code(403).send({ error: "Media job access denied" });
+    return { data: mediaJobs.lineage(jobId).filter((entry) => canAccessMediaJob(principal, entry)) };
+  });
+
+  app.post("/api/v1/media/jobs/:jobId/edits", async (request, reply) => {
+    const jobId = (request.params as { jobId: string }).jobId;
+    const source = mediaJobs.get(jobId);
+    if (!source) return reply.code(404).send({ error: "Media job not found" });
+    const principal = principals.get(request);
+    if (!canAccessMediaJob(principal, source)) return reply.code(403).send({ error: "Media job access denied" });
+    try {
+      const body = requireRecord(request.body);
+      const edited = await mediaJobs.submitEdit(source, requireString(body.prompt, "prompt"), principal);
+      security?.audit("media-job.edited", principal?.user.id, "media-job", edited.id, { sourceJobId: source.id, routeId: edited.routeId });
+      return reply.code(202).send({ data: edited });
+    } catch (error) {
+      const statusCode = mediaSubmissionStatus(error);
+      if (error instanceof MediaJobAdmissionError) reply.header("retry-after", "2");
+      return reply.code(statusCode).send({ error: errorMessage(error), ...(error instanceof MediaJobAdmissionError ? { data: { jobId: error.jobId } } : {}) });
+    }
   });
 
   app.post("/api/v1/media/jobs/:jobId/cancel", async (request, reply) => {
@@ -89,15 +119,9 @@ export function registerMediaRoutes(options: RegisterMediaRoutesOptions): void {
     if (!original) return reply.code(404).send({ error: "Media job not found" });
     const principal = principals.get(request);
     if (!canAccessMediaJob(principal, original)) return reply.code(403).send({ error: "Media job access denied" });
-    if (!isTerminalMediaStatus(original.status)) return reply.code(409).send({ error: "Only terminal media jobs can be retried" });
+    if (!isTerminalMediaJobStatus(original.status)) return reply.code(409).send({ error: "Only terminal media jobs can be retried" });
     try {
-      const retried = await mediaJobs.submit({
-        routeId: original.routeId,
-        modality: original.modality,
-        params: original.params,
-        ...(original.sessionId ? { sessionId: original.sessionId } : {}),
-        ...(!principal && original.createdByUserId ? { userId: original.createdByUserId } : {}),
-      }, principal);
+      const retried = await mediaJobs.retry(original, principal);
       security?.audit("media-job.retried", principal?.user.id, "media-job", retried.id, { originalJobId: original.id, routeId: original.routeId, modality: original.modality });
       return reply.code(202).send({ data: retried });
     } catch (error) {
@@ -134,7 +158,7 @@ export function registerMediaRoutes(options: RegisterMediaRoutesOptions): void {
       }
     });
     for (const event of mediaJobs.eventsAfter(jobId, after)) send(event);
-    if (isTerminalMediaStatus(mediaJobs.get(jobId)?.status)) {
+    if (isTerminalMediaJobStatus(String(mediaJobs.get(jobId)?.status))) {
       unsubscribe();
       reply.raw.end();
     } else {
@@ -246,7 +270,7 @@ export function mediaJobFailureMessage(store: SqliteStore, job: MediaJobRecord):
 
 export async function awaitMediaJob(coordinator: MediaJobCoordinator, id: string, timeoutMs: number): Promise<MediaJobRecord> {
   const current = coordinator.get(id);
-  if (current && isTerminalMediaStatus(current.status)) return current;
+  if (current && isTerminalMediaJobStatus(current.status)) return current;
   return await new Promise((resolve, reject) => {
     let settled = false;
     let unsubscribe = () => {};
@@ -279,10 +303,6 @@ function canAccessMediaJob(principal: AuthenticatedPrincipal | undefined, job: M
   return !principal || principal.user.role === "administrator" || principal.user.id === job.createdByUserId;
 }
 
-function isTerminalMediaStatus(status: string | undefined): boolean {
-  return status === "completed" || status === "failed" || status === "cancelled" || status === "interrupted";
-}
-
 function isTerminalMediaEvent(type: string): boolean {
   return type === "completed" || type === "failed" || type === "cancelled";
 }
@@ -293,7 +313,7 @@ function parseModality(value: unknown): MediaModality {
 }
 
 function parseMediaStatus(value: string | undefined): MediaJobStatus | undefined {
-  return value === "queued" || value === "started" || value === "progressing" || value === "completed" || value === "failed" || value === "cancelled" || value === "interrupted" ? value : undefined;
+  return value && (isActiveMediaJobStatus(value) || isTerminalMediaJobStatus(value)) ? value : undefined;
 }
 
 function parseMediaParams(value: unknown): MediaGenerationParams {

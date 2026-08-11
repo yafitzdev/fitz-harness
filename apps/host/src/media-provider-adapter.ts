@@ -72,6 +72,10 @@ export class MediaProviderEngineAdapter implements MediaEngineAdapter<MediaProvi
     return isLoopbackHostname(hostname) ? "local" : "remote";
   }
 
+  resolveParams(_recipe: Recipe, params: MediaGenerationRequest["params"]): MediaGenerationRequest["params"] {
+    return { ...params };
+  }
+
   async validateRecipe(recipe: Recipe): Promise<ValidationReport> {
     const issues: ValidationIssue[] = [];
     if (recipe.adapter !== this.id) {

@@ -32,14 +32,14 @@ interface LocalChatTelemetry {
 
 type QueueJob =
   | (JobBase & { kind: "chat"; recipeId?: string; unloadAfterCompletion?: boolean; request: InferenceRequest; output: AsyncChannel<InferenceDelta> })
-  | (JobBase & { kind: "media"; mediaRequest: MediaGenerationRequest; output: AsyncChannel<MediaJobEvent> })
+  | (JobBase & { kind: "media"; recipeId?: string; mediaRequest: MediaGenerationRequest; output: AsyncChannel<MediaJobEvent> })
   | (JobBase & { kind: "warm"; result: Deferred<InstanceSnapshot> });
 
 export interface ScheduledStream extends AsyncIterable<InferenceDelta> { requestId: string; cancel(): void }
 export interface ScheduledMediaJob { jobId: string; lane: InferenceLane; events: AsyncIterable<MediaJobEvent>; cancel(): void }
 export interface ScheduledWarmup { requestId: string; result: Promise<InstanceSnapshot>; cancel(): void }
 export interface RecipeEnqueueOptions { unloadAfterCompletion?: boolean; context?: WorkContext }
-export interface MediaEnqueueOptions { jobId: string; context?: WorkContext }
+export interface MediaEnqueueOptions { jobId: string; recipeId?: string; context?: WorkContext }
 
 export interface InferenceQueueItem {
   id: string;
@@ -104,10 +104,10 @@ export class InferenceScheduler {
 
   get queueDepth(): number { return this.#gpuLane.depth + this.#cloudLane.depth }
 
-  resolveMediaParams(routeId: string, params: MediaGenerationRequest["params"]): MediaGenerationRequest["params"] {
-    const recipe = this.routes.resolve(routeId).recipe;
+  resolveMediaParams(routeId: string, params: MediaGenerationRequest["params"], recipeId?: string): MediaGenerationRequest["params"] {
+    const recipe = recipeId ? this.routes.resolveRecipe(recipeId) : this.routes.resolve(routeId).recipe;
     const adapter = this.lifecycle.adapters.getMedia(recipe.adapter);
-    return adapter.resolveParams?.(recipe, params) ?? params;
+    return adapter.resolveParams(recipe, params);
   }
 
   enqueue(routeId: string, input: Omit<InferenceRequest, "id" | "routeId">, externalSignal?: AbortSignal, context: WorkContext = {}): ScheduledStream {
@@ -122,7 +122,7 @@ export class InferenceScheduler {
   enqueueMedia(routeId: string, input: Omit<MediaGenerationRequest, "id" | "routeId">, externalSignal: AbortSignal | undefined, options: MediaEnqueueOptions): ScheduledMediaJob {
     let lane: InferenceLane = "gpu";
     try {
-      const recipe = this.routes.resolve(routeId).recipe;
+      const recipe = options.recipeId ? this.routes.resolveRecipe(options.recipeId) : this.routes.resolve(routeId).recipe;
       const adapter = this.lifecycle.adapters.getMedia(recipe.adapter);
       lane = (adapter.executionLocation?.(recipe) ?? "local") === "remote" ? "cloud" : "gpu";
     } catch {
@@ -136,7 +136,7 @@ export class InferenceScheduler {
     // the ordinary event high-water mark, but it is the only buffered value;
     // progress events cannot accumulate behind it.
     const output = this.#outputChannel<MediaJobEvent>(true);
-    const job: QueueJob = { kind: "media", id, routeId, lane, enqueuedAt: new Date().toISOString(), context: options.context ?? {}, mediaRequest: { ...input, id, routeId }, output, controller: new AbortController() };
+    const job: QueueJob = { kind: "media", id, routeId, ...(options.recipeId ? { recipeId: options.recipeId } : {}), lane, enqueuedAt: new Date().toISOString(), context: options.context ?? {}, mediaRequest: { ...input, id, routeId }, output, controller: new AbortController() };
     this.#attachAbort(job, externalSignal);
     this.#submit(job);
     return { jobId: id, lane, events: output, cancel: () => this.#lane(lane).cancel(job) };
@@ -234,7 +234,7 @@ export class InferenceScheduler {
         }
         if (job.unloadAfterCompletion) await this.lifecycle.stop(`recipe-test:${chatRecipe.id}`, "graceful");
       } else if (job.kind === "media") {
-        const recipe = this.routes.resolve(job.routeId).recipe;
+        const recipe = job.recipeId ? this.routes.resolveRecipe(job.recipeId) : this.routes.resolve(job.routeId).recipe;
         const events = job.lane === "cloud"
           ? this.#remoteMedia.run(recipe, job.mediaRequest, job.controller.signal)
           : this.lifecycle.runMedia(recipe, job.mediaRequest, job.controller.signal);
