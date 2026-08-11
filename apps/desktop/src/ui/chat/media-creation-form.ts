@@ -115,7 +115,10 @@ export class MediaCreationForm {
       void this.#create(form);
     });
     promptControl.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void this.#create(form); }
+      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        void this.#create(form);
+      }
     });
 
     card.append(title, form);

@@ -103,21 +103,31 @@ describe("MediaCreationForm", () => {
     expect(messages.querySelector(".media-creation-card")).not.toBeNull();
   });
 
-  it("submits on Cmd/Ctrl+Enter in the prompt", async () => {
+  it("submits on Enter in the prompt", async () => {
     const { form, messages } = setup();
     const { onCreate } = show(form, { modality: "image", prompt: "watercolor fox" });
     formOf(messages).querySelector<HTMLTextAreaElement>("[data-creation-field='prompt']")!.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }),
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
     );
     await vi.waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
   });
 
-  it("does not let Cmd/Ctrl+Enter bypass numeric field constraints", async () => {
+  it("keeps Shift+Enter available for multiline prompt editing", async () => {
+    const { form, messages } = setup();
+    const { onCreate } = show(form, { modality: "image", prompt: "watercolor fox" });
+    const event = new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true });
+    formOf(messages).querySelector<HTMLTextAreaElement>("[data-creation-field='prompt']")!.dispatchEvent(event);
+    await Promise.resolve();
+    expect(event.defaultPrevented).toBe(false);
+    expect(onCreate).not.toHaveBeenCalled();
+  });
+
+  it("does not let Enter bypass numeric field constraints", async () => {
     const { form, messages } = setup();
     const { onCreate } = show(form, { modality: "video", prompt: "watercolor fox" });
     formOf(messages).querySelector<HTMLInputElement>("[data-creation-field='durationSeconds']")!.value = "-2";
     formOf(messages).querySelector<HTMLTextAreaElement>("[data-creation-field='prompt']")!.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }),
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
     );
     await Promise.resolve();
     expect(onCreate).not.toHaveBeenCalled();

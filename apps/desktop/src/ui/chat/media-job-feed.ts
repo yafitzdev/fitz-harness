@@ -5,6 +5,8 @@ import { scrollToLatestIfFollowing } from "./conversation-scroll.js";
 
 type Json = Record<string, any>;
 
+const MEDIA_PREPARATION_PERCENT = 25;
+
 export interface MediaJobFeedOptions {
   messages: HTMLElement;
   appendWork: (element: HTMLElement, createdAt?: string) => void;
@@ -78,8 +80,11 @@ export class MediaJobFeed {
         : job.status === "cancelled" ? `${label} generation cancelled`
           : `${label} generation in progress`;
     const detail = document.createElement("small");
-    if (!this.#terminal(job.status) && typeof job.progress === "number") {
-      detail.textContent = `Generating… ${Math.round(Math.min(1, Math.max(0, job.progress)) * 100)}%`;
+    const displayProgress = this.#displayProgress(job);
+    if (!this.#terminal(job.status) && displayProgress !== undefined) {
+      detail.textContent = job.status === "started" && job.progress === undefined
+        ? `Preparing model… ${displayProgress}%`
+        : `Generating… ${displayProgress}%`;
     } else {
       detail.textContent = failure ?? (artifact?.name ? artifact.name : completed ? "Generated artifact" : "Fitz is following this job in the background.");
     }
@@ -95,18 +100,17 @@ export class MediaJobFeed {
     else if (["failed", "cancelled", "interrupted"].includes(job.status)) row.append(this.#action("Retry", (button) => this.#retry(job, button)));
 
     // Thin progress bar across the bottom of the card while the job is active.
-    // ComfyUI reports diffusion progress as a fixed step count, so the fill is a
-    // real 0..1 measurement rather than an indeterminate spinner.
+    // Reserve the first quarter for model preparation. Once ComfyUI begins
+    // reporting diffusion steps, map that real 0..1 measurement over 25..100%.
     if (!this.#terminal(job.status)) {
       const progress = document.createElement("div");
       progress.className = "media-job-progress";
       progress.setAttribute("role", "progressbar");
       progress.setAttribute("aria-valuemin", "0");
       progress.setAttribute("aria-valuemax", "100");
-      if (typeof job.progress === "number") {
-        const percent = Math.round(Math.min(1, Math.max(0, job.progress)) * 100);
-        progress.style.setProperty("--progress", `${percent}%`);
-        progress.setAttribute("aria-valuenow", String(percent));
+      if (displayProgress !== undefined) {
+        progress.style.setProperty("--progress", `${displayProgress}%`);
+        progress.setAttribute("aria-valuenow", String(displayProgress));
       }
       row.append(progress);
     }
@@ -143,6 +147,13 @@ export class MediaJobFeed {
 
   #terminal(status: string): boolean {
     return ["completed", "failed", "cancelled", "interrupted"].includes(status);
+  }
+
+  #displayProgress(job: MediaJobSummary): number | undefined {
+    if (job.status === "started" && job.progress === undefined) return MEDIA_PREPARATION_PERCENT;
+    if (typeof job.progress !== "number") return undefined;
+    const generationProgress = Math.min(1, Math.max(0, job.progress));
+    return Math.round(MEDIA_PREPARATION_PERCENT + generationProgress * (100 - MEDIA_PREPARATION_PERCENT));
   }
 
   #terminalMessage(job: MediaJobSummary): string {

@@ -104,13 +104,26 @@ describe("MediaJobFeed", () => {
     feed.render({ id: "job-1", modality: "video", status: "progressing", progress: 0.42 });
     const bar = messages.querySelector<HTMLElement>(".media-job-progress")!;
     expect(bar).not.toBeNull();
-    expect(bar.style.getPropertyValue("--progress")).toBe("42%");
-    expect(bar.getAttribute("aria-valuenow")).toBe("42");
-    expect(messages.textContent).toContain("Generating… 42%");
+    expect(bar.style.getPropertyValue("--progress")).toBe("57%");
+    expect(bar.getAttribute("aria-valuenow")).toBe("57");
+    expect(messages.textContent).toContain("Generating… 57%");
 
     // The bar disappears once the job reaches a terminal state.
     feed.render({ id: "job-1", modality: "video", status: "completed", progress: 1 });
     expect(messages.querySelector(".media-job-progress")).toBeNull();
+  });
+
+  it("uses the first quarter of the progress bar for model preparation", () => {
+    const { feed, messages } = setup();
+    feed.render({ id: "job-1", modality: "image", status: "started" });
+    const bar = messages.querySelector<HTMLElement>(".media-job-progress")!;
+    expect(bar.style.getPropertyValue("--progress")).toBe("25%");
+    expect(bar.getAttribute("aria-valuenow")).toBe("25");
+    expect(messages.textContent).toContain("Preparing model… 25%");
+
+    feed.render({ id: "job-1", modality: "image", status: "progressing", progress: 0 });
+    expect(messages.querySelector<HTMLElement>(".media-job-progress")!.style.getPropertyValue("--progress")).toBe("25%");
+    expect(messages.textContent).toContain("Generating… 25%");
   });
 
   it("shows an empty track while a job is queued before progress arrives", () => {
