@@ -1,5 +1,5 @@
-import { FakeEngineAdapter } from "@fitz/engine-fake";
-import type { InferenceDelta, Recipe, Route } from "@fitz/protocol";
+import { FakeEngineAdapter, type FakeInstanceHandle } from "@fitz/engine-fake";
+import type { InferenceDelta, InferenceRequest, Recipe, Route } from "@fitz/protocol";
 import { describe, expect, it } from "vitest";
 import { EngineAdapterRegistry } from "./adapter.js";
 import { ManualClock } from "./clock.js";
@@ -327,7 +327,41 @@ describe("InferenceScheduler", () => {
     expect(records).toEqual([expect.objectContaining({
       kind: "chat", status: "completed", routeId: "smart", recipeId: "reasoner", modelId: "reasoner-model",
       ownerUserId: "user-1", sessionId: "session-1", executionLane: "gpu", promptTokens: expect.any(Number), completionTokens: expect.any(Number),
+      metadata: expect.objectContaining({ responseDurationMs: expect.any(Number), outputDelivery: "streamed", observedOutputChunks: expect.any(Number) }),
     })]);
+  });
+
+  it("persists a local token estimate and model-ready timing when usage is absent", async () => {
+    class AtomicNoUsageAdapter extends FakeEngineAdapter {
+      override async *streamChat(instance: FakeInstanceHandle, request: InferenceRequest, signal: AbortSignal): AsyncIterable<InferenceDelta> {
+        let text = "";
+        for await (const delta of super.streamChat(instance, request, signal)) text += delta.text;
+        yield { text, finishReason: "stop" };
+      }
+    }
+    const adapter = new AtomicNoUsageAdapter({ loadDelayMs: 5, responseFactory: () => "a".repeat(400) });
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]) });
+    const records: import("@fitz/protocol").RequestUsageRecord[] = [];
+    const scheduler = new InferenceScheduler(
+      new RouteResolver([route("fast", "atomic")], [recipe("atomic", 60)]),
+      lifecycle,
+      undefined,
+      { recordUsage: (record) => { records.push(record); } },
+    );
+
+    await collect(scheduler.enqueue("fast", { messages: [{ role: "user", content: "answer atomically" }] }));
+    await waitFor(() => records.length === 1);
+
+    expect(records[0]?.completionTokens).toBeUndefined();
+    expect(records[0]).toEqual(expect.objectContaining({
+      metadata: expect.objectContaining({
+        outputDelivery: "atomic",
+        observedOutputChunks: 1,
+        estimatedCompletionTokens: 100,
+        responseDurationMs: expect.any(Number),
+        modelLoadMs: expect.any(Number),
+      }),
+    }));
   });
 });
 

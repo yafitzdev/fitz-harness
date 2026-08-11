@@ -29,6 +29,11 @@ export interface LifecycleManagerOptions {
   thermalGuard?: GpuThermalGuard;
 }
 
+export interface LifecycleRunHooks {
+  /** Fires after the model is ready and immediately before the adapter request. */
+  onInferenceStarted?: () => void;
+}
+
 export class LifecycleManager {
   readonly events: LifecycleEventBus;
   readonly resources: ResourceGovernor;
@@ -78,6 +83,7 @@ export class LifecycleManager {
     recipe: Recipe,
     request: InferenceRequest,
     signal: AbortSignal,
+    hooks: LifecycleRunHooks = {},
   ): AsyncIterable<InferenceDelta> {
     await this.#ensureReady(recipe, signal);
     if (!this.#adapter || !this.#handle) throw new Error("Engine instance is not ready");
@@ -88,6 +94,7 @@ export class LifecycleManager {
     this.#cancelEviction();
     this.#activeLeases += 1;
     this.#transition("BUSY", "generation-started");
+    hooks.onInferenceStarted?.();
     let requestRejected = false;
     try {
       for await (const delta of this.#adapter.streamChat(this.#handle, request, signal)) {

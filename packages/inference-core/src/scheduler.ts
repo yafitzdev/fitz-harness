@@ -24,6 +24,12 @@ interface JobBase {
   detachExternalAbort?: () => void;
 }
 
+interface LocalChatTelemetry {
+  inferenceStarted?: Date;
+  generatedText: string;
+  outputChunks: number;
+}
+
 type QueueJob =
   | (JobBase & { kind: "chat"; recipeId?: string; unloadAfterCompletion?: boolean; request: InferenceRequest; output: AsyncChannel<InferenceDelta> })
   | (JobBase & { kind: "media"; mediaRequest: MediaGenerationRequest; output: AsyncChannel<MediaJobEvent> })
@@ -203,11 +209,19 @@ export class InferenceScheduler {
     let firstOutput: Date | undefined;
     let promptTokens: number | undefined;
     let completionTokens: number | undefined;
+    const localTelemetry: LocalChatTelemetry = { generatedText: "", outputChunks: 0 };
     try {
       if (job.kind === "chat") {
         chatRecipe = job.recipeId ? this.routes.resolveRecipe(job.recipeId) : this.routes.resolve(job.routeId).recipe;
-        for await (const delta of this.lifecycle.run(chatRecipe, job.request, job.controller.signal)) {
+        for await (const delta of this.lifecycle.run(chatRecipe, job.request, job.controller.signal, {
+          onInferenceStarted: () => { localTelemetry.inferenceStarted = new Date(); },
+        })) {
           if (!firstOutput && (delta.text || delta.reasoning || delta.toolCalls?.length)) firstOutput = new Date();
+          const generated = generatedDeltaText(delta);
+          if (generated) {
+            localTelemetry.generatedText += generated;
+            localTelemetry.outputChunks += 1;
+          }
           if (delta.promptTokens !== undefined) promptTokens = delta.promptTokens;
           if (delta.completionTokens !== undefined) completionTokens = delta.completionTokens;
           await job.output.push(delta, job.controller.signal);
@@ -224,28 +238,43 @@ export class InferenceScheduler {
         job.result.resolve(await this.lifecycle.warm(recipe, job.controller.signal));
       }
       closeJob(job);
-      if (job.kind === "chat") await this.#safeRecordUsage(this.#chatUsage(job, chatRecipe, "completed", started, firstOutput, promptTokens, completionTokens));
+      if (job.kind === "chat") await this.#safeRecordUsage(this.#chatUsage(job, chatRecipe, "completed", started, firstOutput, promptTokens, completionTokens, undefined, localTelemetry));
     } catch (error) {
       failJob(job, error);
-      if (job.kind === "chat") await this.#safeRecordUsage(this.#chatUsage(job, chatRecipe, isAbort(error) ? "cancelled" : "failed", started, firstOutput, promptTokens, completionTokens, error));
+      if (job.kind === "chat") await this.#safeRecordUsage(this.#chatUsage(job, chatRecipe, isAbort(error) ? "cancelled" : "failed", started, firstOutput, promptTokens, completionTokens, error, localTelemetry));
       throw error;
     } finally {
       job.detachExternalAbort?.();
     }
   }
 
-  #chatUsage(job: Extract<QueueJob, { kind: "chat" }>, recipe: Recipe | undefined, status: RequestUsageRecord["status"], started: Date, firstOutput?: Date, promptTokens?: number, completionTokens?: number, error?: unknown): RequestUsageRecord {
+  #chatUsage(job: Extract<QueueJob, { kind: "chat" }>, recipe: Recipe | undefined, status: RequestUsageRecord["status"], started: Date, firstOutput?: Date, promptTokens?: number, completionTokens?: number, error?: unknown, localTelemetry?: LocalChatTelemetry): RequestUsageRecord {
     const completed = new Date();
     const enqueued = new Date(job.enqueuedAt);
+    const inferenceStarted = localTelemetry?.inferenceStarted;
+    const responseDurationMs = inferenceStarted ? Math.max(0, completed.getTime() - inferenceStarted.getTime()) : undefined;
+    const outputDelivery = localTelemetry?.outputChunks === 1 ? "atomic" : localTelemetry?.outputChunks && localTelemetry.outputChunks > 1 ? "streamed" : undefined;
+    const estimatedCompletionTokens = completionTokens === undefined && localTelemetry?.generatedText
+      ? estimateTokens(localTelemetry.generatedText)
+      : undefined;
+    const metadata = {
+      ...(responseDurationMs !== undefined ? { responseDurationMs } : {}),
+      ...(inferenceStarted ? { modelLoadMs: Math.max(0, inferenceStarted.getTime() - started.getTime()) } : {}),
+      ...(localTelemetry?.outputChunks ? { observedOutputChunks: localTelemetry.outputChunks } : {}),
+      ...(outputDelivery ? { outputDelivery } : {}),
+      ...(estimatedCompletionTokens !== undefined ? { estimatedCompletionTokens, tokenEstimateMethod: "utf8-bytes-per-four" } : {}),
+    };
+    const ttftOrigin = inferenceStarted ?? started;
     return {
       id: job.id, kind: "chat", status, routeId: job.routeId,
       ...(recipe ? { recipeId: recipe.id, playbookId: recipe.playbookId, adapter: recipe.adapter, modelId: recipe.modelId } : {}),
       ...job.context, executionLane: job.lane, enqueuedAt: job.enqueuedAt,
       startedAt: started.toISOString(), ...(firstOutput ? { firstOutputAt: firstOutput.toISOString() } : {}),
       completedAt: completed.toISOString(), queueWaitMs: Math.max(0, started.getTime() - enqueued.getTime()),
-      ...(firstOutput ? { ttftMs: Math.max(0, firstOutput.getTime() - started.getTime()), generationMs: Math.max(0, completed.getTime() - firstOutput.getTime()) } : {}),
+      ...(firstOutput ? { ttftMs: Math.max(0, firstOutput.getTime() - ttftOrigin.getTime()), generationMs: Math.max(0, completed.getTime() - firstOutput.getTime()) } : {}),
       durationMs: Math.max(0, completed.getTime() - started.getTime()),
       ...(promptTokens !== undefined ? { promptTokens } : {}), ...(completionTokens !== undefined ? { completionTokens } : {}),
+      ...(Object.keys(metadata).length ? { metadata } : {}),
       ...(error ? { errorCode: error instanceof Error ? error.name : "inference_failed" } : {}),
     };
   }
@@ -296,3 +325,8 @@ function abortError(): Error { const error = new Error("Inference request was ca
 function queueItem(job: QueueJob, status: "running" | "queued", position: number): InferenceQueueItem { return { id: job.id, routeId: job.routeId, kind: job.kind, lane: job.lane, status, position, enqueuedAt: job.enqueuedAt, context: job.context } }
 function serializedSize(value: unknown): number { return Buffer.byteLength(JSON.stringify(value), "utf8") }
 function isAbort(error: unknown): boolean { return error instanceof Error && error.name === "AbortError" }
+function estimateTokens(text: string): number { return Math.max(1, Math.ceil(Buffer.byteLength(text, "utf8") / 4)) }
+function generatedDeltaText(delta: InferenceDelta): string {
+  const toolText = delta.toolCalls?.flatMap((call) => [call.id, call.function?.name, call.function?.arguments]).filter((value): value is string => Boolean(value)).join("") ?? "";
+  return `${delta.text}${delta.reasoning ?? ""}${toolText}`;
+}

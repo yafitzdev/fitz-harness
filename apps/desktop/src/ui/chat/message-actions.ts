@@ -35,10 +35,12 @@ export class MessageActions {
     if (!time) return;
     const timestamp = time.dataset.timestampLabel ?? time.textContent ?? "";
     time.dataset.timestampLabel = timestamp;
-    const speed = tokenRate(usage.completionTokens, usage.generationMs);
+    const performance = resolveTokenRate(content, usage);
+    const effective = performance?.basis === "effective";
     const compact = [timestamp];
-    if (usage.ttftMs !== undefined) compact.push(`${formatDuration(usage.ttftMs)} TTFT`);
-    if (speed !== undefined) compact.push(`${Math.round(speed)} tok/s`);
+    if (effective && performance.durationMs !== undefined) compact.push(`${formatDuration(performance.durationMs)} response`);
+    else if (usage.ttftMs !== undefined) compact.push(`${formatDuration(usage.ttftMs)} TTFT`);
+    if (performance) compact.push(`${performance.estimated ? "~" : ""}${Math.round(performance.rate)} tok/s`);
     if (usage.promptTokens !== undefined) compact.push(`${formatCompactNumber(usage.promptTokens)} ctx`);
     const model = usage.modelId ?? usage.recipeId;
     if (model) compact.push(model);
@@ -46,10 +48,16 @@ export class MessageActions {
 
     const details = [timestamp];
     if (model) details.push(`Model: ${model}`);
-    if (usage.ttftMs !== undefined) details.push(`Time to first token: ${formatDuration(usage.ttftMs)}`);
-    if (speed !== undefined) details.push(`Generation speed: ${Math.round(speed)} tok/s`);
+    if (effective && performance.durationMs !== undefined) details.push(`Response time after model load: ${formatDuration(performance.durationMs)}`);
+    else if (usage.ttftMs !== undefined) details.push(`Time to first token: ${formatDuration(usage.ttftMs)}`);
+    if (performance) details.push(performance.estimated
+      ? `Estimated ${effective ? "effective " : ""}speed: ~${Math.round(performance.rate)} tok/s`
+      : `Generation speed: ${Math.round(performance.rate)} tok/s`);
     if (usage.promptTokens !== undefined) details.push(`Input tokens: ${formatInteger(usage.promptTokens)}`);
     if (usage.completionTokens !== undefined) details.push(`Output tokens: ${formatInteger(usage.completionTokens)}`);
+    else if (performance?.tokens !== undefined) details.push(`Estimated output tokens: ~${formatInteger(performance.tokens)}`);
+    const modelLoadMs = metadataNumber(usage, "modelLoadMs");
+    if (modelLoadMs !== undefined && modelLoadMs >= 1) details.push(`Model load: ${formatDuration(modelLoadMs)}`);
     if (usage.queueWaitMs !== undefined) details.push(`Queue wait: ${formatDuration(usage.queueWaitMs)}`);
     if (usage.durationMs !== undefined) details.push(`Total model time: ${formatDuration(usage.durationMs)}`);
     time.title = details.join("\n");
@@ -136,8 +144,52 @@ export class MessageActions {
   #editIcon(): SVGElement { return this.#icon('<path d="m4.2 14.8.7-3.2 7.8-7.8a1.45 1.45 0 0 1 2.05 2.05L7 13.65z"></path><path d="m11.7 4.8 2.05 2.05"></path>'); }
 }
 
-function tokenRate(tokens: number | undefined, generationMs: number | undefined): number | undefined {
-  return tokens !== undefined && generationMs !== undefined && generationMs > 0 ? tokens * 1_000 / generationMs : undefined;
+interface TokenRate {
+  rate: number;
+  tokens: number;
+  durationMs: number;
+  estimated: boolean;
+  basis: "generation" | "effective";
+}
+
+function resolveTokenRate(content: HTMLElement, usage: RequestUsageRecord): TokenRate | undefined {
+  const estimatedTokens = metadataNumber(usage, "estimatedCompletionTokens") ?? estimateTokens(content.textContent ?? "");
+  const tokens = usage.completionTokens ?? estimatedTokens;
+  if (tokens === undefined || tokens <= 0) return undefined;
+
+  const responseDurationMs = metadataNumber(usage, "responseDurationMs") ?? usage.durationMs;
+  const delivery = metadataString(usage, "outputDelivery");
+  const looksAtomic = delivery === "atomic" || (delivery === undefined
+    && usage.completionTokens === undefined
+    && usage.generationMs !== undefined
+    && usage.durationMs !== undefined
+    && usage.durationMs >= 250
+    && usage.generationMs <= Math.min(100, usage.durationMs * 0.05));
+  const basis: TokenRate["basis"] = looksAtomic || usage.generationMs === undefined ? "effective" : "generation";
+  const durationMs = basis === "effective" ? responseDurationMs : usage.generationMs;
+  if (durationMs === undefined || durationMs <= 0) return undefined;
+  return {
+    rate: tokens * 1_000 / durationMs,
+    tokens,
+    durationMs,
+    estimated: usage.completionTokens === undefined || basis === "effective",
+    basis,
+  };
+}
+
+function estimateTokens(text: string): number | undefined {
+  if (!text) return undefined;
+  return Math.max(1, Math.ceil(new TextEncoder().encode(text).byteLength / 4));
+}
+
+function metadataNumber(usage: RequestUsageRecord, key: string): number | undefined {
+  const value = usage.metadata?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function metadataString(usage: RequestUsageRecord, key: string): string | undefined {
+  const value = usage.metadata?.[key];
+  return typeof value === "string" ? value : undefined;
 }
 
 function formatDuration(milliseconds: number): string {
