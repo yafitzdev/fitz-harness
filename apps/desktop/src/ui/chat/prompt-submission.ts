@@ -16,7 +16,7 @@ export interface PromptSubmissionOptions {
   consumeAttachments: () => PastedAttachment[];
   sessionId: () => string | undefined;
   settings: () => PromptRunSettings;
-  ensureSession: (title: string, routeId: string) => Promise<string | undefined>;
+  ensureSession: (title: string, routeId?: string) => Promise<string | undefined>;
   openNewChat: () => void;
   clearDraft: () => void;
   setDraft: (value: string) => void;
@@ -24,6 +24,7 @@ export interface PromptSubmissionOptions {
   uploadAttachment: (sessionId: string, attachment: PastedAttachment) => Promise<{ id: string }>;
   clearLanding: () => void;
   appendUser: (content: string) => void;
+  persistUserMessage: (sessionId: string, content: string, clientMessageId: string) => Promise<void>;
   appendSteer: (content: string) => HTMLElement;
   pushHistory: (content: string) => void;
   addTokenEstimate: (content: string) => void;
@@ -88,13 +89,13 @@ export class PromptSubmissionController {
     // commands generate with a default prompt instead of being silently dropped.
     if (!content && attachments.length === 0 && !mediaCommand) return;
     const settings = this.#options.settings();
+    if (!settings.routeId && !mediaCommand) { this.#options.showError("No model route is available"); return; }
     let sessionId = this.#options.sessionId();
     if (!sessionId) {
-      try { sessionId = await this.#options.ensureSession(titleFrom(content), settings.routeId); }
+      try { sessionId = await this.#options.ensureSession(titleFrom(content), settings.routeId || undefined); }
       catch (error) { this.#options.showError(this.#options.errorMessage(error)); return; }
     }
     if (!sessionId) { this.#options.openNewChat(); return; }
-    if (!settings.routeId) { this.#options.showError("No model route is available"); return; }
 
     this.#options.resetWarmup();
     // Media generation only consumes pasted reference images (and audio takes
@@ -118,9 +119,17 @@ export class PromptSubmissionController {
       const refs = uploaded
         .filter(({ attachment }) => attachment.kind === "image")
         .map(({ artifact }) => ({ artifactId: artifact.id }));
+      const displayContent = `/${mediaCommand}${content ? ` ${content}` : ""}`;
+      if (!existingUserMessage) {
+        try { await this.#options.persistUserMessage(sessionId, displayContent, crypto.randomUUID()); }
+        catch (error) {
+          this.#options.setDraft(displayContent);
+          this.#options.showError(this.#options.errorMessage(error));
+          return;
+        }
+      }
       this.#options.clearDraft();
       this.#options.clearLanding();
-      const displayContent = `/${mediaCommand}${content ? ` ${content}` : ""}`;
       if (!existingUserMessage) this.#options.appendUser(displayContent);
       if (displayContent && !existingUserMessage) this.#options.pushHistory(displayContent);
       this.#options.addTokenEstimate(displayContent);

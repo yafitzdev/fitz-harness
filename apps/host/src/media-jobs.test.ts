@@ -73,6 +73,29 @@ describe("Fitz host media jobs", () => {
     }
   });
 
+  it.each([
+    [{ prompt: "invalid", durationSeconds: 0 }, "durationSeconds"],
+    [{ prompt: "invalid", fps: -1 }, "fps"],
+    [{ prompt: "invalid", steps: 1.5 }, "steps"],
+    [{ prompt: "invalid", guidance: -1 }, "guidance"],
+  ] as const)("rejects invalid media parameters before creating a job: %o", async (params, field) => {
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter()] });
+    try {
+      await registerMediaRecipe(runtime, "h3-video", ["video"]);
+      await assignRoute(runtime, "video", "h3-video");
+      const response = await runtime.app.inject({
+        method: "POST",
+        url: "/api/v1/media/jobs",
+        payload: { routeId: "video", modality: "video", params },
+      });
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.message).toContain(field);
+      expect(runtime.store.listMediaJobs({})).toEqual([]);
+    } finally {
+      await runtime.app.close();
+    }
+  });
+
   it("rejects saturated media admission immediately while preserving a durable failed job", async () => {
     const runtime = createHost({
       adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter({ progressPerPoll: 0.00001 })],

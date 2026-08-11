@@ -112,6 +112,18 @@ describe("MediaCreationForm", () => {
     await vi.waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
   });
 
+  it("does not let Cmd/Ctrl+Enter bypass numeric field constraints", async () => {
+    const { form, messages } = setup();
+    const { onCreate } = show(form, { modality: "video", prompt: "watercolor fox" });
+    formOf(messages).querySelector<HTMLInputElement>("[data-creation-field='durationSeconds']")!.value = "-2";
+    formOf(messages).querySelector<HTMLTextAreaElement>("[data-creation-field='prompt']")!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }),
+    );
+    await Promise.resolve();
+    expect(onCreate).not.toHaveBeenCalled();
+    expect(messages.querySelector(".media-creation-card")).not.toBeNull();
+  });
+
   it("removes the card when Cancel is clicked", () => {
     const { form, messages } = setup();
     show(form);

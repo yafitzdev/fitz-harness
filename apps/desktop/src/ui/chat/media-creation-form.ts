@@ -1,4 +1,5 @@
 import type { MediaModality } from "@fitz/protocol";
+import { validateMediaGenerationParams } from "@fitz/media";
 import { scrollToLatestIfFollowing } from "./conversation-scroll.js";
 
 /** Parameters collected from the media creation form, keyed like MediaGenerationParams. */
@@ -135,6 +136,16 @@ export class MediaCreationForm {
     if (!onCreate) return;
     const params = this.#readParams(form);
     if (!params.prompt) return;
+    for (const control of form.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea")) control.setCustomValidity("");
+    try { validateMediaGenerationParams(params); }
+    catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const fieldName = message.split(" ", 1)[0];
+      const control = fieldName ? form.querySelector<HTMLInputElement>(`[data-creation-field='${fieldName}']`) : undefined;
+      control?.setCustomValidity(message);
+      control?.reportValidity();
+      return;
+    }
     const buttons = [...form.querySelectorAll<HTMLButtonElement>("button")];
     for (const button of buttons) button.disabled = true;
     try {

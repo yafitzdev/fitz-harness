@@ -274,6 +274,22 @@ describe("ComfyUIProgressListener", () => {
     listener.close(); // idempotent
     expect(socket.closed).toBe(true);
   });
+
+  it("preserves a reverse-proxy base path in the WebSocket endpoint", () => {
+    const sockets: FakeWebSocket[] = [];
+    const listener = new ComfyUIProgressListener({
+      baseUrl: "https://media.example.test/comfy/",
+      clientId: "proxy-client",
+      createSocket: (url) => {
+        const socket = new FakeWebSocket();
+        socket.url = url;
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    expect(sockets[0]?.url).toBe("wss://media.example.test/comfy/ws?clientId=proxy-client");
+    listener.close();
+  });
 });
 
 describe("ComfyUIEngineAdapter progress streaming", () => {

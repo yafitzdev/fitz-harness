@@ -199,6 +199,39 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
     };
   });
 
+  app.post("/api/v1/sessions/:sessionId/messages", async (request, reply) => {
+    try {
+      const session = sessionFor((request.params as { sessionId: string }).sessionId);
+      if (!session) return reply.code(404).send({ error: "Session not found" });
+      const principal = principalFor(request);
+      if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" });
+      const body = requireRecord(request.body);
+      const clientMessageId = requireString(body.clientMessageId, "clientMessageId");
+      if (clientMessageId.length > 128) throw new TypeError("clientMessageId must be at most 128 characters");
+      const text = requireString(body.text, "text");
+      const id = `client-message:${session.id}:${clientMessageId}`;
+      const existing = store.getTranscriptEntry(id);
+      if (existing) {
+        if (existing.sessionId !== session.id || existing.role !== "user" || existing.content.text !== text) {
+          return reply.code(409).send({ error: "clientMessageId is already used by another message" });
+        }
+        return reply.code(200).send({ data: existing });
+      }
+      const entry = store.appendTranscriptEntry({
+        id,
+        sessionId: session.id,
+        kind: "message",
+        role: "user",
+        content: { text, source: "desktop" },
+        createdAt: new Date().toISOString(),
+      });
+      security?.audit("session.message-created", principal?.user.id, "session", session.id, { transcriptEntryId: entry.id });
+      return reply.code(201).send({ data: entry });
+    } catch (error) {
+      return reply.code(400).send({ error: errorMessage(error) });
+    }
+  });
+
   app.post("/api/v1/sessions/:sessionId/compact", async (request, reply) => {
     try {
       const session = sessionFor((request.params as { sessionId: string }).sessionId);

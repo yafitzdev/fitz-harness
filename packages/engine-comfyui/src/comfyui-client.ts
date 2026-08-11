@@ -228,7 +228,7 @@ function parseProgressMessage(data: unknown): { promptId: string; progress: numb
 function wsEndpoint(baseUrl: string, clientId: string): string {
   const url = new URL(baseUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.pathname = "/ws";
+  url.pathname = `${url.pathname.replace(/\/$/, "")}/ws`;
   url.search = `?clientId=${encodeURIComponent(clientId)}`;
   return url.toString();
 }

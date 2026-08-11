@@ -9,7 +9,8 @@ function setup(overrides: Partial<PromptSubmissionOptions> = {}) {
     draft: () => ({ content: "build it" }), consumeAttachments: () => [], sessionId: () => "session-1",
     settings: () => ({ routeId: "smart", maxTokens: 8192, temperature: 0.4, accessMode: "full" }),
     ensureSession: vi.fn(async () => "session-1"), openNewChat: vi.fn(), clearDraft: vi.fn(), setDraft: vi.fn(), resetWarmup: vi.fn(),
-    uploadAttachment: vi.fn(async () => ({ id: "artifact-1" })), clearLanding: vi.fn(), appendUser: vi.fn(), appendSteer: vi.fn(() => row),
+    uploadAttachment: vi.fn(async () => ({ id: "artifact-1" })), clearLanding: vi.fn(), appendUser: vi.fn(),
+    persistUserMessage: vi.fn(async () => undefined), appendSteer: vi.fn(() => row),
     pushHistory: vi.fn(), addTokenEstimate: vi.fn(), refreshContext: vi.fn(), refreshControls: vi.fn(), runId: () => "run-1",
     startRun: vi.fn(async () => undefined), submitMedia: vi.fn(async () => ({ id: "job-1" })), onMediaJobSubmitted: vi.fn(),
     showMediaCreation: vi.fn(),
@@ -58,6 +59,7 @@ describe("PromptSubmissionController", () => {
     // The command appears in the chat immediately; only the job waits for the card.
     expect(options.clearDraft).toHaveBeenCalled();
     expect(options.appendUser).toHaveBeenCalledWith("/video a cat with a hat");
+    expect(options.persistUserMessage).toHaveBeenCalledWith("session-1", "/video a cat with a hat", expect.any(String));
     expect(options.pushHistory).toHaveBeenCalledWith("/video a cat with a hat");
     expect(options.startRun).not.toHaveBeenCalled();
     expect(options.submitMedia).not.toHaveBeenCalled();
@@ -94,6 +96,40 @@ describe("PromptSubmissionController", () => {
     expect(options.submitMedia).toHaveBeenCalledWith(expect.objectContaining({ prompt: "a short video clip" }));
     expect(options.onMediaJobSubmitted).toHaveBeenCalledWith("job-1", "video");
     expect(options.startRun).not.toHaveBeenCalled();
+  });
+
+  it("creates and persists a media-only session without a text route", async () => {
+    const { controller, options } = setup({
+      sessionId: () => undefined,
+      settings: () => ({ routeId: "", maxTokens: 8192, temperature: 0.4, accessMode: "full" }),
+      draft: () => ({ content: "a quiet lake", mediaCommand: "image" }),
+    });
+    await controller.submit();
+    expect(options.ensureSession).toHaveBeenCalledWith("a quiet lake", undefined);
+    expect(options.persistUserMessage).toHaveBeenCalledWith("session-1", "/image a quiet lake", expect.any(String));
+    expect(options.showMediaCreation).toHaveBeenCalled();
+    expect(options.showError).not.toHaveBeenCalled();
+  });
+
+  it("does not create an empty chat when a regular prompt has no text route", async () => {
+    const { controller, options } = setup({
+      sessionId: () => undefined,
+      settings: () => ({ routeId: "", maxTokens: 8192, temperature: 0.4, accessMode: "full" }),
+    });
+    await controller.submit("hello");
+    expect(options.ensureSession).not.toHaveBeenCalled();
+    expect(options.showError).toHaveBeenCalledWith("No model route is available");
+  });
+
+  it("does not render an unpersisted media command when durable storage fails", async () => {
+    const { controller, options } = setup({
+      draft: () => ({ content: "a fox", mediaCommand: "video" }),
+      persistUserMessage: vi.fn(async () => { throw new Error("storage unavailable"); }),
+    });
+    await controller.submit();
+    expect(options.appendUser).not.toHaveBeenCalled();
+    expect(options.showMediaCreation).not.toHaveBeenCalled();
+    expect(options.showError).toHaveBeenCalledWith("Error: storage unavailable");
   });
 
   it("passes pasted reference images into the creation card and submits them as refs", async () => {

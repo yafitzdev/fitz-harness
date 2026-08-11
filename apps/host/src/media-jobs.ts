@@ -11,6 +11,7 @@ import type {
   Recipe,
   RequestUsageRecord,
 } from "@fitz/protocol";
+import { validateMediaGenerationParams } from "@fitz/media";
 import { InferenceAdmissionError, type InferenceScheduler, type RouteResolver, type ScheduledMediaJob } from "@fitz/inference-core";
 import { SecurityPolicyError, type AuthenticatedPrincipal, type SecurityService } from "@fitz/security";
 import { ArtifactQuotaExceededError, BlobSizeLimitError, type ArtifactRepository, type BlobSource, type MediaJobEventEnvelope, type SqliteStore } from "@fitz/storage";
@@ -112,7 +113,7 @@ export class MediaJobCoordinator {
       });
     }
 
-    const params = constrainMediaParams(input.params, recipe);
+    const params = constrainMediaParams(validateMediaGenerationParams(input.params), recipe);
     const id = randomUUID();
     const now = new Date().toISOString();
     const record: MediaJobRecord = {

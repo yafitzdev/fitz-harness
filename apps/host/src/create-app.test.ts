@@ -872,6 +872,28 @@ describe("Fitz host", () => {
     const transcript = await runtime.app.inject({ method: "GET", url: `/api/v1/sessions/${sessionId}/transcript` }); expect(transcript.json().data).toEqual([expect.objectContaining({ sequence: 1, role: "user", content: expect.objectContaining({ text: "persist this turn" }) }), expect.objectContaining({ sequence: 2, role: "assistant", content: expect.objectContaining({ runId }) })]); await runtime.app.close();
   });
 
+  it("persists direct client messages idempotently in the canonical transcript", async () => {
+    const runtime = createHost();
+    const session = await runtime.app.inject({ method: "POST", url: "/api/v1/chats", payload: { title: "Media command" } });
+    const sessionId = session.json().data.id as string;
+    const payload = { clientMessageId: "media-command-1", text: "/video a fox in snow" };
+    const created = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/messages`, payload });
+    expect(created.statusCode, created.body).toBe(201);
+    const repeated = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/messages`, payload });
+    expect(repeated.statusCode, repeated.body).toBe(200);
+    expect(repeated.json().data.id).toBe(created.json().data.id);
+    expect(runtime.store.transcriptAfter(sessionId, 0)).toEqual([
+      expect.objectContaining({ role: "user", content: expect.objectContaining({ text: "/video a fox in snow" }) }),
+    ]);
+    const conflict = await runtime.app.inject({
+      method: "POST",
+      url: `/api/v1/sessions/${sessionId}/messages`,
+      payload: { clientMessageId: "media-command-1", text: "/video something else" },
+    });
+    expect(conflict.statusCode).toBe(409);
+    await runtime.app.close();
+  });
+
   it("opens long conversations at the latest page and pages backward in sequence order", async () => {
     const runtime = createHost();
     const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Long transcript" } });

@@ -442,6 +442,9 @@ const promptSubmission = new PromptSubmissionController({
   },
   clearLanding: () => { if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren(); },
   appendUser: (content) => { appendMessage("user", content); },
+  persistUserMessage: async (sessionId, content, clientMessageId) => {
+    await api(`/api/v1/sessions/${sessionId}/messages`, "POST", { text: content, clientMessageId });
+  },
   appendSteer: (content) => activityTimeline.appendSteer(content),
   pushHistory: (content) => composer.pushHistory(content),
   addTokenEstimate: (content) => { sessionTokenEstimate += estimateTokens(content); },
@@ -945,12 +948,13 @@ async function steerPrompt(content: string): Promise<void> {
   await promptSubmission.steer(content);
 }
 
-async function ensurePromptSession(title: string, routeId: string): Promise<string | undefined> {
+async function ensurePromptSession(title: string, routeId?: string): Promise<string | undefined> {
   if (projects.currentSessionId) return projects.currentSessionId;
   if (!newChatMode) return undefined;
+  const payload = { title, ...(routeId ? { routeId: routeId as FixedRouteId } : {}) };
   const response = projects.currentProjectId
-    ? await api(`/api/v1/projects/${projects.currentProjectId}/sessions`, "POST", { title, routeId: routeId as FixedRouteId })
-    : await api("/api/v1/chats", "POST", { title, routeId: routeId as FixedRouteId });
+    ? await api(`/api/v1/projects/${projects.currentProjectId}/sessions`, "POST", payload)
+    : await api("/api/v1/chats", "POST", payload);
   newChatMode = false;
   workspace.classList.remove("new-chat-open");
   composer.exitNewChat();
