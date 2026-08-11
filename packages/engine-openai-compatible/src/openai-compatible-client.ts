@@ -1,3 +1,4 @@
+import { InferenceRequestRejectedError } from "@fitz/inference-core";
 import type { InferenceDelta, InferenceRequest } from "@fitz/protocol";
 
 export interface OpenAICompatibleClientOptions {
@@ -106,7 +107,11 @@ export class OpenAICompatibleClient {
     });
     if (!response.ok || !response.body) {
       const detail = await response.text().catch(() => "");
-      throw new Error(`OpenAI-compatible request failed (${response.status}): ${detail.slice(0, 500)}`);
+      const message = `OpenAI-compatible request failed (${response.status}): ${detail.slice(0, 500)}`;
+      if (response.status >= 400 && response.status < 500) {
+        throw new InferenceRequestRejectedError(message, response.status);
+      }
+      throw new Error(message);
     }
     for await (const chunk of parseSseJson(response.body, signal)) {
       if (chunk.error) throw new Error(chunk.error.message ?? "OpenAI-compatible stream failed");

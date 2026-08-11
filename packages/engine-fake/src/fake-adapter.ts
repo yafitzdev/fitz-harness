@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
-import type {
-  EngineAdapter,
-  EngineInstanceHandle,
-  InstanceInspection,
-  PortAllocation,
-  ReadyInfo,
-  StopMode,
-  StopReport,
+import {
+  InferenceRequestRejectedError,
+  type EngineAdapter,
+  type EngineInstanceHandle,
+  type InstanceInspection,
+  type PortAllocation,
+  type ReadyInfo,
+  type StopMode,
+  type StopReport,
 } from "@fitz/inference-core";
 import type {
   InferenceDelta,
@@ -25,6 +26,7 @@ export interface FakeEngineOptions {
   failStart?: boolean;
   failPrepare?: boolean;
   failWhenPromptIncludes?: string;
+  rejectWhenPromptIncludes?: string;
 }
 
 export interface FakeInstanceHandle extends EngineInstanceHandle {
@@ -51,6 +53,9 @@ export class FakeEngineAdapter implements EngineAdapter<FakeInstanceHandle> {
       ...(options.failPrepare !== undefined ? { failPrepare: options.failPrepare } : {}),
       ...(options.failWhenPromptIncludes
         ? { failWhenPromptIncludes: options.failWhenPromptIncludes }
+        : {}),
+      ...(options.rejectWhenPromptIncludes
+        ? { rejectWhenPromptIncludes: options.rejectWhenPromptIncludes }
         : {}),
     };
   }
@@ -127,6 +132,12 @@ export class FakeEngineAdapter implements EngineAdapter<FakeInstanceHandle> {
       prompt.includes(this.#options.failWhenPromptIncludes)
     ) {
       throw new Error("Fake engine configured request failure");
+    }
+    if (
+      this.#options.rejectWhenPromptIncludes &&
+      prompt.includes(this.#options.rejectWhenPromptIncludes)
+    ) {
+      throw new InferenceRequestRejectedError("Fake engine rejected request", 400);
     }
 
     const response =

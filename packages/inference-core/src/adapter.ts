@@ -39,6 +39,20 @@ export interface StopReport {
   detail?: string;
 }
 
+/** A request was rejected without making the backing engine unhealthy.
+ *  Lifecycle management must surface the error to the caller while keeping
+ *  the loaded instance resident and available for subsequent requests. */
+export class InferenceRequestRejectedError extends Error {
+  constructor(
+    message: string,
+    readonly statusCode: number,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "InferenceRequestRejectedError";
+  }
+}
+
 export interface EngineAdapter<THandle extends EngineInstanceHandle = EngineInstanceHandle> {
   readonly id: string;
   /** Prepare host/runtime state without starting a model-bearing process or occupying model VRAM. */

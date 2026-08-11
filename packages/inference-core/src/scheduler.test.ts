@@ -43,6 +43,26 @@ describe("InferenceScheduler", () => {
     expect(adapter.stops).toHaveLength(1);
   });
 
+  it("restarts a loaded recipe when its runtime configuration changes", async () => {
+    const adapter = new FakeEngineAdapter();
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]) });
+    const initialRecipe = recipe("best", 600);
+    const routes = new RouteResolver([route("default", "best")], [initialRecipe]);
+    const scheduler = new InferenceScheduler(routes, lifecycle);
+
+    await collect(scheduler.enqueue("default", { messages: [{ role: "user", content: "before" }] }));
+    routes.upsertRecipe({
+      ...initialRecipe,
+      contextTokens: 200_000,
+      configuration: { args: ["--ctx-size", "{context}"] },
+    });
+    await collect(scheduler.enqueue("default", { messages: [{ role: "user", content: "after" }] }));
+
+    expect(adapter.starts).toHaveLength(2);
+    expect(adapter.stops).toEqual([expect.objectContaining({ mode: "graceful" })]);
+    expect(lifecycle.snapshot().state).toBe("READY");
+  });
+
   it("caps text model residency at ten idle minutes", async () => {
     const clock = new ManualClock(Date.UTC(2026, 6, 31));
     const adapter = new FakeEngineAdapter();
@@ -263,6 +283,31 @@ describe("InferenceScheduler", () => {
     expect(adapter.starts).toHaveLength(2);
     expect(adapter.stops).toEqual([expect.objectContaining({ mode: "force" })]);
     expect(lifecycle.snapshot().state).toBe("READY");
+  });
+
+  it("keeps a healthy instance resident after a rejected request", async () => {
+    const clock = new ManualClock(Date.UTC(2026, 6, 31));
+    const adapter = new FakeEngineAdapter({ rejectWhenPromptIncludes: "too large" });
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]), clock });
+    const scheduler = new InferenceScheduler(
+      new RouteResolver([route("default", "best")], [recipe("best", 600)]),
+      lifecycle,
+    );
+
+    await expect(collect(scheduler.enqueue("default", {
+      messages: [{ role: "user", content: "too large" }],
+    }))).rejects.toMatchObject({ name: "InferenceRequestRejectedError", statusCode: 400 });
+    expect(lifecycle.snapshot()).toMatchObject({ state: "READY", activeLeases: 0 });
+
+    await expect(collect(scheduler.enqueue("default", {
+      messages: [{ role: "user", content: "recover without reload" }],
+    }))).resolves.toContain("recover without reload");
+    expect(adapter.starts).toHaveLength(1);
+    expect(adapter.stops).toHaveLength(0);
+
+    await clock.advanceBy(600_000);
+    expect(lifecycle.snapshot().state).toBe("UNLOADED");
+    expect(adapter.stops).toHaveLength(1);
   });
 
   it("records one terminal usage fact with provider token telemetry", async () => {

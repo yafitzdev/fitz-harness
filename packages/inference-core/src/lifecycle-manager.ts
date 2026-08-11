@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type {
   InferenceDelta,
   InferenceRequest,
@@ -9,7 +10,7 @@ import type {
   Recipe,
 } from "@fitz/protocol";
 import type { EngineAdapter, EngineInstanceHandle, MediaEngineAdapter, MediaJobHandle } from "./adapter.js";
-import { EngineAdapterRegistry, isMediaEngineAdapter } from "./adapter.js";
+import { EngineAdapterRegistry, InferenceRequestRejectedError, isMediaEngineAdapter } from "./adapter.js";
 import type { Clock, ScheduledTask } from "./clock.js";
 import { SystemClock } from "./clock.js";
 import { LifecycleEventBus } from "./event-bus.js";
@@ -87,13 +88,15 @@ export class LifecycleManager {
     this.#cancelEviction();
     this.#activeLeases += 1;
     this.#transition("BUSY", "generation-started");
+    let requestRejected = false;
     try {
       for await (const delta of this.#adapter.streamChat(this.#handle, request, signal)) {
         this.#lastActivityAt = this.#clock.now();
         yield delta;
       }
     } catch (error) {
-      if (!isAbortError(error)) {
+      requestRejected = error instanceof InferenceRequestRejectedError;
+      if (!isAbortError(error) && !requestRejected) {
         this.#failureReason = errorMessage(error);
         this.#transition("FAILED", "generation-failed");
       }
@@ -102,7 +105,9 @@ export class LifecycleManager {
       this.#activeLeases = Math.max(0, this.#activeLeases - 1);
       this.#lastActivityAt = this.#clock.now();
       if (this.#state === "BUSY") {
-        this.#transition("READY", signal.aborted ? "generation-cancelled" : "generation-completed");
+        this.#transition("READY", signal.aborted
+          ? "generation-cancelled"
+          : requestRejected ? "generation-rejected" : "generation-completed");
         this.#scheduleEviction();
       }
     }
@@ -227,7 +232,7 @@ export class LifecycleManager {
 
   async #ensureReady(recipe: Recipe, signal: AbortSignal): Promise<void> {
     this.#cancelEviction();
-    if (this.#state === "READY" && this.#recipe?.id === recipe.id) return;
+    if (this.#state === "READY" && sameRuntimeRecipe(this.#recipe, recipe)) return;
     if (this.#state === "BUSY") throw new Error("Lifecycle manager received concurrent generations");
     if (this.#readinessTask?.recipeId === recipe.id) return this.#readinessTask.promise;
     if (this.#readinessTask) await this.#readinessTask.promise;
@@ -394,6 +399,25 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function sameRuntimeRecipe(current: Recipe | undefined, requested: Recipe): boolean {
+  return current !== undefined
+    && current.id === requested.id
+    && current.adapter === requested.adapter
+    && current.modelId === requested.modelId
+    && current.contextTokens === requested.contextTokens
+    && isDeepStrictEqual(current.configuration, requested.configuration);
+}
+
 function preparationKey(recipe: Recipe): string {
-  return JSON.stringify({ id: recipe.id, adapter: recipe.adapter, modelId: recipe.modelId, configuration: recipe.configuration });
+  return runtimeRecipeKey(recipe);
+}
+
+function runtimeRecipeKey(recipe: Recipe): string {
+  return JSON.stringify({
+    id: recipe.id,
+    adapter: recipe.adapter,
+    modelId: recipe.modelId,
+    contextTokens: recipe.contextTokens,
+    configuration: recipe.configuration,
+  });
 }
