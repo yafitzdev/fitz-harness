@@ -2,6 +2,7 @@ export type RecipeModality = "text" | "image" | "video" | "audio";
 
 interface MediaLimits {
   maxDurationSeconds?: number;
+  maxFps?: number;
   maxResolution?: string;
   maxRefs?: number;
   maxFrames?: number;
@@ -54,6 +55,7 @@ function mediaLimitBadges(limits: MediaLimits | undefined): string[] {
   if (!limits) return [];
   const badges: string[] = [];
   if (typeof limits.maxDurationSeconds === "number") badges.push(`≤${limits.maxDurationSeconds}s`);
+  if (typeof limits.maxFps === "number") badges.push(`≤${limits.maxFps}fps`);
   if (typeof limits.maxResolution === "string") badges.push(`≤${limits.maxResolution}`);
   if (typeof limits.maxRefs === "number") badges.push(`≤${limits.maxRefs} refs`);
   if (typeof limits.maxFrames === "number") badges.push(`≤${limits.maxFrames} frames`);

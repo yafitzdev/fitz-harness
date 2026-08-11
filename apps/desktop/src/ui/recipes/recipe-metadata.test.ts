@@ -14,8 +14,8 @@ describe("recipeMetadata", () => {
     const labels = recipeMetadata({
       modelId: "minimax-h3",
       contextTokens: 1,
-      capabilities: { chatCompletions: false, modalities: { output: ["video", "audio"], limits: { maxDurationSeconds: 8, maxResolution: "1080p" } } },
+      capabilities: { chatCompletions: false, modalities: { output: ["video", "audio"], limits: { maxDurationSeconds: 8, maxFps: 30, maxResolution: "1080p" } } },
     });
-    expect(labels.map((label) => label.textContent)).toEqual(["minimax-h3", "Video", "Audio", "≤8s", "≤1080p"]);
+    expect(labels.map((label) => label.textContent)).toEqual(["minimax-h3", "Video", "Audio", "≤8s", "≤30fps", "≤1080p"]);
   });
 });

@@ -24,15 +24,16 @@ afterEach(() => {
 });
 
 /**
- * Reproduction of the production ComfyUI safe-mode path: a store seeded exactly
- * like reconcileLocalComfyUIConfiguration (engine record performanceMode "safe"
- * + h3-video recipe + video route), a real createHost pipeline, and a fixture
- * server that records the exact graph the adapter submits to ComfyUI. The test
- * asserts the SamplerCustomAdvanced node was replaced by the paced
- * FitzSafeSamplerCustomAdvanced node before the prompt left the host.
+ * End-to-end path for local ComfyUI media generation: a store seeded exactly
+ * like reconcileLocalComfyUIConfiguration (engine record + h3-video recipe +
+ * video route), a real createHost pipeline, and a fixture server that records
+ * the exact graph the adapter submits to ComfyUI. The test asserts the graph
+ * leaves the host unchanged: GPU pacing is engine-side now, applied by the
+ * fitz_safe_sampler extension inside ComfyUI, so no host-side node swap or
+ * performance mode exists anymore.
  */
-describe("ComfyUI safe mode end-to-end (GPU duty-cycle regression)", () => {
-  it("replaces the video sampler with the paced Fitz node when the engine is in safe mode", async () => {
+describe("ComfyUI media generation end-to-end (engine-side pacing)", () => {
+  it("submits the workflow unchanged; pacing is applied engine-side by the extension", async () => {
     const fixturePort = await unusedPort();
     const tempRoot = mkdtempSync(join(tmpdir(), "fitz-comfy-safe-e2e-"));
     tempRoots.push(tempRoot);
@@ -49,7 +50,6 @@ describe("ComfyUI safe mode end-to-end (GPU duty-cycle regression)", () => {
       displayName: "comfyui",
       connectionMode: "managed",
       runtime: "windows",
-      performanceMode: "safe",
       baseUrl: "http://127.0.0.1",
       healthPath: "/system_stats",
       launchCommand: "python",
@@ -91,67 +91,8 @@ describe("ComfyUI safe mode end-to-end (GPU duty-cycle regression)", () => {
 
       const sampler = Object.values(graph).find((node) => node.class_type.includes("Sampler"));
       expect(sampler).toBeDefined();
-      expect(sampler!.class_type).toBe("FitzSafeSamplerCustomAdvanced");
-      expect(sampler!.inputs.safe_duty_cycle).toBe(0.5);
-    } finally {
-      await runtime.app.close();
-    }
-  });
-
-  it("leaves the sampler untouched when the engine is in normal mode (control)", async () => {
-    const fixturePort = await unusedPort();
-    const tempRoot = mkdtempSync(join(tmpdir(), "fitz-comfy-safe-e2e-"));
-    tempRoots.push(tempRoot);
-    const graphFile = join(tempRoot, "graphs.jsonl");
-    const child = spawn(process.execPath, [FIXTURE, "--listen", "127.0.0.1", "--port", String(fixturePort), "--progress-per-poll", "0.5", "--graph-file", graphFile]);
-    children.push(child);
-    await waitForHttp(fixturePort);
-
-    const store = SqliteStore.memory();
-    const now = new Date().toISOString();
-    store.upsertEngine({
-      id: "comfyui",
-      folderName: "ComfyUI",
-      displayName: "comfyui",
-      connectionMode: "managed",
-      runtime: "windows",
-      performanceMode: "normal",
-      baseUrl: "http://127.0.0.1",
-      healthPath: "/system_stats",
-      launchCommand: "python",
-      launchArguments: ["main.py"],
-      workingDirectory: ".",
-      createdAt: now,
-      updatedAt: now,
-    });
-    const playbook = createComfyUIPlaybook({ engineDir: ".", baseUrl: `http://127.0.0.1:${fixturePort}` });
-    store.upsertRecipe(playbook.recipes.find((candidate) => candidate.id === "h3-video")!);
-    store.upsertRoute({ id: "video", displayName: "Video generation", description: "Local video generation via ComfyUI", recipeId: "h3-video", kind: "video", enabled: true });
-
-    const comfyui = new ComfyUIEngineAdapter({ validatePaths: false, pollIntervalMs: 10, defaultPollIntervalMs: 1, readinessTimeoutMs: 5_000 });
-    const runtime = createHost({
-      store,
-      adapters: [new FakeEngineAdapter(), comfyui],
-      resourceMonitor: {
-        snapshot: async () => ({
-          capturedAt: new Date(0).toISOString(),
-          totalRamMiB: 64_000,
-          freeRamMiB: 48_000,
-          totalVramMiB: 32_000,
-          usedVramMiB: 0,
-          freeVramMiB: 32_000,
-          gpuTelemetryAvailable: true,
-        }),
-      },
-      thermalGuard: testThermalGuard(),
-    });
-    try {
-      const test = await runtime.app.inject({ method: "POST", url: "/api/v1/management/recipes/h3-video/media-test" });
-      expect(test.statusCode, test.body).toBe(200);
-      const lines = readFileSync(graphFile, "utf8").trim().split("\n").filter(Boolean);
-      const graph = JSON.parse(lines[lines.length - 1]) as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
-      const sampler = Object.values(graph).find((node) => node.class_type.includes("Sampler"));
       expect(sampler!.class_type).toBe("SamplerCustomAdvanced");
+      expect(sampler!.inputs.safe_duty_cycle).toBeUndefined();
     } finally {
       await runtime.app.close();
     }

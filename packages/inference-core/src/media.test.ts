@@ -464,7 +464,7 @@ describe("InferenceScheduler media jobs", () => {
           totalVramMiB: 32_000,
           usedVramMiB: 30_000,
           freeVramMiB: 2_000,
-          gpuTemperatureC: sample++ === 0 ? 74 : 85,
+          gpuTemperatureC: sample++ === 0 ? 74 : 92,
           gpuPowerLimitW: 450,
           gpuMinPowerLimitW: 400,
           gpuMaxPowerLimitW: 450,

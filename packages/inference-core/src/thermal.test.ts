@@ -4,15 +4,15 @@ import { GpuThermalGuard, ThermalSafetyError } from "./thermal.js";
 
 describe("GpuThermalGuard", () => {
   it("allows normal media work below the emergency boundary", async () => {
-    const guard = new GpuThermalGuard({ snapshot: async () => snapshot(84) });
-    await expect(guard.start(true).regulate()).resolves.toMatchObject({ gpuTemperatureC: 84 });
+    const guard = new GpuThermalGuard({ snapshot: async () => snapshot(91) });
+    await expect(guard.start(true).regulate()).resolves.toMatchObject({ gpuTemperatureC: 91 });
   });
 
   it("hard-stops an overheated local GPU", async () => {
-    const guard = new GpuThermalGuard({ snapshot: async () => snapshot(85) });
+    const guard = new GpuThermalGuard({ snapshot: async () => snapshot(92) });
     await expect(guard.start(true).regulate()).rejects.toMatchObject({
       name: "ThermalSafetyError",
-      message: "Media generation stopped: GPU reached 85°C (emergency limit 85°C)",
+      message: "Media generation stopped: GPU reached 92°C (emergency limit 92°C)",
     });
     await expect(guard.start(true).regulate()).rejects.toBeInstanceOf(ThermalSafetyError);
   });

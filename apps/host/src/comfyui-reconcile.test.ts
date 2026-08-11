@@ -27,7 +27,7 @@ describe("local ComfyUI reconciliation", () => {
     ]) { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, "fixture"); }
     const store = SqliteStore.memory();
     expect(reconcileLocalComfyUIConfiguration(store, paths)).toBe(true);
-    expect(store.getEngine("comfyui")).toMatchObject({ folderName: "ComfyUI", displayName: "comfyui", connectionMode: "managed", performanceMode: "safe" });
+    expect(store.getEngine("comfyui")).toMatchObject({ folderName: "ComfyUI", displayName: "comfyui", connectionMode: "managed" });
     expect(store.getEngine("comfyui")?.launchArguments).toContain(local.baseDir);
     expect(localComfyUIRecipeIds(paths)).toEqual(["h3-video"]);
     expect(store.listRecipes().filter((recipe) => recipe.playbookId === "comfyui")).toEqual([

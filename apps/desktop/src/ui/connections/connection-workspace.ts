@@ -60,7 +60,7 @@ interface MediaModelView {
   modelId: string;
   /** Output modalities the recipe can generate — one well-known route toggle each. */
   modalities: MediaModality[];
-  limits?: { maxDurationSeconds?: number; maxResolution?: string; maxRefs?: number; maxFrames?: number };
+  limits?: { maxDurationSeconds?: number; maxFps?: number; maxResolution?: string; maxRefs?: number; maxFrames?: number };
   template: string;
 }
 type HostedConnectionView = Omit<ConsumerConnectionSummary, "models" | "mediaModels"> & { hosted: true; availableModels: ConnectionModelView[]; availableMediaModels: MediaModelView[] };

@@ -28,6 +28,7 @@ export interface ModalityCapabilities {
   /** Generation-specific limits, where the engine declares them. */
   limits?: {
     maxDurationSeconds?: number;
+    maxFps?: number;
     maxResolution?: string; // e.g. "768x768", "1280x720", "2560x1440"
     maxRefs?: number; // H3 accepts up to 12 multimodal refs
     maxFrames?: number;
@@ -65,7 +66,6 @@ export interface Recipe {
 
 export type EngineConnectionMode = "managed" | "external";
 export type EngineRuntime = "windows" | "wsl";
-export type EnginePerformanceMode = "normal" | "safe";
 
 export interface EngineRegistration {
   id: string;
@@ -73,9 +73,6 @@ export interface EngineRegistration {
   displayName: string;
   connectionMode: EngineConnectionMode;
   runtime: EngineRuntime;
-  /** Host-owned workload profile. Safe mode is adapter-specific and may trade
-   * throughput for lower sustained local accelerator load. */
-  performanceMode: EnginePerformanceMode;
   baseUrl: string;
   healthPath: string;
   launchCommand?: string;

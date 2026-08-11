@@ -324,7 +324,6 @@ describe("Fitz host", () => {
           displayName: "My llama.cpp fork",
           connectionMode: "managed",
           runtime: "wsl",
-          performanceMode: "normal",
           baseUrl: "http://127.0.0.1:18080",
           healthPath: "/v1/models",
           launchCommand: "./build/bin/llama-server",
@@ -352,7 +351,7 @@ describe("Fitz host", () => {
     const store = SqliteStore.memory();
     const timestamp = new Date(0).toISOString();
     store.upsertEngine({
-      id: "comfyui", folderName: "ComfyUI", displayName: "comfyui", connectionMode: "managed", runtime: "windows", performanceMode: "normal",
+      id: "comfyui", folderName: "ComfyUI", displayName: "comfyui", connectionMode: "managed", runtime: "windows",
       baseUrl: "http://127.0.0.1", healthPath: "/system_stats", launchCommand: "python", launchArguments: ["main.py"], workingDirectory: ".",
       createdAt: timestamp, updatedAt: timestamp,
     });
@@ -361,13 +360,13 @@ describe("Fitz host", () => {
       const response = await runtime.app.inject({
         method: "PUT", url: "/api/v1/management/engines/ComfyUI",
         payload: {
-          displayName: "comfyui", connectionMode: "managed", runtime: "windows", performanceMode: "safe",
+          displayName: "comfyui", connectionMode: "managed", runtime: "windows",
           baseUrl: "http://127.0.0.1", healthPath: "/system_stats", launchCommand: "python", launchArguments: ["main.py"], workingDirectory: ".",
         },
       });
       expect(response.statusCode).toBe(200);
       expect(store.listEngines()).toHaveLength(1);
-      expect(store.getEngine("comfyui")).toMatchObject({ folderName: "ComfyUI", performanceMode: "safe" });
+      expect(store.getEngine("comfyui")).toMatchObject({ id: "comfyui", folderName: "ComfyUI" });
     } finally {
       await runtime.app.close();
       rmSync(engineRoot, { recursive: true, force: true });

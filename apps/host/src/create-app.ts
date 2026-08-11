@@ -26,7 +26,6 @@ import {
   HOST_CONTRACT_VERSION,
   PROTOCOL_VERSION,
   type EngineConnectionMode,
-  type EnginePerformanceMode,
   type EngineRegistration,
   type EngineRuntime,
   type MediaModality,
@@ -210,7 +209,6 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const routes = new RouteResolver(
     store.listRoutes(),
     store.listRecipes(),
-    new Map(store.listEngines().map((engine) => [engine.id.toLowerCase(), engine.performanceMode])),
   );
   ensureMediaRoutes(store, routes);
   const events = new LifecycleEventBus(1_000, store.latestLifecycleSequence());
@@ -665,7 +663,6 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         if (!existsSync(rootPath) || !statSync(rootPath).isDirectory()) throw new TypeError("Engine folder does not exist beneath the configured root");
         const connectionMode = parseConnectionMode(body.connectionMode);
         const runtime = parseEngineRuntime(body.runtime);
-        const performanceMode = parseEnginePerformanceMode(body.performanceMode);
         const baseUrl = connectionMode === "external" ? requireBaseUrl(body.baseUrl) : "http://127.0.0.1";
         const healthPath = requireString(body.healthPath, "healthPath");
         if (!healthPath.startsWith("/") || healthPath.startsWith("//")) throw new TypeError("healthPath must be an absolute URL path");
@@ -682,7 +679,6 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
           displayName: requireString(body.displayName, "displayName"),
           connectionMode,
           runtime,
-          performanceMode,
           baseUrl,
           healthPath,
           ...(launchCommand ? { launchCommand } : {}),
@@ -693,7 +689,6 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
           updatedAt: now,
         };
         store.upsertEngine(engine);
-        routes.setEnginePerformanceMode(engine.id, performanceMode);
         return { data: { ...engine, rootPath } };
       } catch (error) {
         return reply.code(400).send({ error: errorMessage(error) });
@@ -975,11 +970,6 @@ function parseConnectionMode(value: unknown): EngineConnectionMode {
 
 function parseEngineRuntime(value: unknown): EngineRuntime {
   if (value !== "windows" && value !== "wsl") throw new TypeError("runtime must be windows or wsl");
-  return value;
-}
-
-function parseEnginePerformanceMode(value: unknown): EnginePerformanceMode {
-  if (value !== "normal" && value !== "safe") throw new TypeError("performanceMode must be normal or safe");
   return value;
 }
 
@@ -1378,6 +1368,7 @@ function parseModalities(value: Record<string, unknown>): ModalityCapabilities {
   const limits = isRecord(value.limits)
     ? {
         ...(typeof value.limits.maxDurationSeconds === "number" ? { maxDurationSeconds: value.limits.maxDurationSeconds } : {}),
+        ...(typeof value.limits.maxFps === "number" ? { maxFps: value.limits.maxFps } : {}),
         ...(typeof value.limits.maxResolution === "string" ? { maxResolution: value.limits.maxResolution } : {}),
         ...(typeof value.limits.maxRefs === "number" ? { maxRefs: value.limits.maxRefs } : {}),
         ...(typeof value.limits.maxFrames === "number" ? { maxFrames: value.limits.maxFrames } : {}),

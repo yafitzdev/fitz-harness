@@ -179,7 +179,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .markdown-table th:last-child,
 .markdown-table td:last-child { border-right: 0; }
 .message.system { padding: 10px 12px; overflow-wrap: anywhere; border-left: 2px solid var(--danger); background: var(--danger-tint); color: var(--danger-soft); }
-.media-job-notice { display: grid; grid-template-columns: 26px minmax(0, 1fr) 18px auto; align-items: center; gap: 9px; min-height: 52px; padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: var(--radius-lg); background: var(--tint-2); color: var(--muted); cursor: pointer; }
+.media-job-notice { display: grid; grid-template-columns: 26px minmax(0, 1fr) 18px auto; align-items: center; gap: 9px; min-height: 52px; padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: var(--radius-lg); background: var(--tint-2); color: var(--muted); cursor: pointer; position: relative; overflow: hidden; }
 .media-job-notice:focus-visible { outline: 1px solid var(--focus); outline-offset: 2px; }
 .media-result-message > .message-body { margin-bottom: 9px; }
 .media-result-message > .media-job-notice { margin: 0; }
@@ -194,6 +194,9 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .media-job-chevron { width: 18px; height: 18px; display: grid; place-items: center; color: var(--subtle); transition: transform 120ms ease; }
 .media-job-chevron svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .media-job-notice.open .media-job-chevron { transform: rotate(90deg); }
+/* Flush against the card's bottom edge: absolute within the padding box, clipped to the rounded corners. */
+.media-job-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--tint-5); }
+.media-job-progress::before { content: ""; display: block; height: 100%; width: var(--progress, 0%); background: var(--text); opacity: .9; transition: width 300ms ease; }
 .media-job-specification { grid-column: 1 / -1; min-width: 0; margin: 3px 0 1px 35px; padding-top: 10px; border-top: 1px solid var(--border-soft); cursor: default; }
 .media-job-specification > strong { display: block; margin: 0 0 5px; color: var(--subtle); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .045em; }
 .media-job-specification pre { max-height: 190px; margin: 0 0 11px; padding: 8px 10px; overflow: auto; border-radius: var(--radius-md); background: var(--grey-300); color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.55 Consolas, "Cascadia Mono", monospace; }

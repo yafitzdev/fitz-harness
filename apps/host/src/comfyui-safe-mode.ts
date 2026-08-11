@@ -1,7 +1,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-const EXTENSION_SOURCE = String.raw`import subprocess
+const EXTENSION_SOURCE = String.raw`import os
+import subprocess
 import time
 import torch
 import comfy.model_management
@@ -12,13 +13,50 @@ import comfy.utils
 import latent_preview
 
 
+_PACING_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fitz_pacing.log")
+
+
+def _log_pacing(message):
+    try:
+        with open(_PACING_LOG, "a", encoding="utf-8") as _f:
+            _f.write("%s %s\n" % (time.strftime("%H:%M:%S"), message))
+    except OSError:
+        pass
+
+
+_log_pacing("fitz_safe_sampler loaded cuda=%s gpu=%s"
+            % (torch.cuda.is_available(),
+               torch.cuda.get_device_name(0) if torch.cuda.is_available() else "none"))
+
+
+# Pacing policy: diffusion runs in bounded bursts (default 8 s of GPU time)
+# with an idle after each burst. The idle is the base rest plus any overshoot
+# beyond the budget, so a step that overruns its burst repays the extra heat
+# with extra idle: short steps batch into one burst with little idle, long
+# steps self-scale. The idle is capped: beyond ~8 s the die has shed what it
+# will quickly, so longer rests only cost wall time. An emergency floor: a
+# die at or above the safeguard temperature rests at least the safeguard
+# rest whatever the budget says, then starts a fresh burst. The safeguard
+# sits at 85 C with a 10 s rest: a genuinely hot die is given a long idle
+# and then allowed to continue. The host's hard stop is a 92 C backstop in
+# firmware-throttle territory, so it never races this floor and only fires
+# if this extension is missing or broken.
+_BURST_BUDGET_SECONDS = 8.0
+_BASE_IDLE_SECONDS = 3.0
+_MAX_REST_SECONDS = 8.0
+_SAFEGUARD_TEMP_C = 85
+_SAFEGUARD_REST_SECONDS = 10.0
+
 class _PacedCallback:
     def __init__(self, callback, duty_cycle):
         self.callback = callback
         self.duty_cycle = max(0.10, min(0.95, float(duty_cycle)))
         self.resumed_at = time.monotonic()
+        self.burst_work = 0.0
+        _log_pacing("callback init duty=%s" % self.duty_cycle)
 
     def __call__(self, *args, **kwargs):
+        step = args[0] if args else -1
         self.callback(*args, **kwargs)
         # CUDA work is asynchronous. Without this synchronization the old
         # implementation measured only CPU enqueue time, slept too briefly,
@@ -28,31 +66,23 @@ class _PacedCallback:
         now = time.monotonic()
         work_seconds = max(0.0, now - self.resumed_at)
         temperature = _gpu_temperature_c()
-        effective_duty = self.duty_cycle
-        if temperature is not None and temperature >= 75:
-            effective_duty = min(effective_duty, 0.15)
-        elif temperature is not None and temperature >= 72:
-            effective_duty = min(effective_duty, 0.30)
-        # Honor the duty target even for heavy steps. The old 60 s ceiling let
-        # long diffusion steps (e.g. a 10 s H3 clip) enqueue their next burst
-        # before the GPU had shed its heat, so the temperature ratcheted up to
-        # the emergency limit. 300 s bounds a single rest without starving it.
-        rest_seconds = min(300.0, work_seconds * ((1.0 / effective_duty) - 1.0))
+        self.burst_work += work_seconds
+        burst_work = self.burst_work
+        rest_seconds = 0.0
+        if burst_work >= _BURST_BUDGET_SECONDS:
+            rest_seconds = min(_BASE_IDLE_SECONDS + (burst_work - _BURST_BUDGET_SECONDS), _MAX_REST_SECONDS)
+            self.burst_work = 0.0
+        # Emergency floor: a genuinely hot die rests at least the safeguard
+        # rest, whatever the burst budget says, then starts a fresh burst.
+        if temperature is not None and temperature >= _SAFEGUARD_TEMP_C:
+            rest_seconds = max(rest_seconds, _SAFEGUARD_REST_SECONDS)
+            self.burst_work = 0.0
+        _log_pacing("step=%s work=%.3f temp=%s burst=%.3f rest=%.3f"
+                    % (step, work_seconds, temperature, burst_work, rest_seconds))
         if rest_seconds >= 0.01:
+            _sleep_started = time.monotonic()
             time.sleep(rest_seconds)
-        # Safe mode cools before queuing the next diffusion step. This is
-        # unprivileged telemetry only; no clocks or board power state change.
-        # The post-step reading is the peak, so re-measure after the duty rest
-        # and only proceed once the GPU is back below the resume threshold; a
-        # hot start is what lets heavy jobs ratchet toward the hard stop.
-        temperature = _gpu_temperature_c()
-        if temperature is not None and temperature >= 68:
-            deadline = time.monotonic() + 600.0
-            while temperature > 65 and time.monotonic() < deadline:
-                time.sleep(2.0)
-                temperature = _gpu_temperature_c()
-                if temperature is None:
-                    break
+            _log_pacing("step=%s slept=%.3f" % (step, time.monotonic() - _sleep_started))
         self.resumed_at = time.monotonic()
 
 
@@ -66,6 +96,45 @@ def _gpu_temperature_c():
     except (OSError, IndexError, ValueError,
             subprocess.SubprocessError):
         return None
+
+
+_GLOBAL_DUTY_CYCLE = 0.40
+_PACING_INSTALLED = False
+
+
+def _install_global_pacing():
+    """Runtime patch: pace every sampler, not just the swapped FitzSafe nodes.
+
+    Every k-diffusion sampling path (KSampler, KSamplerAdvanced,
+    SamplerCustomAdvanced, any guider) funnels through
+    comfy.samplers.KSAMPLER.sample, which adapts the per-step callback.
+    Wrapping the callback there means burst pacing applies to stock nodes too:
+    pacing is engine-side and always on while this extension is installed, so
+    the GPU can never sit at 100% and compound to the host's 92 C stop.
+    Idempotent: each callback is wrapped at most once.
+    """
+    global _PACING_INSTALLED
+    if _PACING_INSTALLED:
+        return
+    try:
+        import comfy.samplers
+        _original_ksampler_sample = comfy.samplers.KSAMPLER.sample
+
+        def _paced_ksampler_sample(self, model_wrap, sigmas, extra_args, callback,
+                                   noise, latent_image=None, denoise_mask=None,
+                                   disable_pbar=False):
+            if callback is not None and not isinstance(callback, _PacedCallback):
+                callback = _PacedCallback(callback, _GLOBAL_DUTY_CYCLE)
+            return _original_ksampler_sample(
+                self, model_wrap, sigmas, extra_args, callback, noise,
+                latent_image=latent_image, denoise_mask=denoise_mask,
+                disable_pbar=disable_pbar)
+
+        comfy.samplers.KSAMPLER.sample = _paced_ksampler_sample
+        _PACING_INSTALLED = True
+        _log_pacing("global pacing installed (duty=%s)" % _GLOBAL_DUTY_CYCLE)
+    except Exception as _exc:
+        _log_pacing("global pacing install FAILED: %s" % _exc)
 
 
 def _common_ksampler(model, seed, steps, cfg, sampler_name, scheduler, positive,
@@ -111,7 +180,7 @@ class FitzSafeKSampler:
             "positive": ("CONDITIONING",), "negative": ("CONDITIONING",),
             "latent_image": ("LATENT",),
             "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-            "safe_duty_cycle": ("FLOAT", {"default": 0.50, "min": 0.10, "max": 0.95, "step": 0.05}),
+            "safe_duty_cycle": ("FLOAT", {"default": 0.40, "min": 0.10, "max": 0.95, "step": 0.05}),
         }}
     RETURN_TYPES = ("LATENT",)
     FUNCTION = "sample"
@@ -139,7 +208,7 @@ class FitzSafeKSamplerAdvanced:
             "start_at_step": ("INT", {"default": 0, "min": 0, "max": 10000}),
             "end_at_step": ("INT", {"default": 10000, "min": 0, "max": 10000}),
             "return_with_leftover_noise": (["disable", "enable"],),
-            "safe_duty_cycle": ("FLOAT", {"default": 0.50, "min": 0.10, "max": 0.95, "step": 0.05}),
+            "safe_duty_cycle": ("FLOAT", {"default": 0.40, "min": 0.10, "max": 0.95, "step": 0.05}),
         }}
     RETURN_TYPES = ("LATENT",)
     FUNCTION = "sample"
@@ -162,7 +231,7 @@ class FitzSafeSamplerCustomAdvanced:
         return {"required": {
             "noise": ("NOISE",), "guider": ("GUIDER",), "sampler": ("SAMPLER",),
             "sigmas": ("SIGMAS",), "latent_image": ("LATENT",),
-            "safe_duty_cycle": ("FLOAT", {"default": 0.50, "min": 0.10, "max": 0.95, "step": 0.05}),
+            "safe_duty_cycle": ("FLOAT", {"default": 0.40, "min": 0.10, "max": 0.95, "step": 0.05}),
         }}
     RETURN_TYPES = ("LATENT", "LATENT")
     RETURN_NAMES = ("output", "denoised_output")
@@ -212,6 +281,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "FitzSafeKSamplerAdvanced": "Fitz Safe KSampler (Advanced)",
     "FitzSafeSamplerCustomAdvanced": "Fitz Safe Sampler Custom Advanced",
 }
+
+_install_global_pacing()
 `;
 
 /** Installs Fitz's cooperative sampler beside application data, never inside

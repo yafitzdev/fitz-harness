@@ -78,7 +78,6 @@ export function reconcileLocalComfyUIConfiguration(store: SqliteStore, paths: Fi
       displayName: playbook.displayName,
       connectionMode: "managed",
       runtime: "windows",
-      performanceMode: "safe",
       baseUrl: "http://127.0.0.1",
       healthPath: "/system_stats",
       launchCommand: local.executable,

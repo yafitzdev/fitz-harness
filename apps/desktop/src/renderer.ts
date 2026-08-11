@@ -178,10 +178,13 @@ const composer = new Composer({
   onSubmit: (submission) => {
     // Media commands submit straight to the media-job pipeline, which runs on
     // its own queue, so they are allowed while the agent is busy. Everything
-    // else steers or cancels the active run.
+    // else steers or cancels the active run; with an empty draft and a media
+    // job in flight the send button stops that job instead.
     if (agentRuns.active && !submission.mediaCommand) {
       if (submission.content.trim().length > 0) void steerPrompt(submission.content);
       else void agentRuns.cancel();
+    } else if (mediaJobs.active && !submission.mediaCommand && submission.content.trim().length === 0) {
+      void mediaJobs.cancelActive().catch((error) => showStatus(errorMessage(error), "error"));
     } else void sendPrompt(submission);
   },
   onInput: (text) => {
@@ -372,6 +375,8 @@ const mediaJobFeed = new MediaJobFeed({
 });
 const mediaJobs = new MediaJobTracker({
   api,
+  onActiveChange: refreshComposerState,
+  onProgress: (job) => mediaJobFeed.render(job),
   onTerminal: async (job, failure) => {
     if (job.sessionId && job.sessionId !== projects.currentSessionId) return;
     const artifactsForSession = job.status === "completed" ? await artifactController.load() : [];
@@ -486,7 +491,6 @@ const playbookWorkspace = new PlaybookWorkspaceController({
   engineFolder: element("engine-folder") as HTMLSelectElement,
   engineDisplayName: element("engine-display-name") as HTMLInputElement,
   engineConnection: element("engine-connection") as HTMLSelectElement,
-  enginePerformanceMode: element("engine-performance-mode") as HTMLSelectElement,
   engineRuntime: element("engine-runtime") as HTMLSelectElement,
   engineBaseUrl: element("engine-base-url") as HTMLInputElement,
   engineHealthPath: element("engine-health-path") as HTMLInputElement,
@@ -1015,7 +1019,7 @@ function refreshComposerState(): void {
   const ready = Boolean((projects.currentSessionId || newChatMode) && composer.controls.routeId);
   artifactController.setEnabled(Boolean(projects.currentSessionId));
   // The attach button also unlocks in a new chat so files can be staged for the first message.
-  composer.setState({ ready, running: agentRuns.active, hasSession: Boolean(projects.currentSessionId || newChatMode) });
+  composer.setState({ ready, running: agentRuns.active, generating: mediaJobs.active, hasSession: Boolean(projects.currentSessionId || newChatMode) });
 }
 
 function updateTitles(): void {

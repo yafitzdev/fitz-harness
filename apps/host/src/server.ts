@@ -151,10 +151,9 @@ runtime.app.addHook("onClose", async () => {
 });
 // On a fresh database createHost seeds the complete engine-mode recipe set first;
 // reconcile afterward so ComfyUI also gets its Playbooks registration without
-// suppressing the normal chat defaults.
-if (storeInitiallyEmpty && reconcileLocalComfyUIConfiguration(store, runtimePaths)) {
-  runtime.routes.setEnginePerformanceMode("comfyui", "safe");
-}
+// suppressing the normal chat defaults. Pacing is engine-side (the extension
+// under data/comfyui), so no host-owned performance mode is set here.
+if (storeInitiallyEmpty) reconcileLocalComfyUIConfiguration(store, runtimePaths);
 if (storeInitiallyEmpty) enforceModelResidency(store);
 
 await runtime.app.listen({ host, port });

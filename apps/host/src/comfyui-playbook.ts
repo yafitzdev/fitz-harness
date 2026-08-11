@@ -134,7 +134,7 @@ const KREA2_TURBO_IMAGE_WORKFLOW = {
   "9": { class_type: "SaveImage", inputs: { images: ["8", 0], filename_prefix: "fitz-krea2" } },
 };
 
-/** Local ComfyUI media playbook. H3 variants share the official 1344×768
+/** Local ComfyUI media playbook. H3 variants share the official 1280×720
  * text-to-video plus stereo-audio graph; Krea 2 Turbo owns text-to-image.
  * Every independently downloaded weight remains in Fitz's external registry. */
 export function createComfyUIPlaybook(options: ComfyUIPlaybookOptions): ComfyUIPlaybook {
@@ -155,14 +155,18 @@ export function createComfyUIPlaybook(options: ComfyUIPlaybookOptions): ComfyUIP
       displayName: "MiniMax H3 · Text to Video + Audio",
       modelId: "minimax-h3-fl2va-int8",
       modalities: { input: ["text"], output: ["video", "audio"] },
-      limits: { maxDurationSeconds: 15, maxResolution: "1344x768" },
+      limits: { maxDurationSeconds: 6, maxFps: 30, maxResolution: "1280x720" },
       configuration: {
         ...launch,
         expectedVramMiB: expectedVramMiB ?? 24_576,
         readinessTimeoutMs: 300_000,
         comfyuiWorkflow: h3VideoWorkflow(OFFICIAL_H3_MODEL),
         outputFormats: ["mp4"],
-        defaults: { resolution: "1344x768", fps: 24, durationSeconds: 2, sampler: "res_multistep", steps: 20 },
+        // H3's latent grid needs multiples of 16 (the DiT consumes height/16
+        // by width/16 patches); the server snaps requested sizes before they
+        // reach the graph.
+        sizeGrid: 16,
+        defaults: { resolution: "1280x720", fps: 24, durationSeconds: 2, sampler: "res_multistep", steps: 20 },
       },
     }));
   }
@@ -172,14 +176,15 @@ export function createComfyUIPlaybook(options: ComfyUIPlaybookOptions): ComfyUIP
       displayName: "PinkCherry MiniMax H3 v0.5 · Text to Video + Audio",
       modelId: "pinkcherry-minimax-h3-v0.5-pruned-int8",
       modalities: { input: ["text"], output: ["video", "audio"] },
-      limits: { maxDurationSeconds: 15, maxResolution: "1344x768" },
+      limits: { maxDurationSeconds: 6, maxFps: 30, maxResolution: "1280x720" },
       configuration: {
         ...launch,
         expectedVramMiB: expectedVramMiB ?? 24_576,
         readinessTimeoutMs: 300_000,
         comfyuiWorkflow: h3VideoWorkflow(PINKCHERRY_H3_MODEL),
         outputFormats: ["mp4"],
-        defaults: { resolution: "1344x768", fps: 24, durationSeconds: 2, sampler: "res_multistep", steps: 20 },
+        sizeGrid: 32,
+        defaults: { resolution: "1280x720", fps: 24, durationSeconds: 2, sampler: "res_multistep", steps: 20 },
       },
     }));
   }
@@ -234,7 +239,7 @@ function recipe(input: {
   displayName: string;
   modelId: string;
   modalities: { input: Array<"text" | "image" | "video" | "audio">; output: Array<"image" | "video" | "audio"> };
-  limits?: { maxDurationSeconds?: number; maxResolution?: string; maxRefs?: number };
+  limits?: { maxDurationSeconds?: number; maxFps?: number; maxResolution?: string; maxRefs?: number };
   configuration: Record<string, unknown>;
 }): Recipe {
   return {

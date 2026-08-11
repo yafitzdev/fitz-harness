@@ -10,17 +10,17 @@ const recipe: Recipe = {
 };
 const route: Route = { id: "video", displayName: "Video", recipeId: recipe.id, enabled: true, isDefault: false, kind: "video" };
 
-describe("RouteResolver engine performance policy", () => {
-  it("overlays host policy without mutating stored recipe configuration", () => {
-    const resolver = new RouteResolver([route], [recipe], new Map([["comfyui", "safe"]]));
-    expect(resolver.resolve("video").recipe.configuration).toEqual({ pinned: true, performanceMode: "safe" });
+describe("RouteResolver recipe resolution", () => {
+  it("resolves recipes without overlaying host policy on stored configuration", () => {
+    const resolver = new RouteResolver([route], [recipe]);
+    expect(resolver.resolve("video").recipe.configuration).toEqual({ pinned: true });
     expect(resolver.listRecipes()[0]?.configuration).toEqual({ pinned: true });
   });
 
-  it("applies engine changes to subsequent requests", () => {
+  it("clones resolved recipes so callers cannot mutate the registry", () => {
     const resolver = new RouteResolver([route], [recipe]);
-    expect(resolver.resolveRecipe("media").configuration.performanceMode).toBe("normal");
-    resolver.setEnginePerformanceMode("COMFYUI", "safe");
-    expect(resolver.resolveRecipe("media").configuration.performanceMode).toBe("safe");
+    const resolved = resolver.resolve("video").recipe;
+    resolved.configuration = { injected: true };
+    expect(resolver.resolveRecipe("media").configuration).toEqual({ pinned: true });
   });
 });

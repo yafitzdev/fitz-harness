@@ -2,12 +2,14 @@ import type { ResourceMonitor, ResourceSnapshot } from "./resources.js";
 
 export interface GpuThermalPolicy {
   /** Last-resort protection only. Normal load shaping belongs to the engine
-   * adapter and must not depend on privileged board controls. */
+   * adapter and must not depend on privileged board controls. The stop sits
+   * at 92 C, inside the firmware throttle band (88-90 C), so it only fires
+   * if the engine-side pacing extension is missing or broken. */
   hardStopAtC: number;
 }
 
 export const DEFAULT_GPU_THERMAL_POLICY: GpuThermalPolicy = {
-  hardStopAtC: 85,
+  hardStopAtC: 92,
 };
 
 export class ThermalSafetyError extends Error {

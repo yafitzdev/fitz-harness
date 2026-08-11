@@ -27,7 +27,7 @@ describe("MiniMax H3 via ComfyUI (PR 7)", () => {
     const h3Video = playbook.recipes.find((recipe) => recipe.id === "h3-video");
     expect(h3Video).toMatchObject({
       adapter: "comfyui",
-      capabilities: { modalities: { input: ["text"], output: ["video", "audio"], limits: { maxDurationSeconds: 15, maxResolution: "1344x768" } } },
+      capabilities: { modalities: { input: ["text"], output: ["video", "audio"], limits: { maxDurationSeconds: 6, maxFps: 30, maxResolution: "1280x720" } } },
       configuration: { executable: "python", cwd: "/engines/comfyui", expectedVramMiB: 24_576 },
     });
     expect(playbook.recipes.map((recipe) => recipe.id)).toEqual(["h3-video"]);

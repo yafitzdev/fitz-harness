@@ -76,12 +76,12 @@ describe("agent media tools (§5.9)", () => {
       createRun(harness.store, harness.user.id);
       const result = await mediaTools(harness).generateVideo.execute("call-video", {
         prompt: "a camera circles a red cube",
-        resolution: "1344x768",
+        resolution: "1280x720",
         duration_seconds: 2,
         fps: 24,
       });
       const job = harness.store.getMediaJob((result.details as { mediaJobId: string }).mediaJobId);
-      expect(job?.params).toMatchObject({ prompt: "a camera circles a red cube", size: "1344x768", durationSeconds: 2, fps: 24 });
+      expect(job?.params).toMatchObject({ prompt: "a camera circles a red cube", size: "1280x720", durationSeconds: 2, fps: 24 });
       expect(job?.params).not.toHaveProperty("resolution");
     } finally {
       await harness.runtime.app.close();
