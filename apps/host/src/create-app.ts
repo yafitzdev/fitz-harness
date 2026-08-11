@@ -778,7 +778,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         if (!route) throw new TypeError(`Recipe ${recipeId} is not assigned to an enabled media route`);
         // Admin diagnostic probe: submitted without a principal so it is exempt
         // from per-user quota (design doc §5.10), exactly like the image gateway.
-        const job = mediaJobs.submit({ routeId: route.id, modality: route.kind as MediaModality, params: { prompt: MEDIA_TEST_PROMPTS[route.kind as MediaModality] } });
+        const job = await mediaJobs.submit({ routeId: route.id, modality: route.kind as MediaModality, params: { prompt: MEDIA_TEST_PROMPTS[route.kind as MediaModality] } });
         const terminal = await awaitMediaJob(mediaJobs, job.id, mediaImageTimeoutMs);
         if (terminal.status !== "completed") {
           throw new Error(`Media test failed (job ${job.id}): ${mediaJobFailureMessage(store, terminal)}`);

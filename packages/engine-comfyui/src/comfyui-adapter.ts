@@ -61,6 +61,10 @@ export interface ComfyUIConfiguration {
    *  placement is manual; the recipe pins the graph that ComfyUI runs). The
    *  configuration reader resolves JSON strings to the graph. */
   comfyuiWorkflow?: Readonly<Record<string, unknown>>;
+  /** Optional reference-edit graph. It is selected automatically whenever the
+   * request contains image refs, allowing one image route to own generation and
+   * editing without exposing implementation recipes to the consumer. */
+  comfyuiEditWorkflow?: Readonly<Record<string, unknown>>;
   /** Pinned workflow: path to a workflow JSON file (absolute, or relative to
    *  `cwd` when managed). Mutually exclusive with `comfyuiWorkflow`. */
   comfyuiWorkflowPath?: string;
@@ -258,10 +262,13 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
     signal: AbortSignal,
   ): Promise<MediaJobHandle> {
     if (signal.aborted) throw abortError();
-    const graph = await this.#loadWorkflow(instance, signal);
+    const graph = request.params.refs?.length && instance.config.comfyuiEditWorkflow
+      ? instance.config.comfyuiEditWorkflow
+      : await this.#loadWorkflow(instance, signal);
     const overrides = instance.config.comfyuiOverrides;
     const params = applyGenerationDefaults(request.params, instance.config.defaults);
-    const substituted = substituteWorkflow(graph, params, overrides);
+    const referenceNames = await this.#uploadReferences(instance, params, signal);
+    const substituted = substituteWorkflow(graph, params, overrides, referenceNames);
     const clientId = randomUUID();
     // Open the progress socket before POSTing so it is (likely) connected by
     // the time the server starts executing the prompt.
@@ -274,6 +281,28 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
       listener?.close();
       throw error;
     }
+  }
+
+  async #uploadReferences(instance: ComfyUIHandle, params: MediaGenerationParams, signal: AbortSignal): Promise<string[]> {
+    const refs = params.refs ?? [];
+    const uploaded: string[] = [];
+    for (const [index, ref] of refs.entries()) {
+      if (!("url" in ref)) throw new Error("ComfyUI received an unresolved Fitz artifact reference");
+      const response = await this.#fetch(ref.url, { signal });
+      if (!response.ok) throw new Error(`Reference image download failed (HTTP ${response.status})`);
+      const mimeType = response.headers.get("content-type")?.split(";", 1)[0] || "image/png";
+      if (!mimeType.startsWith("image/")) throw new Error(`Reference ${index + 1} is not an image (${mimeType})`);
+      const extension = imageExtension(mimeType);
+      const result = await instance.client.uploadImage(
+        instance.baseUrl,
+        new Uint8Array(await response.arrayBuffer()),
+        `fitz-reference-${randomUUID()}.${extension}`,
+        mimeType,
+        signal,
+      );
+      uploaded.push(result.subfolder ? `${result.subfolder}/${result.name}` : result.name);
+    }
+    return uploaded;
   }
 
   async poll(instance: ComfyUIHandle, job: MediaJobHandle, signal: AbortSignal): Promise<MediaJobPoll> {
@@ -398,6 +427,7 @@ export function readComfyUIConfiguration(recipe: Recipe): ComfyUIConfiguration {
     ...(value.expectedVramMiB !== undefined ? { expectedVramMiB: nonNegativeNumber(value.expectedVramMiB, "expectedVramMiB") } : {}),
     ...(value.readinessTimeoutMs !== undefined ? { readinessTimeoutMs: nonNegativeNumber(value.readinessTimeoutMs, "readinessTimeoutMs") } : {}),
     ...(value.comfyuiWorkflow !== undefined ? { comfyuiWorkflow: parseWorkflowValue(value.comfyuiWorkflow) } : {}),
+    ...(value.comfyuiEditWorkflow !== undefined ? { comfyuiEditWorkflow: parseWorkflowValue(value.comfyuiEditWorkflow) } : {}),
     ...(value.comfyuiWorkflowPath !== undefined ? { comfyuiWorkflowPath: stringValue(value.comfyuiWorkflowPath, "comfyuiWorkflowPath") } : {}),
     ...(value.outputFormats !== undefined ? { outputFormats: stringArray(value.outputFormats, "outputFormats") } : {}),
     ...(value.defaults !== undefined ? { defaults: readDefaults(value.defaults) } : {}),
@@ -421,6 +451,9 @@ export function validateComfyUIConfiguration(recipe: Recipe): ValidationIssue[] 
     }
     if (config.comfyuiWorkflow !== undefined && !isGraph(config.comfyuiWorkflow)) {
       issues.push({ level: "error", code: "invalid_workflow_graph", message: "comfyuiWorkflow must be a non-empty object of { class_type, inputs } nodes" });
+    }
+    if (config.comfyuiEditWorkflow !== undefined && !isGraph(config.comfyuiEditWorkflow)) {
+      issues.push({ level: "error", code: "invalid_edit_workflow_graph", message: "comfyuiEditWorkflow must be a non-empty object of { class_type, inputs } nodes" });
     }
     const external = config.baseUrl !== undefined;
     const managed = config.executable !== undefined || config.cwd !== undefined || config.launchArgs !== undefined;
@@ -461,6 +494,7 @@ export function substituteWorkflow(
   graph: Readonly<Record<string, unknown>>,
   params: MediaGenerationParams,
   overrides: ComfyUIWorkflowOverrides = {},
+  referenceNames: readonly string[] = [],
 ): Record<string, unknown> {
   const clone = structuredClone(graph) as Record<string, Record<string, unknown>>;
   const size = parseSize(params.size);
@@ -476,7 +510,7 @@ export function substituteWorkflow(
     if (overrides.seedNodeIds?.includes(nodeId) && params.seed !== undefined) {
       inputs = { ...inputs, seed: params.seed };
     }
-    node.inputs = substituteInputs(inputs, params, size);
+    node.inputs = substituteInputs(inputs, params, size, referenceNames);
   }
   return clone;
 }
@@ -485,10 +519,11 @@ function substituteInputs(
   inputs: Record<string, unknown>,
   params: MediaGenerationParams,
   size: { width: number; height: number } | undefined,
+  referenceNames: readonly string[],
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(inputs)) {
-    out[key] = typeof value === "string" ? substitutePlaceholders(value, params, size) : value;
+    out[key] = typeof value === "string" ? substitutePlaceholders(value, params, size, referenceNames) : value;
   }
   return out;
 }
@@ -497,12 +532,15 @@ function substitutePlaceholders(
   value: string,
   params: MediaGenerationParams,
   size: { width: number; height: number } | undefined,
+  referenceNames: readonly string[],
 ): unknown {
+  const referenceMatch = /^\{\{ref_(\d+)\}\}$/.exec(value);
+  if (referenceMatch) return referenceNames[Number(referenceMatch[1])];
   const exact = exactPlaceholderValue(value, params, size);
   if (exact !== undefined) return exact;
   let result = value;
   result = result.replaceAll("{{prompt}}", params.prompt);
-  if (params.negativePrompt !== undefined) result = result.replaceAll("{{negative_prompt}}", params.negativePrompt);
+  result = result.replaceAll("{{negative_prompt}}", params.negativePrompt ?? "");
   if (params.seed !== undefined) result = result.replaceAll("{{seed}}", String(params.seed));
   if (size !== undefined) {
     result = result.replaceAll("{{width}}", String(size.width));
@@ -523,7 +561,7 @@ function exactPlaceholderValue(
 ): string | number | undefined {
   switch (value) {
     case "{{prompt}}": return params.prompt;
-    case "{{negative_prompt}}": return params.negativePrompt;
+    case "{{negative_prompt}}": return params.negativePrompt ?? "";
     case "{{seed}}": return params.seed;
     case "{{width}}": return size?.width;
     case "{{height}}": return size?.height;
@@ -566,6 +604,13 @@ function stringDefault(defaults: Readonly<Record<string, unknown>> | undefined, 
 function numberDefault(defaults: Readonly<Record<string, unknown>> | undefined, key: string): number | undefined {
   const value = defaults?.[key];
   return typeof value === "number" ? value : undefined;
+}
+
+function imageExtension(mimeType: string): string {
+  if (mimeType === "image/jpeg") return "jpg";
+  if (mimeType === "image/webp") return "webp";
+  if (mimeType === "image/gif") return "gif";
+  return "png";
 }
 
 // ---------------------------------------------------------------------------

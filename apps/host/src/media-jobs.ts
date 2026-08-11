@@ -92,7 +92,7 @@ export class MediaJobCoordinator {
   /** Resolve → validate → authorize → quota → durable record → enqueue.
    *  The job's id is the scheduler's job id, so the durable record and the queue
    *  slot always agree. Returns the freshly created queued record. */
-  submit(input: MediaSubmitInput, principal?: AuthenticatedPrincipal): MediaJobRecord {
+  async submit(input: MediaSubmitInput, principal?: AuthenticatedPrincipal): Promise<MediaJobRecord> {
     if (!this.#accepting) throw new MediaCoordinatorClosedError();
     const { route, recipe } = this.#routes.resolve(input.routeId); // throws RouteNotFoundError when missing or disabled
     const kind = route.kind ?? "chat";
@@ -114,6 +114,7 @@ export class MediaJobCoordinator {
     }
 
     const params = constrainMediaParams(validateMediaGenerationParams(input.params), recipe);
+    const executionParams = await this.#materializeReferences(params);
     const id = randomUUID();
     const now = new Date().toISOString();
     const record: MediaJobRecord = {
@@ -132,7 +133,7 @@ export class MediaJobCoordinator {
     try {
       scheduled = this.#scheduler.enqueueMedia(route.id, {
         modality: input.modality,
-        params,
+        params: executionParams,
         ...(principal ? { userId: principal.user.id } : input.userId ? { userId: input.userId } : {}),
       }, undefined, {
         jobId: id,
@@ -156,6 +157,27 @@ export class MediaJobCoordinator {
       () => this.#consumers.delete(id),
     );
     return this.#store.getMediaJob(id)!;
+  }
+
+  /** Provider adapters receive self-contained data URLs while the durable job
+   * record keeps compact artifact ids. This keeps blob payloads out of SQLite
+   * and lets local/remote media engines consume the same reference contract. */
+  async #materializeReferences(params: MediaGenerationParams): Promise<MediaGenerationParams> {
+    if (!params.refs?.length) return params;
+    const refs: Array<{ url: string }> = [];
+    for (const ref of params.refs) {
+      if ("url" in ref) {
+        refs.push(ref);
+        continue;
+      }
+      const artifact = this.#store.getArtifact(ref.artifactId);
+      if (!artifact) throw new TypeError(`Reference artifact not found: ${ref.artifactId}`);
+      if (!artifact.mimeType.startsWith("image/")) throw new TypeError(`Reference artifact is not an image: ${ref.artifactId}`);
+      const bytes = await this.#artifacts.read(ref.artifactId);
+      if (!bytes) throw new TypeError(`Reference artifact content is unavailable: ${ref.artifactId}`);
+      refs.push({ url: `data:${artifact.mimeType};base64,${Buffer.from(bytes).toString("base64")}` });
+    }
+    return { ...params, refs };
   }
 
   get(id: string): MediaJobRecord | undefined {

@@ -78,7 +78,7 @@ export function createMediaTools(options: MediaToolsOptions): (context: { cwd: s
       parameters: generateImageParameters,
       execute: async (_toolCallId, params) => {
         try {
-          const job = submitMedia(options, context, "image", {
+          const job = await submitMedia(options, context, "image", {
             prompt: params.prompt,
             ...(params.size !== undefined ? { size: params.size } : {}),
             ...(params.seed !== undefined ? { seed: params.seed } : {}),
@@ -105,7 +105,7 @@ export function createMediaTools(options: MediaToolsOptions): (context: { cwd: s
       parameters: generateVideoParameters,
       execute: async (_toolCallId, params) => {
         try {
-          const job = submitMedia(options, context, "video", {
+          const job = await submitMedia(options, context, "video", {
             prompt: params.prompt,
             ...(params.duration_seconds !== undefined ? { durationSeconds: params.duration_seconds } : {}),
             ...(params.resolution !== undefined ? { size: params.resolution } : {}),
@@ -131,7 +131,7 @@ export function createMediaTools(options: MediaToolsOptions): (context: { cwd: s
       parameters: generateAudioParameters,
       execute: async (_toolCallId, params) => {
         try {
-          const job = submitMedia(options, context, "audio", {
+          const job = await submitMedia(options, context, "audio", {
             prompt: params.prompt,
             ...(params.duration_seconds !== undefined ? { durationSeconds: params.duration_seconds } : {}),
           }, params.route_id);
@@ -145,13 +145,13 @@ export function createMediaTools(options: MediaToolsOptions): (context: { cwd: s
 }
 
 /** Submit in-process with the run owner's principal; never blocks on completion (§5.9, KD-12). */
-function submitMedia(
+async function submitMedia(
   { mediaJobs, store, security }: MediaToolsOptions,
   context: { cwd: string; runId?: string },
   modality: MediaModality,
   params: MediaGenerationParams,
   routeId: string | undefined,
-): MediaJobRecord {
+): Promise<MediaJobRecord> {
   const run = context.runId ? store.getAgentRun(context.runId) : undefined;
   const principal = resolvePrincipal(security, run?.ownerUserId);
   return mediaJobs.submit({

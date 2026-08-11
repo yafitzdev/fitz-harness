@@ -36,7 +36,7 @@ export function registerMediaRoutes(options: RegisterMediaRoutesOptions): void {
       if (!routeId) throw new TypeError("routeId is required");
       const modality = parseModality(body.modality);
       const principal = principals.get(request);
-      const job = mediaJobs.submit({
+      const job = await mediaJobs.submit({
         routeId,
         modality,
         params: parseMediaParams(body.params),
@@ -91,7 +91,7 @@ export function registerMediaRoutes(options: RegisterMediaRoutesOptions): void {
     if (!canAccessMediaJob(principal, original)) return reply.code(403).send({ error: "Media job access denied" });
     if (!isTerminalMediaStatus(original.status)) return reply.code(409).send({ error: "Only terminal media jobs can be retried" });
     try {
-      const retried = mediaJobs.submit({
+      const retried = await mediaJobs.submit({
         routeId: original.routeId,
         modality: original.modality,
         params: original.params,
@@ -146,7 +146,7 @@ export function registerMediaRoutes(options: RegisterMediaRoutesOptions): void {
     try {
       const body = parseImageGenerationRequest(request.body);
       const principal = principals.get(request);
-      const job = mediaJobs.submit({
+      const job = await mediaJobs.submit({
         routeId: body.model,
         modality: "image",
         params: { prompt: body.prompt, ...(body.size ? { size: body.size } : {}) },
@@ -189,7 +189,7 @@ export function registerMediaRoutes(options: RegisterMediaRoutesOptions): void {
     try {
       const body = parseVideoGenerationRequest(request.body);
       const principal = principals.get(request);
-      const job = mediaJobs.submit({
+      const job = await mediaJobs.submit({
         routeId: body.model,
         modality: "video",
         params: {

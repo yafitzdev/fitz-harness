@@ -129,6 +129,16 @@ describe("substituteWorkflow", () => {
     expect(VIDEO_WORKFLOW).toEqual(original);
   });
 
+  it("substitutes uploaded reference filenames into edit workflows", () => {
+    const graph = substituteWorkflow(
+      { "1": { class_type: "LoadImage", inputs: { image: "{{ref_0}}" } } },
+      { prompt: "make it blue", refs: [{ url: "data:image/png;base64,AA==" }] },
+      {},
+      ["fitz-reference.png"],
+    );
+    expect(graph["1"]).toEqual({ class_type: "LoadImage", inputs: { image: "fitz-reference.png" } });
+  });
+
   it("substitutes {{fps}} inside embedded expressions (H3 frame count)", () => {
     const workflow = {
       "111": { class_type: "PrimitiveFloat", inputs: { value: "{{duration_seconds}}" } },
@@ -152,6 +162,7 @@ describe("ComfyUIEngineAdapter configuration surface", () => {
     const config = readComfyUIConfiguration(recipeFor({
       executable: "python", cwd: "/engines/comfyui", expectedVramMiB: 24_576, readinessTimeoutMs: 30_000,
       comfyuiWorkflow: JSON.stringify(VIDEO_WORKFLOW), outputFormats: ["mp4"],
+      comfyuiEditWorkflow: VIDEO_WORKFLOW,
       defaults: { resolution: "1280x720", fps: 30 }, comfyuiOverrides: { promptNodeId: "1", seedNodeIds: ["1"] },
     }));
     expect(config).toMatchObject({
@@ -163,6 +174,7 @@ describe("ComfyUIEngineAdapter configuration surface", () => {
       comfyuiOverrides: { promptNodeId: "1", seedNodeIds: ["1"] },
     });
     expect(config.comfyuiWorkflow).toEqual(VIDEO_WORKFLOW);
+    expect(config.comfyuiEditWorkflow).toEqual(VIDEO_WORKFLOW);
     expect(config.defaults).toEqual({ resolution: "1280x720", fps: 30 });
   });
 

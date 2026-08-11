@@ -34,6 +34,12 @@ export interface ComfyUIClientOptions {
   fetch?: typeof globalThis.fetch;
 }
 
+export interface ComfyUIUploadedImage {
+  name: string;
+  subfolder: string;
+  type: "input";
+}
+
 export class ComfyUIClient {
   readonly #fetch: typeof globalThis.fetch;
 
@@ -51,6 +57,40 @@ export class ComfyUIClient {
     } catch {
       return false;
     }
+  }
+
+  /** Upload a reference image to ComfyUI's input store. Workflows receive the
+   * returned relative name through a LoadImage node; provider and Fitz artifact
+   * URLs therefore never leak into the pinned workflow graph. */
+  async uploadImage(
+    baseUrl: string,
+    bytes: Uint8Array,
+    filename: string,
+    mimeType: string,
+    signal?: AbortSignal,
+  ): Promise<ComfyUIUploadedImage> {
+    const body = new FormData();
+    const imageBuffer = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(imageBuffer).set(bytes);
+    body.append("image", new Blob([imageBuffer], { type: mimeType }), filename);
+    body.append("type", "input");
+    body.append("overwrite", "true");
+    const response = await this.#fetch(joinUrl(baseUrl, "/upload/image"), {
+      method: "POST",
+      body,
+      ...(signal ? { signal } : {}),
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(`ComfyUI reference upload failed (HTTP ${response.status}): ${detail.slice(0, 500)}`);
+    }
+    const payload = (await response.json()) as { name?: unknown; subfolder?: unknown; type?: unknown };
+    if (typeof payload.name !== "string" || !payload.name) throw new Error("ComfyUI reference upload returned no filename");
+    return {
+      name: payload.name,
+      subfolder: typeof payload.subfolder === "string" ? payload.subfolder : "",
+      type: "input",
+    };
   }
 
   /** POST /prompt with the pinned workflow graph; returns the server-side prompt id. */
