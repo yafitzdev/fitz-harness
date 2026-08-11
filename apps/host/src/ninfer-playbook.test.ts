@@ -3,8 +3,17 @@ import { readNInferConfiguration, validateNInferConfiguration } from "@fitz/engi
 import { createNInferPlaybook, NINFER_PLAYBOOK_ID } from "./ninfer-playbook.js";
 
 describe("production NiNfer playbook", () => {
+  const runtime = {
+    id: "ninfer-linux",
+    distribution: "Fitz-NInfer",
+    hostRoot: "C:\\Users\\tester\\.llm\\runtimes\\ninfer-linux",
+    guestRoot: "/opt/fitz/llm",
+    modelRoot: "/opt/fitz/llm/models/ninfer",
+    executable: "/opt/fitz/llm/engines/ninfer/ninfer-serve",
+  };
+
   it("contains exactly two validated recipes and the fixed fast/default/smart routes", () => {
-    const playbook = createNInferPlaybook();
+    const playbook = createNInferPlaybook(runtime);
 
     expect(playbook).toMatchObject({ id: "ninfer", displayName: "ninfer" });
     expect(new Set(playbook.recipes.map((recipe) => recipe.playbookId))).toEqual(new Set([NINFER_PLAYBOOK_ID]));
@@ -20,14 +29,6 @@ describe("production NiNfer playbook", () => {
   });
 
   it("resolves logical recipes into the managed Linux runtime", () => {
-    const runtime = {
-      id: "ninfer-linux",
-      distribution: "Fitz-NInfer",
-      hostRoot: "C:\\Users\\tester\\.llm\\runtimes\\ninfer-linux",
-      guestRoot: "/opt/fitz/llm",
-      modelRoot: "/opt/fitz/llm/models/ninfer",
-      executable: "/opt/fitz/llm/engines/ninfer/ninfer-serve",
-    };
     const playbook = createNInferPlaybook(runtime);
     expect(playbook.recipes.every((recipe) => recipe.configuration.runtimeId === "ninfer-linux")).toBe(true);
     expect(playbook.recipes.every((recipe) => recipe.configuration.runtimeDistribution === "Fitz-NInfer")).toBe(true);

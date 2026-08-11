@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { resolveRuntimePaths } from "./runtime-paths.js";
-import { NInferRuntimeManager } from "./ninfer-runtime.js";
+import { createNInferModelRegistration, NInferRuntimeManager } from "./ninfer-runtime.js";
 
 describe("managed NInfer runtime", () => {
   it("keeps the dedicated WSL distribution inside the .llm registry", async () => {
@@ -40,5 +40,28 @@ describe("managed NInfer runtime", () => {
     const runtime = new NInferRuntimeManager({ paths, platform: "linux" });
     await expect(runtime.status()).resolves.toMatchObject({ available: false, state: "unavailable" });
     expect(() => runtime.startProvisioning()).toThrow(/requires Windows/);
+  });
+
+  it("describes runtime-resident model payloads without duplicating them on Windows", () => {
+    const paths = resolveRuntimePaths({ FITZ_LLM_ROOT: "D:\\registry" });
+    const runtime = new NInferRuntimeManager({ paths, platform: "win32", run: vi.fn() });
+    expect(createNInferModelRegistration({
+      id: "qwen3.6-27b",
+      fileName: "qwen3_6_27b_nvfp4.ninfer",
+      bytes: 18_324_064_000,
+      sha256: "abc123",
+    }, runtime.layout)).toEqual({
+      schemaVersion: 1,
+      id: "qwen3.6-27b",
+      engine: "ninfer",
+      format: "ninfer",
+      payload: {
+        backend: "runtime-filesystem",
+        runtimeId: "ninfer-linux",
+        path: "/opt/fitz/llm/models/ninfer/qwen3_6_27b_nvfp4.ninfer",
+      },
+      bytes: 18_324_064_000,
+      sha256: "abc123",
+    });
   });
 });

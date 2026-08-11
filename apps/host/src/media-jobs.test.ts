@@ -391,7 +391,14 @@ describe("Fitz host media jobs", () => {
     ensureMediaRoutes(store, routes);
     store.upsertRoute({ id: "image", displayName: "Image generation", recipeId: "h3-img", enabled: true, kind: "image" });
 
-    reconcileNInferConfiguration(store);
+    reconcileNInferConfiguration(store, {
+      id: "ninfer-linux",
+      distribution: "Fitz-NInfer",
+      hostRoot: "C:\\Users\\tester\\.llm\\runtimes\\ninfer-linux",
+      guestRoot: "/opt/fitz/llm",
+      modelRoot: "/opt/fitz/llm/models/ninfer",
+      executable: "/opt/fitz/llm/engines/ninfer/ninfer-serve",
+    });
 
     const image = store.listRoutes().find((route) => route.id === "image");
     expect(image).toMatchObject({ recipeId: "h3-img", enabled: true, kind: "image" });

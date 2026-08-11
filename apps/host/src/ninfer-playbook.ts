@@ -1,5 +1,3 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { buildCurrentNInferRecipe } from "@fitz/engine-ninfer";
 import type { Recipe, Route } from "@fitz/protocol";
 import type { NInferRuntimeLayout } from "./ninfer-runtime.js";
@@ -13,12 +11,9 @@ export interface NInferPlaybook {
   routes: Route[];
 }
 
-export function createNInferPlaybook(runtime?: NInferRuntimeLayout): NInferPlaybook {
-  const llmRoot = process.env.FITZ_LLM_ROOT ?? join(homedir(), ".llm");
-  const modelRoot = process.env.FITZ_NINFER_MODEL_ROOT ?? runtime?.modelRoot ?? guestPath(join(llmRoot, "models", "ninfer"));
-  const executable = process.env.FITZ_NINFER_EXECUTABLE
-    ?? runtime?.executable
-    ?? guestPath(join(llmRoot, "engines", "ninfer", "build", "apps", "ninfer-serve"));
+export function createNInferPlaybook(runtime: NInferRuntimeLayout): NInferPlaybook {
+  const modelRoot = runtime.modelRoot;
+  const executable = runtime.executable;
   const recipes = [
     recipe(
       "qwen36-35b-a3b-mtp4-100k",
@@ -66,7 +61,7 @@ export function createNInferPlaybook(runtime?: NInferRuntimeLayout): NInferPlayb
   return { id: NINFER_PLAYBOOK_ID, displayName: "ninfer", recipes, routes };
 }
 
-function recipe(id: string, displayName: string, modelId: string, artifact: string, draftTokens: number, executable: string, runtime?: NInferRuntimeLayout): Recipe {
+function recipe(id: string, displayName: string, modelId: string, artifact: string, draftTokens: number, executable: string, runtime: NInferRuntimeLayout): Recipe {
   const value = buildCurrentNInferRecipe(id, modelId, artifact, draftTokens, executable);
   return {
     ...value,
@@ -76,19 +71,11 @@ function recipe(id: string, displayName: string, modelId: string, artifact: stri
     configuration: {
       ...value.configuration,
       readinessTimeoutMs: 180_000,
-      ...(runtime ? {
-        requestLogJsonl: `${runtime.guestRoot}/logs/ninfer-requests.jsonl`,
-        runtimeId: runtime.id,
-        runtimeDistribution: runtime.distribution,
-        engineRef: "llm://engines/ninfer",
-        modelRef: `llm://models/${modelId}`,
-      } : {}),
+      requestLogJsonl: `${runtime.guestRoot}/logs/ninfer-requests.jsonl`,
+      runtimeId: runtime.id,
+      runtimeDistribution: runtime.distribution,
+      engineRef: "llm://engines/ninfer",
+      modelRef: `llm://models/${modelId}`,
     },
   };
-}
-
-function guestPath(hostPath: string): string {
-  const windowsPath = /^([A-Za-z]):[\\/](.*)$/.exec(hostPath);
-  if (!windowsPath) return hostPath.replaceAll("\\", "/");
-  return `/mnt/${windowsPath[1]!.toLowerCase()}/${windowsPath[2]!.replaceAll("\\", "/")}`;
 }

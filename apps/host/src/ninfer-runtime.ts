@@ -60,13 +60,50 @@ export interface NInferRuntimeManagerOptions {
   run?: CommandRunner;
 }
 
+export interface NInferRuntimeManifestModel {
+  id: string;
+  fileName: string;
+  bytes: number;
+  sha256: string;
+}
+
 interface RuntimeManifest {
   schemaVersion: 1;
   id: string;
   distribution: string;
   guestRoot: string;
   provisionedAt: string;
-  models: Array<{ id: string; fileName: string; bytes: number; sha256: string }>;
+  models: NInferRuntimeManifestModel[];
+}
+
+export interface NInferModelRegistration {
+  schemaVersion: 1;
+  id: string;
+  engine: "ninfer";
+  format: "ninfer";
+  payload: {
+    backend: "runtime-filesystem";
+    runtimeId: string;
+    path: string;
+  };
+  bytes: number;
+  sha256: string;
+}
+
+export function createNInferModelRegistration(model: NInferRuntimeManifestModel, layout: NInferRuntimeLayout): NInferModelRegistration {
+  return {
+    schemaVersion: 1,
+    id: model.id,
+    engine: "ninfer",
+    format: "ninfer",
+    payload: {
+      backend: "runtime-filesystem",
+      runtimeId: layout.id,
+      path: `${layout.modelRoot}/${model.fileName}`,
+    },
+    bytes: model.bytes,
+    sha256: model.sha256,
+  };
 }
 
 /** Owns the Linux-only NInfer runtime while keeping its physical VHDX inside
@@ -144,6 +181,7 @@ export class NInferRuntimeManager {
     await this.#guestShell(`install -m 0755 ${shellQuote(guestPath(sourceEngine))} ${shellQuote(this.layout.executable)}`, 120_000);
 
     const installedModels: RuntimeManifest["models"] = [];
+    const migratedSources: string[] = [];
     const candidates = [] as Array<{ id: string; fileName: string; source?: string; bytes: number }>;
     for (const known of KNOWN_MODELS) {
       const source = resolve(join(this.#paths.modelRoot, "ninfer", known.fileName));
@@ -175,10 +213,19 @@ export class NInferRuntimeManager {
       }
       installedModels.push({ id: candidate.id, fileName: candidate.fileName, bytes: candidate.bytes, sha256: runtimeHash });
       completedBytes += candidate.bytes;
-      if (moveModels && candidate.source) await rm(candidate.source);
+      if (moveModels && candidate.source) migratedSources.push(candidate.source);
     }
     const manifest: RuntimeManifest = { schemaVersion: 1, id: this.layout.id, distribution: this.layout.distribution, guestRoot: this.layout.guestRoot, provisionedAt: new Date().toISOString(), models: installedModels };
     await writeFile(join(this.layout.hostRoot, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    const registrationRoot = resolve(join(this.#paths.modelRoot, "ninfer"));
+    assertInside(this.#paths.modelRoot, registrationRoot);
+    await mkdir(registrationRoot, { recursive: true });
+    await Promise.all(installedModels.map(async (model) => {
+      const registrationPath = resolve(join(registrationRoot, `${model.id}.json`));
+      assertInside(registrationRoot, registrationPath);
+      await writeFile(registrationPath, `${JSON.stringify(createNInferModelRegistration(model, this.layout), null, 2)}\n`, "utf8");
+    }));
+    await Promise.all(migratedSources.map((source) => rm(source)));
     this.#setWorking("ready", 100, "NInfer is ready on managed Linux storage.");
   }
 

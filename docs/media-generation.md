@@ -86,7 +86,7 @@ The single biggest hidden cost is that **cloud media APIs are not OpenAI-compati
 | KD-10 | **Separate `MediaEngineAdapter` interface** rather than adding generation methods to `EngineAdapter`. | `streamChat` and `submit/poll/cancel` have different shapes, lifetimes, and error semantics; one interface per job kind keeps the registry and lifecycle type-safe. |
 | KD-11 | **Provider templates** (`packages/media-providers`), not a chat-shaped adapter, for cloud media. | Cloud media APIs are not OpenAI-compatible chat — this is the biggest hidden cost; templates are the containment boundary (same argument as engine adapters). |
 | KD-12 | Media tool calls **never block the agent turn on job completion**. The tool submits and returns a `mediaJobId`; completion lands in the artifact repo and event stream. | The agent's own chat *is* a scheduler queue job; blocking on a queued media job behind it would deadlock the turn. |
-| KD-13 | **H3 weight placement:** the upstream ComfyUI checkout stays clean under `.llm/engines/ComfyUI`; weights live under `.llm/models/comfyui`, the isolated Python environment under `.llm/runtimes/comfyui`, and Fitz points ComfyUI at them with an external YAML config. | Preserves the single `.llm` source of truth without polluting an engine Git checkout. See `docs/h3-local-video.md`. |
+| KD-13 | **H3 weight placement:** the upstream ComfyUI checkout stays clean under `.llm/engines/ComfyUI`; weights live under `.llm/models/comfyui`, the isolated Python environment under `.llm/environments/comfyui-python`, and Fitz points ComfyUI at them with an external YAML config. | Preserves the single `.llm` source of truth without polluting an engine Git checkout. See `docs/h3-local-video.md`. |
 
 ---
 
@@ -730,7 +730,7 @@ Notes:
 
 ## Open Questions
 
-- **OQ-1 — RESOLVED (v1, KD-13)**: H3 weights live under `.llm/models/comfyui`; the upstream checkout remains clean under `.llm/engines/ComfyUI`, its venv is `.llm/runtimes/comfyui`, and an external YAML points ComfyUI at the model registry. `ModelCatalogService` remains GGUF/text-generation-only for now.
+- **OQ-1 — RESOLVED (v1, KD-13)**: H3 weights live under `.llm/models/comfyui`; the upstream checkout remains clean under `.llm/engines/ComfyUI`, its venv is `.llm/environments/comfyui-python`, and an external YAML points ComfyUI at the model registry. `ModelCatalogService` remains GGUF/text-generation-only for now.
 - **OQ-2**: Content moderation policy for local-engine output. Cloud providers have terms; local H3 is unmoderated. Options: none (admin owns it), post-generation classifier hook, or provider-side moderation flags. Not required for v1.
 - **OQ-3 resolved**: remote provider media runs in the bounded GPU-free cloud lane and never acquires a local lifecycle lease.
 - **OQ-4 — RESOLVED**: payloads use the content-addressed local blob backend; SQLite stores metadata and opaque references. The backend interface is intentionally compatible with a future S3 implementation.

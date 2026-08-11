@@ -16,7 +16,7 @@ describe("local ComfyUI reconciliation", () => {
     const paths: FitzRuntimePaths = {
       dataRoot: join(root, "data"), databasePath: join(root, "data", "fitz.db"), piAgentDir: join(root, "data", "pi"),
       logsDir: join(root, "data", "logs"), cacheDir: join(root, "data", "cache"), llmRoot: join(root, "llm"),
-      engineRoot: join(root, "llm", "engines"), modelRoot: join(root, "llm", "models"), snapshotsDir: join(root, "data", "snapshots"),
+      engineRoot: join(root, "llm", "engines"), modelRoot: join(root, "llm", "models"), environmentRoot: join(root, "llm", "environments"), snapshotsDir: join(root, "data", "snapshots"),
     };
     const local = localComfyUIPaths(paths);
     for (const file of [
@@ -42,7 +42,7 @@ describe("local ComfyUI reconciliation", () => {
     const paths: FitzRuntimePaths = {
       dataRoot: join(root, "data"), databasePath: join(root, "data", "fitz.db"), piAgentDir: join(root, "data", "pi"),
       logsDir: join(root, "data", "logs"), cacheDir: join(root, "data", "cache"), llmRoot: join(root, "llm"),
-      engineRoot: join(root, "llm", "engines"), modelRoot: join(root, "llm", "models"), snapshotsDir: join(root, "data", "snapshots"),
+      engineRoot: join(root, "llm", "engines"), modelRoot: join(root, "llm", "models"), environmentRoot: join(root, "llm", "environments"), snapshotsDir: join(root, "data", "snapshots"),
     };
     const local = localComfyUIPaths(paths);
     for (const file of [
@@ -79,7 +79,7 @@ describe("local ComfyUI reconciliation", () => {
     const paths: FitzRuntimePaths = {
       dataRoot: join(root, "data"), databasePath: join(root, "data", "fitz.db"), piAgentDir: join(root, "data", "pi"),
       logsDir: join(root, "data", "logs"), cacheDir: join(root, "data", "cache"), llmRoot: join(root, "llm"),
-      engineRoot: join(root, "llm", "engines"), modelRoot: join(root, "llm", "models"), snapshotsDir: join(root, "data", "snapshots"),
+      engineRoot: join(root, "llm", "engines"), modelRoot: join(root, "llm", "models"), environmentRoot: join(root, "llm", "environments"), snapshotsDir: join(root, "data", "snapshots"),
     };
     const local = localComfyUIPaths(paths);
     for (const file of [
@@ -106,7 +106,7 @@ describe("local ComfyUI reconciliation", () => {
     const paths: FitzRuntimePaths = {
       dataRoot: join(root, "data"), databasePath: join(root, "data", "fitz.db"), piAgentDir: join(root, "data", "pi"),
       logsDir: join(root, "data", "logs"), cacheDir: join(root, "data", "cache"), llmRoot: join(root, "llm"),
-      engineRoot: join(root, "llm", "engines"), modelRoot: join(root, "llm", "models"), snapshotsDir: join(root, "data", "snapshots"),
+      engineRoot: join(root, "llm", "engines"), modelRoot: join(root, "llm", "models"), environmentRoot: join(root, "llm", "environments"), snapshotsDir: join(root, "data", "snapshots"),
     };
     const local = localComfyUIPaths(paths);
     for (const file of [

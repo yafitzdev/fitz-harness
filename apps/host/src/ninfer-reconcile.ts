@@ -12,7 +12,7 @@ const NINFER_MEDIA_ROUTE_EXEMPTIONS = new Set(["image", "video", "audio"]);
  * artifact paths, prunes routes outside the current route contract, and
  * materializes the current templates. It deliberately contains no old-id or
  * old-schema aliases. */
-export function reconcileNInferConfiguration(store: SqliteStore, runtime?: NInferRuntimeLayout): void {
+export function reconcileNInferConfiguration(store: SqliteStore, runtime: NInferRuntimeLayout): void {
   const playbook = createNInferPlaybook(runtime);
   const templatesById = new Map(playbook.recipes.map((recipe) => [recipe.id, recipe]));
   for (const recipe of store.listRecipes()) {

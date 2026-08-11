@@ -10,6 +10,10 @@ export interface FitzRuntimePaths {
   llmRoot: string;
   engineRoot: string;
   modelRoot: string;
+  /** Physical GGUF payload store managed by the model catalog. */
+  ggufModelRoot: string;
+  /** Language/package environments used by engines (for example a Python venv). */
+  environmentRoot: string;
   /** App-managed platform runtimes (for example the NInfer Linux VHDX). */
   runtimeRoot: string;
   /** Per-run pre-flight snapshots of the workspace, used to restore after a bad run. */
@@ -32,6 +36,8 @@ export function resolveRuntimePaths(environment: NodeJS.ProcessEnv = process.env
     llmRoot,
     engineRoot: resolve(environment.FITZ_ENGINE_ROOT ?? join(llmRoot, "engines")),
     modelRoot: resolve(environment.FITZ_MODEL_ROOT ?? join(llmRoot, "models")),
+    ggufModelRoot: resolve(environment.FITZ_GGUF_MODEL_ROOT ?? join(environment.FITZ_MODEL_ROOT ?? join(llmRoot, "models"), "gguf")),
+    environmentRoot: resolve(environment.FITZ_ENVIRONMENT_ROOT ?? join(llmRoot, "environments")),
     runtimeRoot: resolve(environment.FITZ_RUNTIME_ROOT ?? join(llmRoot, "runtimes")),
     snapshotsDir: resolve(environment.FITZ_SNAPSHOTS_DIR ?? join(dataRoot, "snapshots")),
     artifactsDir: resolve(environment.FITZ_ARTIFACTS_DIR ?? join(dataRoot, "artifacts")),

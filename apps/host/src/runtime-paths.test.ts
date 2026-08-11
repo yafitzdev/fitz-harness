@@ -9,6 +9,8 @@ describe("Fitz runtime paths", () => {
     expect(paths.llmRoot).toBe(resolve(homedir(), ".llm"));
     expect(paths.engineRoot).toBe(resolve(homedir(), ".llm", "engines"));
     expect(paths.modelRoot).toBe(resolve(homedir(), ".llm", "models"));
+    expect(paths.ggufModelRoot).toBe(resolve(homedir(), ".llm", "models", "gguf"));
+    expect(paths.environmentRoot).toBe(resolve(homedir(), ".llm", "environments"));
     expect(paths.runtimeRoot).toBe(resolve(homedir(), ".llm", "runtimes"));
   });
 
@@ -21,11 +23,13 @@ describe("Fitz runtime paths", () => {
     expect(paths.backupsDir).toContain("backups");
     expect(paths.engineRoot).toBe("C:\\Users\\tester\\llm\\engines");
     expect(paths.modelRoot).toBe("C:\\Users\\tester\\llm\\models");
+    expect(paths.ggufModelRoot).toBe("C:\\Users\\tester\\llm\\models\\gguf");
+    expect(paths.environmentRoot).toBe("C:\\Users\\tester\\llm\\environments");
     expect(paths.runtimeRoot).toBe("C:\\Users\\tester\\llm\\runtimes");
   });
 
   it("derives the database from the data root and allows canonical roots to be overridden", () => {
-    const paths = resolveRuntimePaths({ FITZ_DATA_ROOT: "D:\\fitz-data", FITZ_PI_AGENT_DIR: "D:\\pi", FITZ_LLM_ROOT: "D:\\llm" });
-    expect(paths).toMatchObject({ dataRoot: "D:\\fitz-data", databasePath: "D:\\fitz-data\\database\\fitz.db", piAgentDir: "D:\\pi", llmRoot: "D:\\llm" });
+    const paths = resolveRuntimePaths({ FITZ_DATA_ROOT: "D:\\fitz-data", FITZ_PI_AGENT_DIR: "D:\\pi", FITZ_LLM_ROOT: "D:\\llm", FITZ_MODEL_ROOT: "D:\\models" });
+    expect(paths).toMatchObject({ dataRoot: "D:\\fitz-data", databasePath: "D:\\fitz-data\\database\\fitz.db", piAgentDir: "D:\\pi", llmRoot: "D:\\llm", modelRoot: "D:\\models", ggufModelRoot: "D:\\models\\gguf" });
   });
 });

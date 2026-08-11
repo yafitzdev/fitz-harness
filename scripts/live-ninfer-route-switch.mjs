@@ -5,12 +5,20 @@ if (process.env.FITZ_ALLOW_LIVE_NINFER !== "1") {
   throw new Error("Set FITZ_ALLOW_LIVE_NINFER=1 to run the live NInfer route-switch test");
 }
 
-const playbook = createNInferPlaybook();
+const runtimeLayout = {
+  id: "ninfer-linux",
+  distribution: "Fitz-NInfer",
+  hostRoot: "",
+  guestRoot: "/opt/fitz/llm",
+  modelRoot: "/opt/fitz/llm/models/ninfer",
+  executable: "/opt/fitz/llm/engines/ninfer/ninfer-serve",
+};
+const playbook = createNInferPlaybook(runtimeLayout);
 const recipes = playbook.recipes.map(configuredRecipe);
 const routes = playbook.routes;
 
 const runtime = createHost({
-  adapters: [new NInferEngineAdapter({ pollIntervalMs: 500, stopTimeoutMs: 15_000, ...(process.platform === "win32" ? { wslDistribution: process.env.FITZ_NINFER_WSL_DISTRIBUTION ?? "Ubuntu", wslUser: process.env.FITZ_NINFER_WSL_USER ?? "root" } : {}) })],
+  adapters: [new NInferEngineAdapter({ pollIntervalMs: 500, stopTimeoutMs: 15_000, wslDistribution: runtimeLayout.distribution, wslUser: "root" })],
   initialRecipes: recipes,
   initialRoutes: routes,
 });

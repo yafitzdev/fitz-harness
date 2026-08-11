@@ -9,7 +9,7 @@ and generated output do not pollute that repository.
 | Purpose | Location |
 | --- | --- |
 | Upstream ComfyUI checkout | `%USERPROFILE%/.llm/engines/ComfyUI` |
-| Isolated Python runtime | `%USERPROFILE%/.llm/runtimes/comfyui` |
+| Isolated Python environment | `%USERPROFILE%/.llm/environments/comfyui-python` |
 | H3 model files | `%USERPROFILE%/.llm/models/comfyui` |
 | ComfyUI LoRAs | `%USERPROFILE%/.llm/models/comfyui/loras` |
 | ComfyUI model-path config | `%USERPROFILE%/.llm/config/comfyui-extra-model-paths.yaml` |

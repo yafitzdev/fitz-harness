@@ -1,6 +1,4 @@
 import { createServer } from "node:net";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import {
   NInferEngineAdapter,
   buildCurrentNInferRecipe,
@@ -11,10 +9,8 @@ if (process.env.FITZ_ALLOW_LIVE_NINFER !== "1") {
 }
 
 const profile = process.env.FITZ_NINFER_PROFILE ?? "27b";
-const llmRoot = process.env.FITZ_LLM_ROOT ?? join(homedir(), ".llm");
-const ninferModelRoot = guestPath(join(llmRoot, "models", "ninfer"));
-const ninferExecutable = process.env.FITZ_NINFER_EXECUTABLE
-  ?? guestPath(join(llmRoot, "engines", "ninfer", "build", "apps", "ninfer-serve"));
+const ninferModelRoot = "/opt/fitz/llm/models/ninfer";
+const ninferExecutable = "/opt/fitz/llm/engines/ninfer/ninfer-serve";
 const selected =
   profile === "35b"
     ? {
@@ -43,7 +39,7 @@ configuration.readinessTimeoutMs = 180_000;
 recipe.configuration = configuration;
 
 const port = await availablePort();
-const adapter = new NInferEngineAdapter({ pollIntervalMs: 500, stopTimeoutMs: 15_000, ...(process.platform === "win32" ? { wslDistribution: process.env.FITZ_NINFER_WSL_DISTRIBUTION ?? "Ubuntu", wslUser: process.env.FITZ_NINFER_WSL_USER ?? "root" } : {}) });
+const adapter = new NInferEngineAdapter({ pollIntervalMs: 500, stopTimeoutMs: 15_000, wslDistribution: "Fitz-NInfer", wslUser: "root" });
 const controller = new AbortController();
 const validation = await adapter.validateRecipe(recipe);
 if (!validation.valid) throw new Error(JSON.stringify(validation.issues));
@@ -102,10 +98,4 @@ async function availablePort() {
   if (!address || typeof address === "string") throw new Error("Could not allocate a TCP port");
   await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
   return address.port;
-}
-
-function guestPath(hostPath) {
-  const windowsPath = /^([A-Za-z]):[\\/](.*)$/.exec(hostPath);
-  if (!windowsPath) return hostPath.replaceAll("\\", "/");
-  return `/mnt/${windowsPath[1].toLowerCase()}/${windowsPath[2].replaceAll("\\", "/")}`;
 }

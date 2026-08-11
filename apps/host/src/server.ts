@@ -31,6 +31,7 @@ import { ensureComfyUISafeModeExtension } from "./comfyui-safe-mode.js";
 import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
 import { HostInstanceLock } from "./host-instance-lock.js";
 import { installGracefulShutdown } from "./graceful-shutdown.js";
+import { LlamaCppModelReconciler } from "./llama-cpp-reconcile.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const runtimePaths = resolveRuntimePaths();
@@ -56,13 +57,14 @@ const hostInstanceLock = HostInstanceLock.acquire(join(runtimePaths.dataRoot, "h
 const restoredStorage = await applyPendingStorageRestore(runtimePaths);
 if (restoredStorage) console.info("Scheduled storage restore applied", restoredStorage);
 mkdirSync(dirname(databasePath), { recursive: true });
-for (const directory of [runtimePaths.piAgentDir, runtimePaths.logsDir, runtimePaths.cacheDir, runtimePaths.engineRoot, runtimePaths.modelRoot, runtimePaths.runtimeRoot, runtimePaths.snapshotsDir, runtimePaths.artifactsDir, runtimePaths.backupsDir]) mkdirSync(directory, { recursive: true });
+for (const directory of [runtimePaths.piAgentDir, runtimePaths.logsDir, runtimePaths.cacheDir, runtimePaths.engineRoot, runtimePaths.modelRoot, runtimePaths.ggufModelRoot, runtimePaths.environmentRoot, runtimePaths.runtimeRoot, runtimePaths.snapshotsDir, runtimePaths.artifactsDir, runtimePaths.backupsDir]) mkdirSync(directory, { recursive: true });
 ensureComfyUISafeModeExtension(localComfyUIPaths(runtimePaths).baseDir);
 const ninferRuntime = engineMode === "ninfer" && process.platform === "win32"
   ? new NInferRuntimeManager({ paths: runtimePaths, sourceDistribution: process.env.FITZ_NINFER_SOURCE_WSL_DISTRIBUTION ?? "Ubuntu" })
   : undefined;
 const engineOptions = engineModeOptions(engineMode);
 const store = new SqliteStore(databasePath);
+const llamaCppModels = new LlamaCppModelReconciler(store, runtimePaths);
 const artifacts = new ArtifactRepository(store, new LocalBlobStore(runtimePaths.artifactsDir), { quotaBytes: () => store.getSetting<number>("artifactStorageQuotaBytes") });
 const artifactRecovery = await artifacts.initialize();
 if (artifactRecovery.migrated || artifactRecovery.collected) console.info("Artifact store reconciled", artifactRecovery);
@@ -72,7 +74,10 @@ const authPepper = authMode === "required" ? resolveAuthPepper(store) : undefine
 // One SecurityService shared by HTTP auth, the media coordinator, and the agent media
 // tools: in-process submits build device-less principals via `principalForUser` (§5.9).
 const security = authPepper ? new SecurityService(store, authPepper) : undefined;
-if (engineMode === "ninfer") reconcileNInferConfiguration(store, ninferRuntime?.layout);
+if (engineMode === "ninfer") {
+  if (!ninferRuntime) throw new Error("NInfer requires the canonical ninfer-linux runtime");
+  reconcileNInferConfiguration(store, ninferRuntime.layout);
+}
 // A fresh store is seeded atomically by createHost from engineOptions. Existing
 // stores need an additive reconcile because seedDefaults is intentionally
 // create-only and must not reset user route assignments.
@@ -83,7 +88,7 @@ enforceModelResidency(store);
 const safety = new AgentSafetyService({
   store,
   snapshotsDir: runtimePaths.snapshotsDir,
-  runtimeDirs: [runtimePaths.piAgentDir, runtimePaths.logsDir, runtimePaths.cacheDir, runtimePaths.engineRoot, runtimePaths.modelRoot, runtimePaths.runtimeRoot, runtimePaths.llmRoot],
+  runtimeDirs: [runtimePaths.piAgentDir, runtimePaths.logsDir, runtimePaths.cacheDir, runtimePaths.engineRoot, runtimePaths.modelRoot, runtimePaths.environmentRoot, runtimePaths.runtimeRoot, runtimePaths.llmRoot],
 });
 // Late-bound: the media coordinator is constructed inside createHost, but customTools
 // runs per agent run — after host startup — so the closure reads the assigned instance.
@@ -110,9 +115,10 @@ const runtime = createHost({
     ...(npmCliPath ? { npmCommand: [process.execPath, npmCliPath] } : {}),
   }),
   modelCatalog: new ModelCatalogService({
-    modelRoot: runtimePaths.modelRoot,
+    modelRoot: runtimePaths.ggufModelRoot,
     ...(process.env.FITZ_HF_ENDPOINT ? { endpoint: process.env.FITZ_HF_ENDPOINT } : {}),
   }),
+  reconcileLocalModels: (routes) => llamaCppModels.reconcile(routes),
   ...(ninferRuntime ? { ninferRuntime } : {}),
   ...(authPepper ? { authPepper } : {}),
   ...engineOptions,
@@ -194,7 +200,8 @@ function resolveAuthPepper(store: SqliteStore): string {
 }
 
 function ninferOptions() {
-  const playbook = createNInferPlaybook(ninferRuntime?.layout);
+  if (!ninferRuntime) throw new Error("NInfer requires the canonical ninfer-linux runtime");
+  const playbook = createNInferPlaybook(ninferRuntime.layout);
   const mediaPlaybook = installedLocalComfyUIPlaybook();
   const wslDistribution = process.env.FITZ_NINFER_WSL_DISTRIBUTION ?? ninferRuntime?.layout.distribution ?? (process.platform === "win32" ? "Ubuntu" : undefined);
   const adapter = new NInferEngineAdapter({ ...(wslDistribution ? { wslDistribution, wslUser: process.env.FITZ_NINFER_WSL_USER ?? "root" } : {}) });

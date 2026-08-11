@@ -146,6 +146,8 @@ export interface CreateHostOptions {
   mediaImageTimeoutMs?: number;
   piPackages?: PiPackageService;
   modelCatalog?: ModelCatalogService;
+  /** Reconciles canonical filesystem model registrations into the live index. */
+  reconcileLocalModels?: (routes: RouteResolver) => void;
   ninferRuntime?: NInferRuntimeManager;
   /** The host safety layer (policy engine, snapshots, trash, redaction). Optional so tests can run without it. */
   safety?: AgentSafetyService;
@@ -212,6 +214,8 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     store.listRoutes(),
     store.listRecipes(),
   );
+  const reconcileLocalModels = () => options.reconcileLocalModels?.(routes);
+  reconcileLocalModels();
   ensureMediaRoutes(store, routes);
   const events = new LifecycleEventBus(1_000, store.latestLifecycleSequence());
   const fakeAdapter = options.adapters ? options.fakeAdapter : (options.fakeAdapter ?? new FakeEngineAdapter());
@@ -423,6 +427,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     "/api/v1/management/status",
     { preHandler: adminGuard(options.adminToken, authMode, principals) },
     async () => {
+      reconcileLocalModels();
       const resourceSnapshot = await resources.snapshot();
       return {
         engine: lifecycle.snapshot(),
@@ -857,7 +862,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
 
   const administratorGuard = adminGuard(options.adminToken, authMode, principals);
   registerRuntimeAdministrationRoutes({ app, tailscale, tailscaleServe, authMode, localPort: options.localPort ?? 8787, principals, administratorGuard, ...(startup ? { startup } : {}), ...(ninferRuntime ? { ninferRuntime } : {}), ...(security ? { security } : {}) });
-  registerCatalogRoutes({ app, principals, administratorGuard, ...(piPackages ? { piPackages } : {}), ...(modelCatalog ? { modelCatalog } : {}), ...(security ? { security } : {}) });
+  registerCatalogRoutes({ app, principals, administratorGuard, reconcileLocalModels, ...(piPackages ? { piPackages } : {}), ...(modelCatalog ? { modelCatalog } : {}), ...(security ? { security } : {}) });
   app.post("/api/v1/management/pairing-codes", { preHandler: administratorGuard }, async (request, reply) => { try { const body = requireRecord(request.body); const role = parseRole(body.intendedRole); const ttlSeconds = body.ttlSeconds === undefined ? 600 : requireInteger(body.ttlSeconds); const pairing = securityRequired(security).issuePairingCode(role, ttlSeconds); security?.audit("pairing-code.issued", principals.get(request)?.user.id, "pairing-code", pairing.id, { intendedRole: role, expiresAt: pairing.expiresAt }); return reply.code(201).send({ data: pairing }); } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
   app.get("/api/v1/management/tool-policies", { preHandler: administratorGuard }, async () => ({ data: store.listToolPolicies() }));
   app.put("/api/v1/management/tool-policies/:subjectType/:subjectId/:toolName", { preHandler: administratorGuard }, async (request, reply) => { try { const params = request.params as { subjectType: string; subjectId: string; toolName: string }; if (params.subjectType !== "role" && params.subjectType !== "user") throw new TypeError("subjectType must be role or user"); const body = requireRecord(request.body); if (body.decision !== "allow" && body.decision !== "deny" && body.decision !== "ask") throw new TypeError("decision must be allow, deny, or ask"); const policy: ToolPolicyRecord = { subjectType: params.subjectType, subjectId: params.subjectId, toolName: params.toolName, decision: body.decision, updatedAt: new Date().toISOString() }; store.upsertToolPolicy(policy); security?.audit("tool-policy.updated", principals.get(request)?.user.id, "tool-policy", `${params.subjectType}:${params.subjectId}:${params.toolName}`, { decision: body.decision }); return { data: policy }; } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });

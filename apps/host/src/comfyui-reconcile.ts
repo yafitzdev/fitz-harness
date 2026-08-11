@@ -20,7 +20,7 @@ export function localComfyUIPaths(paths: FitzRuntimePaths): LocalComfyUIPaths {
   return {
     baseDir: join(paths.dataRoot, "comfyui"),
     engineDir: join(paths.engineRoot, "ComfyUI"),
-    executable: join(paths.llmRoot, "runtimes", "comfyui", process.platform === "win32" ? "Scripts/python.exe" : "bin/python"),
+    executable: join(paths.environmentRoot, "comfyui-python", process.platform === "win32" ? "Scripts/python.exe" : "bin/python"),
     modelConfigPath: join(paths.llmRoot, "config", "comfyui-extra-model-paths.yaml"),
     outputDir: join(paths.cacheDir, "comfyui-output"),
   };

@@ -10,11 +10,12 @@ export interface CatalogRouteOptions {
   security?: SecurityService;
   principals: WeakMap<object, AuthenticatedPrincipal>;
   administratorGuard: preHandlerHookHandler;
+  reconcileLocalModels?: () => void;
 }
 
 /** Owns installable Pi packages/skills and downloadable model catalogs. */
 export function registerCatalogRoutes(options: CatalogRouteOptions): void {
-  const { app, piPackages, modelCatalog, security, principals, administratorGuard } = options;
+  const { app, piPackages, modelCatalog, security, principals, administratorGuard, reconcileLocalModels } = options;
   const preHandler = administratorGuard;
 
   app.get("/api/v1/management/pi/catalog", { preHandler }, async (request, reply) => {
@@ -63,7 +64,7 @@ export function registerCatalogRoutes(options: CatalogRouteOptions): void {
     catch (error) { return reply.code(error instanceof TypeError ? 400 : 503).send({ error: errorMessage(error) }); }
   });
   app.get("/api/v1/management/models/downloaded", { preHandler }, async (_request, reply) => {
-    try { return { data: await requiredModels(modelCatalog).downloaded() }; }
+    try { reconcileLocalModels?.(); return { data: await requiredModels(modelCatalog).downloaded() }; }
     catch (error) { return reply.code(503).send({ error: errorMessage(error) }); }
   });
   app.get("/api/v1/management/models/downloads", { preHandler }, async (_request, reply) => {
@@ -81,7 +82,7 @@ export function registerCatalogRoutes(options: CatalogRouteOptions): void {
     } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
   });
   app.get("/api/v1/management/models/downloads/:id", { preHandler }, async (request, reply) => {
-    try { return { data: requiredModels(modelCatalog).progress((request.params as { id: string }).id) }; }
+    try { const record = requiredModels(modelCatalog).progress((request.params as { id: string }).id); if (record.status === "done") reconcileLocalModels?.(); return { data: record }; }
     catch (error) { return reply.code(error instanceof DownloadNotFoundError ? 404 : 400).send({ error: errorMessage(error) }); }
   });
   app.delete("/api/v1/management/models/downloads/:id", { preHandler }, async (request, reply) => {
@@ -98,6 +99,7 @@ export function registerCatalogRoutes(options: CatalogRouteOptions): void {
       const repoId = requireString(body.repoId, "repoId");
       const fileName = requireString(body.fileName, "fileName");
       await requiredModels(modelCatalog).removeDownloaded(repoId, fileName);
+      reconcileLocalModels?.();
       security?.audit("model.removed", principals.get(request)?.user.id, "model", `${repoId}/${fileName}`);
       return reply.code(204).send();
     } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
