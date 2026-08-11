@@ -81,6 +81,28 @@ describe("Fitz host", () => {
     } finally { await runtime.app.close(); }
   });
 
+  it("force-unloads the resident model when the desktop closes", async () => {
+    const adapter = new FakeEngineAdapter();
+    const runtime = createHost({ fakeAdapter: adapter });
+    try {
+      const warm = await runtime.app.inject({ method: "POST", url: "/api/v1/inference/warm", payload: { model: "fast" } });
+      expect(warm.statusCode, warm.body).toBe(200);
+      expect(runtime.lifecycle.snapshot().state).toBe("READY");
+
+      const stopped = await runtime.app.inject({
+        method: "POST",
+        url: "/api/v1/management/instances/stop",
+        payload: { mode: "force", reason: "desktop-quit" },
+      });
+      expect(stopped.statusCode, stopped.body).toBe(200);
+      expect(stopped.json().engine.state).toBe("UNLOADED");
+      expect(adapter.stops).toEqual([expect.objectContaining({ mode: "force" })]);
+
+      const invalid = await runtime.app.inject({ method: "POST", url: "/api/v1/management/instances/stop", payload: { mode: "eventually" } });
+      expect(invalid.statusCode).toBe(400);
+    } finally { await runtime.app.close(); }
+  });
+
   it("returns an immediate OpenAI-compatible 429 when the GPU lane is saturated", async () => {
     const runtime = createHost({
       fakeAdapter: new FakeEngineAdapter({ tokenDelayMs: 100 }),

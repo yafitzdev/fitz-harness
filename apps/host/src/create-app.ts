@@ -839,12 +839,18 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   app.post(
     "/api/v1/management/instances/stop",
     { preHandler: adminGuard(options.adminToken, authMode, principals) },
-    async (_request, reply) => {
+    async (request, reply) => {
       try {
-        await lifecycle.stop("management-request", "graceful");
+        const body = request.body === undefined ? {} : requireRecord(request.body);
+        const mode = body.mode === undefined || body.mode === "graceful"
+          ? "graceful"
+          : body.mode === "force" ? "force" : undefined;
+        if (!mode) throw new TypeError("mode must be graceful or force");
+        const reason = body.reason === undefined ? "management-request" : requireString(body.reason, "reason");
+        await lifecycle.stop(reason, mode);
         return { engine: lifecycle.snapshot() };
       } catch (error) {
-        return reply.code(409).send({ error: errorMessage(error) });
+        return reply.code(error instanceof TypeError ? 400 : 409).send({ error: errorMessage(error) });
       }
     },
   );

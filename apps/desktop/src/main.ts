@@ -10,6 +10,7 @@ import { readProjectResource } from "./resource-preview.js";
 import electronUpdater from "electron-updater";
 import { HostStartupError, HostSupervisor } from "./host-supervisor.js";
 import { HostClient, hostRequestDeadline } from "./host-client.js";
+import { createModelUnloadOnQuitHandler } from "./model-unload-on-quit.js";
 
 const { autoUpdater } = electronUpdater;
 const execFileAsync = promisify(execFile);
@@ -145,6 +146,19 @@ autoUpdater.on("update-not-available", (info) => publishUpdateStatus({ state: "c
 autoUpdater.on("update-downloaded", (info) => publishUpdateStatus({ state: "downloaded", version: info.version, percent: 100 }));
 autoUpdater.on("error", () => publishUpdateStatus({ state: "error" }));
 const desktopSmoke = process.env.FITZ_DESKTOP_SMOKE === "1";
+app.on("before-quit", createModelUnloadOnQuitHandler({
+  app,
+  shouldUnload: () => !desktopSmoke && isLoopbackHost(hostUrl),
+  unload: async () => {
+    const response = await hostClient.fetch("/api/v1/management/instances/stop", {
+      method: "POST",
+      body: { mode: "force", reason: "desktop-quit" },
+      timeoutMs: 15_000,
+    });
+    if (!response.ok) throw new Error(hostError(await response.text()));
+  },
+  onError: (error) => console.warn("Could not unload the local model before quit", error),
+}));
 const primaryInstance = desktopSmoke || app.requestSingleInstanceLock();
 if (!primaryInstance) {
   app.quit();
