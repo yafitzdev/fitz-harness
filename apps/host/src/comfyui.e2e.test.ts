@@ -112,6 +112,21 @@ describe("MiniMax H3 via ComfyUI (PR 7)", () => {
     expect(playbook.routes).toEqual([expect.objectContaining({ id: "image", recipeId: "krea2-nsfw-image" })]);
   });
 
+  it("budgets Qwen Image by peak dedicated VRAM rather than total model-file size", () => {
+    const playbook = createComfyUIPlaybook({
+      engineDir: "/engines/comfyui",
+      executable: "python",
+      recipeIds: ["qwen-image"],
+    });
+
+    expect(playbook.recipes).toEqual([
+      expect.objectContaining({
+        id: "qwen-image",
+        configuration: expect.objectContaining({ expectedVramMiB: 24_576 }),
+      }),
+    ]);
+  });
+
   it("runs a video generation end-to-end through the host pipeline", async () => {
     const fixturePort = await unusedPort();
     const child = spawn(process.execPath, [FIXTURE, "--listen", "127.0.0.1", "--port", String(fixturePort), "--progress-per-poll", "0.5"]);

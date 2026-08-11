@@ -276,7 +276,10 @@ export function createComfyUIPlaybook(options: ComfyUIPlaybookOptions): ComfyUIP
       limits: { maxResolution: "2048x2048", maxRefs: 1 },
       configuration: {
         ...launch,
-        expectedVramMiB: 30_720,
+        // ComfyUI smart memory keeps the FP8 diffusion model resident while
+        // offloading the shared Qwen encoder as needed. This is a peak
+        // dedicated-VRAM budget, not the sum of every model file on disk.
+        expectedVramMiB: 24_576,
         readinessTimeoutMs: 300_000,
         comfyuiWorkflow: qwenImageWorkflow(),
         comfyuiEditWorkflow: qwenImageEditWorkflow(),
