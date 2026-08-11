@@ -70,16 +70,21 @@ describe("ModelCatalogService", () => {
     expect(result.models[0]?.id).toBe("org/model");
   });
 
-  it("filters the catalog by pipeline tag", async () => {
+  it("separates text-producing models from image and video generators", async () => {
     const requested: string[] = [];
     const service = new ModelCatalogService({
       modelRoot: await temporaryModelRoot(),
       fetch: async (input: RequestInfo | URL) => { requested.push(String(input)); return jsonResponse({ count: 0, items: [] }); },
     });
-    await service.search("", 0, 10, "feature-extraction");
-    await service.search("", 0, 10);
-    expect(requested[0]).toContain("pipeline_tag=feature-extraction");
-    expect(requested[1]).toContain("pipeline_tag=text-generation");
+    await service.search("", 0, 10, "vision");
+    expect(requested.some((url) => url.includes("pipeline_tag=image-text-to-video"))).toBe(true);
+    expect(requested.some((url) => url.includes("pipeline_tag=text-to-image"))).toBe(true);
+    expect(requested.every((url) => !url.includes("filter=gguf"))).toBe(true);
+    requested.length = 0;
+    await service.search("", 0, 10, "llm");
+    expect(requested.some((url) => url.includes("pipeline_tag=text-generation"))).toBe(true);
+    expect(requested.some((url) => url.includes("pipeline_tag=image-text-to-text"))).toBe(true);
+    expect(requested.every((url) => url.includes("filter=gguf"))).toBe(true);
   });
 
   it("maps the shared sort keys to Hugging Face sort params", async () => {
@@ -88,18 +93,14 @@ describe("ModelCatalogService", () => {
       modelRoot: await temporaryModelRoot(),
       fetch: async (input: RequestInfo | URL) => { requested.push(String(input)); return jsonResponse({ count: 0, items: [] }); },
     });
-    await service.search("", 0, 10, "text-generation", "downloads", "desc");
-    await service.search("", 0, 10, "text-generation", "updated", "desc");
-    await service.search("", 0, 10, "text-generation", "name", "asc");
-    await service.search("", 0, 10, "text-generation", "likes", "desc");
-    expect(requested[0]).toContain("sort=downloads");
-    expect(requested[0]).toContain("direction=-1");
-    expect(requested[1]).toContain("sort=lastModified");
-    expect(requested[1]).toContain("direction=-1");
-    expect(requested[2]).toContain("sort=name");
-    expect(requested[2]).toContain("direction=1");
-    expect(requested[3]).toContain("sort=likes");
-    expect(requested[3]).toContain("direction=-1");
+    await service.search("", 0, 10, "llm", "downloads", "desc");
+    await service.search("", 0, 10, "llm", "updated", "desc");
+    await service.search("", 0, 10, "llm", "name", "asc");
+    await service.search("", 0, 10, "llm", "likes", "desc");
+    expect(requested.some((url) => url.includes("sort=downloads") && url.includes("direction=-1"))).toBe(true);
+    expect(requested.some((url) => url.includes("sort=lastModified") && url.includes("direction=-1"))).toBe(true);
+    expect(requested.some((url) => url.includes("sort=name") && url.includes("direction=1"))).toBe(true);
+    expect(requested.some((url) => url.includes("sort=likes") && url.includes("direction=-1"))).toBe(true);
   });
 
   it("skips models below the minimum likes and downloads thresholds", async () => {
@@ -111,7 +112,7 @@ describe("ModelCatalogService", () => {
         { id: "org/liked", downloads: 2_000, likes: 1_500 },
       ]),
     });
-    const result = await service.search("", 0, 10, "text-generation", "downloads", "desc", 100, 1000);
+    const result = await service.search("", 0, 10, "llm", "downloads", "desc", 100, 1000);
     expect(result.models.map((entry) => entry.id)).toEqual(["org/popular", "org/liked"]);
     expect(result.total).toBe(2);
   });
@@ -132,7 +133,7 @@ describe("ModelCatalogService", () => {
     expect(next.models.map((entry) => entry.id)).toEqual(Array.from({ length: 30 }, (_, i) => `org/model-${30 + i}`));
     expect(next.total).toBe(100);
     // HF ignores `offset`, so the whole window is fetched once and reused for both pages.
-    expect(requested).toHaveLength(1);
+    expect(requested).toHaveLength(2);
   });
 
   it("keeps only models released within the last weeks", async () => {
@@ -147,7 +148,7 @@ describe("ModelCatalogService", () => {
         { id: "org/dateless", downloads: 1000, likes: 10 },
       ]),
     });
-    const result = await service.search("", 0, 10, "text-generation", "downloads", "desc", 0, 0, 4);
+    const result = await service.search("", 0, 10, "llm", "downloads", "desc", 0, 0, 4);
     expect(result.models.map((entry) => entry.id)).toEqual(["org/fresh", "org/borderline"]);
     expect(result.total).toBe(2);
   });
@@ -166,10 +167,10 @@ describe("ModelCatalogService", () => {
     });
     const unfiltered = await service.search("", 0, 10);
     expect(unfiltered.total).toBe(2);
-    const filtered = await service.search("", 0, 10, "text-generation", "downloads", "desc", 100, 1000);
+    const filtered = await service.search("", 0, 10, "llm", "downloads", "desc", 100, 1000);
     expect(filtered.total).toBe(1);
     expect(filtered.models.map((entry) => entry.id)).toEqual(["org/popular"]);
-    expect(requested).toHaveLength(1);
+    expect(requested).toHaveLength(2);
   });
 
   it("re-fetches the window when the query or sort changes", async () => {
@@ -181,8 +182,8 @@ describe("ModelCatalogService", () => {
     await service.search("qwen");
     await service.search("qwen"); // same query/sort → cached
     await service.search("gemma");
-    await service.search("", 0, 10, "text-generation", "likes", "desc");
-    expect(requested).toHaveLength(3);
+    await service.search("", 0, 10, "llm", "likes", "desc");
+    expect(requested).toHaveLength(6);
   });
 
   it("lists the GGUF files of a model repository", async () => {

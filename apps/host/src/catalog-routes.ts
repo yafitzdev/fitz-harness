@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerHookHandler } from "fastify";
 import type { PiPackageService } from "@fitz/agent-pi";
 import type { AuthenticatedPrincipal, SecurityService } from "@fitz/security";
-import { DownloadNotFoundError, type ModelCatalogService } from "./model-catalog.js";
+import { DownloadNotFoundError, normalizeModelCatalogCategory, type ModelCatalogService } from "./model-catalog.js";
 
 export interface CatalogRouteOptions {
   app: FastifyInstance;
@@ -55,8 +55,8 @@ export function registerCatalogRoutes(options: CatalogRouteOptions): void {
 
   app.get("/api/v1/management/models/catalog", { preHandler }, async (request, reply) => {
     try {
-      const query = request.query as { query?: string; pipeline?: string; offset?: string; limit?: string; sort?: string; direction?: string; min_likes?: string; min_downloads?: string; released_within_weeks?: string };
-      return { data: await requiredModels(modelCatalog).search(query.query ?? "", toNonNegativeInteger(query.offset, 0), Math.min(toNonNegativeInteger(query.limit, 30), 50), query.pipeline ?? "text-generation", catalogSort(query.sort), catalogDirection(query.direction), toNonNegativeInteger(query.min_likes, 0), toNonNegativeInteger(query.min_downloads, 0), toNonNegativeInteger(query.released_within_weeks, 0)) };
+      const query = request.query as { query?: string; category?: string; offset?: string; limit?: string; sort?: string; direction?: string; min_likes?: string; min_downloads?: string; released_within_weeks?: string };
+      return { data: await requiredModels(modelCatalog).search(query.query ?? "", toNonNegativeInteger(query.offset, 0), Math.min(toNonNegativeInteger(query.limit, 30), 50), normalizeModelCatalogCategory(query.category), catalogSort(query.sort), catalogDirection(query.direction), toNonNegativeInteger(query.min_likes, 0), toNonNegativeInteger(query.min_downloads, 0), toNonNegativeInteger(query.released_within_weeks, 0)) };
     } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); }
   });
   app.get("/api/v1/management/models/files", { preHandler }, async (request, reply) => {

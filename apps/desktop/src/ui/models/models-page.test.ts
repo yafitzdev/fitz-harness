@@ -10,9 +10,8 @@ function buildPage(): HTMLElement {
   page.className = "management-page";
   const layout = new ManagementPageLayout(page, {
     tabs: [
-      { id: "llm-tab", label: "LLMs", dataset: { pipeline: "text-generation" }, active: true },
-      { id: "vision-tab", label: "Vision", dataset: { pipeline: "image-text-to-text" } },
-      { id: "audio-tab", label: "Audio", dataset: { pipeline: "automatic-speech-recognition" } },
+      { id: "llm-tab", label: "LLMs", dataset: { category: "llm" }, active: true },
+      { id: "vision-tab", label: "Vision", dataset: { category: "vision" } },
     ],
     actions: [{ id: "refresh-models", icon: managementRefreshIcon, label: "Refresh models" }],
   });
@@ -28,7 +27,7 @@ function buildPage(): HTMLElement {
     id: "models-view",
     title: "LLMs",
     titleId: "models-title",
-    description: "Search GGUF models on Hugging Face by type.",
+    description: "Browse text models and image or video generation models on Hugging Face.",
     search: { id: "model-search", placeholder: "Search models" },
     body: [downloadedSection, discoverSection],
   });
@@ -143,7 +142,7 @@ describe("ModelsPageController", () => {
     select.value = "updated:desc";
     select.dispatchEvent(new Event("change", { bubbles: true }));
 
-    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/models/catalog?query=&pipeline=text-generation&offset=0&limit=30&sort=updated&direction=desc"));
+    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/models/catalog?query=&category=llm&offset=0&limit=30&sort=updated&direction=desc"));
   });
 
   it("filters the catalog by minimum likes and downloads", async () => {
@@ -184,9 +183,9 @@ describe("ModelsPageController", () => {
     recency.dispatchEvent(new Event("change", { bubbles: true }));
     expect(recencyReadout?.textContent).toBe("last 4 weeks");
 
-    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/models/catalog?query=&pipeline=text-generation&offset=0&limit=30&sort=downloads&direction=desc&min_likes=100&min_downloads=5000&released_within_weeks=4"));
+    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/models/catalog?query=&category=llm&offset=0&limit=30&sort=downloads&direction=desc&min_likes=100&min_downloads=5000&released_within_weeks=4"));
     // Thresholds are dropped from the query while the sliders are at zero.
-    expect(api).toHaveBeenCalledWith("/api/v1/management/models/catalog?query=&pipeline=text-generation&offset=0&limit=30&sort=downloads&direction=desc");
+    expect(api).toHaveBeenCalledWith("/api/v1/management/models/catalog?query=&category=llm&offset=0&limit=30&sort=downloads&direction=desc");
   });
 
   it("does not render uploader facet chips", async () => {
@@ -205,19 +204,19 @@ describe("ModelsPageController", () => {
     expect(page.querySelectorAll("#model-catalog .model-card")).toHaveLength(3);
   });
 
-  it("switches the catalog filter when a pipeline tab is clicked", async () => {
+  it("switches the catalog filter when an output category tab is clicked", async () => {
     const api = vi.fn(async (path: string) => {
       if (path === "/api/v1/management/models/downloaded" || path === "/api/v1/management/models/downloads") return { data: [] };
       return { data: { total: 0, models: [] } };
     });
     const { controller, page } = setup(api);
     await controller.load();
-    expect(api).toHaveBeenCalledWith("/api/v1/management/models/catalog?query=&pipeline=text-generation&offset=0&limit=30&sort=downloads&direction=desc");
-    // The page title mirrors the active pipeline tab.
+    expect(api).toHaveBeenCalledWith("/api/v1/management/models/catalog?query=&category=llm&offset=0&limit=30&sort=downloads&direction=desc");
+    // The page title mirrors the active category tab.
     expect(page.querySelector("#models-title")?.textContent).toBe("LLMs");
 
     click(page.querySelector("#vision-tab")!);
-    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/models/catalog?query=&pipeline=image-text-to-text&offset=0&limit=30&sort=downloads&direction=desc"));
+    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/models/catalog?query=&category=vision&offset=0&limit=30&sort=downloads&direction=desc"));
     expect(page.querySelector("#vision-tab")?.classList.contains("active")).toBe(true);
     expect(page.querySelector("#llm-tab")?.classList.contains("active")).toBe(false);
     expect(page.querySelector("#models-title")?.textContent).toBe("Vision");
@@ -237,7 +236,7 @@ describe("ModelsPageController", () => {
     search.dispatchEvent(new Event("input", { bubbles: true }));
     await vi.advanceTimersByTimeAsync(250);
 
-    expect(api).toHaveBeenCalledWith("/api/v1/management/models/catalog?query=llama&pipeline=text-generation&offset=0&limit=30&sort=downloads&direction=desc");
+    expect(api).toHaveBeenCalledWith("/api/v1/management/models/catalog?query=llama&category=llm&offset=0&limit=30&sort=downloads&direction=desc");
   });
 
   it("does not let a slow stale search replace newer catalog results", async () => {
@@ -279,7 +278,7 @@ describe("ModelsPageController", () => {
     expect(page.querySelectorAll("#model-catalog .model-card")).toHaveLength(1);
 
     click(loadMore);
-    expect(api).toHaveBeenCalledWith("/api/v1/management/models/catalog?query=&pipeline=text-generation&offset=1&limit=30&sort=downloads&direction=desc");
+    expect(api).toHaveBeenCalledWith("/api/v1/management/models/catalog?query=&category=llm&offset=1&limit=30&sort=downloads&direction=desc");
     await vi.waitFor(() => expect(page.querySelectorAll("#model-catalog .model-card")).toHaveLength(2));
   });
 
@@ -367,7 +366,7 @@ describe("ModelsPageController", () => {
     await vi.advanceTimersByTimeAsync(500); // first poll: still active
     expect(page.querySelector("#model-catalog .model-progress")?.textContent).toContain("50 B / 100 B");
 
-    await vi.advanceTimersByTimeAsync(500); // second poll: done → toast + reload
+    await vi.advanceTimersByTimeAsync(500); // second poll: done → reload
     expect(calls.showStatus).toHaveBeenCalledWith("Downloaded model.Q4_K_M.gguf", "success");
     // The finished model moves to Downloaded and leaves the Discover catalog.
     expect(page.querySelector("#model-catalog")?.textContent).not.toContain("org/model");
@@ -531,7 +530,7 @@ describe("ModelsPageController", () => {
   it("fails loudly when the page is missing a required catalog control", () => {
     const page = document.createElement("section");
     page.id = "models-page";
-    new ManagementPageLayout(page, { tabs: [{ id: "llm-tab", label: "LLMs", dataset: { pipeline: "text-generation" }, active: true }] });
+    new ManagementPageLayout(page, { tabs: [{ id: "llm-tab", label: "LLMs", dataset: { category: "llm" }, active: true }] });
     expect(() => new ModelsPageController({ page, api: vi.fn(), openExternal: vi.fn(), openPath: vi.fn(), showStatus: vi.fn(), errorMessage: vi.fn() } satisfies ModelsPageOptions))
       .toThrow("Models page is missing #models-view");
   });

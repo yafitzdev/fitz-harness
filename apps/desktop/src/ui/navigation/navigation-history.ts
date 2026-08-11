@@ -13,6 +13,7 @@ export class NavigationHistoryController {
   readonly #entries: AppLocation[] = [];
   #index = -1;
   #replaying = false;
+  #navigating = false;
 
   constructor(options: NavigationHistoryOptions) { this.#options = options; }
 
@@ -26,13 +27,15 @@ export class NavigationHistoryController {
   }
 
   async navigate(offset: -1 | 1): Promise<void> {
+    if (this.#navigating) return;
     const nextIndex = this.#index + offset;
     const location = this.#entries[nextIndex];
     if (!location || this.#options.blocked()) return;
+    this.#navigating = true;
     this.#index = nextIndex;
     this.#replaying = true;
     try { await this.#options.replay(location); }
-    finally { this.#replaying = false; }
+    finally { this.#replaying = false; this.#navigating = false; }
   }
 }
 

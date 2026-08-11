@@ -1052,10 +1052,11 @@ describe("Fitz host", () => {
       const denied = await runtime.app.inject({ method: "GET", url: "/api/v1/management/models/catalog" });
       expect(denied.statusCode).toBe(403);
       const headers = { "x-fitz-admin-token": "model-test-token" };
-      const response = await runtime.app.inject({ method: "GET", url: "/api/v1/management/models/catalog?query=qwen&pipeline=feature-extraction", headers });
+      const response = await runtime.app.inject({ method: "GET", url: "/api/v1/management/models/catalog?query=qwen&category=vision", headers });
       expect(response.statusCode, response.body).toBe(200);
       expect(response.json().data).toEqual({ total: 1, models: [expect.objectContaining({ id: "Qwen/Qwen2.5-7B-Instruct-GGUF" })] });
-      expect(requested.some((url) => url.includes("pipeline_tag=feature-extraction"))).toBe(true);
+      expect(requested.some((url) => url.includes("pipeline_tag=image-text-to-video"))).toBe(true);
+      expect(requested.filter((url) => url.includes("pipeline_tag=image-text-to-video")).every((url) => !url.includes("filter=gguf"))).toBe(true);
       // The shared sort/direction params pass through to the upstream fetch.
       const sorted = await runtime.app.inject({ method: "GET", url: "/api/v1/management/models/catalog?sort=updated&direction=asc", headers });
       expect(sorted.statusCode, sorted.body).toBe(200);

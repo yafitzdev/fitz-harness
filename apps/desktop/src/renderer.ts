@@ -23,7 +23,7 @@ import { canOpenManagementView, managementNavigationVisibility } from "./ui/navi
 import { NavigationHistoryController, type AppLocation } from "./ui/navigation/navigation-history.js";
 import { ApplicationMenuController } from "./ui/navigation/application-menu.js";
 import { CustomSelectController } from "./ui/primitives/custom-select.js";
-import { ActionStatus, type ActionStatusTone } from "./ui/primitives/action-status.js";
+import type { ActionStatusTone } from "./ui/primitives/action-status.js";
 import { requiredElement as element, requiredQuery as query, svgIcon as svg, textBlock } from "./ui/primitives/dom.js";
 import { ResizablePane } from "./ui/primitives/resizable-pane.js";
 import { PluginsPageController } from "./ui/plugins/plugins-page.js";
@@ -122,9 +122,8 @@ pluginsLayout.addContent({
 });
 const modelsLayout = new ManagementPageLayout(modelsPage, {
   tabs: [
-    { id: "llm-tab", label: "LLMs", dataset: { pipeline: "text-generation" }, active: true },
-    { id: "vision-tab", label: "Vision", dataset: { pipeline: "image-text-to-text" } },
-    { id: "audio-tab", label: "Audio", dataset: { pipeline: "automatic-speech-recognition" } },
+    { id: "llm-tab", label: "LLMs", dataset: { category: "llm" }, active: true },
+    { id: "vision-tab", label: "Vision", dataset: { category: "vision" } },
   ],
   actions: [{ id: "refresh-models", icon: managementRefreshIcon, label: "Refresh models" }],
 });
@@ -132,7 +131,7 @@ modelsLayout.addContent({
   id: "models-view",
   title: "LLMs",
   titleId: "models-title",
-  description: "Search GGUF models on Hugging Face by type.",
+  description: "Browse text models and image or video generation models on Hugging Face.",
   search: { id: "model-search", placeholder: "Search models" },
   body: [element("models-downloaded-section"), element("models-discover-section")],
 });
@@ -209,9 +208,6 @@ const composer = new Composer({
   onError: (message) => showStatus(message, "error"),
   isRunning: () => agentRuns.active,
 });
-const conversationActionStatus = new ActionStatus();
-conversationActionStatus.root.classList.add("conversation-action-status");
-composer.root.prepend(conversationActionStatus.root);
 conversationLayout = new ConversationLayout({ workspace, messages, composer: composer.root, scrollButton: composer.scrollButton, inspectorWidth: () => inspectorPanel.width() });
 adaptiveWorkspace = new AdaptiveWorkspace({ shell, workspace, onLayoutChange: () => conversationLayout?.sync() });
 const customSelects = new CustomSelectController(selectPopover, closePopovers);
@@ -696,6 +692,11 @@ const appMenus = new ApplicationMenuController({
 void initialize();
 
 window.fitz.onNavigationCommand((command) => void navigationHistory.navigate(command === "back" ? -1 : 1));
+document.addEventListener("auxclick", (event) => {
+  if (event.button !== 3 && event.button !== 4) return;
+  event.preventDefault();
+  void navigationHistory.navigate(event.button === 3 ? -1 : 1);
+});
 document.addEventListener("keydown", (event) => {
   if (event.ctrlKey && event.key.toLowerCase() === "n") { event.preventDefault(); openNewChat(); }
   if (event.ctrlKey && event.key.toLowerCase() === "b") { event.preventDefault(); toggleSidebar(); }
@@ -774,7 +775,7 @@ async function loadModels(preferredRoute?: string): Promise<void> {
 // refreshes, so picks made in the Connections workspace show up in chat immediately.
 function rebuildRouteLabels(preferredRoute?: string): void {
   if (!routeCards.length) return;
-  const priority = new Map([["default", 0], ["fast", 1], ["smart", 2]]);
+  const priority = new Map([["fast", 0], ["default", 1], ["smart", 2]]);
   const cards = routeCards.filter((card: Json) => priority.has(String(card.id))).sort((left: Json, right: Json) => (priority.get(left.id) ?? 3) - (priority.get(right.id) ?? 3));
   composer.controls.setRoutes(cards.map((card: Json) => {
     const route = (managementConfiguration?.routes ?? []).find((item: Json) => item.id === card.id);
@@ -1060,16 +1061,8 @@ async function compactCurrentSession(): Promise<void> {
 function setStatus(text: string, state: string): void { composer.setStatus(text, state); }
 function setConnection(text: string, state: string): void { connectionDetail.textContent = text; connectionStatus.dataset.state = state; }
 function setFormBusy(formElement: HTMLFormElement, busy: boolean): void { for (const control of formElement.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>("input,button,select")) control.disabled = busy; }
-/** Routes typed action feedback to the visible page without popup notifications. */
-function showStatus(text: string, tone: ActionStatusTone): void {
-  const activeManagementPage = workspace.querySelector<HTMLElement>(".management-page:not([hidden])");
-  const status = activeManagementPage ? ActionStatus.find(activeManagementPage) : undefined;
-  if (status) {
-    status.show(text, tone);
-    return;
-  }
-  conversationActionStatus.show(text, tone);
-}
+/** Action feedback is deliberately silent; operations render durable state in their own UI. */
+function showStatus(_text: string, _tone: ActionStatusTone): void {}
 function panelEmpty(text: string): HTMLElement { return textBlock("panel-empty", text); }
 function loadingMessage(text: string): HTMLElement { return textBlock("panel-empty", text); }
 async function api(path: string, method = "GET", body?: unknown): Promise<Json> {

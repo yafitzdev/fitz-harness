@@ -12,8 +12,8 @@ export interface ModelsPageOptions {
 }
 
 /**
- * Owns the Models management page: the Hugging Face catalog filtered by
- * pipeline tag, per-model downloads, and the list of GGUF files on the host.
+ * Owns the Models management page: the Hugging Face catalog separated by
+ * output category, per-model downloads, and the list of GGUF files on the host.
  * The catalog behavior is delegated to ModelCatalogController; this wrapper
  * just resolves the page's elements and forwards the shared loading behavior.
  */
@@ -26,8 +26,8 @@ export class ModelsPageController {
       if (!value) throw new Error(`Models page is missing #${id}`);
       return value;
     };
-    const pipelineTabs = [...options.page.querySelectorAll<HTMLButtonElement>(".management-page-tabs [data-pipeline]")];
-    if (pipelineTabs.length === 0) throw new Error("Models page is missing pipeline tabs");
+    const categoryTabs = [...options.page.querySelectorAll<HTMLButtonElement>(".management-page-tabs [data-category]")];
+    if (categoryTabs.length === 0) throw new Error("Models page is missing category tabs");
     this.catalog = new ModelCatalogController({
       view: require("models-view"),
       title: require("models-title"),
@@ -36,7 +36,7 @@ export class ModelsPageController {
       catalogList: require("model-catalog"),
       loadMoreModels: require("load-more-models"),
       refresh: require("refresh-models"),
-      pipelineTabs,
+      categoryTabs,
     }, {
       api: options.api,
       openExternal: options.openExternal,

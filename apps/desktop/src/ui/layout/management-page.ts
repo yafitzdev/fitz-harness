@@ -1,5 +1,4 @@
 import { svgIcon } from "../primitives/dom.js";
-import { ActionStatus } from "../primitives/action-status.js";
 
 /** Shared refresh glyph used by every management tab's header action. */
 export const managementRefreshIcon = '<path d="M15.5 7A6 6 0 1 0 16 12"></path><path d="M15.5 3v4h-4"></path>';
@@ -10,7 +9,7 @@ export interface ManagementPageTab {
   id: string;
   label: string;
   active?: boolean;
-  /** Extra attributes exposed as `data-*` on the tab button, e.g. `{ pipeline: "text-generation" }` → `data-pipeline`. */
+  /** Extra attributes exposed as `data-*` on the tab button, e.g. `{ category: "vision" }` → `data-category`. */
   dataset?: Record<string, string>;
 }
 
@@ -50,8 +49,6 @@ export class ManagementPageLayout {
   readonly header: HTMLElement;
   readonly tabs: HTMLElement;
   readonly actions: HTMLElement;
-  readonly status: ActionStatus;
-
   readonly #tabButtons = new Map<string, HTMLButtonElement>();
   readonly #actionButtons = new Map<string, HTMLButtonElement>();
   #tabListener: ((id: string) => void) | undefined;
@@ -64,7 +61,6 @@ export class ManagementPageLayout {
     this.tabs.className = "management-page-tabs";
     this.actions = document.createElement("div");
     this.actions.className = "management-actions";
-    this.status = new ActionStatus();
     for (const tab of options.tabs ?? []) {
       const button = document.createElement("button");
       button.type = "button";
@@ -97,7 +93,6 @@ export class ManagementPageLayout {
     }
     this.header.append(this.tabs, this.actions);
     root.prepend(this.header);
-    this.header.after(this.status.root);
   }
 
   /**
@@ -136,7 +131,7 @@ export class ManagementPageLayout {
     if (options.body) column.append(...options.body);
     if (options.before) options.before.before(column);
     else if (this.#lastContent) this.#lastContent.after(column);
-    else this.status.root.after(column);
+    else this.header.after(column);
     this.#lastContent = column;
     return column;
   }

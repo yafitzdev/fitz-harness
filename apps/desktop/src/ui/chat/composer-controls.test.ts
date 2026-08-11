@@ -26,11 +26,11 @@ function setup(storage = memoryStorage()) {
   const accessReadOnly = node<HTMLButtonElement>("button");
   accessReadOnly.dataset.accessMode = "read-only";
   const effort = node<HTMLSelectElement>("select");
-  for (const [label, value] of [["Light", "2048"], ["Medium", "8192"], ["High", "16384"]]) {
+  for (const [label, value] of [["Light", "4096"], ["Normal", "10240"], ["High", "24576"]]) {
     const option = document.createElement("option");
     option.textContent = label;
     option.value = value;
-    if (value === "8192") option.selected = true;
+    if (value === "10240") option.selected = true;
     effort.add(option);
   }
   const modelSummary = node<HTMLElement>("span");
@@ -70,7 +70,7 @@ describe("ComposerControls", () => {
     ], "smart");
 
     expect(controls.routeId).toBe("smart");
-    expect(elements.modelSummary.textContent).toBe("Smart · Medium");
+    expect(elements.modelSummary.textContent).toBe("Smart · Normal");
 
     click(elements.settingRows[0]!);
     expect(elements.settingsSubmenu.hidden).toBe(false);
@@ -78,7 +78,7 @@ describe("ComposerControls", () => {
     click([...elements.settingsSubmenu.querySelectorAll("button")][0]!);
 
     expect(controls.routeId).toBe("default");
-    expect(elements.modelSummary.textContent).toBe("Default · Medium");
+    expect(elements.modelSummary.textContent).toBe("Default · Normal");
     expect(calls.onRouteChange).toHaveBeenCalledWith("default");
     expect(calls.closeAllPopovers).toHaveBeenCalled();
   });
@@ -89,15 +89,15 @@ describe("ComposerControls", () => {
       { id: "smart", label: "Smart · ninfer-1.5b", displayName: "Smart", group: "Routes" },
     ], "smart");
 
-    expect(elements.modelSummary.textContent).toBe("Smart · Medium");
+    expect(elements.modelSummary.textContent).toBe("Smart · Normal");
     expect(elements.modelRoute.textContent).toBe("Smart");
-    expect(elements.modelEffort.textContent).toBe(" · Medium");
+    expect(elements.modelEffort.textContent).toBe(" · Normal");
     // The settings menu still shows the full label.
     expect(elements.modelValue.textContent).toBe("Smart · ninfer-1.5b");
 
     // A route without a model name collapses the name span entirely.
     controls.setRoutes([{ id: "default", label: "Default", displayName: "Default" }], "default");
-    expect(elements.modelSummary.textContent).toBe("Default · Medium");
+    expect(elements.modelSummary.textContent).toBe("Default · Normal");
     expect(elements.modelRoute.textContent).toBe("Default");
   });
 

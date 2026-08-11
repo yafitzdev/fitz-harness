@@ -90,9 +90,8 @@ describe("ManagementPageLayout", () => {
     root.append(editor);
     const layout = new ManagementPageLayout(root);
     layout.addContent({ id: "management-browser", title: "Playbooks", before: editor });
-    expect(root.children[1]!.classList.contains("management-action-status")).toBe(true);
-    expect(root.children[2]!.id).toBe("management-browser");
-    expect(root.children[3]).toBe(editor);
+    expect(root.children[1]!.id).toBe("management-browser");
+    expect(root.children[2]).toBe(editor);
   });
 
   it("renders text actions with their extra classes", () => {

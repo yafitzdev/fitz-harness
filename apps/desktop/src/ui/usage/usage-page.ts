@@ -1,5 +1,4 @@
 import type { UsageBreakdownRow, UsageReport, UsageTimelineBucket } from "@fitz/protocol";
-import { ActionStatus } from "../primitives/action-status.js";
 
 type RangeId = "day" | "week" | "month";
 
@@ -19,7 +18,6 @@ const ranges: Record<RangeId, { label: string; milliseconds: number; bucket: "ho
 /** Owns the usage dashboard lifecycle and renders only immutable aggregate facts. */
 export class UsagePageController {
   readonly #options: UsagePageOptions;
-  readonly #status = new ActionStatus();
   #range: RangeId = "week";
 
   constructor(options: UsagePageOptions) {
@@ -28,8 +26,7 @@ export class UsagePageController {
   }
 
   showLoading(): void {
-    this.#options.root.replaceChildren(this.#status.root);
-    this.#status.show("Loading usage…", "neutral");
+    this.#options.root.replaceChildren(message("Loading usage…"));
   }
 
   async load(): Promise<void> {
@@ -42,7 +39,7 @@ export class UsagePageController {
       const response = await this.#options.api(`/api/v1/management/usage?${query}`);
       this.render(response.data as UsageReport);
     } catch (error) {
-      this.#status.show(this.#options.errorMessage(error), "error");
+      this.#options.root.replaceChildren(message(this.#options.errorMessage(error)));
     }
   }
 
@@ -89,6 +86,13 @@ export class UsagePageController {
     content.append(controls, cards, timeline, breakdowns, recipes);
     this.#options.root.replaceChildren(content);
   }
+}
+
+function message(text: string): HTMLElement {
+  const element = document.createElement("p");
+  element.className = "panel-empty";
+  element.textContent = text;
+  return element;
 }
 
 function metric(label: string, value: string, note: string): HTMLElement {

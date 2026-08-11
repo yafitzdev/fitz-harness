@@ -10,6 +10,8 @@ export interface CatalogModel {
   downloads: number;
   likes: number;
   pipelineTag?: string;
+  /** True when this browser can directly download a GGUF from the repository. */
+  downloadable: boolean;
   /** HF repo creation date; the release-date proxy for recency filters. */
   createdAt?: string;
   updatedAt?: string;
@@ -18,6 +20,7 @@ export interface CatalogModel {
 /** Shared catalog sort keys, passed through to HF's `sort`/`direction` params. */
 export type CatalogSortKey = "downloads" | "updated" | "name" | "likes";
 export type CatalogSortDirection = "asc" | "desc";
+export type ModelCatalogCategory = "llm" | "vision";
 
 const CATALOG_SORT_KEYS: readonly string[] = ["downloads", "updated", "name", "likes"];
 const HF_SORT_BY: Record<CatalogSortKey, string> = { downloads: "downloads", updated: "lastModified", name: "name", likes: "likes" };
@@ -28,6 +31,10 @@ export function normalizeCatalogSort(value: unknown): CatalogSortKey {
 
 export function normalizeCatalogDirection(value: unknown): CatalogSortDirection {
   return value === "asc" ? "asc" : "desc";
+}
+
+export function normalizeModelCatalogCategory(value: unknown): ModelCatalogCategory {
+  return value === "vision" ? "vision" : "llm";
 }
 
 export interface ModelFile {
@@ -78,7 +85,7 @@ const USER_AGENT = "Fitz-Codex";
 /**
  * HF's `/api/models` ignores the `offset` param and caps `limit` at 1000, so a
  * catalog "page" is really a window of the top `WINDOW_SIZE` results for the
- * active query/sort. The window is fetched once per (query, pipeline, sort)
+ * active query/sort. The window is fetched once per (query, category, sort)
  * and cached briefly, then filtered by the min likes/downloads thresholds and
  * paged for the client — a filtered page is therefore always full of matches
  * and the `total` is exact, so "Load more" works (it never did before, since
@@ -88,10 +95,16 @@ const WINDOW_SIZE = 1000;
 const WINDOW_CACHE_TTL_MS = 60_000;
 const WINDOW_CACHE_MAX_KEYS = 10;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const CATEGORY_PIPELINES: Record<ModelCatalogCategory, readonly string[]> = {
+  // VLMs still produce text, so they belong beside ordinary chat LLMs.
+  llm: ["text-generation", "image-text-to-text"],
+  // These pipelines produce pixels or frames rather than merely understanding them.
+  vision: ["text-to-image", "image-to-image", "image-text-to-image", "unconditional-image-generation", "text-to-video", "image-to-video", "image-text-to-video", "video-to-video"],
+};
 
 /**
- * Browse and download GGUF models from Hugging Face. The catalog search maps
- * HF's `/api/models` results (filtered to GGUF text-generation models) the same
+ * Browse models from Hugging Face. LLM results are restricted to GGUF so they
+ * can be downloaded directly; vision results include generation repositories
  * way the Pi catalog maps npm search results, and downloads stream into
  * `{modelRoot}/<org>/<repo>/<file>.gguf` with resume support: an interrupted
  * download leaves a `.part` file that the next attempt continues from.
@@ -101,7 +114,7 @@ export class ModelCatalogService {
   readonly #endpoint: string;
   readonly #fetch: typeof globalThis.fetch;
   readonly #downloads = new Map<string, ActiveDownload>();
-  /** Raw result windows keyed by query/pipeline/sort, so threshold tweaks are instant. */
+  /** Raw result windows keyed by query/category/sort, so threshold tweaks are instant. */
   readonly #windowCache = new Map<string, { fetchedAt: number; models: CatalogModel[] }>();
 
   constructor(options: ModelCatalogServiceOptions) {
@@ -118,13 +131,13 @@ export class ModelCatalogService {
    * models in the window, so the client can show an exact "Load more" state
    * without blank pages.
    */
-  async search(query = "", offset = 0, limit = 50, pipelineTag = "text-generation", sort: CatalogSortKey = "downloads", direction: CatalogSortDirection = "desc", minLikes = 0, minDownloads = 0, releasedWithinWeeks = 0): Promise<{ total: number; models: CatalogModel[] }> {
+  async search(query = "", offset = 0, limit = 50, category: ModelCatalogCategory = "llm", sort: CatalogSortKey = "downloads", direction: CatalogSortDirection = "desc", minLikes = 0, minDownloads = 0, releasedWithinWeeks = 0): Promise<{ total: number; models: CatalogModel[] }> {
     const safeLimit = Math.max(1, Math.min(50, Math.trunc(limit)));
     const safeOffset = Math.max(0, Math.trunc(offset));
     const safeMinLikes = Math.max(0, Math.trunc(minLikes));
     const safeMinDownloads = Math.max(0, Math.trunc(minDownloads));
     const safeWeeks = Math.max(0, Math.trunc(releasedWithinWeeks));
-    const window = await this.#window(query.trim(), pipelineTag, sort, direction);
+    const window = await this.#window(query.trim(), category, sort, direction);
     const cutoff = safeWeeks > 0 ? Date.now() - safeWeeks * WEEK_MS : 0;
     const matches = window.models.filter((model) => {
       if (model.likes < safeMinLikes || model.downloads < safeMinDownloads) return false;
@@ -137,13 +150,27 @@ export class ModelCatalogService {
     return { total: matches.length, models: matches.slice(safeOffset, safeOffset + safeLimit) };
   }
 
-  async #window(query: string, pipelineTag: string, sort: CatalogSortKey, direction: CatalogSortDirection): Promise<{ fetchedAt: number; models: CatalogModel[] }> {
-    const key = `${query}\u0000${pipelineTag}\u0000${sort}\u0000${direction}`;
+  async #window(query: string, category: ModelCatalogCategory, sort: CatalogSortKey, direction: CatalogSortDirection): Promise<{ fetchedAt: number; models: CatalogModel[] }> {
+    const key = `${query}\u0000${category}\u0000${sort}\u0000${direction}`;
     const cached = this.#windowCache.get(key);
     if (cached && Date.now() - cached.fetchedAt < WINDOW_CACHE_TTL_MS) return cached;
+    const resultSets = await Promise.all(CATEGORY_PIPELINES[category].map((pipelineTag) => this.#fetchPipeline(query, pipelineTag, category === "llm", sort, direction)));
+    const unique = new Map<string, CatalogModel>();
+    for (const model of resultSets.flat()) unique.set(model.id, model);
+    const models = [...unique.values()].sort(catalogComparator(sort, direction));
+    const window = { fetchedAt: Date.now(), models };
+    this.#windowCache.set(key, window);
+    if (this.#windowCache.size > WINDOW_CACHE_MAX_KEYS) {
+      const oldest = this.#windowCache.keys().next().value;
+      if (oldest !== undefined) this.#windowCache.delete(oldest);
+    }
+    return window;
+  }
+
+  async #fetchPipeline(query: string, pipelineTag: string, ggufOnly: boolean, sort: CatalogSortKey, direction: CatalogSortDirection): Promise<CatalogModel[]> {
     const url = new URL(`${this.#endpoint}/api/models`);
     if (query) url.searchParams.set("search", query);
-    url.searchParams.set("filter", "gguf");
+    if (ggufOnly) url.searchParams.set("filter", "gguf");
     url.searchParams.set("pipeline_tag", pipelineTag);
     url.searchParams.set("sort", HF_SORT_BY[sort]);
     url.searchParams.set("direction", direction === "desc" ? "-1" : "1");
@@ -152,14 +179,7 @@ export class ModelCatalogService {
     if (!response.ok) throw new Error(`Hugging Face catalog request failed (${response.status})`);
     const payload = await response.json() as { items?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
     const items = Array.isArray(payload) ? payload : Array.isArray(payload.items) ? payload.items : [];
-    const models = items.map(catalogModel).filter((value): value is CatalogModel => Boolean(value));
-    const window = { fetchedAt: Date.now(), models };
-    this.#windowCache.set(key, window);
-    if (this.#windowCache.size > WINDOW_CACHE_MAX_KEYS) {
-      const oldest = this.#windowCache.keys().next().value;
-      if (oldest !== undefined) this.#windowCache.delete(oldest);
-    }
-    return window;
+    return items.map(catalogModel).filter((value): value is CatalogModel => Boolean(value));
   }
 
   /** Lists the `.gguf` files in a model repo (sizes are included for LFS files). */
@@ -345,13 +365,27 @@ export function pickGgufFile(files: ModelFile[]): ModelFile | undefined {
 
 function catalogModel(entry: Record<string, unknown>): CatalogModel | undefined {
   if (typeof entry.id !== "string") return undefined;
+  const tags = Array.isArray(entry.tags) ? entry.tags : [];
   return {
     id: entry.id,
     downloads: typeof entry.downloads === "number" ? entry.downloads : 0,
     likes: typeof entry.likes === "number" ? entry.likes : 0,
+    downloadable: tags.includes("gguf") || entry.id.toLowerCase().includes("gguf"),
     ...(typeof entry.pipeline_tag === "string" ? { pipelineTag: entry.pipeline_tag } : {}),
     ...(typeof entry.createdAt === "string" ? { createdAt: entry.createdAt } : {}),
     ...(typeof entry.lastModified === "string" ? { updatedAt: entry.lastModified } : {}),
+  };
+}
+
+function catalogComparator(sort: CatalogSortKey, direction: CatalogSortDirection): (left: CatalogModel, right: CatalogModel) => number {
+  const multiplier = direction === "desc" ? -1 : 1;
+  return (left, right) => {
+    let compared: number;
+    if (sort === "name") compared = left.id.localeCompare(right.id);
+    else if (sort === "updated") compared = Date.parse(left.updatedAt ?? "") - Date.parse(right.updatedAt ?? "");
+    else compared = left[sort] - right[sort];
+    if (!Number.isFinite(compared)) compared = 0;
+    return compared * multiplier;
   };
 }
 

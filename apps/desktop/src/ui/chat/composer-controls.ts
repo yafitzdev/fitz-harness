@@ -111,7 +111,7 @@ export class ComposerControls {
     // therefore exposes the stable route contract (Fast/Default/Smart), while
     // the settings menu may still show the resolved model for diagnostics.
     const routeName = option?.dataset.displayName || fullLabel;
-    const effortLabel = [...this.elements.effort.options].find((candidate) => candidate.value === this.elements.effort.value)?.textContent ?? "Medium";
+    const effortLabel = [...this.elements.effort.options].find((candidate) => candidate.value === this.elements.effort.value)?.textContent ?? "Normal";
     this.elements.modelRoute.textContent = routeName;
     this.elements.modelEffort.textContent = ` · ${effortLabel}`;
     this.elements.modelValue.textContent = fullLabel;

@@ -95,7 +95,7 @@ describe("desktop renderer shell", () => {
     // The composer docks into the conversation column, so its width tracks the
     // chat window (and the Inspector stealing space). Width container queries
     // drop text in two stages: the access label goes icon-only first, then the
-    // model name hides leaving the route and effort ("Smart · Medium").
+    // model name hides leaving the route and effort ("Smart · Normal").
     expect(composerCss).toContain("container-type: inline-size");
     expect(composerCss).toContain("container-name: composer");
     expect(composerCss).toContain("@container composer (max-width: 480px)");
@@ -168,6 +168,8 @@ describe("desktop renderer shell", () => {
     expect(preload).toContain('onNavigationCommand(listener: (command: "back" | "forward")');
     expect(preload).toContain('ipcRenderer.on("fitz:navigation-command", handler)');
     expect(renderer).toContain('window.fitz.onNavigationCommand((command) => void navigationHistory.navigate');
+    expect(renderer).toContain('document.addEventListener("auxclick"');
+    expect(renderer).toContain('event.button !== 3 && event.button !== 4');
     expect(navigationHistory).toContain('| { view: "conversation";');
     expect(navigationHistory).toContain('this.#entries.splice(this.#index + 1)');
     expect(navigationHistory).toContain('async navigate(offset: -1 | 1)');
@@ -277,9 +279,9 @@ describe("desktop renderer shell", () => {
     // Only chat-capable model types are browsable; embedders/rerankers are out.
     expect(renderer).not.toContain('id: "embedder-tab"');
     expect(renderer).not.toContain('id: "reranker-tab"');
-    expect(renderer).toContain('{ id: "llm-tab", label: "LLMs", dataset: { pipeline: "text-generation" }, active: true }');
-    expect(renderer).toContain('{ id: "vision-tab", label: "Vision", dataset: { pipeline: "image-text-to-text" } }');
-    expect(renderer).toContain('{ id: "audio-tab", label: "Audio", dataset: { pipeline: "automatic-speech-recognition" } }');
+    expect(renderer).toContain('{ id: "llm-tab", label: "LLMs", dataset: { category: "llm" }, active: true }');
+    expect(renderer).toContain('{ id: "vision-tab", label: "Vision", dataset: { category: "vision" } }');
+    expect(renderer).not.toContain('id: "audio-tab"');
     expect(html).toContain('id="plugin-catalog"');
     expect(html).toContain('id="installed-plugins-toggle"');
     expect(html).toContain('id="plugin-catalog-toggle"');
@@ -572,7 +574,7 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".advanced-settings-panel");
     expect(styles).toContain(".model-menu { right: 0; bottom: 34px; width: 286px;");
     expect(styles).toContain(".settings-submenu.open-left");
-    expect(composer).toContain('<option value="2048">Light</option><option value="8192" selected>Medium</option><option value="16384">High</option>');
+    expect(composer).toContain('<option value="4096">Light</option><option value="10240" selected>Normal</option><option value="24576">High</option>');
     expect(composer).not.toContain('data-setting="speed"');
     expect(composer).not.toContain("Extra High");
     expect(composer).not.toContain("Ultra");

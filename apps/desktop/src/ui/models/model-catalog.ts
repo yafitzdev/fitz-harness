@@ -12,6 +12,7 @@ export interface CatalogModel {
   downloads: number;
   likes: number;
   pipelineTag?: string;
+  downloadable?: boolean;
   updatedAt?: string;
 }
 
@@ -36,15 +37,15 @@ export interface DownloadRecord {
 export interface ModelCatalogElements {
   /** The content column that owns the collapsible sections. */
   view: HTMLElement;
-  /** The page h1; mirrors the active pipeline tab's label. */
+  /** The page h1; mirrors the active category tab's label. */
   title: HTMLElement;
   modelSearch: HTMLInputElement;
   downloadedList: HTMLElement;
   catalogList: HTMLElement;
   loadMoreModels: HTMLButtonElement;
   refresh: HTMLButtonElement;
-  /** Header tabs that filter the catalog by HF pipeline tag (data-pipeline). */
-  pipelineTabs: HTMLButtonElement[];
+  /** Header tabs that filter the catalog by output category (data-category). */
+  categoryTabs: HTMLButtonElement[];
 }
 
 export interface ModelCatalogOptions {
@@ -82,8 +83,8 @@ const MODEL_NUMERIC_FILTERS: CatalogNumericFilter[] = [
 const modelIcon = '<path d="M10 2.5 17 6v8l-7 3.5L3 14V6z"></path><path d="M3 6l7 3.5L17 6M10 9.5V17.5"></path>';
 
 /**
- * Owns the Models management tab: the Hugging Face GGUF catalog filtered by
- * pipeline tag (LLMs, vision, audio, …), per-model downloads with
+ * Owns the Models management tab: the Hugging Face catalog separated into
+ * text-producing LLMs and image/video generators, per-model downloads with
  * progress polling and cancel, and the list of model files on the host. The
  * page body mirrors the Plugins tab: a collapsible Downloaded section above a
  * collapsible Discover section, with the type filter in the header tabs.
@@ -94,7 +95,7 @@ export class ModelCatalogController {
   private readonly searchDelayMs: number;
   private readonly pollIntervalMs: number;
   private readonly filterBar: CatalogFilterBar;
-  private pipelineTag: string;
+  private category: string;
   private models: CatalogModel[] = [];
   private downloaded: DownloadedModel[] = [];
   private catalogTotal = 0;
@@ -109,8 +110,8 @@ export class ModelCatalogController {
     this.options = options;
     this.searchDelayMs = options.searchDelayMs ?? 250;
     this.pollIntervalMs = options.pollIntervalMs ?? 500;
-    const activeTab = elements.pipelineTabs.find((tab) => tab.classList.contains("active"));
-    this.pipelineTag = activeTab?.dataset.pipeline ?? "text-generation";
+    const activeTab = elements.categoryTabs.find((tab) => tab.classList.contains("active"));
+    this.category = activeTab?.dataset.category ?? "llm";
     if (activeTab) elements.title.textContent = activeTab.textContent?.trim() || elements.title.textContent;
     CollapsibleSection.adoptAll(elements.view, { storageKey: "fitz-collapsed-model-sections" });
     this.filterBar = new CatalogFilterBar({
@@ -164,9 +165,9 @@ export class ModelCatalogController {
       this.searchTimer = setTimeout(() => void this.load(false), this.searchDelayMs);
     });
     this.elements.loadMoreModels.addEventListener("click", () => void this.load(true));
-    for (const tab of this.elements.pipelineTabs) {
+    for (const tab of this.elements.categoryTabs) {
       tab.addEventListener("click", () => {
-        this.pipelineTag = tab.dataset.pipeline ?? "text-generation";
+        this.category = tab.dataset.category ?? "llm";
         this.elements.title.textContent = tab.textContent?.trim() || this.elements.title.textContent;
         void this.load(false);
       });
@@ -176,8 +177,8 @@ export class ModelCatalogController {
   private async loadCatalog(append: boolean, generation: number): Promise<void> {
     const offset = append ? this.models.length : 0;
     const query = encodeURIComponent(this.elements.modelSearch.value.trim());
-    const pipeline = encodeURIComponent(this.pipelineTag);
-    const response = await this.options.api(`/api/v1/management/models/catalog?query=${query}&pipeline=${pipeline}&offset=${offset}&limit=30&${catalogQueryString(this.filterBar.filters)}`);
+    const category = encodeURIComponent(this.category);
+    const response = await this.options.api(`/api/v1/management/models/catalog?query=${query}&category=${category}&offset=${offset}&limit=30&${catalogQueryString(this.filterBar.filters)}`);
     if (generation !== this.loadGeneration) return;
     this.catalogTotal = response.data?.total ?? 0;
     this.models = append ? [...this.models, ...(response.data?.models ?? [])] : (response.data?.models ?? []);
@@ -197,7 +198,7 @@ export class ModelCatalogController {
       const actions = card.querySelector(".model-actions") as HTMLElement;
       if (this.downloads.has(entry.id)) {
         actions.append(this.progressControl(entry.id, this.downloads.get(entry.id)!));
-      } else {
+      } else if (entry.downloadable !== false) {
         actions.append(this.downloadAction(entry.id));
       }
       this.elements.catalogList.append(card);
