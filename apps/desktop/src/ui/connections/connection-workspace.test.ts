@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ConnectionWorkspaceController, MEDIA_ROUTES, type ConnectionWorkspaceBridge } from "./connection-workspace.js";
+import { CONNECTION_ROUTES, ConnectionWorkspaceController, MEDIA_ROUTES, type ConnectionWorkspaceBridge } from "./connection-workspace.js";
 
 function memoryStorage(initial: Record<string, string> = {}): Storage {
   const values = new Map(Object.entries(initial));
@@ -148,6 +148,23 @@ describe("ConnectionWorkspaceController", () => {
     const test = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[1]!.querySelector<HTMLButtonElement>(".recipe-test-button")!;
     click(test);
     expect(calls.testRecipe).toHaveBeenCalledWith(expect.objectContaining({ id: "consumer-recipe--remote-model" }), expect.any(HTMLElement), test);
+  });
+
+  it("assigns the internal subagent route without adding it to chat tiers", async () => {
+    const { controller, elements, calls } = setup();
+    await controller.sync(false);
+    const remoteCard = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[1]!;
+    expect(CONNECTION_ROUTES.map((route) => route.id)).toEqual(["fast", "default", "smart", "subagent"]);
+    expect(remoteCard.textContent).toContain("Sequential");
+
+    click(remoteCard.querySelector<HTMLButtonElement>(".route-subagent")!);
+
+    await vi.waitFor(() => expect(calls.api).toHaveBeenCalledWith(
+      "/api/v1/management/routes/subagent",
+      "PUT",
+      expect.objectContaining({ recipeId: "consumer-recipe--remote-model", description: "Internal delegated-work route" }),
+    ));
+    await vi.waitFor(() => expect(calls.showStatus).toHaveBeenCalledWith("Subagent route updated", "success"));
   });
 
   it("removes a connection and its cards from the workspace", async () => {

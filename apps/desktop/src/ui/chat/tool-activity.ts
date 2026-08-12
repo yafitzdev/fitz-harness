@@ -43,6 +43,7 @@ const BUILT_IN_TOOLS: Record<string, ToolMeta> = {
   generate_image: { kind: "command", presentVerb: "Generating", pastVerb: "Generated", icon: "sparkle", displayName: "image" },
   generate_video: { kind: "command", presentVerb: "Generating", pastVerb: "Generated", icon: "sparkle", displayName: "video" },
   generate_audio: { kind: "command", presentVerb: "Generating", pastVerb: "Generated", icon: "sparkle", displayName: "audio" },
+  subagent: { kind: "command", presentVerb: "Delegating", pastVerb: "Delegated", icon: "sparkle", displayName: "subagent" },
 };
 
 const DEFAULT_TOOL: ToolMeta = { kind: "command", presentVerb: "Running", pastVerb: "Ran", icon: "sparkle" };
@@ -116,6 +117,10 @@ function countPhrase(verb: string, count: number, noun: string): string {
 export function describeTool(toolName: string, input: unknown, running: boolean): string {
   const meta = toolMeta(toolName);
   const verb = running ? meta.presentVerb : meta.pastVerb;
+  if (toolName === "subagent" && input && typeof input === "object") {
+    const role = String((input as Record<string, unknown>).role ?? "").trim();
+    if (role) return `${verb} to ${role}`;
+  }
   const target = toolTarget(input);
   return target ? `${verb} ${target}` : `${verb} ${meta.displayName ?? displayName(toolName)}`;
 }

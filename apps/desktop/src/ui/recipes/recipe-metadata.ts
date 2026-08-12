@@ -13,6 +13,7 @@ export interface RecipeMetadataOptions {
   contextTokens?: number;
   capabilities?: {
     chatCompletions?: boolean;
+    maxConcurrentGenerations?: number;
     modalities?: {
       output?: unknown[];
       limits?: MediaLimits;
@@ -34,6 +35,10 @@ export function recipeMetadata(options: RecipeMetadataOptions): HTMLElement[] {
   }
   if (modalities.includes("text") && Number.isFinite(options.contextTokens) && Number(options.contextTokens) > 0) {
     labels.push(label(`${formatTokenCount(Number(options.contextTokens))} ctx`, "recipe-context-label"));
+  }
+  if (modalities.includes("text")) {
+    const concurrency = Math.max(1, Math.floor(Number(options.capabilities?.maxConcurrentGenerations ?? 1)));
+    labels.push(label(concurrency === 1 ? "Sequential" : `${concurrency} concurrent`, "recipe-concurrency-label", concurrency === 1 ? "Runs one generation at a time" : `Runs up to ${concurrency} generations concurrently`));
   }
   if (!modalities.includes("text")) {
     for (const badge of mediaLimitBadges(options.capabilities?.modalities?.limits)) labels.push(label(badge, "media-limit-badge"));

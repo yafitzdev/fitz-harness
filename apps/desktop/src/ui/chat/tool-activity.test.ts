@@ -54,6 +54,8 @@ describe("describeTool", () => {
     expect(describeTool("write", { file_path: "README.md" }, false)).toBe("Wrote README.md");
     expect(describeTool("grep", { pattern: "TODO" }, false)).toBe("Searched TODO");
     expect(describeTool("read", { path: "src/app.ts" }, true)).toBe("Reading src/app.ts");
+    expect(describeTool("subagent", { role: "researcher", task: "Inspect routing" }, true)).toBe("Delegating to researcher");
+    expect(describeTool("subagent", { role: "researcher", task: "Inspect routing" }, false)).toBe("Delegated to researcher");
   });
 
   it("keeps single-word tool names lowercase when a known tool has no target", () => {

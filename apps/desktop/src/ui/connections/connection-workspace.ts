@@ -29,11 +29,24 @@ const CONNECTION_EDITOR_TEMPLATE = `
 `;
 
 export type FixedRouteId = "fast" | "default" | "smart";
+export type ConnectionRouteId = FixedRouteId | "subagent";
 export const LOCAL_CONNECTION_ID = "hosted--local";
 export const FIXED_ROUTES: readonly { id: FixedRouteId; label: string; icon: string }[] = [
   { id: "fast", label: "Fast", icon: '<path class="route-icon-outline" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path><path class="route-icon-filled" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path>' },
   { id: "default", label: "Default", icon: '<g class="route-icon-outline"><circle cx="10" cy="10" r="6"></circle><circle cx="10" cy="10" r="1.6"></circle></g><path class="route-icon-filled" fill-rule="evenodd" d="M10 3.25a6.75 6.75 0 1 0 0 13.5 6.75 6.75 0 0 0 0-13.5Zm0 4a2.75 2.75 0 1 1 0 5.5 2.75 2.75 0 0 1 0-5.5Z"></path>' },
   { id: "smart", label: "Smart", icon: '<g class="route-icon-outline"><path d="M8.75 2.75A3.25 3.25 0 0 0 4.3 5.7 3.2 3.2 0 0 0 3 8.3a3.5 3.5 0 0 0 2.1 3.2V14a3.25 3.25 0 0 0 3.65 3.2M11.25 2.75a3.25 3.25 0 0 1 4.45 2.95A3.2 3.2 0 0 1 17 8.3a3.5 3.5 0 0 1-2.1 3.2V14a3.25 3.25 0 0 1-3.65 3.2M8.75 2.75V17.2M11.25 2.75V17.2M5.1 8h3.65M11.25 8h3.65M5.1 12h3.65M11.25 12h3.65"></path></g><g class="route-icon-filled"><path d="M8.8 2.35A3.65 3.65 0 0 0 4 5.55 3.55 3.55 0 0 0 2.65 8.3c0 1.6.8 3 2.15 3.85V14a3.75 3.75 0 0 0 4 3.65V2.35Zm2.4 0v15.3A3.75 3.75 0 0 0 15.2 14v-1.85a4.35 4.35 0 0 0 2.15-3.85A3.55 3.55 0 0 0 16 5.55a3.65 3.65 0 0 0-4.8-3.2Z"></path><path class="route-icon-cut" d="M8.8 6.35H6.6l-1.15-1M8.8 10H5.9l-1.15 1M8.8 13.65H6.7l-1 1M11.2 6.35h2.2l1.15-1M11.2 10h2.9l1.15 1M11.2 13.65h2.1l1 1"></path></g>' },
+];
+
+/** Text-model assignments shown in Connections. Subagent is intentionally not
+ * part of FIXED_ROUTES: it is an internal execution route and must never appear
+ * in the chat tier picker or ordinary user route grants. */
+export const CONNECTION_ROUTES: readonly { id: ConnectionRouteId; label: string; icon: string }[] = [
+  ...FIXED_ROUTES,
+  {
+    id: "subagent",
+    label: "Subagent",
+    icon: '<g class="route-icon-outline"><circle cx="6" cy="6" r="2.25"></circle><circle cx="14" cy="6" r="2.25"></circle><circle cx="10" cy="14" r="2.25"></circle><path d="m7.7 7.45 1.15 4.35M12.3 7.45l-1.15 4.35M8.25 6h3.5"></path></g><g class="route-icon-filled"><circle cx="6" cy="6" r="2.5"></circle><circle cx="14" cy="6" r="2.5"></circle><circle cx="10" cy="14" r="2.5"></circle><path d="M7.5 7.4 9 11.7M12.5 7.4 11 11.7M8.5 6h3"></path></g>',
+  },
 ];
 
 /** Well-known media routes (§5.2): single-assignment toggles per modality.
@@ -52,7 +65,7 @@ export const CONSUMER_TEMPLATES: readonly { id: string; label: string; descripti
   { id: "replicate", label: "Replicate", description: "Replicate media models; the base URL is filled in automatically." },
 ];
 
-type ConnectionModelView = ConsumerConnectionSummary["models"][number] & { displayName?: string; modelId?: string; contextTokens?: number };
+type ConnectionModelView = ConsumerConnectionSummary["models"][number] & { displayName?: string; modelId?: string; contextTokens?: number; maxConcurrentGenerations?: number };
 /** One media model card: a media recipe plus the well-known route toggles it can serve. */
 interface MediaModelView {
   recipeId: string;
@@ -254,10 +267,19 @@ export class ConnectionWorkspaceController {
     const recipes = this.configuration?.recipes ?? [];
     const hostedModels = recipes
       .filter((recipe: Json) => !String(recipe.id).startsWith("consumer-recipe--") && recipe.capabilities?.chatCompletions !== false)
-      .map((recipe: Json): ConnectionModelView => ({ id: String(recipe.id), routeId: "", recipeId: String(recipe.id), displayName: String(recipe.displayName ?? recipe.modelId ?? recipe.id), modelId: String(recipe.modelId ?? recipe.id), contextTokens: Number(recipe.contextTokens) }));
+      .map((recipe: Json): ConnectionModelView => ({ id: String(recipe.id), routeId: "", recipeId: String(recipe.id), displayName: String(recipe.displayName ?? recipe.modelId ?? recipe.id), modelId: String(recipe.modelId ?? recipe.id), contextTokens: Number(recipe.contextTokens), maxConcurrentGenerations: Number(recipe.capabilities?.maxConcurrentGenerations ?? 1) }));
     const hostedMediaModels = hostedMediaViews(recipes);
     const hostedConnection: HostedConnectionView = { id: LOCAL_CONNECTION_ID, displayName: String(this.configuration?.hostName ?? "This PC"), baseUrl: "", authType: "none", hasCredential: false, template: "openai-compatible", availableModels: hostedModels, availableMediaModels: hostedMediaModels, updatedAt: "", hosted: true };
-    return [hostedConnection, ...this.records.map((connection): SavedConnectionView => ({ ...connection, hosted: false, availableModels: connection.models.map((model) => ({ ...model })), availableMediaModels: savedMediaViews(connection), source: connection }))];
+    return [hostedConnection, ...this.records.map((connection): SavedConnectionView => ({
+      ...connection,
+      hosted: false,
+      availableModels: connection.models.map((model) => {
+        const recipe = recipes.find((candidate: Json) => candidate.id === model.recipeId);
+        return { ...model, maxConcurrentGenerations: Number(recipe?.capabilities?.maxConcurrentGenerations ?? 1) };
+      }),
+      availableMediaModels: savedMediaViews(connection),
+      source: connection,
+    }))];
   }
 
   private connectionCard(connection: ConnectionView, routes: Json[], mediaModels: MediaModelView[]): HTMLElement {
@@ -300,7 +322,7 @@ export class ConnectionWorkspaceController {
     labels.append(...recipeMetadata({
       modelId: model.modelId ?? "API model",
       ...(model.contextTokens ? { contextTokens: model.contextTokens } : {}),
-      capabilities: { chatCompletions: true },
+      capabilities: { chatCompletions: true, maxConcurrentGenerations: model.maxConcurrentGenerations ?? 1 },
     }));
     details.append(name, labels);
     const actions = document.createElement("div");
@@ -314,7 +336,7 @@ export class ConnectionWorkspaceController {
     routeToggle.className = "recipe-route-toggle";
     routeToggle.setAttribute("role", "group");
     routeToggle.setAttribute("aria-label", `${model.id} routing`);
-    for (const definition of FIXED_ROUTES) {
+    for (const definition of CONNECTION_ROUTES) {
       const routeId = definition.id;
       const route = routes.find((item: Json) => item.id === routeId);
       const button = document.createElement("button");
@@ -471,7 +493,7 @@ export class ConnectionWorkspaceController {
     }
   }
 
-  private async assignRoute(definition: (typeof FIXED_ROUTES)[number], model: ConnectionModelView, button: HTMLButtonElement): Promise<void> {
+  private async assignRoute(definition: (typeof CONNECTION_ROUTES)[number], model: ConnectionModelView, button: HTMLButtonElement): Promise<void> {
     const routeId = definition.id;
     const current = this.configuration?.routes?.find((route: Json) => route.id === routeId);
     if (current?.recipeId === model.recipeId) return;
@@ -479,7 +501,7 @@ export class ConnectionWorkspaceController {
     try {
       await this.options.api(`/api/v1/management/routes/${routeId}`, "PUT", {
         displayName: definition.label,
-        description: definition.id === "fast" ? "Lowest-latency route" : definition.id === "smart" ? "Highest-capability route" : "Primary route",
+        description: definition.id === "fast" ? "Lowest-latency route" : definition.id === "smart" ? "Highest-capability route" : definition.id === "subagent" ? "Internal delegated-work route" : "Primary route",
         recipeId: model.recipeId,
         enabled: true,
         isDefault: definition.id === "default",
