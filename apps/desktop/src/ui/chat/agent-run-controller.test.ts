@@ -209,21 +209,21 @@ describe("AgentRunController", () => {
     expect(activity.timeline.finishWork).not.toHaveBeenCalled();
   });
 
-  it("warms once after the first character and can be reset for another model", async () => {
+  it("warms local Default once and never probes cloud Smart", async () => {
     vi.useFakeTimers();
     const api = vi.fn(async () => ({ data: {} }));
     const { controller } = setup(api);
 
-    controller.scheduleWarmup("h", "fast");
-    controller.scheduleWarmup("he", "fast");
+    controller.scheduleWarmup("h", "default");
+    controller.scheduleWarmup("he", "default");
     await vi.advanceTimersByTimeAsync(120);
     expect(api).toHaveBeenCalledTimes(1);
-    expect(api).toHaveBeenCalledWith("/api/v1/inference/warm", "POST", { model: "fast" });
+    expect(api).toHaveBeenCalledWith("/api/v1/inference/warm", "POST", { model: "default" });
 
     controller.resetWarmup();
     controller.scheduleWarmup("x", "smart");
     await vi.advanceTimersByTimeAsync(120);
-    expect(api).toHaveBeenLastCalledWith("/api/v1/inference/warm", "POST", { model: "smart" });
+    expect(api).toHaveBeenCalledTimes(1);
   });
 
   it("remembers cancellation while run creation is still in flight", async () => {

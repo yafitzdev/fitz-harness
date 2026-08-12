@@ -107,9 +107,8 @@ export class ComposerControls {
   refreshLabels(): void {
     const option = [...this.elements.model.options].find((candidate) => candidate.value === this.routeId);
     const fullLabel = option?.textContent ?? "Model";
-    // The connection owns the concrete model behind a route. The composer
-    // therefore exposes the stable route contract (Fast/Default/Smart), while
-    // the settings menu may still show the resolved model for diagnostics.
+    // The host or consumer connection owns the concrete model behind a role;
+    // every route uses the same short-name/full-model presentation contract.
     const routeName = option?.dataset.displayName || fullLabel;
     const effortLabel = [...this.elements.effort.options].find((candidate) => candidate.value === this.elements.effort.value)?.textContent ?? "Normal";
     this.elements.modelRoute.textContent = routeName;

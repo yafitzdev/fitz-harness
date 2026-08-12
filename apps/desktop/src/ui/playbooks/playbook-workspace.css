@@ -5,7 +5,7 @@
 .recipe-card-details { min-width: 0; display: grid; align-content: center; gap: 7px; padding: 10px 12px; background: transparent; color: var(--text); cursor: pointer; text-align: left; }
 .recipe-display-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recipe-card-labels { min-width: 0; display: flex; align-items: center; gap: 6px; overflow: hidden; }
-.recipe-card-label { max-width: min(320px, 55vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 3px 7px; border-radius: 999px; background: var(--grey-300); color: var(--muted); font: 10.5px/1.3 "Cascadia Mono", Consolas, monospace; }
+.recipe-card-label { max-width: min(320px, 55vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 3px 8px; border: 1px solid var(--border-soft); border-radius: 999px; background: var(--tint-7); color: var(--grey-800); font: 10.5px/1.3 "Cascadia Mono", Consolas, monospace; }
 .recipe-context-label { flex: 0 0 auto; color: var(--grey-750); }
 .recipe-card-actions { align-self: center; display: flex; align-items: center; gap: 8px; margin-right: 12px; }
 .recipe-test-button { min-width: 58px; height: 32px; padding: 0 9px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; white-space: nowrap; transition: background-color 120ms ease, color 120ms ease; }

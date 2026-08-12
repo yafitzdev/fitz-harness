@@ -154,6 +154,20 @@ describe("ActivityTimeline", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
   });
 
+  it("names the active project instead of rendering a meaningless list dot", () => {
+    const messages = document.createElement("main");
+    const timeline = new ActivityTimeline({
+      messages,
+      projectRoot: () => "C:\\work\\fitz-codex",
+      inspectResource: vi.fn(),
+      decideApproval: vi.fn(async () => "approved" as const),
+      showStatus: vi.fn(),
+    });
+    const row = timeline.appendTool("ls", { path: "." }, "list-1", true);
+    timeline.completeTool(row, "ls", { path: "." }, [], false);
+    expect(row.querySelector(".agent-activity-label")?.textContent).toBe("Listed fitz-codex");
+  });
+
   it("uses running labels until every tool in a burst completes and one durable work summary", () => {
     const { messages, timeline } = setup();
     const command = timeline.appendTool("bash", { command: "pnpm test" }, "tool-1", true, "2026-08-03T08:00:00.000Z");

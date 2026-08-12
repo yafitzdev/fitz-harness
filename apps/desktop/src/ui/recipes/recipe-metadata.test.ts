@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from "vitest";
-import { recipeMetadata } from "./recipe-metadata.js";
+import { engineDisplayName, recipeMetadata } from "./recipe-metadata.js";
 
 describe("recipeMetadata", () => {
   beforeEach(() => { document.body.replaceChildren(); });
@@ -13,6 +13,13 @@ describe("recipeMetadata", () => {
   it("shows declared concurrent generation capacity for chat recipes", () => {
     const labels = recipeMetadata({ modelId: "worker", contextTokens: 32_768, capabilities: { chatCompletions: true, maxConcurrentGenerations: 8 } });
     expect(labels.map((label) => label.textContent)).toContain("8 concurrent");
+  });
+
+  it("puts a normalized engine tag before every other label when supplied", () => {
+    const labels = recipeMetadata({ engine: "vllm", modelId: "worker", capabilities: { chatCompletions: true } });
+    expect(labels.map((label) => label.textContent)).toEqual(["vLLM", "worker", "Text", "Sequential"]);
+    expect(labels[0]?.classList.contains("recipe-engine-label")).toBe(true);
+    expect(engineDisplayName("openai-compatible")).toBe("OpenAI-compatible");
   });
 
   it("shows media modalities and limits without a context badge", () => {

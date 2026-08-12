@@ -1,4 +1,3 @@
-import { FIXED_ROUTES } from "../connections/connection-workspace.js";
 import { CollapsibleSection } from "../layout/collapsible-section.js";
 import { createCopyButton } from "../primitives/copy-button.js";
 import { textBlock } from "../primitives/dom.js";
@@ -10,6 +9,11 @@ import { SafetyRecoveryController } from "./safety-recovery-controller.js";
 import { StorageDurabilityController } from "./storage-durability-controller.js";
 
 type Json = Record<string, any>;
+const MEDIA_ACCESS_ROUTES = [
+  { id: "image", label: "Image generation" },
+  { id: "video", label: "Video generation" },
+  { id: "audio", label: "Audio generation" },
+] as const;
 
 export type AdministrationPageApi = (path: string, method?: string, body?: unknown) => Promise<Json>;
 
@@ -309,19 +313,24 @@ export class AdministrationPageController {
     const body = document.createElement("div");
     body.className = "admin-user-body";
     const routesHeading = document.createElement("h3");
-    routesHeading.textContent = "Routes";
-    const routeList = document.createElement("div");
+    routesHeading.textContent = "Model access";
+    const routeList = document.createElement("p");
     routeList.className = "admin-routes";
-    for (const route of FIXED_ROUTES) {
+    routeList.textContent = "Local Default is available to every user. Smart and Fast use that user's own cloud connections.";
+
+    const mediaHeading = document.createElement("h3");
+    mediaHeading.textContent = "Media access";
+    const mediaRoutes = document.createElement("div");
+    mediaRoutes.className = "admin-access admin-media-access";
+    for (const route of MEDIA_ACCESS_ROUTES) {
       const label = document.createElement("label");
-      label.className = "admin-route";
+      label.className = "admin-media-route";
       const input = document.createElement("input");
       input.type = "checkbox";
-      input.value = route.id;
-      input.checked = user.role === "administrator" || (access.routeIds ?? []).includes(route.id);
-      input.disabled = user.role === "administrator";
-      label.append(input, route.label);
-      routeList.append(label);
+      input.dataset.mediaRoute = route.id;
+      input.checked = (access.routeIds ?? []).includes(route.id);
+      label.append(input, document.createTextNode(route.label));
+      mediaRoutes.append(label);
     }
 
     const quotaHeading = document.createElement("h3");
@@ -385,7 +394,7 @@ export class AdministrationPageController {
       toggle.addEventListener("click", () => void this.updateAdminUser(user.id, { status: user.status === "active" ? "disabled" : "active" }));
       actions.append(toggle);
     }
-    body.append(routesHeading, routeList, quotaHeading, quota, devicesHeading, devices, actions);
+    body.append(routesHeading, routeList, mediaHeading, mediaRoutes, quotaHeading, quota, devicesHeading, devices, actions);
     details.append(summary, body);
     return details;
   }
@@ -473,9 +482,11 @@ export class AdministrationPageController {
   private async saveAdminAccess(userId: string, card: HTMLElement, button: HTMLButtonElement): Promise<void> {
     button.disabled = true;
     try {
-      const routeIds = [...card.querySelectorAll<HTMLInputElement>(".admin-route input:checked")].map((input) => input.value);
       const quota: Json = {};
       for (const input of card.querySelectorAll<HTMLInputElement>("[data-quota]")) quota[input.dataset.quota!] = Number(input.value);
+      const routeIds = [...card.querySelectorAll<HTMLInputElement>("[data-media-route]")]
+        .filter((input) => input.checked)
+        .map((input) => input.dataset.mediaRoute!);
       await Promise.all([
         this.options.api(`/api/v1/management/users/${userId}/routes`, "PUT", { routeIds }),
         this.options.api(`/api/v1/management/users/${userId}/quota`, "PUT", quota),

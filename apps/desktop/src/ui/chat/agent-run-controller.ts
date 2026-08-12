@@ -128,6 +128,9 @@ export class AgentRunController {
 
   scheduleWarmup(prompt: string, model: string): void {
     if (!prompt.length) { this.resetWarmup(); return; }
+    // Smart is a consumer-owned cloud endpoint; only the pinned local Default
+    // has a host process worth warming while the user types.
+    if (model !== "default") return;
     if (this.#composerHadText || this.active || !model) return;
     this.#composerHadText = true;
     this.#warmupTimer = setTimeout(() => {

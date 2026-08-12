@@ -14,7 +14,8 @@ import { ConversationMessageFeed } from "./ui/chat/conversation-message-feed.js"
 import { ConversationTranscript } from "./ui/chat/conversation-transcript.js";
 import { PromptSubmissionController } from "./ui/chat/prompt-submission.js";
 import { MediaCreationForm } from "./ui/chat/media-creation-form.js";
-import { ConnectionWorkspaceController, FIXED_ROUTES, type FixedRouteId } from "./ui/connections/connection-workspace.js";
+import { ConnectionWorkspaceController, type FixedRouteId } from "./ui/connections/connection-workspace.js";
+import { textRouteOptions, textRouteRecipe } from "./ui/routes/text-route-presentation.js";
 import { InspectorPanel } from "./ui/inspector/inspector-panel.js";
 import { AdaptiveWorkspace } from "./ui/layout/adaptive-workspace.js";
 import { ConversationLayout } from "./ui/layout/conversation-layout.js";
@@ -54,7 +55,6 @@ let newChatProjectDetached = false;
 // the artifact repository re-scopes to the session, so a chat never inherits
 // another chat's files or previews.
 let inspectorChatId: string | undefined;
-let routeCards: Json[] = [];
 
 const shell = query(".app-shell");
 const workspaceHeader = query(".workspace-header");
@@ -307,6 +307,7 @@ const projects = new ProjectsController({
 });
 const activityTimeline = new ActivityTimeline({
   messages,
+  projectRoot: () => projects.activeProject()?.rootPath ?? "",
   inspectResource: (reference) => inspectorPanel.inspect(reference),
   decideApproval: async (approvalId, decision, request) => {
     const response = await api(`/api/v1/tool-approvals/${approvalId}/decision`, "POST", { decision, ...(request ? { request } : {}) });
@@ -535,6 +536,8 @@ const connectionWorkspace = new ConnectionWorkspaceController({
   bridge: window.fitz,
   api,
   reloadConfiguration: () => loadManagementConfiguration(false),
+  updateRouteConfiguration: applyManagementRoute,
+  updateCloudRouteConfiguration: applyCloudRoute,
   testRecipe: (recipe, card, button) => playbookWorkspace.testRecipe(recipe, card, button),
   renderRecipeTestState: (recipeId, card, button) => playbookWorkspace.renderRecipeTestState(recipeId, card, button),
   closePopovers,
@@ -754,7 +757,6 @@ async function initialize(): Promise<void> {
     assertHostContract(health);
     configuredHostOrigin = connection.origin; currentUserId = identity.data?.user?.id; administrator = identity.data?.authMode === "disabled" || identity.data?.user?.role === "administrator";
     applyNavigation();
-    await loadModels();
     engineState.textContent = health.engine?.state ?? "UNLOADED";
     routeState.textContent = composer.controls.routeLabel;
     setConnection(configuredHostOrigin.replace(/^https?:\/\//, ""), "active");
@@ -774,26 +776,12 @@ async function initialize(): Promise<void> {
   }
 }
 
-async function loadModels(preferredRoute?: string): Promise<void> {
-  const response = await api("/v1/models");
-  routeCards = response.data ?? [];
-  rebuildRouteLabels(preferredRoute);
-}
-
-// Rebuilds the chat route selector's labels from the latest management configuration
-// (route → recipe). The selected route is preserved; only the displayed model name
-// refreshes, so picks made in the Connections workspace show up in chat immediately.
+// Connections and chat resolve labels through one shared role formatter. Cloud
+// roles are owned by cloudRoutes, not the host-owned routes array.
 function rebuildRouteLabels(preferredRoute?: string): void {
-  if (!routeCards.length) return;
-  const priority = new Map([["fast", 0], ["default", 1], ["smart", 2]]);
-  const cards = routeCards.filter((card: Json) => priority.has(String(card.id))).sort((left: Json, right: Json) => (priority.get(left.id) ?? 3) - (priority.get(right.id) ?? 3));
-  composer.controls.setRoutes(cards.map((card: Json) => {
-    const route = (managementConfiguration?.routes ?? []).find((item: Json) => item.id === card.id);
-    const recipe = (managementConfiguration?.recipes ?? []).find((item: Json) => item.id === route?.recipeId);
-    const modelName = recipe?.displayName ?? recipe?.modelId;
-    const routeName = card.display_name ?? card.id;
-    return { id: card.id, label: modelName ? `${routeName} · ${modelName}` : routeName, displayName: routeName, group: "Routes" };
-  }), preferredRoute);
+  const options = textRouteOptions(managementConfiguration);
+  if (!options.length) return;
+  composer.controls.setRoutes(options, preferredRoute);
   routeState.textContent = composer.controls.routeLabel;
   syncComposerContext();
 }
@@ -910,7 +898,7 @@ async function pairDevice(): Promise<void> {
 
 async function loadManagementConfiguration(renderPage: boolean): Promise<Json | undefined> {
   try {
-    managementConfiguration = await api("/api/v1/management/status");
+    managementConfiguration = await api(administrator ? "/api/v1/management/status" : "/api/v1/configuration");
     syncContextLimit();
     updateContextMeter();
     connectionWorkspace.setConfiguration(managementConfiguration);
@@ -923,10 +911,31 @@ async function loadManagementConfiguration(renderPage: boolean): Promise<Json | 
   return managementConfiguration;
 }
 
+function applyManagementRoute(routeId: string, route: Json | undefined): void {
+  if (!managementConfiguration) return;
+  const routes = (managementConfiguration.routes ?? []).filter((item: Json) => item.id !== routeId);
+  if (route) routes.push(route);
+  managementConfiguration = { ...managementConfiguration, routes };
+  syncContextLimit();
+  updateContextMeter();
+  rebuildRouteLabels();
+  playbookWorkspace.setConfiguration(managementConfiguration);
+}
+
+function applyCloudRoute(role: "smart" | "fast", recipeId: string | undefined): void {
+  if (!managementConfiguration) return;
+  managementConfiguration = {
+    ...managementConfiguration,
+    cloudRoutes: { ...(managementConfiguration.cloudRoutes ?? {}), [role]: recipeId },
+  };
+  rebuildRouteLabels();
+  connectionWorkspace.setConfiguration(managementConfiguration);
+}
+
 function syncContextLimit(): void {
-  const route = managementConfiguration?.routes?.find((item: Json) => item.id === composer.controls.routeId);
-  const recipe = managementConfiguration?.recipes?.find((item: Json) => item.id === route?.recipeId);
-  if (Number.isFinite(recipe?.contextTokens) && recipe.contextTokens > 0) contextTokenLimit = recipe.contextTokens;
+  const recipe = textRouteRecipe(managementConfiguration, composer.controls.routeId as FixedRouteId);
+  const contextTokens = Number(recipe?.contextTokens);
+  if (Number.isFinite(contextTokens) && contextTokens > 0) contextTokenLimit = contextTokens;
 }
 
 async function updateSessionBinding(): Promise<void> {
@@ -941,7 +950,6 @@ async function updateSessionBinding(): Promise<void> {
 function handleRouteChange(): void {
   routeState.textContent = composer.controls.routeLabel;
   agentRuns.resetWarmup();
-  agentRuns.scheduleWarmup(composer.value, composer.controls.routeId);
   if (projects.currentSessionId) void updateSessionBinding();
   syncComposerContext();
 }

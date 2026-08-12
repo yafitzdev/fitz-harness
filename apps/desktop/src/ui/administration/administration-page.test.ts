@@ -43,7 +43,7 @@ function adminApi() {
         ? [{ id: "device-8", name: "Old laptop", revokedAt: null }, { id: "device-9", name: "Laptop", revokedAt: null }]
         : [],
       currentDeviceId: "device-9",
-      routeIds: ["default"],
+      routeIds: ["image"],
       quota: { maxRequestsPerMinute: 60, maxPromptChars: 4000, maxOutputTokens: 2000, maxQueueDepth: 2 },
     },
   });
@@ -186,7 +186,10 @@ describe("AdministrationPageController", () => {
     const users = elements.adminUsers.querySelectorAll(".admin-user");
     expect(users).toHaveLength(2);
     expect(users[1]!.querySelector(".admin-user-title strong")?.textContent).toBe("Grace");
-    expect(users[1]!.querySelector(".admin-route input")).not.toBeNull();
+    const mediaRoutes = users[1]!.querySelectorAll<HTMLInputElement>(".admin-media-route input");
+    expect(mediaRoutes).toHaveLength(3);
+    expect(mediaRoutes[0]!.checked).toBe(true);
+    expect(users[1]!.textContent).toContain("Local Default is available to every user");
     // The current user's role cannot be changed; others can.
     expect((users[0]!.querySelector("select") as HTMLSelectElement).disabled).toBe(true);
     expect((users[1]!.querySelector("select") as HTMLSelectElement).disabled).toBe(false);
@@ -265,7 +268,8 @@ describe("AdministrationPageController", () => {
     await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/tool-policies/user/user-2/edit", "PUT", { decision: "deny" }));
     await vi.waitFor(() => expect(showStatus).toHaveBeenCalledWith("Tool policy saved", "success"));
 
-    // Change a consumer's role and save their route + quota access.
+    // Change a consumer's role and save media + quota access. Text routing is
+    // fixed by the product contract and never appears as a grant checkbox.
     const card = elements.adminUsers.querySelectorAll(".admin-user")[1] as HTMLElement;
     const role = card.querySelector("select") as HTMLSelectElement;
     role.value = "agent";
@@ -273,9 +277,11 @@ describe("AdministrationPageController", () => {
     await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/users/user-2", "PATCH", { role: "agent" }));
     await vi.waitFor(() => expect(showStatus).toHaveBeenCalledWith("User updated", "success"));
 
-    (card.querySelector(".admin-route input") as HTMLInputElement).checked = true;
+    const mediaInputs = card.querySelectorAll<HTMLInputElement>(".admin-media-route input");
+    mediaInputs[0]!.checked = false;
+    mediaInputs[1]!.checked = true;
     click(card.querySelector(".admin-user-actions button")!);
-    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/users/user-2/routes", "PUT", { routeIds: ["fast", "default"] }));
+    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/users/user-2/routes", "PUT", { routeIds: ["video"] }));
     await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/users/user-2/quota", "PUT", expect.objectContaining({ maxRequestsPerMinute: 60 })));
   });
 

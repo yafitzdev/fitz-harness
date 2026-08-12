@@ -4,6 +4,13 @@ import type { ActionFeedback } from "../primitives/action-status.js";
 import { CollapsibleSection } from "../layout/collapsible-section.js";
 import { svgIcon } from "../primitives/dom.js";
 import { recipeMetadata, type RecipeModality } from "../recipes/recipe-metadata.js";
+import {
+  CLOUD_TEXT_ROUTE_DEFINITIONS,
+  TEXT_ROUTE_DEFINITIONS,
+  type CloudTextRouteId,
+  type TextRouteDefinition,
+  type TextRouteId,
+} from "../routes/text-route-presentation.js";
 
 type Json = Record<string, any>;
 export type MediaModality = Exclude<RecipeModality, "text">;
@@ -28,26 +35,24 @@ const CONNECTION_EDITOR_TEMPLATE = `
   </div>
 `;
 
-export type FixedRouteId = "fast" | "default" | "smart";
-export type ConnectionRouteId = FixedRouteId | "subagent";
+export type FixedRouteId = TextRouteId;
+export type CloudRouteId = CloudTextRouteId;
+type RouteDefinition<T extends string> = { id: T; label: string; icon: string };
 export const LOCAL_CONNECTION_ID = "hosted--local";
-export const FIXED_ROUTES: readonly { id: FixedRouteId; label: string; icon: string }[] = [
-  { id: "fast", label: "Fast", icon: '<path class="route-icon-outline" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path><path class="route-icon-filled" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path>' },
-  { id: "default", label: "Default", icon: '<g class="route-icon-outline"><circle cx="10" cy="10" r="6"></circle><circle cx="10" cy="10" r="1.6"></circle></g><path class="route-icon-filled" fill-rule="evenodd" d="M10 3.25a6.75 6.75 0 1 0 0 13.5 6.75 6.75 0 0 0 0-13.5Zm0 4a2.75 2.75 0 1 1 0 5.5 2.75 2.75 0 0 1 0-5.5Z"></path>' },
-  { id: "smart", label: "Smart", icon: '<g class="route-icon-outline"><path d="M8.75 2.75A3.25 3.25 0 0 0 4.3 5.7 3.2 3.2 0 0 0 3 8.3a3.5 3.5 0 0 0 2.1 3.2V14a3.25 3.25 0 0 0 3.65 3.2M11.25 2.75a3.25 3.25 0 0 1 4.45 2.95A3.2 3.2 0 0 1 17 8.3a3.5 3.5 0 0 1-2.1 3.2V14a3.25 3.25 0 0 1-3.65 3.2M8.75 2.75V17.2M11.25 2.75V17.2M5.1 8h3.65M11.25 8h3.65M5.1 12h3.65M11.25 12h3.65"></path></g><g class="route-icon-filled"><path d="M8.8 2.35A3.65 3.65 0 0 0 4 5.55 3.55 3.55 0 0 0 2.65 8.3c0 1.6.8 3 2.15 3.85V14a3.75 3.75 0 0 0 4 3.65V2.35Zm2.4 0v15.3A3.75 3.75 0 0 0 15.2 14v-1.85a4.35 4.35 0 0 0 2.15-3.85A3.55 3.55 0 0 0 16 5.55a3.65 3.65 0 0 0-4.8-3.2Z"></path><path class="route-icon-cut" d="M8.8 6.35H6.6l-1.15-1M8.8 10H5.9l-1.15 1M8.8 13.65H6.7l-1 1M11.2 6.35h2.2l1.15-1M11.2 10h2.9l1.15 1M11.2 13.65h2.1l1 1"></path></g>' },
-];
+const ROUTE_ICONS: Record<FixedRouteId, string> = {
+  default: '<g class="route-icon-outline"><circle cx="10" cy="10" r="6"></circle><circle cx="10" cy="10" r="1.6"></circle></g><path class="route-icon-filled" fill-rule="evenodd" d="M10 3.25a6.75 6.75 0 1 0 0 13.5 6.75 6.75 0 0 0 0-13.5Zm0 4a2.75 2.75 0 1 1 0 5.5 2.75 2.75 0 0 1 0-5.5Z"></path>',
+  fast: '<path class="route-icon-outline" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path><path class="route-icon-filled" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path>',
+  smart: '<g class="route-icon-outline"><path d="M8.75 2.75A3.25 3.25 0 0 0 4.3 5.7 3.2 3.2 0 0 0 3 8.3a3.5 3.5 0 0 0 2.1 3.2V14a3.25 3.25 0 0 0 3.65 3.2M11.25 2.75a3.25 3.25 0 0 1 4.45 2.95A3.2 3.2 0 0 1 17 8.3a3.5 3.5 0 0 1-2.1 3.2V14a3.25 3.25 0 0 1-3.65 3.2M8.75 2.75V17.2M11.25 2.75V17.2M5.1 8h3.65M11.25 8h3.65M5.1 12h3.65M11.25 12h3.65"></path></g><g class="route-icon-filled"><path d="M8.8 2.35A3.65 3.65 0 0 0 4 5.55 3.55 3.55 0 0 0 2.65 8.3c0 1.6.8 3 2.15 3.85V14a3.75 3.75 0 0 0 4 3.65V2.35Zm2.4 0v15.3A3.75 3.75 0 0 0 15.2 14v-1.85a4.35 4.35 0 0 0 2.15-3.85A3.55 3.55 0 0 0 16 5.55a3.65 3.65 0 0 0-4.8-3.2Z"></path><path class="route-icon-cut" d="M8.8 6.35H6.6l-1.15-1M8.8 10H5.9l-1.15 1M8.8 13.65H6.7l-1 1M11.2 6.35h2.2l1.15-1M11.2 10h2.9l1.15 1M11.2 13.65h2.1l1 1"></path></g>',
+};
 
-/** Text-model assignments shown in Connections. Subagent is intentionally not
- * part of FIXED_ROUTES: it is an internal execution route and must never appear
- * in the chat tier picker or ordinary user route grants. */
-export const CONNECTION_ROUTES: readonly { id: ConnectionRouteId; label: string; icon: string }[] = [
-  ...FIXED_ROUTES,
-  {
-    id: "subagent",
-    label: "Subagent",
-    icon: '<g class="route-icon-outline"><circle cx="6" cy="6" r="2.25"></circle><circle cx="14" cy="6" r="2.25"></circle><circle cx="10" cy="14" r="2.25"></circle><path d="m7.7 7.45 1.15 4.35M12.3 7.45l-1.15 4.35M8.25 6h3.5"></path></g><g class="route-icon-filled"><circle cx="6" cy="6" r="2.5"></circle><circle cx="14" cy="6" r="2.5"></circle><circle cx="10" cy="14" r="2.5"></circle><path d="M7.5 7.4 9 11.7M12.5 7.4 11 11.7M8.5 6h3"></path></g>',
-  },
-];
+function withRouteIcon<T extends FixedRouteId>(definition: TextRouteDefinition<T>): RouteDefinition<T> {
+  return { id: definition.id, label: definition.label, icon: ROUTE_ICONS[definition.id] };
+}
+
+export const FIXED_ROUTES: readonly RouteDefinition<FixedRouteId>[] = TEXT_ROUTE_DEFINITIONS.map(withRouteIcon);
+const DEFAULT_ROUTE = withRouteIcon(TEXT_ROUTE_DEFINITIONS.find((route): route is TextRouteDefinition<"default"> => route.id === "default")!);
+const LOCAL_ROUTES: readonly RouteDefinition<"default">[] = [DEFAULT_ROUTE];
+export const CLOUD_ROUTES: readonly RouteDefinition<CloudRouteId>[] = CLOUD_TEXT_ROUTE_DEFINITIONS.map(withRouteIcon);
 
 /** Well-known media routes (§5.2): single-assignment toggles per modality.
  *  A recipe is only assignable to a route whose kind matches one of its output
@@ -65,16 +70,16 @@ export const CONSUMER_TEMPLATES: readonly { id: string; label: string; descripti
   { id: "replicate", label: "Replicate", description: "Replicate media models; the base URL is filled in automatically." },
 ];
 
-type ConnectionModelView = ConsumerConnectionSummary["models"][number] & { displayName?: string; modelId?: string; contextTokens?: number; maxConcurrentGenerations?: number };
+type ConnectionModelView = ConsumerConnectionSummary["models"][number] & { displayName?: string; modelId?: string; engine?: string; contextTokens?: number; maxConcurrentGenerations?: number };
 /** One media model card: a media recipe plus the well-known route toggles it can serve. */
 interface MediaModelView {
   recipeId: string;
   displayName: string;
   modelId: string;
+  engine: string;
   /** Output modalities the recipe can generate — one well-known route toggle each. */
   modalities: MediaModality[];
   limits?: { maxDurationSeconds?: number; maxFps?: number; maxResolution?: string; maxRefs?: number; maxFrames?: number };
-  template: string;
 }
 type HostedConnectionView = Omit<ConsumerConnectionSummary, "models" | "mediaModels"> & { hosted: true; availableModels: ConnectionModelView[]; availableMediaModels: MediaModelView[] };
 type SavedConnectionView = Omit<ConsumerConnectionSummary, "models" | "mediaModels"> & { hosted: false; availableModels: ConnectionModelView[]; availableMediaModels: MediaModelView[]; source: ConsumerConnectionSummary };
@@ -116,6 +121,8 @@ export interface ConnectionWorkspaceOptions {
   bridge: ConnectionWorkspaceBridge;
   api: (path: string, method?: string, body?: unknown) => Promise<Json>;
   reloadConfiguration: () => Promise<Json | undefined>;
+  updateRouteConfiguration: (routeId: string, route: Json | undefined) => void;
+  updateCloudRouteConfiguration: (role: CloudRouteId, recipeId: string | undefined) => void;
   testRecipe: (recipe: Json, card: HTMLElement, button: HTMLButtonElement) => Promise<void>;
   renderRecipeTestState: (recipeId: string, card: HTMLElement, button: HTMLButtonElement) => void;
   closePopovers: () => void;
@@ -130,6 +137,7 @@ export class ConnectionWorkspaceController {
   private records: ConsumerConnectionSummary[] = [];
   private configuration: Json | undefined;
   private refreshGeneration = 0;
+  private readonly routeAssignmentGeneration = new Map<string, number>();
 
   constructor(options: ConnectionWorkspaceOptions) {
     this.options = options;
@@ -216,7 +224,7 @@ export class ConnectionWorkspaceController {
     this.elements.connections.replaceChildren();
     const connectionRecords = this.views();
     const query = this.elements.search.value.trim().toLowerCase();
-    const visible = connectionRecords.filter((connection) => !query || [connection.displayName, ...connection.availableModels.flatMap((model) => [model.id, model.displayName, model.modelId]), ...connection.availableMediaModels.flatMap((model) => [model.modelId, model.displayName])].some((value) => String(value ?? "").toLowerCase().includes(query)));
+    const visible = connectionRecords.filter((connection) => !query || [connection.displayName, ...connection.availableModels.flatMap((model) => [model.id, model.displayName, model.modelId, model.engine]), ...connection.availableMediaModels.flatMap((model) => [model.modelId, model.displayName, model.engine])].some((value) => String(value ?? "").toLowerCase().includes(query)));
     if (!visible.length) {
       this.elements.connections.append(emptyState(query ? "No matching connections" : "No APIs connected yet", query ? "panel-empty" : "connections-empty"));
       return;
@@ -267,7 +275,7 @@ export class ConnectionWorkspaceController {
     const recipes = this.configuration?.recipes ?? [];
     const hostedModels = recipes
       .filter((recipe: Json) => !String(recipe.id).startsWith("consumer-recipe--") && recipe.capabilities?.chatCompletions !== false)
-      .map((recipe: Json): ConnectionModelView => ({ id: String(recipe.id), routeId: "", recipeId: String(recipe.id), displayName: String(recipe.displayName ?? recipe.modelId ?? recipe.id), modelId: String(recipe.modelId ?? recipe.id), contextTokens: Number(recipe.contextTokens), maxConcurrentGenerations: Number(recipe.capabilities?.maxConcurrentGenerations ?? 1) }));
+      .map((recipe: Json): ConnectionModelView => ({ id: String(recipe.id), recipeId: String(recipe.id), displayName: String(recipe.displayName ?? recipe.modelId ?? recipe.id), modelId: String(recipe.modelId ?? recipe.id), engine: String(recipe.playbookId ?? recipe.adapter ?? "Local"), contextTokens: Number(recipe.contextTokens), maxConcurrentGenerations: Number(recipe.capabilities?.maxConcurrentGenerations ?? 1) }));
     const hostedMediaModels = hostedMediaViews(recipes);
     const hostedConnection: HostedConnectionView = { id: LOCAL_CONNECTION_ID, displayName: String(this.configuration?.hostName ?? "This PC"), baseUrl: "", authType: "none", hasCredential: false, template: "openai-compatible", availableModels: hostedModels, availableMediaModels: hostedMediaModels, updatedAt: "", hosted: true };
     return [hostedConnection, ...this.records.map((connection): SavedConnectionView => ({
@@ -275,7 +283,7 @@ export class ConnectionWorkspaceController {
       hosted: false,
       availableModels: connection.models.map((model) => {
         const recipe = recipes.find((candidate: Json) => candidate.id === model.recipeId);
-        return { ...model, maxConcurrentGenerations: Number(recipe?.capabilities?.maxConcurrentGenerations ?? 1) };
+        return { ...model, engine: String(connection.template ?? recipe?.adapter ?? "openai-compatible"), maxConcurrentGenerations: Number(recipe?.capabilities?.maxConcurrentGenerations ?? 1) };
       }),
       availableMediaModels: savedMediaViews(connection),
       source: connection,
@@ -301,7 +309,7 @@ export class ConnectionWorkspaceController {
     });
     if (!section.collapsed) {
       if (!connection.availableModels.length && !mediaModels.length) section.appendBody(emptyState("No models available"));
-      for (const model of connection.availableModels) section.appendBody(this.modelCard(model, routes));
+      for (const model of connection.availableModels) section.appendBody(this.modelCard(model, routes, connection.hosted));
       if (mediaModels.length) {
         for (const model of mediaModels) section.appendBody(this.mediaModelCard(model, routes));
       }
@@ -309,7 +317,7 @@ export class ConnectionWorkspaceController {
     return section.root;
   }
 
-  private modelCard(model: ConnectionModelView, routes: Json[]): HTMLElement {
+  private modelCard(model: ConnectionModelView, routes: Json[], hosted: boolean): HTMLElement {
     const card = document.createElement("article");
     card.className = "recipe-card";
     const details = document.createElement("div");
@@ -320,6 +328,7 @@ export class ConnectionWorkspaceController {
     const labels = document.createElement("div");
     labels.className = "recipe-card-labels";
     labels.append(...recipeMetadata({
+      ...(model.engine ? { engine: model.engine } : {}),
       modelId: model.modelId ?? "API model",
       ...(model.contextTokens ? { contextTokens: model.contextTokens } : {}),
       capabilities: { chatCompletions: true, maxConcurrentGenerations: model.maxConcurrentGenerations ?? 1 },
@@ -330,24 +339,32 @@ export class ConnectionWorkspaceController {
     const test = document.createElement("button");
     test.type = "button";
     test.className = "recipe-test-button";
+    test.hidden = this.configuration?.isAdministrator !== true;
     test.setAttribute("aria-live", "polite");
     test.addEventListener("click", () => void this.options.testRecipe({ id: model.recipeId, displayName: model.id }, card, test));
     const routeToggle = document.createElement("div");
     routeToggle.className = "recipe-route-toggle";
     routeToggle.setAttribute("role", "group");
     routeToggle.setAttribute("aria-label", `${model.id} routing`);
-    for (const definition of CONNECTION_ROUTES) {
+    const definitions = hosted ? LOCAL_ROUTES : CLOUD_ROUTES;
+    for (const definition of definitions) {
       const routeId = definition.id;
       const route = routes.find((item: Json) => item.id === routeId);
+      const active = hosted
+        ? route?.recipeId === model.recipeId
+        : this.configuration?.cloudRoutes?.[routeId] === model.recipeId;
       const button = document.createElement("button");
       button.type = "button";
       button.className = `route-symbol route-${definition.id}`;
       button.title = definition.label;
       button.setAttribute("aria-label", `${definition.label} route`);
-      button.setAttribute("aria-pressed", String(route?.recipeId === model.recipeId));
-      button.classList.toggle("active", route?.recipeId === model.recipeId);
+      button.setAttribute("aria-pressed", String(active));
+      button.classList.toggle("active", active);
       button.append(svgIcon(definition.icon));
-      button.addEventListener("click", () => void this.assignRoute(definition, model, button));
+      if (hosted && this.configuration?.isAdministrator !== true) button.disabled = true;
+      button.addEventListener("click", () => void (definition.id === "default"
+        ? this.assignDefaultRoute(definition, model)
+        : this.assignCloudRoute(definition, model)));
       routeToggle.append(button);
     }
     actions.append(routeToggle, test);
@@ -367,6 +384,7 @@ export class ConnectionWorkspaceController {
     const labels = document.createElement("div");
     labels.className = "recipe-card-labels";
     labels.append(...recipeMetadata({
+      engine: model.engine,
       modelId: model.modelId,
       capabilities: { chatCompletions: false, modalities: { output: model.modalities, ...(model.limits ? { limits: model.limits } : {}) } },
     }));
@@ -376,6 +394,7 @@ export class ConnectionWorkspaceController {
     const test = document.createElement("button");
     test.type = "button";
     test.className = "recipe-test-button";
+    test.hidden = this.configuration?.isAdministrator !== true;
     test.setAttribute("aria-live", "polite");
     test.addEventListener("click", () => void this.options.testRecipe({
       id: model.recipeId,
@@ -400,7 +419,8 @@ export class ConnectionWorkspaceController {
         button.disabled = true;
         button.title = `${model.modelId} does not generate ${definition.label.toLowerCase()}`;
       }
-      button.addEventListener("click", () => void this.assignMediaRoute(definition, model, button));
+      if (this.configuration?.isAdministrator !== true) button.disabled = true;
+      button.addEventListener("click", () => void this.assignMediaRoute(definition, model));
       routeToggle.append(button);
     }
     actions.append(routeToggle, test);
@@ -493,46 +513,99 @@ export class ConnectionWorkspaceController {
     }
   }
 
-  private async assignRoute(definition: (typeof CONNECTION_ROUTES)[number], model: ConnectionModelView, button: HTMLButtonElement): Promise<void> {
+  private async assignDefaultRoute(definition: RouteDefinition<"default">, model: ConnectionModelView): Promise<void> {
     const routeId = definition.id;
     const current = this.configuration?.routes?.find((route: Json) => route.id === routeId);
     if (current?.recipeId === model.recipeId) return;
-    button.disabled = true;
+    const route: Json = {
+      ...(current ?? {}),
+      id: routeId,
+      displayName: definition.label,
+      description: "Pinned local model",
+      recipeId: model.recipeId,
+      enabled: true,
+      isDefault: true,
+    };
+    const generation = (this.routeAssignmentGeneration.get(routeId) ?? 0) + 1;
+    this.routeAssignmentGeneration.set(routeId, generation);
+    this.applyRoute(routeId, route);
+    this.options.updateRouteConfiguration(routeId, route);
+    this.render();
     try {
-      await this.options.api(`/api/v1/management/routes/${routeId}`, "PUT", {
-        displayName: definition.label,
-        description: definition.id === "fast" ? "Lowest-latency route" : definition.id === "smart" ? "Highest-capability route" : definition.id === "subagent" ? "Internal delegated-work route" : "Primary route",
-        recipeId: model.recipeId,
-        enabled: true,
-        isDefault: definition.id === "default",
-      });
-      this.configuration = await this.options.reloadConfiguration();
-      this.render();
-      this.options.showStatus(`${definition.label} route updated`, "success");
+      const response = await this.options.api(`/api/v1/management/routes/${routeId}`, "PUT", route);
+      if (this.routeAssignmentGeneration.get(routeId) !== generation) return;
+      const saved = response.data ?? route;
+      this.applyRoute(routeId, saved);
+      this.options.updateRouteConfiguration(routeId, saved);
     } catch (error) {
-      button.disabled = false;
+      if (this.routeAssignmentGeneration.get(routeId) !== generation) return;
+      this.applyRoute(routeId, current);
+      this.options.updateRouteConfiguration(routeId, current);
+      this.render();
       this.options.showStatus(this.options.errorMessage(error), "error");
     }
   }
 
-  private async assignMediaRoute(definition: (typeof MEDIA_ROUTES)[number], model: MediaModelView, button: HTMLButtonElement): Promise<void> {
-    const routeId = definition.id;
-    const current = this.configuration?.routes?.find((route: Json) => route.id === routeId);
-    if (current?.recipeId === model.recipeId) return;
-    button.disabled = true;
+  private async assignCloudRoute(definition: RouteDefinition<CloudRouteId>, model: ConnectionModelView): Promise<void> {
+    const role = definition.id;
+    const previous = this.configuration?.cloudRoutes?.[role] as string | undefined;
+    const next = previous === model.recipeId ? undefined : model.recipeId;
+    const generation = (this.routeAssignmentGeneration.get(role) ?? 0) + 1;
+    this.routeAssignmentGeneration.set(role, generation);
+    this.applyCloudRoute(role, next);
+    this.options.updateCloudRouteConfiguration(role, next);
+    this.render();
     try {
-      await this.options.api(`/api/v1/management/routes/${routeId}`, "PUT", {
-        displayName: definition.label,
-        recipeId: model.recipeId,
-        enabled: true,
-      });
-      this.configuration = await this.options.reloadConfiguration();
-      this.render();
-      this.options.showStatus(`${definition.label} route updated`, "success");
+      if (next) await this.options.api(`/api/v1/cloud-routes/${role}`, "PUT", { recipeId: next });
+      else await this.options.api(`/api/v1/cloud-routes/${role}`, "DELETE");
+      if (this.routeAssignmentGeneration.get(role) !== generation) return;
     } catch (error) {
-      button.disabled = false;
+      if (this.routeAssignmentGeneration.get(role) !== generation) return;
+      this.applyCloudRoute(role, previous);
+      this.options.updateCloudRouteConfiguration(role, previous);
       this.options.showStatus(this.options.errorMessage(error), "error");
     }
+    this.render();
+  }
+
+  private async assignMediaRoute(definition: (typeof MEDIA_ROUTES)[number], model: MediaModelView): Promise<void> {
+    const routeId = definition.id;
+    const current = this.configuration?.routes?.find((route: Json) => route.id === routeId);
+    const selected = current?.recipeId === model.recipeId && current?.enabled !== false;
+    const route: Json = selected
+      ? { ...(current ?? {}), id: routeId, displayName: definition.label, recipeId: "", enabled: false }
+      : { ...(current ?? {}), id: routeId, displayName: definition.label, recipeId: model.recipeId, enabled: true };
+    const generation = (this.routeAssignmentGeneration.get(routeId) ?? 0) + 1;
+    this.routeAssignmentGeneration.set(routeId, generation);
+    this.applyRoute(routeId, route);
+    this.options.updateRouteConfiguration(routeId, route);
+    this.render();
+    try {
+      const response = await this.options.api(`/api/v1/management/routes/${routeId}`, "PUT", route);
+      if (this.routeAssignmentGeneration.get(routeId) !== generation) return;
+      const saved = response.data ?? route;
+      this.applyRoute(routeId, saved);
+      this.options.updateRouteConfiguration(routeId, saved);
+    } catch (error) {
+      if (this.routeAssignmentGeneration.get(routeId) !== generation) return;
+      this.applyRoute(routeId, current);
+      this.options.updateRouteConfiguration(routeId, current);
+      this.render();
+      this.options.showStatus(this.options.errorMessage(error), "error");
+    }
+  }
+
+  private applyRoute(routeId: string, route: Json | undefined): void {
+    const routes = (this.configuration?.routes ?? []).filter((item: Json) => item.id !== routeId);
+    if (route) routes.push(route);
+    this.configuration = { ...(this.configuration ?? {}), routes };
+  }
+
+  private applyCloudRoute(role: CloudRouteId, recipeId: string | undefined): void {
+    this.configuration = {
+      ...(this.configuration ?? {}),
+      cloudRoutes: { ...(this.configuration?.cloudRoutes ?? {}), [role]: recipeId },
+    };
   }
 
   private resetForm(): void {
@@ -566,10 +639,6 @@ export class ConnectionWorkspaceController {
   }
 }
 
-export function consumerFixedRouteId(connectionId: string, id: FixedRouteId): string {
-  return `consumer--${connectionId}--route--${id}`;
-}
-
 function actionButton(label: string, action: (button: HTMLButtonElement) => void | Promise<void>): HTMLButtonElement {
   const button = document.createElement("button");
   button.type = "button";
@@ -601,7 +670,7 @@ function hostedMediaViews(recipes: Json[]): MediaModelView[] {
       modelId: String(recipe.modelId ?? recipe.id),
       modalities: recipe.capabilities.modalities.output.filter((modality: unknown) => modality === "image" || modality === "video" || modality === "audio"),
       ...(recipe.capabilities?.modalities?.limits ? { limits: recipe.capabilities.modalities.limits } : {}),
-      template: String(recipe.adapter ?? "openai-compatible"),
+      engine: String(recipe.playbookId ?? recipe.adapter ?? "Local"),
     }));
 }
 
@@ -615,7 +684,7 @@ function savedMediaViews(connection: ConsumerConnectionSummary): MediaModelView[
       displayName: model.id,
       modelId: model.id,
       modalities: [],
-      template: model.template,
+      engine: model.template,
     };
     if (!view.modalities.includes(model.modality)) view.modalities.push(model.modality);
     byRecipe.set(model.recipeId, view);

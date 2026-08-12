@@ -9,6 +9,8 @@ interface MediaLimits {
 }
 
 export interface RecipeMetadataOptions {
+  /** Inference/provider engine, rendered before every other metadata tag. */
+  engine?: string;
   modelId: string;
   contextTokens?: number;
   capabilities?: {
@@ -28,7 +30,10 @@ export interface RecipeMetadataOptions {
  * leak into the UI.
  */
 export function recipeMetadata(options: RecipeMetadataOptions): HTMLElement[] {
-  const labels = [label(options.modelId)];
+  const labels = [
+    ...(options.engine ? [label(engineDisplayName(options.engine), "recipe-engine-label")] : []),
+    label(options.modelId),
+  ];
   const modalities = outputModalities(options.capabilities);
   for (const modality of modalities) {
     labels.push(label(capitalize(modality), `media-modality-badge media-${modality}`, `Generates ${modality}`));
@@ -44,6 +49,21 @@ export function recipeMetadata(options: RecipeMetadataOptions): HTMLElement[] {
     for (const badge of mediaLimitBadges(options.capabilities?.modalities?.limits)) labels.push(label(badge, "media-limit-badge"));
   }
   return labels;
+}
+
+export function engineDisplayName(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  const known: Record<string, string> = {
+    ninfer: "NInfer",
+    vllm: "vLLM",
+    comfyui: "ComfyUI",
+    "llama.cpp": "llama.cpp",
+    "openai-compatible": "OpenAI-compatible",
+    "openai-media": "OpenAI media",
+    fal: "Fal",
+    replicate: "Replicate",
+  };
+  return known[normalized] ?? value.trim();
 }
 
 export function outputModalities(capabilities: RecipeMetadataOptions["capabilities"]): RecipeModality[] {

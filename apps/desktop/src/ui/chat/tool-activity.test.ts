@@ -54,6 +54,9 @@ describe("describeTool", () => {
     expect(describeTool("write", { file_path: "README.md" }, false)).toBe("Wrote README.md");
     expect(describeTool("grep", { pattern: "TODO" }, false)).toBe("Searched TODO");
     expect(describeTool("read", { path: "src/app.ts" }, true)).toBe("Reading src/app.ts");
+    expect(describeTool("ls", { path: "." }, false, "C:\\work\\fitz-codex")).toBe("Listed fitz-codex");
+    expect(describeTool("ls", { path: "." }, false)).toBe("Listed current directory");
+    expect(describeTool("ls", { path: "src" }, false, "C:\\work\\fitz-codex")).toBe("Listed src");
     expect(describeTool("subagent", { role: "researcher", task: "Inspect routing" }, true)).toBe("Delegating to researcher");
     expect(describeTool("subagent", { role: "researcher", task: "Inspect routing" }, false)).toBe("Delegated to researcher");
   });

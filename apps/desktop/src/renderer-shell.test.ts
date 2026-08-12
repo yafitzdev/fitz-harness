@@ -29,6 +29,7 @@ const applicationMenu = readFileSync(new URL("./ui/navigation/application-menu.t
 const composerControls = readFileSync(new URL("./ui/chat/composer-controls.ts", import.meta.url), "utf8");
 const composer = readFileSync(new URL("./ui/chat/composer.ts", import.meta.url), "utf8");
 const connectionWorkspace = readFileSync(new URL("./ui/connections/connection-workspace.ts", import.meta.url), "utf8");
+const textRoutePresentation = readFileSync(new URL("./ui/routes/text-route-presentation.ts", import.meta.url), "utf8");
 const pluginCatalog = readFileSync(new URL("./ui/plugins/plugin-catalog.ts", import.meta.url), "utf8");
 const administrationPage = readFileSync(new URL("./ui/administration/administration-page.ts", import.meta.url), "utf8");
 const desktopUpdateController = readFileSync(new URL("./ui/administration/desktop-update-controller.ts", import.meta.url), "utf8");
@@ -109,8 +110,9 @@ describe("desktop renderer shell", () => {
     expect(composerControls).toContain("displayName?: string");
     expect(composerControls).not.toContain("modelName");
     expect(composerControls).toContain("accessModeToggle.title = value.label");
-    // The renderer passes the short route name alongside the "route · model" label.
-    expect(renderer).toContain("displayName: routeName");
+    // One formatter passes the short route name alongside every "route · model" label.
+    expect(renderer).toContain("textRouteOptions(managementConfiguration)");
+    expect(textRoutePresentation).toContain("displayName: definition.label");
   });
 
   it("keeps chat actions in the sidebar menu and keyboard shortcuts, not the header", () => {
@@ -246,7 +248,6 @@ describe("desktop renderer shell", () => {
     expect(renderer).not.toContain("const connectionsPage");
     expect(connectionWorkspace).toContain('this.options.bridge.saveConsumerConnection');
     expect(renderer).not.toContain('/api/v1/runtime-mode');
-    expect(connectionWorkspace).toContain('consumerFixedRouteId');
     expect(connectionWorkspace).toContain('const LOCAL_CONNECTION_ID = "hosted--local"');
     expect(renderer).not.toContain('connectionWorkspace.selectedConnectionId');
     expect(renderer).toContain('routeId: routeId as FixedRouteId');
@@ -259,7 +260,8 @@ describe("desktop renderer shell", () => {
     expect(renderer).not.toContain('edit.textContent = configuredConnectionId');
     expect(connectionWorkspace).toContain('for (const model of connection.availableModels)');
     expect(connectionWorkspace).toContain('const routeId = definition.id');
-    expect(connectionWorkspace).toContain('this.assignRoute(definition, model, button)');
+    expect(connectionWorkspace).toContain('this.assignDefaultRoute(definition, model)');
+    expect(connectionWorkspace).toContain('this.assignCloudRoute(definition, model)');
     expect(connectionWorkspace).toContain('if (!connection.hosted)');
     expect(connectionWorkspace).not.toContain('url.className = "connection-url"');
     expect(connectionWorkspace).toContain("Provider and self-hosted OpenAI-compatible APIs.");
@@ -313,7 +315,8 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('id: "management-browser"');
     expect(renderer).toContain("openPlaybookPage()");
     expect(playbookWorkspace).toContain("render(): void");
-    expect(renderer).toContain("FIXED_ROUTES");
+    expect(connectionWorkspace).toContain("TEXT_ROUTE_DEFINITIONS.map(withRouteIcon)");
+    expect(renderer).toContain("textRouteOptions(managementConfiguration)");
     expect(renderer).not.toContain("assignFixedRoute(");
     expect(playbookWorkspace).toContain('Configure and test recipes from your engine folders.');
     expect(renderer).not.toContain("now uses ${recipe.displayName}");
@@ -363,7 +366,7 @@ describe("desktop renderer shell", () => {
     expect(projectSidebar).toContain('this.#openMenu("project"');
     expect(projectSidebar).toContain('this.#openMenu("task"');
     expect(composerControls).toContain('this.openSettingsSubmenu(row.dataset.setting as ComposerSetting, row)');
-    expect(renderer).toContain('api("/api/v1/management/status")');
+    expect(renderer).toContain('administrator ? "/api/v1/management/status" : "/api/v1/configuration"');
     expect(playbookWorkspace).toContain('/api/v1/management/recipes/${encodeURIComponent(id)}');
     expect(renderer).toContain("sessionTokenEstimate += estimateTokens");
     expect(projects).toContain('this.options.api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" })');
@@ -580,8 +583,11 @@ describe("desktop renderer shell", () => {
     expect(composer).not.toContain("Ultra");
   });
 
-  it("silently warms the selected route after the first composer character", () => {
-    expect(renderer).toContain("agentRuns.scheduleWarmup(composer.value, composer.controls.routeId)");
+  it("warms Default on desktop open and retains first-character warm as a safety net", () => {
+    expect(main).toContain("void warmLocalDefault()");
+    expect(main).toContain('hostClient.fetch("/api/v1/inference/warm"');
+    expect(renderer).toContain("agentRuns.scheduleWarmup(text, composer.controls.routeId)");
+    expect(renderer).not.toContain("agentRuns.scheduleWarmup(composer.value, composer.controls.routeId)");
     expect(agentRunController).toContain('this.#options.api("/api/v1/inference/warm", "POST", { model })');
     expect(agentRunController).toContain("if (this.#composerHadText || this.active || !model) return");
     expect(agentRunController).toContain("}, 120)");
@@ -979,6 +985,8 @@ describe("desktop renderer shell", () => {
     expect(main).toContain("safeStorage.encryptString(token)");
     expect(main).toContain("safeStorage.decryptString");
     expect(main).toContain('createHash("sha256").update(new URL(hostUrl).origin)');
+    expect(main).toContain("legacyConsumerConnectionsPath");
+    expect(main).toContain('renameSync(legacyPath, `${legacyPath}.migrated`)');
     expect(main).toContain("const { token: _token, ...safeData } = data");
     expect(styles).toContain(".pairing-page");
     expect(renderer).toContain('setConnection(configuredHostOrigin.replace');
@@ -1000,7 +1008,9 @@ describe("desktop renderer shell", () => {
     expect(administrationPage).toContain("this.safetyRecovery.renderToolActions");
     expect(safetyRecoveryController).toContain('api("/api/v1/management/trash", "DELETE")');
     expect(safetyRecoveryController).toContain('api("/api/v1/management/trash/gc", "POST", { maxAgeDays: 30 })');
+    expect(administrationPage).toContain("Local Default is available to every user");
     expect(administrationPage).toContain('/routes`, "PUT", { routeIds }');
+    expect(administrationPage).toContain('input.dataset.mediaRoute = route.id');
     expect(administrationPage).toContain('/quota`, "PUT", quota');
     expect(administrationPage).toContain('revokeAdminDevice(device.id)');
     expect(html).toContain('id="administration-sections"');

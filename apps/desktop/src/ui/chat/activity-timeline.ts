@@ -21,6 +21,7 @@ type ActivityBurst = {
 
 export interface ActivityTimelineOptions {
   messages: HTMLElement;
+  projectRoot?: () => string;
   inspectResource: (reference: string) => void | Promise<void>;
   decideApproval: (approvalId: string, decision: "approved" | "denied", request?: Json) => Promise<"approved" | "denied">;
   showStatus: ActionFeedback;
@@ -113,7 +114,7 @@ export class ActivityTimeline {
     icon.append(svgIcon(iconPathFor(toolName)));
     const label = document.createElement("span");
     label.className = "agent-activity-label";
-    label.textContent = describeTool(toolName, input, running);
+    label.textContent = describeTool(toolName, input, running, this.#options.projectRoot?.() ?? "");
     label.title = label.textContent;
     this.#registerSearchRoot(input);
     const resource = this.#resourceReference(toolName, input);
@@ -165,7 +166,7 @@ export class ActivityTimeline {
     const mediaJobId = mediaJobIdFromToolResult(result);
     if (mediaJobId) row.dataset.mediaJobId = mediaJobId;
     const label = row.querySelector<HTMLElement>(".agent-activity-label");
-    if (label) { const description = describeTool(toolName, input, false); label.textContent = isError ? `${description} (failed)` : description; label.title = label.textContent; }
+    if (label) { const description = describeTool(toolName, input, false, this.#options.projectRoot?.() ?? ""); label.textContent = isError ? `${description} (failed)` : description; label.title = label.textContent; }
     const resultValue = row.querySelector<HTMLElement>(".tool-activity-result .tool-activity-value");
     if (resultValue) resultValue.textContent = this.#formatPayload(result, "No result returned");
     const shellOutput = row.querySelector<HTMLElement>(".shell-output");

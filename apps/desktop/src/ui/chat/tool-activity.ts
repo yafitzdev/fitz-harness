@@ -114,14 +114,14 @@ function countPhrase(verb: string, count: number, noun: string): string {
 }
 
 /** Present- or past-tense label for a single tool call row. */
-export function describeTool(toolName: string, input: unknown, running: boolean): string {
+export function describeTool(toolName: string, input: unknown, running: boolean, workspaceRoot = ""): string {
   const meta = toolMeta(toolName);
   const verb = running ? meta.presentVerb : meta.pastVerb;
   if (toolName === "subagent" && input && typeof input === "object") {
     const role = String((input as Record<string, unknown>).role ?? "").trim();
     if (role) return `${verb} to ${role}`;
   }
-  const target = toolTarget(input);
+  const target = toolTarget(toolName, input, workspaceRoot);
   return target ? `${verb} ${target}` : `${verb} ${meta.displayName ?? displayName(toolName)}`;
 }
 
@@ -152,12 +152,20 @@ export function toolPath(input: unknown): string | undefined {
   return trimmed || undefined;
 }
 
-function toolTarget(input: unknown): string {
+function toolTarget(toolName: string, input: unknown, workspaceRoot: string): string {
   const path = toolPath(input);
-  if (path) return path;
+  if (path) return toolName === "ls" ? listTarget(path, workspaceRoot) : path;
   if (!input || typeof input !== "object") return "";
   const value = input as Record<string, unknown>;
   return String(value.command ?? value.cmd ?? value.pattern ?? value.query ?? "").trim();
+}
+
+/** A bare dot is meaningful to the shell but useless to a human. Name the
+ * active workspace when possible and otherwise say what the dot means. */
+function listTarget(path: string, workspaceRoot: string): string {
+  if (path !== "." && path !== "./" && path !== ".\\") return path;
+  const normalized = workspaceRoot.replaceAll("\\", "/").replace(/\/+$/, "");
+  return normalized.split("/").filter(Boolean).at(-1) ?? "current directory";
 }
 
 /**
