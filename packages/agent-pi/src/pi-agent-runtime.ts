@@ -83,7 +83,7 @@ export interface PiAgentRuntimeOptions {
   baseUrl?: string;
   apiKey?: string;
   /** Model context window in tokens, or a per-request resolver (the request carries the resolved route id). */
-  contextWindow?: number | ((request: AgentRunRequest) => number);
+  contextWindow?: number | ((request: AgentRunRequest, context?: AgentRuntimeRunOptions) => number);
   thinkingLevel?: ThinkingLevel;
   createSession?: PiSessionFactory;
   requestToolApproval?: ToolApprovalRequester;
@@ -127,7 +127,7 @@ export class PiAgentRuntime implements AgentRuntime {
   readonly #tools: readonly string[] | undefined;
   readonly #baseUrl: string;
   readonly #apiKey: string;
-  readonly #contextWindow: number | ((request: AgentRunRequest) => number);
+  readonly #contextWindow: number | ((request: AgentRunRequest, context?: AgentRuntimeRunOptions) => number);
   readonly #thinkingLevel: ThinkingLevel;
   readonly #createSession: PiSessionFactory;
   readonly #requestToolApproval: ToolApprovalRequester | undefined;
@@ -183,12 +183,21 @@ export class PiAgentRuntime implements AgentRuntime {
     };
     const cancel = () => { controller.abort(); void session?.abort(); }; if (signal) { if (signal.aborted) cancel(); else signal.addEventListener("abort", cancel, { once: true }); }
     const cwd = typeof this.#cwd === "function" ? this.#cwd(request) : this.#cwd;
-    const contextWindow = typeof this.#contextWindow === "function" ? this.#contextWindow(request) : this.#contextWindow;
+    const contextWindow = typeof this.#contextWindow === "function" ? this.#contextWindow(request, options) : this.#contextWindow;
     const forcedToolName = request.mediaCommand ? `generate_${request.mediaCommand}` : undefined;
+    const customTools = this.#customTools?.({ cwd, ...(options?.runId ? { runId: options.runId } : {}), request }) ?? [];
+    const hasSubagentTool = customTools.some((tool) => tool.name === "subagent");
     const sessionTask = (async () => {
+      if (initialDelegationCount > 0 && !hasSubagentTool) {
+        throw new Error("Subagents are unavailable because no Fast cloud route is selected. Choose a Fast workers model in Connections first.");
+      }
       const created = await this.#createSession({
         cwd,
-        ...(forcedToolName ? { tools: [], activeTools: [forcedToolName] } : this.#tools ? { tools: this.#tools } : {}),
+        ...(forcedToolName
+          ? { tools: [], activeTools: [forcedToolName] }
+          : initialDelegationCount > 0
+            ? { tools: [], activeTools: ["subagent"] }
+            : this.#tools ? { tools: this.#tools } : {}),
         routeId: request.model,
         baseUrl: this.#baseUrl,
         apiKey: this.#apiKey,
@@ -217,7 +226,7 @@ export class PiAgentRuntime implements AgentRuntime {
           ? { acquireToolLease: (toolCall) => this.#toolLease!({ ...toolCall, cwd, ...(options?.runId ? { runId: options.runId } : {}) }, controller.signal) }
           : {}),
         ...(this.#redactToolResult ? { redactResult: this.#redactToolResult } : {}),
-        ...(this.#customTools ? { customTools: this.#customTools({ cwd, ...(options?.runId ? { runId: options.runId } : {}), request }) } : {}),
+        ...(this.#customTools ? { customTools } : {}),
         ...(this.#forwardWorkContext && options ? { workContext: { ...options, ...(forcedToolName ? { forcedToolName } : {}) } } : {}),
       }); session = created; if (controller.signal.aborted) { await created.abort(); throw abortError(); }
       return created;
@@ -225,6 +234,7 @@ export class PiAgentRuntime implements AgentRuntime {
     void (async () => { try {
       const activeSession = await sessionTask;
       let sawAssistant = false;
+      let internalDelegationRetry = false;
       // The first user message_start is the initial prompt; any later one is a steering
       // message Pi has pulled off its steer queue, i.e. the point where the user's text is
       // inserted into the running conversation.
@@ -234,12 +244,17 @@ export class PiAgentRuntime implements AgentRuntime {
         if (failure) { if (!completedMediaHandoff) channel.fail(failure); return; }
         if (event.type === "message_start" && event.message?.role === "user") {
           if (!sawInitialUserMessage) { sawInitialUserMessage = true; return; }
+          if (internalDelegationRetry) { internalDelegationRetry = false; return; }
           const text = extractTextFromMessageContent(event.message.content);
           if (text) channel.push({ type: "user.steer", text });
           return;
         }
         const translated = translateEvent(event);
-        if (translated) { if (translated.type === "assistant.delta") sawAssistant = true; channel.push(translated); }
+        if (translated) {
+          if (translated.type === "assistant.delta") sawAssistant = true;
+          const delegationOutput = translated.type === "assistant.delta" || translated.type === "reasoning.delta" || translated.type === "reasoning.completed";
+          if (!(initialDelegationCount > 0 && admittedInitialSubagents.size < initialDelegationCount && delegationOutput)) channel.push(translated);
+        }
         if (event.type === "tool_execution_end" && toolCallBudget !== undefined && delegatedToolCalls >= toolCallBudget && !budgetSteered) {
           budgetSteered = true;
           queueMicrotask(() => void activeSession.steer(subagentBudgetReason(toolCallBudget)).catch(() => undefined));
@@ -257,6 +272,14 @@ export class PiAgentRuntime implements AgentRuntime {
         await activeSession.prompt(formatPrompt(request, initialDelegationCount));
         if (completedMediaHandoff) { channel.close(); return; }
         if (controller.signal.aborted) throw abortError();
+        if (initialDelegationCount > 0 && admittedInitialSubagents.size < initialDelegationCount) {
+          const remaining = initialDelegationCount - admittedInitialSubagents.size;
+          internalDelegationRetry = true;
+          await activeSession.prompt(`SYSTEM: Your previous response was invalid because it did not launch every requested subagent. Call the subagent tool ${remaining} more time${remaining === 1 ? "" : "s"} now. Do not answer in prose.`);
+        }
+        if (initialDelegationCount > 0 && admittedInitialSubagents.size < initialDelegationCount) {
+          throw new Error(`The selected main model did not launch the ${initialDelegationCount} requested subagent${initialDelegationCount === 1 ? "" : "s"}.`);
+        }
         if (!sawAssistant) throw new Error("Pi agent completed without an assistant response");
         channel.close();
       } finally { unsubscribe(); activeSession.dispose(); }
@@ -628,8 +651,14 @@ function formatPrompt(request: AgentRunRequest, initialDelegationCount = request
 
 function delegatedCompaction(contextWindow: number, maxTokens: number): { reserveTokens: number; keepRecentTokens: number } {
   const outputHeadroom = Math.max(2_048, Math.min(maxTokens, Math.floor(contextWindow / 4)));
+  const estimatorSafety = Math.min(16_384, Math.floor(contextWindow / 2));
   return {
-    reserveTokens: Math.min(Math.floor(contextWindow / 3), Math.max(8_192, outputHeadroom)),
+    // Delegated workers ingest unusually token-dense source and tool output. Pi's
+    // estimator can undercount that material versus the serving tokenizer, so leave
+    // half of smaller context windows available for compaction and the final report.
+    // This prevents a worker estimated below the threshold from reaching the engine
+    // as prompt + max output > the model's actual context limit.
+    reserveTokens: Math.min(Math.floor(contextWindow / 2), Math.max(8_192, outputHeadroom, estimatorSafety)),
     keepRecentTokens: Math.max(2_048, Math.min(4_096, Math.floor(contextWindow / 8))),
   };
 }

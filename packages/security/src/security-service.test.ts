@@ -5,9 +5,9 @@ import { DEFAULT_QUOTAS, SecurityPolicyError, SecurityService } from "./security
 describe("SecurityService", () => {
   it("authenticates hashed device tokens and rejects revocation", () => {
     const store = SqliteStore.memory(); const security = new SecurityService(store, "test-pepper");
-    const user = security.createUser("Agent", "agent"); security.setRouteGrants(user.id, ["fast"]);
+    const user = security.createUser("Agent", "agent"); security.setRouteGrants(user.id, ["image"]);
     const issued = security.issueDevice(user.id, "Laptop", "secret-device-token");
-    expect(security.authenticate("Bearer secret-device-token")).toEqual(expect.objectContaining({ user: expect.objectContaining({ id: user.id }), routeGrants: ["fast"] }));
+    expect(security.authenticate("Bearer secret-device-token")).toEqual(expect.objectContaining({ user: expect.objectContaining({ id: user.id }), routeGrants: ["image"] }));
     expect(store.findDeviceByTokenHash("secret-device-token")).toBeUndefined();
     store.revokeDevice(issued.device.id, new Date().toISOString());
     expect(security.authenticate("Bearer secret-device-token")).toBeUndefined(); store.close();
@@ -41,6 +41,15 @@ describe("SecurityService", () => {
     const admin = security.createUser("Admin", "administrator"); const principal = security.authenticate(`Bearer ${security.issueDevice(admin.id, "Console").token}`)!;
     expect(security.authorizeRoute(principal, "ungranted-route")).toBe(true);
     expect(() => security.setQuota(admin.id, { maxRequestsPerMinute: 0, maxPromptChars: 1, maxOutputTokens: 1, maxQueueDepth: 1 })).toThrow("positive integers");
+    store.close();
+  });
+
+  it("authorizes every fixed text role without route grants", () => {
+    const store = SqliteStore.memory(); const security = new SecurityService(store, "pepper");
+    const user = security.createUser("Consumer");
+    const principal = security.principalForUser(user.id);
+    expect(["default", "fast", "smart"].every((routeId) => security.authorizeRoute(principal, routeId))).toBe(true);
+    expect(security.authorizeRoute(principal, "image")).toBe(false);
     store.close();
   });
 

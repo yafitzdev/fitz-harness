@@ -2,6 +2,7 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { FakeEngineAdapter } from "@fitz/engine-fake";
 import {
@@ -21,6 +22,7 @@ import {
   type InferenceSchedulerOptions,
   type ResourceMonitor,
   type ResourcePolicy,
+  isMediaEngineAdapter,
 } from "@fitz/inference-core";
 import {
   HOST_CONTRACT_VERSION,
@@ -68,25 +70,17 @@ import { registerOpenAIRoutes } from "./openai-routes.js";
 import { registerCatalogRoutes } from "./catalog-routes.js";
 import { registerRuntimeAdministrationRoutes } from "./runtime-administration-routes.js";
 import { registerStorageRoutes } from "./storage-routes.js";
-
-interface ConsumerModelRegistration { modelId: string; routeId: string; recipeId: string }
-interface ConsumerMediaModelRegistration { modelId: string; recipeId: string; routeId: string; modality: MediaModality; template: string }
-interface ConsumerConnectionRegistration {
-  id: string;
-  displayName: string;
-  baseUrl: string;
-  authType: "none" | "bearer";
-  credentialEnv: string;
-  template: string;
-  models: ConsumerModelRegistration[];
-  /** Media recipes/routes created for this connection (§5.7): one entry per
-   *  (model, modality), one recipe per model. */
-  mediaModels: ConsumerMediaModelRegistration[];
-  updatedAt: string;
-}
+import {
+  CHAT_ROUTE_IDS,
+  LOCAL_OWNER_ID,
+  UserRouteResolver,
+  type CloudRouteRole,
+  type ConsumerConnectionRegistration,
+  type ConsumerMediaModelRegistration,
+  type ConsumerModelRegistration,
+} from "./user-route-resolver.js";
 
 const CONSUMER_ROUTE_PREFIX = "consumer--";
-const PUBLIC_ROUTE_IDS = new Set(["fast", "default", "smart"]);
 /** Exactly three well-known media route ids (§5.2); created disabled + unassigned. */
 const MEDIA_ROUTE_IDS = ["image", "video", "audio"] as const;
 const MEDIA_ROUTE_DISPLAY_NAMES: Record<(typeof MEDIA_ROUTE_IDS)[number], string> = {
@@ -154,6 +148,9 @@ export interface CreateHostOptions {
   artifacts?: ArtifactRepository;
   /** Coordinated database/artifact backup, restore, and storage maintenance. */
   storageDurability?: StorageDurabilityService;
+  /** Releases the dedicated local inference appliance after all engine
+   * instances have stopped. Used by the desktop hosting-plane lifecycle. */
+  releaseLocalRuntime?: (reason: string) => Promise<void>;
 }
 
 export interface HostRuntime {
@@ -208,14 +205,28 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     options.initialRecipes ?? DEFAULT_RECIPES,
     options.initialRoutes ?? DEFAULT_ROUTES,
   );
+  ensureDefaultRoute(store, options.initialRecipes ?? DEFAULT_RECIPES, options.initialRoutes ?? DEFAULT_ROUTES);
+  for (const retiredRouteId of ["fast", "smart", "subagent"]) store.deleteRoute(retiredRouteId);
+  discardLegacyConsumerConnections(store);
   const configuredEngineRoot = options.engineRoot ?? store.getSetting<string>("engineRoot") ?? join(homedir(), ".llm", "engines");
   store.setSetting("engineRoot", configuredEngineRoot);
   const routes = new RouteResolver(
     store.listRoutes(),
     store.listRecipes(),
   );
-  const reconcileLocalModels = () => options.reconcileLocalModels?.(routes);
-  reconcileLocalModels();
+  const reconcileRecipeCatalog = () => {
+    options.reconcileLocalModels?.(routes);
+    // Reconciliation may dematerialize the selected model after its payload was
+    // removed. Preserve the one-Default invariant with the engine mode's valid
+    // seed rather than leaving a dangling assignment or crashing the host.
+    ensureDefaultRoute(store, options.initialRecipes ?? DEFAULT_RECIPES, options.initialRoutes ?? DEFAULT_ROUTES);
+    const reconciledDefault = store.listRoutes().find((route) => route.id === "default")!;
+    const reconciledDefaultRecipe = store.listRecipes().find((recipe) => recipe.id === reconciledDefault.recipeId)!;
+    routes.upsertRecipe(reconciledDefaultRecipe);
+    routes.upsertRoute(reconciledDefault);
+  };
+  reconcileRecipeCatalog();
+  const userRoutes = new UserRouteResolver(store, routes);
   ensureMediaRoutes(store, routes);
   const events = new LifecycleEventBus(1_000, store.latestLifecycleSequence());
   const fakeAdapter = options.adapters ? options.fakeAdapter : (options.fakeAdapter ?? new FakeEngineAdapter());
@@ -255,15 +266,11 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     resources,
     ...(options.thermalGuard ? { thermalGuard: options.thermalGuard } : {}),
   });
-  const localRecipes = [...new Map(routes.listRoutes().filter((route) => PUBLIC_ROUTE_IDS.has(route.id)).map((route) => {
-    const recipe = routes.resolve(route.id).recipe;
-    return [recipe.id, recipe] as const;
-  })).values()].filter((recipe) => recipe.adapter !== "openai-compatible");
-  void Promise.allSettled(localRecipes.map((recipe) => lifecycle.prepare(recipe)));
   const scheduler = new InferenceScheduler(routes, lifecycle, events, {
     ...options.schedulerOptions,
-    gpuConcurrency: options.schedulerOptions?.gpuConcurrency
-      ?? Math.max(1, ...routes.listRecipes().map((recipe) => recipe.capabilities.maxConcurrentGenerations)),
+    // The hosting plane owns exactly one local model and admits exactly one
+    // local generation at a time, regardless of engine batching flags.
+    gpuConcurrency: 1,
     recordUsage: async (record) => {
       store.recordRequestUsage(record);
       await options.schedulerOptions?.recordUsage?.(record);
@@ -297,14 +304,32 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     if (event.type === "queue.updated" && event.data.kind === "chat") store.recordQueueEvent(event);
   });
   const unsubscribeMetrics = events.subscribe((event) => metrics.observeLifecycleEvent(event));
+  const pinnedDefault = routes.resolve("default").recipe;
+  lifecycle.pin(pinnedDefault);
+  const scheduleDefaultWarm = (label: string, ownerUserId?: string): void => {
+    try {
+      const warmup = scheduler.enqueueWarm("default", undefined, { label, ...(ownerUserId ? { ownerUserId } : {}) });
+      void warmup.result.catch((error) => app.log.error({ error }, `${label} failed`));
+    } catch (error) {
+      // A route assignment is durable configuration, not an inference request.
+      // If the work lane is momentarily full, the next Default call will load
+      // the pinned recipe normally; saving the setting must remain instant.
+      app.log.warn({ error }, `${label} could not be queued`);
+    }
+  };
+  scheduleDefaultWarm("Default startup warm");
+  const reconcileLocalModels = () => {
+    const previous = lifecycle.pinnedRecipe();
+    reconcileRecipeCatalog();
+    const next = routes.resolve("default").recipe;
+    if (sameRuntimeRecipe(previous, next)) return;
+    lifecycle.pin(next);
+    scheduleDefaultWarm("Reconciled Default warm");
+  };
   const requestStarts = new WeakMap<object, number>();
   const principals = new WeakMap<object, AuthenticatedPrincipal>();
   const internalWorkContexts = new WeakMap<object, { runId?: string; ownerUserId?: string; sessionId?: string; forcedToolName?: string }>();
-  const consumerConnections = (): ConsumerConnectionRegistration[] => store.getSetting<ConsumerConnectionRegistration[]>("consumerConnections") ?? [];
-  const activeRoutes = (): Route[] => routes.listRoutes();
-  const publicRoutes = (): Route[] => activeRoutes().filter((route) => PUBLIC_ROUTE_IDS.has(route.id));
-  const resolveActiveRoute = (routeId: string) => routes.resolve(routeId);
-  // Routes are global: exactly one fast/default/smart slot, each pointing at a single recipe.
+  const ownerUserId = (request: object): string => principals.get(request)?.user.id ?? LOCAL_OWNER_ID;
   app.addHook("onRequest", async (request, reply) => {
     requestStarts.set(request, performance.now());
     const publicPath = request.url.split("?")[0];
@@ -350,11 +375,16 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     try {
       const body = requireRecord(request.body);
       const publicRouteId = requirePublicRouteId(body.model);
+      if (publicRouteId !== "default") throw new TypeError("Only the local Default route can be warmed");
       const principal = principals.get(request);
       if (principal && !security?.authorizeRoute(principal, publicRouteId)) return reply.code(403).send({ error: "Route access denied" });
-      resolveActiveRoute(publicRouteId);
+      routes.resolve(publicRouteId);
       const warmup = scheduler.enqueueWarm(publicRouteId, undefined, { ...(principal ? { ownerUserId: principal.user.id } : {}), label: `${publicRouteId} warmup` });
-      return { data: await warmup.result };
+      // Warming is speculative work and cold model activation can legitimately
+      // take longer than an ordinary desktop request. Acknowledge admission
+      // immediately; lifecycle and GPU-work state expose eventual completion.
+      void warmup.result.catch(() => undefined);
+      return reply.code(202).send({ data: { requestId: warmup.requestId, routeId: publicRouteId, status: "queued" } });
     } catch (error) {
       if (error instanceof InferenceAdmissionError) reply.header("retry-after", "2");
       return reply.code(error instanceof RouteNotFoundError ? 404 : error instanceof InferenceAdmissionError ? 429 : 400).send({ error: errorMessage(error) });
@@ -367,7 +397,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     if (store.listUsers().length > 0) return reply.code(409).send({ error: "The host has already been initialized" });
     const administrator = security.createUser(`${hostname()} Administrator`, "administrator");
     const issued = security.issueDevice(administrator.id, `${hostname()} Desktop`);
-    security.setRouteGrants(administrator.id, publicRoutes().map((route) => route.id));
+    security.setRouteGrants(administrator.id, [...CHAT_ROUTE_IDS]);
     security.audit("security.bootstrapped", administrator.id, "user", administrator.id);
     return reply.code(201).send({ data: { user: administrator, device: issued.device, token: issued.token } });
   });
@@ -375,8 +405,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   registerOpenAIRoutes({
     app,
     scheduler,
-    routes,
-    publicRoutes,
+    userRoutes,
     principals,
     internalWorkContexts,
     ...(security ? { security } : {}),
@@ -393,7 +422,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     };
   });
   app.get("/api/v1/connectivity/status", async () => ({ tailscale: await tailscale.status() }));
-  app.post("/api/v1/pairing/redeem", async (request, reply) => { try { const body = requireRecord(request.body); const access = securityRequired(security); const redeemed = access.redeemPairingCode(requireString(body.code, "code"), requireString(body.displayName, "displayName"), requireString(body.deviceName, "deviceName")); access.setRouteGrants(redeemed.user.id, publicRoutes().map((route) => route.id)); return reply.code(201).send({ data: redeemed }); } catch (error) { return reply.code(error instanceof SecurityPolicyError ? 403 : 400).send({ error: errorMessage(error) }); } });
+  app.post("/api/v1/pairing/redeem", async (request, reply) => { try { const body = requireRecord(request.body); const access = securityRequired(security); const redeemed = access.redeemPairingCode(requireString(body.code, "code"), requireString(body.displayName, "displayName"), requireString(body.deviceName, "deviceName")); access.setRouteGrants(redeemed.user.id, [...CHAT_ROUTE_IDS]); return reply.code(201).send({ data: redeemed }); } catch (error) { return reply.code(error instanceof SecurityPolicyError ? 403 : 400).send({ error: errorMessage(error) }); } });
 
   registerAgentRoutes({
     app,
@@ -403,7 +432,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     context,
     principals,
     ...(security ? { security } : {}),
-    contextTokensForRoute: (routeId) => resolveActiveRoute(routeId).recipe.contextTokens,
+    contextTokensForRoute: (routeId, routeOwnerUserId) => userRoutes.contextTokens(routeId, routeOwnerUserId ?? LOCAL_OWNER_ID),
   });
 
   registerMediaRoutes({
@@ -428,16 +457,19 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   app.get(
     "/api/v1/management/status",
     { preHandler: adminGuard(options.adminToken, authMode, principals) },
-    async () => {
+    async (request) => {
       reconcileLocalModels();
       const resourceSnapshot = await resources.snapshot();
       return {
         engine: lifecycle.snapshot(),
+        residency: lifecycle.residencySnapshot(),
         queueDepth: scheduler.queueDepth,
         resources: { ...resourceSnapshot, policy: resources.policy },
         routes: routes.listRoutes(true),
         recipes: routes.listRecipes(),
         engines: store.listEngines(),
+        cloudRoutes: userRoutes.configuration(ownerUserId(request)),
+        isAdministrator: true,
         hostName: hostname(),
         engineRoot: store.getSetting<string>("engineRoot") ?? configuredEngineRoot,
         engineFolders: scanEngineFolders(store.getSetting<string>("engineRoot") ?? configuredEngineRoot, store.listEngines()),
@@ -450,18 +482,59 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     },
   );
 
+  app.get("/api/v1/configuration", async (request) => {
+    reconcileLocalModels();
+    const owner = ownerUserId(request);
+    const connections = userRoutes.connections(owner);
+    const ownedRecipeIds = new Set(connections.flatMap((connection) => [
+      ...connection.models.map((model) => model.recipeId),
+      ...connection.mediaModels.map((model) => model.recipeId),
+    ]));
+    const defaultResolved = routes.resolve("default");
+    return {
+      hostName: hostname(),
+      isAdministrator: authMode === "disabled" || principals.get(request)?.user.role === "administrator",
+      routes: [
+        ...userRoutes.publicRoutes(owner),
+        ...routes.listRoutes(true).filter((route) => (MEDIA_ROUTE_IDS as readonly string[]).includes(route.id) || ownedRecipeIds.has(route.recipeId)),
+      ],
+      recipes: routes.listRecipes().filter((recipe) => recipe.id === defaultResolved.recipe.id || ownedRecipeIds.has(recipe.id)),
+      cloudRoutes: userRoutes.configuration(owner),
+    };
+  });
+
+  app.get("/api/v1/cloud-routes", async (request) => ({ data: userRoutes.configuration(ownerUserId(request)) }));
+  app.put("/api/v1/cloud-routes/:role", async (request, reply) => {
+    try {
+      const role = parseCloudRouteRole((request.params as { role: string }).role);
+      const recipeId = requireString(requireRecord(request.body).recipeId, "recipeId");
+      const binding = userRoutes.assign(ownerUserId(request), role, recipeId);
+      security?.audit("cloud-route.assigned", principals.get(request)?.user.id, "cloud-route", role, { recipeId });
+      return { data: binding };
+    } catch (error) {
+      return reply.code(error instanceof RecipeNotFoundError ? 404 : 400).send({ error: errorMessage(error) });
+    }
+  });
+  app.delete("/api/v1/cloud-routes/:role", async (request, reply) => {
+    try {
+      const role = parseCloudRouteRole((request.params as { role: string }).role);
+      userRoutes.clear(ownerUserId(request), role);
+      security?.audit("cloud-route.cleared", principals.get(request)?.user.id, "cloud-route", role);
+      return reply.code(204).send();
+    } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
+  });
+
   app.get(
-    "/api/v1/management/connections",
-    { preHandler: adminGuard(options.adminToken, authMode, principals) },
-    async () => ({ data: consumerConnections().map(publicConsumerConnection) }),
+    "/api/v1/connections",
+    async (request) => ({ data: userRoutes.connections(ownerUserId(request)).map(publicConsumerConnection) }),
   );
 
   app.put(
-    "/api/v1/management/connections/:connectionId",
-    { preHandler: adminGuard(options.adminToken, authMode, principals) },
+    "/api/v1/connections/:connectionId",
     async (request, reply) => {
       const connectionId = requireIdentifier((request.params as { connectionId: string }).connectionId, "connectionId");
       try {
+        const connectionOwnerUserId = ownerUserId(request);
         const body = requireRecord(request.body);
         const displayName = requireString(body.displayName, "displayName");
         const template = parseConsumerTemplate(body.template);
@@ -469,7 +542,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         const authType = body.authType === "none" ? "none" : body.authType === "bearer" ? "bearer" : undefined;
         if (!authType) throw new TypeError("authType must be none or bearer");
         const apiKey = authType === "bearer" ? requireString(body.apiKey, "apiKey") : undefined;
-        const credentialEnv = consumerCredentialEnvironment(connectionId);
+        const credentialEnv = consumerCredentialEnvironment(connectionOwnerUserId, connectionId);
         if (apiKey) process.env[credentialEnv] = apiKey;
         else delete process.env[credentialEnv];
         const costCentsPerJob = parseCostCentsPerJob(body.costCentsPerJob);
@@ -503,14 +576,14 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         const modelIds = [...new Set(discovered.filter(supportsChatCompletions).map((item) => item.id.trim()).filter(Boolean))];
         if (template === "openai-compatible" && !modelIds.length) throw new Error("The API returned no chat-completion models");
 
-        const registrations = consumerConnections();
+        const registrations = userRoutes.connections(connectionOwnerUserId);
         const previous = registrations.find((item) => item.id === connectionId);
         if (previous) removeConsumerRegistration(previous, store, routes, false);
-        const models = modelIds.map((modelId) => consumerModelRegistration(connectionId, modelId));
+        const models = modelIds.map((modelId) => consumerModelRegistration(connectionOwnerUserId, connectionId, modelId));
         for (const model of models) {
           const recipe: Recipe = {
             id: model.recipeId,
-            playbookId: `consumer-${connectionId}`,
+            playbookId: consumerPlaybookId(connectionOwnerUserId, connectionId),
             displayName: model.modelId,
             adapter: "openai-compatible",
             modelId: model.modelId,
@@ -519,11 +592,11 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
             lifecycle: { loadPolicy: "onDemand", evictionPolicy: "never", idleTtlSeconds: 0, minimumResidencySeconds: 0 },
             configuration: { baseUrl, ...(authType === "bearer" ? { apiKeyEnv: credentialEnv } : {}), healthPath: consumerHealthPath(baseUrl) },
           };
-          const route: Route = { id: model.routeId, displayName: model.modelId, description: displayName, recipeId: model.recipeId, enabled: true };
-          store.upsertRecipe(recipe); routes.upsertRecipe(recipe); store.upsertRoute(route); routes.upsertRoute(route);
+          store.upsertRecipe(recipe); routes.upsertRecipe(recipe);
         }
         const mediaModels = saveMediaRecipes(store, routes, {
           connectionId,
+          ownerUserId: connectionOwnerUserId,
           template,
           displayName,
           baseUrl,
@@ -537,9 +610,9 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         // never left pointing at a deleted recipe (§5.7).
         clearStaleMediaRouteAssignments(store, routes);
         const connection: ConsumerConnectionRegistration = {
-          id: connectionId, displayName, baseUrl, template, authType, credentialEnv, models, mediaModels, updatedAt: new Date().toISOString(),
+          ownerUserId: connectionOwnerUserId, id: connectionId, displayName, baseUrl, template, authType, credentialEnv, models, mediaModels, updatedAt: new Date().toISOString(),
         };
-        store.setSetting("consumerConnections", [...registrations.filter((item) => item.id !== connectionId), connection]);
+        userRoutes.replaceConnection(connectionOwnerUserId, connection);
         security?.audit("consumer-connection.saved", principals.get(request)?.user.id, "consumer-connection", connectionId, { displayName, baseUrl, modelCount: models.length, mediaModelCount: mediaModels.length });
         return { data: publicConsumerConnection(connection) };
       } catch (error) {
@@ -549,16 +622,16 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   );
 
   app.delete(
-    "/api/v1/management/connections/:connectionId",
-    { preHandler: adminGuard(options.adminToken, authMode, principals) },
+    "/api/v1/connections/:connectionId",
     async (request, reply) => {
       const connectionId = requireIdentifier((request.params as { connectionId: string }).connectionId, "connectionId");
-      const registrations = consumerConnections();
+      const connectionOwnerUserId = ownerUserId(request);
+      const registrations = userRoutes.connections(connectionOwnerUserId);
       const connection = registrations.find((item) => item.id === connectionId);
       if (!connection) return reply.code(404).send({ error: "Connection not found" });
       removeConsumerRegistration(connection, store, routes);
       delete process.env[connection.credentialEnv];
-      store.setSetting("consumerConnections", registrations.filter((item) => item.id !== connectionId));
+      userRoutes.removeConnection(connectionOwnerUserId, connectionId);
       security?.audit("consumer-connection.removed", principals.get(request)?.user.id, "consumer-connection", connectionId);
       return reply.code(204).send();
     },
@@ -804,20 +877,33 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       const routeId = (request.params as { routeId: string }).routeId;
       try {
         const route = parseRoute(request.body, routeId);
+        const kind = route.kind ?? "chat";
+        if (kind === "chat" && routeId !== "default") {
+          throw new TypeError("Default is the only host-owned text route");
+        }
         if (route.recipeId !== "") {
           // De-assignment (recipeId: "") deliberately references no recipe, so the
           // recipe-exists guard is skipped for it (§5.2).
           const recipe = routes.listRecipes().find((item) => item.id === route.recipeId);
           if (!recipe) throw new RecipeNotFoundError(route.recipeId);
-          const kind = route.kind ?? "chat";
           if (kind !== "chat") {
             if (!recipe.capabilities.modalities?.output.includes(kind)) {
               throw new TypeError(`Recipe ${recipe.id} does not generate ${kind}; cannot assign it to the ${route.id} route`);
+            }
+          } else {
+            const adapter = adapters.get(recipe.adapter);
+            if (isMediaEngineAdapter(adapter) || (adapter.executionLocation?.(recipe) ?? "local") !== "local") {
+              throw new TypeError("The Default route must use a local text engine");
             }
           }
         }
         store.upsertRoute(route);
         routes.upsertRoute(route);
+        if (route.id === "default") {
+          const recipe = routes.resolve("default").recipe;
+          lifecycle.pin(recipe);
+          scheduleDefaultWarm("Updated Default warm", principals.get(request)?.user.id);
+        }
         return { data: route };
       } catch (error) {
         return reply.code(400).send({ error: errorMessage(error) });
@@ -836,7 +922,12 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
           : body.mode === "force" ? "force" : undefined;
         if (!mode) throw new TypeError("mode must be graceful or force");
         const reason = body.reason === undefined ? "management-request" : requireString(body.reason, "reason");
-        await lifecycle.stop(reason, mode);
+        try {
+          if (mode === "force") await scheduler.quiesce(reason);
+          else await lifecycle.stop(reason, mode);
+        } finally {
+          if (reason === "desktop-quit") await options.releaseLocalRuntime?.(reason);
+        }
         return { engine: lifecycle.snapshot() };
       } catch (error) {
         return reply.code(error instanceof TypeError ? 400 : 409).send({ error: errorMessage(error) });
@@ -900,6 +991,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     await mediaJobs.shutdown();
     await lifecycle.cancelPreparations();
     await scheduler.shutdown();
+    await options.releaseLocalRuntime?.("host-close");
     unsubscribeMetrics();
     unsubscribePersistence();
     store.close();
@@ -931,6 +1023,26 @@ function seedDefaults(store: SqliteStore, recipes: Recipe[], routes: Route[]): v
   if (store.listRoutes().length === 0) {
     for (const route of routes) store.upsertRoute(route);
   }
+}
+
+function ensureDefaultRoute(store: SqliteStore, recipes: Recipe[], routes: Route[]): void {
+  const existing = store.listRoutes().find((route) => route.id === "default");
+  const existingRecipe = existing ? store.listRecipes().find((recipe) => recipe.id === existing.recipeId) : undefined;
+  if (existing && existingRecipe && isLocalTextRecipe(existingRecipe)) return;
+  if (existing) store.deleteRoute(existing.id);
+  const route = routes.find((candidate) => candidate.id === "default");
+  if (!route) throw new Error("Host configuration must define a Default route");
+  const recipe = recipes.find((candidate) => candidate.id === route.recipeId);
+  if (!recipe) throw new Error(`Default route recipe is unavailable: ${route.recipeId}`);
+  if (!isLocalTextRecipe(recipe)) throw new Error(`Default route recipe must use a local text engine: ${recipe.id}`);
+  if (!store.listRecipes().some((candidate) => candidate.id === recipe.id)) store.upsertRecipe(recipe);
+  store.upsertRoute(route);
+}
+
+function isLocalTextRecipe(recipe: Recipe): boolean {
+  return recipe.capabilities.chatCompletions
+    && (recipe.capabilities.modalities?.output.length ?? 0) === 0
+    && recipe.adapter !== "openai-compatible";
 }
 
 /** Idempotent, create-only: creates the well-known media routes disabled with an
@@ -1020,27 +1132,36 @@ function consumerHealthPath(baseUrl: string): string {
   return /\/v1$/i.test(new URL(baseUrl).pathname.replace(/\/$/, "")) ? "/models" : "/v1/models";
 }
 
-function consumerCredentialEnvironment(connectionId: string): string {
-  return `FITZ_CONSUMER_${createHash("sha256").update(connectionId).digest("hex").slice(0, 16).toUpperCase()}`;
+function consumerCredentialEnvironment(ownerUserId: string, connectionId: string): string {
+  return `FITZ_CONSUMER_${createHash("sha256").update(`${ownerUserId}:${connectionId}`).digest("hex").slice(0, 16).toUpperCase()}`;
 }
 
-function consumerModelRegistration(connectionId: string, modelId: string): ConsumerModelRegistration {
+function consumerModelRegistration(ownerUserId: string, connectionId: string, modelId: string): ConsumerModelRegistration {
   const suffix = createHash("sha256").update(modelId).digest("hex").slice(0, 16);
-  return { modelId, routeId: `${CONSUMER_ROUTE_PREFIX}${connectionId}--${suffix}`, recipeId: `consumer-recipe--${connectionId}--${suffix}` };
+  const namespace = consumerNamespace(ownerUserId, connectionId);
+  return { modelId, recipeId: `consumer-recipe--${namespace}--${suffix}` };
 }
 
 /** Media registrations are per (model, modality): one recipe per model, one
  *  `consumer--*` route per modality. Ids are prefixed with `media` so a model
- *  that is both chat- and media-capable never collides with its chat
- *  recipe/route (§5.7 mixed connections). */
-function consumerMediaRecipeId(connectionId: string, modelId: string): string {
+ *  that is both chat- and media-capable never collides with its text recipe
+ *  (§5.7 mixed connections). */
+function consumerMediaRecipeId(ownerUserId: string, connectionId: string, modelId: string): string {
   const suffix = createHash("sha256").update(modelId).digest("hex").slice(0, 16);
-  return `consumer-recipe--media--${connectionId}--${suffix}`;
+  return `consumer-recipe--media--${consumerNamespace(ownerUserId, connectionId)}--${suffix}`;
 }
 
-function consumerMediaRouteId(connectionId: string, modelId: string, modality: MediaModality): string {
+function consumerMediaRouteId(ownerUserId: string, connectionId: string, modelId: string, modality: MediaModality): string {
   const suffix = createHash("sha256").update(`${modelId}:${modality}`).digest("hex").slice(0, 16);
-  return `${CONSUMER_ROUTE_PREFIX}media--${connectionId}--${suffix}`;
+  return `${CONSUMER_ROUTE_PREFIX}media--${consumerNamespace(ownerUserId, connectionId)}--${suffix}`;
+}
+
+function consumerNamespace(ownerUserId: string, connectionId: string): string {
+  return `${createHash("sha256").update(ownerUserId).digest("hex").slice(0, 12)}--${connectionId}`;
+}
+
+function consumerPlaybookId(ownerUserId: string, connectionId: string): string {
+  return `consumer-${consumerNamespace(ownerUserId, connectionId)}`;
 }
 
 function parseConsumerTemplate(value: unknown): string {
@@ -1068,6 +1189,7 @@ function saveMediaRecipes(
   store: SqliteStore,
   routes: RouteResolver,
   options: {
+    ownerUserId: string;
     connectionId: string;
     template: string;
     displayName: string;
@@ -1080,10 +1202,10 @@ function saveMediaRecipes(
 ): ConsumerMediaModelRegistration[] {
   const registrations: ConsumerMediaModelRegistration[] = [];
   for (const model of options.models) {
-    const recipeId = consumerMediaRecipeId(options.connectionId, model.modelId);
+    const recipeId = consumerMediaRecipeId(options.ownerUserId, options.connectionId, model.modelId);
     const recipe: Recipe = {
       id: recipeId,
-      playbookId: `consumer-${options.connectionId}`,
+      playbookId: consumerPlaybookId(options.ownerUserId, options.connectionId),
       displayName: model.modelId,
       adapter: options.template,
       modelId: model.modelId,
@@ -1113,7 +1235,7 @@ function saveMediaRecipes(
     store.upsertRecipe(recipe);
     routes.upsertRecipe(recipe);
     for (const modality of model.modalities) {
-      const routeId = consumerMediaRouteId(options.connectionId, model.modelId, modality);
+      const routeId = consumerMediaRouteId(options.ownerUserId, options.connectionId, model.modelId, modality);
       const route: Route = {
         id: routeId,
         displayName: model.modelId,
@@ -1130,10 +1252,15 @@ function saveMediaRecipes(
   return registrations;
 }
 
-function requirePublicRouteId(value: unknown): "fast" | "default" | "smart" {
+function requirePublicRouteId(value: unknown): "default" | "fast" | "smart" {
   if (value === undefined) return "default";
-  if (value !== "fast" && value !== "default" && value !== "smart") throw new TypeError("routeId must be fast, default, or smart");
+  if (value !== "default" && value !== "fast" && value !== "smart") throw new TypeError("routeId must be default, fast, or smart");
   return value;
+}
+
+function parseCloudRouteRole(value: unknown): CloudRouteRole {
+  if (value === "smart" || value === "fast") return value;
+  throw new TypeError("Cloud route role must be smart or fast");
 }
 
 function removeConsumerRegistration(connection: ConsumerConnectionRegistration, store: SqliteStore, routes: RouteResolver, removeAssignments = true): void {
@@ -1142,7 +1269,6 @@ function removeConsumerRegistration(connection: ConsumerConnectionRegistration, 
     ...(connection.mediaModels ?? []).map((model) => model.recipeId),
   ]);
   const consumerRouteIds = new Set([
-    ...connection.models.map((model) => model.routeId),
     ...(connection.mediaModels ?? []).map((model) => model.routeId),
   ]);
   if (removeAssignments) {
@@ -1158,7 +1284,6 @@ function removeConsumerRegistration(connection: ConsumerConnectionRegistration, 
     }
   }
   for (const model of connection.models) {
-    routes.deleteRoute(model.routeId); store.deleteRoute(model.routeId);
     routes.deleteRecipe(model.recipeId); store.deleteRecipe(model.recipeId);
   }
   for (const model of connection.mediaModels ?? []) {
@@ -1175,7 +1300,7 @@ function publicConsumerConnection(connection: ConsumerConnectionRegistration): R
     authType: connection.authType,
     hasCredential: connection.authType === "bearer",
     template: connection.template ?? "openai-compatible",
-    models: connection.models.map((model) => ({ id: model.modelId, routeId: model.routeId, recipeId: model.recipeId })),
+    models: connection.models.map((model) => ({ id: model.modelId, recipeId: model.recipeId })),
     mediaModels: (connection.mediaModels ?? []).map((model) => ({ id: model.modelId, routeId: model.routeId, recipeId: model.recipeId, modality: model.modality, template: model.template })),
     updatedAt: connection.updatedAt,
   };
@@ -1225,6 +1350,35 @@ function cancelOrphanedProviderJobs(store: SqliteStore, routes: RouteResolver, a
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function discardLegacyConsumerConnections(store: SqliteStore): void {
+  const value = store.getSetting<unknown>("consumerConnections");
+  if (!Array.isArray(value)) return;
+  const owned: unknown[] = [];
+  for (const item of value) {
+    if (isRecord(item) && typeof item.ownerUserId === "string" && item.ownerUserId) {
+      owned.push(item);
+      continue;
+    }
+    if (!isRecord(item)) continue;
+    const models = [...(Array.isArray(item.models) ? item.models : []), ...(Array.isArray(item.mediaModels) ? item.mediaModels : [])];
+    for (const model of models) {
+      if (!isRecord(model)) continue;
+      if (typeof model.routeId === "string") store.deleteRoute(model.routeId);
+      if (typeof model.recipeId === "string") store.deleteRecipe(model.recipeId);
+    }
+  }
+  store.setSetting("consumerConnections", owned);
+}
+
+function sameRuntimeRecipe(left: Recipe | undefined, right: Recipe): boolean {
+  return left !== undefined
+    && left.id === right.id
+    && left.adapter === right.adapter
+    && left.modelId === right.modelId
+    && left.contextTokens === right.contextTokens
+    && isDeepStrictEqual(left.configuration, right.configuration);
 }
 
 function parseUsageDate(value: string): Date | undefined {

@@ -6,10 +6,10 @@ import type { AgentRunCoordinator } from "./agent-runs.js";
 
 export const SUBAGENT_TOOL = "subagent";
 
-export const SUBAGENT_ROUTES: Readonly<Record<SubagentRole, "subagent">> = {
-  worker: "subagent",
-  reviewer: "subagent",
-  researcher: "subagent",
+export const SUBAGENT_ROUTES: Readonly<Record<SubagentRole, "fast">> = {
+  worker: "fast",
+  reviewer: "fast",
+  researcher: "fast",
 };
 
 const SUBAGENT_ACCESS: Readonly<Record<SubagentRole, ToolAccessMode>> = {
@@ -56,21 +56,19 @@ export function isDelegatedToolContext(
 }
 
 /** Host-native delegation tool. Child turns use the normal embedded Pi runtime
- * and share the configured subagent route. The selected recipe owns admission:
- * single-slot engines serialize isolated workers, while batched or remote
- * engines admit them up to maxConcurrentGenerations. */
+ * and share the consumer's explicitly configured Fast cloud role. */
 export function createSubagentTool(options: SubagentToolsOptions, context: { runId?: string }): ToolDefinition {
   let researcherCalls = 0;
   return {
     name: SUBAGENT_TOOL,
     label: "Delegate task",
     description:
-      "Delegate one focused task to an isolated Fitz subagent and wait for its report. Independent calls share the configured Subagent route: multi-generation engines run them concurrently and single-generation engines queue them sequentially while preserving isolated contexts. Use worker for implementation, reviewer for independent read-only review, and researcher for read-only repository or documentation research. A normal parent turn may call researcher only once; multiple researchers require the user's explicit request for an exhaustive investigation. Subagents cannot delegate again.",
+      "Delegate one focused task to an isolated Fitz subagent and wait for its report. Independent calls use your configured Fast cloud model concurrently. Use worker for implementation, reviewer for independent read-only review, and researcher for read-only repository or documentation research. A normal parent turn may call researcher only once; multiple researchers require the user's explicit request for an exhaustive investigation. Subagents cannot delegate again.",
     promptSnippet: "Delegate focused implementation, review, or research to an isolated subagent",
     promptGuidelines: [
       "Give the subagent a self-contained task, expected output, constraints, and the most relevant paths.",
       "Use worker for implementation, reviewer for independent review, and researcher for investigation or source gathering.",
-      "When two or more delegated tasks are independent, issue their subagent calls together in the same turn. The configured recipe will execute them concurrently when supported or queue them sequentially otherwise.",
+      "When two or more delegated tasks are independent, issue their subagent calls together in the same turn. Fast cloud calls execute independently.",
       "For broad project familiarization, use ONE researcher with a consolidated scope unless the user explicitly requests exhaustive parallel research; in that case split disjoint scopes and issue the researcher calls together.",
       "After the report returns, synthesize it directly and verify only critical or conflicting claims with targeted reads. Never repeat the child's full repository scan.",
     ],

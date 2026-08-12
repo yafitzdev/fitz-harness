@@ -647,11 +647,14 @@ describe("PiAgentRuntime", () => {
   });
 
   it("forces explicitly requested subagents to launch before parent research tools", async () => {
+    let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
     const runtime = new PiAgentRuntime({
+      customTools: () => [{ ...createTrashTool(async () => ({ moved: 0, entries: [] })), name: "subagent" }],
       toolPolicy: async () => ({ action: "allow" }),
       createSession: async (options) => ({
-        subscribe: (listener) => { listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "done" } }); return () => undefined; },
+        subscribe: (next) => { listener = next; return () => undefined; },
         prompt: async (prompt) => {
+          expect(options.activeTools).toEqual(["subagent"]);
           expect(prompt).toContain("Your first tool calls must launch all 4 subagents");
           expect(await options.evaluateTool!({ toolCallId: "read-early", toolName: "read", input: { path: "README.md" } }))
             .toMatchObject({ action: "block", reason: expect.stringContaining("remaining 4 subagents") });
@@ -661,6 +664,7 @@ describe("PiAgentRuntime", () => {
           }
           expect(await options.evaluateTool!({ toolCallId: "read-after", toolName: "read", input: { path: "README.md" } }))
             .toEqual({ action: "allow" });
+          listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "done" } });
         },
         abort: async () => undefined,
         dispose: () => undefined,
@@ -674,11 +678,51 @@ describe("PiAgentRuntime", () => {
     expect(events).toContainEqual({ type: "assistant.delta", text: "done" });
   });
 
+  it("rejects explicit delegation before inference when Fast workers are not configured", async () => {
+    const createSession = vi.fn();
+    const runtime = new PiAgentRuntime({ customTools: () => [], createSession });
+    const consume = async () => {
+      for await (const _event of runtime.run({
+        model: "default",
+        messages: [{ role: "user", content: "Use four subagents to inspect this project." }],
+      })) { /* consume */ }
+    };
+    await expect(consume()).rejects.toThrow("no Fast cloud route is selected");
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it("fails instead of accepting prose that merely claims subagents were launched", async () => {
+    let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+    const prompt = vi.fn(async () => {
+      listener({ type: "message_start", message: { role: "user", content: "internal" } });
+      listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "I launched them." } });
+    });
+    const runtime = new PiAgentRuntime({
+      customTools: () => [{ ...createTrashTool(async () => ({ moved: 0, entries: [] })), name: "subagent" }],
+      createSession: async () => ({
+        subscribe: (next) => { listener = next; return () => undefined; },
+        prompt,
+        abort: async () => undefined,
+        dispose: () => undefined,
+      }),
+    });
+    const events = [];
+    const consume = async () => {
+      for await (const event of runtime.run({
+        model: "default",
+        messages: [{ role: "user", content: "Launch four researcher subagents." }],
+      })) events.push(event);
+    };
+    await expect(consume()).rejects.toThrow("did not launch the 4 requested subagents");
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(events).toEqual([]);
+  });
+
   it("reserves compaction headroom for delegated workers", async () => {
     const runtime = new PiAgentRuntime({
       contextWindow: 32_768,
       createSession: async (options) => {
-        expect(options.compaction).toEqual({ reserveTokens: 8_192, keepRecentTokens: 4_096 });
+        expect(options.compaction).toEqual({ reserveTokens: 16_384, keepRecentTokens: 4_096 });
         return {
           subscribe: (listener) => { listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "report" } }); return () => undefined; },
           prompt: async () => undefined,

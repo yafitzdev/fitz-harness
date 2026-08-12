@@ -186,6 +186,21 @@ describe("SqliteStore", () => {
     store.createToolApproval({ id: "approval-1", sessionId: "session-1", toolCallId: "call-1", toolName: "read", status: "pending", request: { path: "README.md" }, requestedAt: now }); expect(store.resolveToolApproval("approval-1", "approved", "user-1")).toBe(true); expect(store.getToolApproval("approval-1")?.status).toBe("approved"); store.createToolApproval({ id: "approval-2", sessionId: "session-1", toolCallId: "call-2", toolName: "bash", status: "pending", request: {}, requestedAt: now }); expect(store.cancelToolApproval("approval-2", "cancelled")).toBe(true); expect(store.getToolApproval("approval-2")?.status).toBe("cancelled"); store.close();
   });
 
+  it("persists Fast as a selectable session route", () => {
+    const store = SqliteStore.memory();
+    const now = new Date(0).toISOString();
+    store.createSession({
+      id: "fast-session",
+      title: "Fast cloud",
+      status: "active",
+      routeId: "fast",
+      createdAt: now,
+      updatedAt: now,
+    });
+    expect(store.getSession("fast-session")?.routeId).toBe("fast");
+    store.close();
+  });
+
   it("removes projects and their session data without deleting run history", () => { const store = SqliteStore.memory(); const now = new Date(0).toISOString(); store.createProject({ id: "remove-project", name: "Remove", createdAt: now, updatedAt: now }); store.createSession({ id: "remove-session", projectId: "remove-project", title: "Remove", status: "active", createdAt: now, updatedAt: now }); store.createAgentRun({ id: "remove-run", routeId: "fast", sessionId: "remove-session", status: "completed", createdAt: now, updatedAt: now, lastSequence: 0 }); expect(store.deleteProject("remove-project")).toBe(true); expect(store.getProject("remove-project")).toBeUndefined(); expect(store.getSession("remove-session")).toBeUndefined(); expect(store.getAgentRun("remove-run")?.sessionId).toBeUndefined(); expect(store.deleteProject("remove-project")).toBe(false); store.close(); });
 
   it("removes one session and detaches its retained run history", () => { const store = SqliteStore.memory(); const now = new Date(0).toISOString(); store.createSession({ id: "remove-chat", title: "Remove", status: "active", createdAt: now, updatedAt: now }); store.createAgentRun({ id: "chat-run", routeId: "fast", sessionId: "remove-chat", status: "completed", createdAt: now, updatedAt: now, lastSequence: 0 }); expect(store.deleteSession("remove-chat")).toBe(true); expect(store.getSession("remove-chat")).toBeUndefined(); expect(store.getAgentRun("chat-run")?.sessionId).toBeUndefined(); expect(store.deleteSession("remove-chat")).toBe(false); store.close(); });

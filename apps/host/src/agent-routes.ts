@@ -14,7 +14,7 @@ export interface RegisterAgentRoutesOptions {
   context: ContextManager;
   principals: WeakMap<object, AuthenticatedPrincipal>;
   security?: SecurityService;
-  contextTokensForRoute(routeId: string): number;
+  contextTokensForRoute(routeId: string, ownerUserId?: string): number;
 }
 
 /** Owns durable agent-run creation, queue visibility, steering, cancellation,
@@ -45,7 +45,7 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
       }
       const executionRouteId = body.model;
       const durableRequest = { ...body, model: executionRouteId };
-      const prepared = await context.prepare(durableRequest, contextTokensForRoute(executionRouteId));
+      const prepared = await context.prepare(durableRequest, contextTokensForRoute(executionRouteId, principal?.user.id));
       let run;
       try { run = agentRuns.start(prepared.request, principal?.user.id, body.messages, durableRequest); }
       catch (error) {
@@ -187,7 +187,7 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
     try {
       if (principal && !security?.authorizeRoute(principal, resumeRequest.model)) return reply.code(403).send({ error: "Route access denied" });
       if (principal) security?.enforceQuota(principal, recoveryInstruction.length, resumeRequest.maxTokens ?? principal.quota.maxOutputTokens, agentRuns.queue(principal.user.id).length);
-      const prepared = await context.prepare(resumeRequest, contextTokensForRoute(resumeRequest.model));
+      const prepared = await context.prepare(resumeRequest, contextTokensForRoute(resumeRequest.model, principal?.user.id ?? source.ownerUserId));
       if (!store.claimAgentRunResume(sourceRunId)) {
         const concurrentResume = store.agentRunResumedFrom(sourceRunId);
         if (concurrentResume) return reply.code(200).send({ protocolVersion: PROTOCOL_VERSION, data: concurrentResume, resumedFrom: sourceRunId, idempotentReplay: true });

@@ -26,7 +26,7 @@ describe("Fitz media provider templates", () => {
     try {
       const put = await runtime.app.inject({
         method: "PUT",
-        url: "/api/v1/management/connections/openai-mixed",
+        url: "/api/v1/connections/openai-mixed",
         payload: {
           displayName: "OpenAI Media",
           template: "openai-media",
@@ -90,9 +90,9 @@ describe("Fitz media provider templates", () => {
       });
 
       // Delete cleanup: connection gone, consumer recipes/routes removed.
-      const del = await runtime.app.inject({ method: "DELETE", url: "/api/v1/management/connections/openai-mixed" });
+      const del = await runtime.app.inject({ method: "DELETE", url: "/api/v1/connections/openai-mixed" });
       expect(del.statusCode).toBe(204);
-      const list = await runtime.app.inject({ method: "GET", url: "/api/v1/management/connections" });
+      const list = await runtime.app.inject({ method: "GET", url: "/api/v1/connections" });
       expect(list.json().data).toHaveLength(0);
       const routes = await runtime.app.inject({ method: "GET", url: "/api/v1/management/routes" });
       const routeIds = routes.json().data.map((route: { id: string }) => route.id);
@@ -110,7 +110,7 @@ describe("Fitz media provider templates", () => {
     try {
       const put = await runtime.app.inject({
         method: "PUT",
-        url: "/api/v1/management/connections/fal-conn",
+        url: "/api/v1/connections/fal-conn",
         payload: {
           displayName: "Fal",
           template: "fal",
@@ -145,7 +145,7 @@ describe("Fitz media provider templates", () => {
       // well-known route is de-assigned (never left dangling, §5.7).
       const resave = await runtime.app.inject({
         method: "PUT",
-        url: "/api/v1/management/connections/fal-conn",
+        url: "/api/v1/connections/fal-conn",
         payload: {
           displayName: "Fal",
           template: "fal",
@@ -173,7 +173,7 @@ describe("Fitz media provider templates", () => {
     try {
       const put = await runtime.app.inject({
         method: "PUT",
-        url: "/api/v1/management/connections/rep-conn",
+        url: "/api/v1/connections/rep-conn",
         payload: {
           displayName: "Replicate",
           template: "replicate",
@@ -210,7 +210,7 @@ describe("Fitz media provider templates", () => {
     try {
       const put = await runtime.app.inject({
         method: "PUT",
-        url: "/api/v1/management/connections/openai-mixed",
+        url: "/api/v1/connections/openai-mixed",
         payload: {
           displayName: "OpenAI Media",
           template: "openai-media",

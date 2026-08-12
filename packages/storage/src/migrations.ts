@@ -501,4 +501,61 @@ export const MIGRATIONS: readonly Migration[] = [
     // reconstructing it from whichever artifact rows happen to be loaded.
     sql: `ALTER TABLE media_jobs ADD COLUMN source_job_id TEXT REFERENCES media_jobs(id);`,
   },
+  {
+    version: 18,
+    // Public chat sessions now choose only the host's local Default or the
+    // consumer's Smart cloud model. Fast remains an internal subagent role.
+    // Historical Fast sessions continue on Default after the cutover.
+    rebuild: true,
+    sql: `
+      CREATE TABLE sessions_v18 (
+        id TEXT PRIMARY KEY,
+        project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+        owner_user_id TEXT,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('active', 'archived')),
+        connection_id TEXT NOT NULL DEFAULT 'hosted--local',
+        route_id TEXT NOT NULL DEFAULT 'default' CHECK (route_id IN ('default', 'smart')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO sessions_v18 (id, project_id, owner_user_id, title, status, connection_id, route_id, created_at, updated_at)
+        SELECT id, project_id, owner_user_id, title, status, connection_id,
+          CASE WHEN route_id = 'smart' THEN 'smart' ELSE 'default' END,
+          created_at, updated_at
+        FROM sessions;
+      DROP TABLE sessions;
+      ALTER TABLE sessions_v18 RENAME TO sessions;
+      CREATE INDEX idx_sessions_project ON sessions(project_id, updated_at DESC);
+      CREATE INDEX idx_sessions_connection ON sessions(connection_id, updated_at DESC);
+      CREATE INDEX idx_sessions_standalone ON sessions(updated_at DESC) WHERE project_id IS NULL;
+    `,
+  },
+  {
+    version: 19,
+    // Fast is now selectable in chat as well as being the delegated-worker
+    // route. Expand the durable session constraint without rewriting values.
+    rebuild: true,
+    sql: `
+      CREATE TABLE sessions_v19 (
+        id TEXT PRIMARY KEY,
+        project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+        owner_user_id TEXT,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('active', 'archived')),
+        connection_id TEXT NOT NULL DEFAULT 'hosted--local',
+        route_id TEXT NOT NULL DEFAULT 'default' CHECK (route_id IN ('default', 'fast', 'smart')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO sessions_v19 (id, project_id, owner_user_id, title, status, connection_id, route_id, created_at, updated_at)
+        SELECT id, project_id, owner_user_id, title, status, connection_id, route_id, created_at, updated_at
+        FROM sessions;
+      DROP TABLE sessions;
+      ALTER TABLE sessions_v19 RENAME TO sessions;
+      CREATE INDEX idx_sessions_project ON sessions(project_id, updated_at DESC);
+      CREATE INDEX idx_sessions_connection ON sessions(connection_id, updated_at DESC);
+      CREATE INDEX idx_sessions_standalone ON sessions(updated_at DESC) WHERE project_id IS NULL;
+    `,
+  },
 ] as const;

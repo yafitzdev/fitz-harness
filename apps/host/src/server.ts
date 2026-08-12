@@ -7,7 +7,6 @@ import { FakeEngineAdapter } from "@fitz/engine-fake";
 import { FakeMediaEngineAdapter } from "@fitz/engine-media-fake";
 import { ManagedOpenAIEngineAdapter, OpenAICompatibleEngineAdapter } from "@fitz/engine-openai-compatible";
 import { ComfyUIEngineAdapter } from "@fitz/engine-comfyui";
-import type { Recipe, Route } from "@fitz/protocol";
 import { applyPendingStorageRestore, ArtifactRepository, LocalBlobStore, SqliteStore, StorageDurabilityService } from "@fitz/storage";
 import { SecurityService } from "@fitz/security";
 import { createHost } from "./create-app.js";
@@ -24,7 +23,7 @@ import { contextTokensForRoute } from "./route-context.js";
 import { WindowsStartupManager } from "@fitz/connectivity";
 import { resolveRuntimePaths } from "./runtime-paths.js";
 import { NInferRuntimeManager } from "./ninfer-runtime.js";
-import { managedLinuxRuntimeLayout, managedLinuxRuntimeMap } from "./managed-linux-runtime.js";
+import { managedLinuxRuntimeLayout, managedLinuxRuntimeMap, terminateManagedLinuxRuntime } from "./managed-linux-runtime.js";
 import { AgentSafetyService } from "./agent-safety/index.js";
 import { localComfyUIPaths, localComfyUIRecipeIds, reconcileLocalComfyUIConfiguration } from "./comfyui-reconcile.js";
 import { ensureComfyUISafeModeExtension } from "./comfyui-safe-mode.js";
@@ -35,6 +34,7 @@ import { LlamaCppModelReconciler } from "./llama-cpp-reconcile.js";
 import { VllmModelReconciler } from "./vllm-reconcile.js";
 import { createSubagentTool, isDelegatedToolContext } from "./subagent-tools.js";
 import type { AgentRunCoordinator } from "./agent-runs.js";
+import { hasCloudRouteBinding, LOCAL_OWNER_ID } from "./user-route-resolver.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const runtimePaths = resolveRuntimePaths();
@@ -105,6 +105,7 @@ const runtime = createHost({
   store,
   artifacts,
   storageDurability,
+  releaseLocalRuntime: () => terminateManagedLinuxRuntime(linuxRuntimeLayout),
   logger: true,
   resourcePolicy: { reserveVramMiB },
   authMode,
@@ -140,7 +141,7 @@ const runtime = createHost({
       forwardWorkContext: Boolean(internalAgentToken),
       // The pi session's context window must match the recipe the route resolves to
       // (e.g. 131072 for consumer/DeepSeek routes, 100000 for ninfer), not a fixed default.
-      contextWindow: (request) => contextTokensForRoute(store, request.model),
+      contextWindow: (request, context) => contextTokensForRoute(store, request.model, context?.ownerUserId),
       cwd: (request) => {
         if (process.env.FITZ_AGENT_CWD) return process.env.FITZ_AGENT_CWD;
         const inheritedSessionId = request.delegation
@@ -158,13 +159,15 @@ const runtime = createHost({
       redactToolResult: safety.createResultRedactor(),
       customTools: (context) => {
         const delegated = isDelegatedToolContext(store, context);
+        const ownerUserId = (context.runId ? store.getAgentRun(context.runId)?.ownerUserId : undefined) ?? LOCAL_OWNER_ID;
+        const subagentsConfigured = hasCloudRouteBinding(store, ownerUserId, "fast");
         return [
           ...safety.createCustomTools()(context),
           // Authenticated runs enforce the owner's media quota and route grants.
           // Explicit local auth-disabled mode has no user and follows the existing
           // administrator-diagnostic path used by the management media test.
           ...(!delegated && mediaJobs ? createMediaTools({ mediaJobs, store, ...(security ? { security } : {}) })(context) : []),
-          ...(!delegated && agentRuns ? [createSubagentTool({ agentRuns, store }, context)] : []),
+          ...(!delegated && subagentsConfigured && agentRuns ? [createSubagentTool({ agentRuns, store }, context)] : []),
         ];
       },
       agentDir: runtimePaths.piAgentDir,
@@ -205,8 +208,6 @@ function parseNonNegativeInteger(value: string, name: string): number {
   if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`Invalid ${name}: ${value}`);
   return parsed;
 }
-
-function requiredEnvironment(name: string): string { const value = process.env[name]; if (!value) throw new Error(`${name} is required`); return value; }
 
 function resolveAuthPepper(store: SqliteStore): string {
   const configured = process.env.FITZ_AUTH_PEPPER?.trim();
@@ -259,9 +260,9 @@ function enforceModelResidency(store: SqliteStore): void {
       ...recipe,
       lifecycle: {
         ...recipe.lifecycle,
-        evictionPolicy: "idle-ttl",
-        idleTtlSeconds: 600,
-        minimumResidencySeconds: Math.min(recipe.lifecycle.minimumResidencySeconds, 600),
+        evictionPolicy: "never",
+        idleTtlSeconds: 0,
+        minimumResidencySeconds: 0,
       },
     });
   }
@@ -282,76 +283,13 @@ function engineModeOptions(mode: string) {
     };
   }
   if (mode === "ninfer") return ninferOptions();
-  if (mode === "openai-compatible") {
-    const recipe = engineRecipe("openai-compatible", {
-      baseUrl: requiredEnvironment("FITZ_OPENAI_BASE_URL"),
-      ...(process.env.FITZ_OPENAI_API_KEY_ENV ? { apiKeyEnv: process.env.FITZ_OPENAI_API_KEY_ENV } : {}),
-      ...(process.env.FITZ_OPENAI_ALLOW_INSECURE_REMOTE === "true" ? { allowInsecureRemote: true } : {}),
-    });
-    return singleEngineOptions([new OpenAICompatibleEngineAdapter(), managedOpenAIAdapter(), new ComfyUIEngineAdapter({ linuxRuntimes })], recipe);
-  }
-  if (mode === "comfyui") return comfyuiOptions();
   throw new Error(`Unsupported FITZ_ENGINE_MODE: ${mode}`);
-}
-
-/** Explicit ComfyUI mode uses the same official local H3 playbook as the
- * composed chat-engine modes, with environment overrides for remote/admin
- * deployments. */
-function comfyuiOptions() {
-  const local = localComfyUIPaths(runtimePaths);
-  const installedRecipeIds = localComfyUIRecipeIds(runtimePaths, local);
-  const playbook = createComfyUIPlaybook({
-    engineDir: process.env.FITZ_COMFYUI_DIR ?? local.engineDir,
-    executable: process.env.FITZ_COMFYUI_EXECUTABLE ?? local.executable,
-    ...(process.env.FITZ_COMFYUI_ENTRYPOINT ? { entrypoint: process.env.FITZ_COMFYUI_ENTRYPOINT } : {}),
-    ...(process.env.FITZ_COMFYUI_BASE_URL ? { baseUrl: process.env.FITZ_COMFYUI_BASE_URL } : {}),
-    ...(!process.env.FITZ_COMFYUI_BASE_URL ? {
-      launchArgs: [
-        "--base-directory",
-        local.baseDir,
-        "--extra-model-paths-config",
-        process.env.FITZ_COMFYUI_MODEL_CONFIG ?? local.modelConfigPath,
-        "--output-directory",
-        process.env.FITZ_COMFYUI_OUTPUT_DIR ?? local.outputDir,
-      ],
-    } : {}),
-    ...(process.env.FITZ_COMFYUI_EXPECTED_VRAM_MIB
-      ? { expectedVramMiB: parseNonNegativeInteger(process.env.FITZ_COMFYUI_EXPECTED_VRAM_MIB, "FITZ_COMFYUI_EXPECTED_VRAM_MIB") }
-      : {}),
-    ...(installedRecipeIds.length ? { recipeIds: installedRecipeIds } : {}),
-    ...(!process.env.FITZ_COMFYUI_BASE_URL ? { runtime: "linux-managed" as const, runtimeId: linuxRuntimeLayout.id } : {}),
-  });
-  return {
-    adapters: [new ComfyUIEngineAdapter({ linuxRuntimes }), managedOpenAIAdapter(), new OpenAICompatibleEngineAdapter()],
-    initialRecipes: playbook.recipes,
-    initialRoutes: playbook.routes,
-  };
 }
 
 function managedOpenAIAdapter(): ManagedOpenAIEngineAdapter {
   return new ManagedOpenAIEngineAdapter({ linuxRuntimes });
 }
 
-function engineRecipe(adapter: "openai-compatible", configuration: Record<string, unknown>): Recipe {
-  const modelId = process.env.FITZ_MODEL_ID ?? "local-model";
-  const contextTokens = parsePositiveInteger(process.env.FITZ_MODEL_CONTEXT_TOKENS ?? "32768", "FITZ_MODEL_CONTEXT_TOKENS");
-  return {
-    id: `${adapter}-default`, playbookId: adapter, displayName: modelId, adapter, modelId, contextTokens,
-    capabilities: { chatCompletions: true, streaming: true, toolCalls: false, responseFormat: false, minP: false, maxConcurrentGenerations: 1 },
-    lifecycle: { loadPolicy: "onDemand", evictionPolicy: "never", idleTtlSeconds: 600, minimumResidencySeconds: 0 },
-    configuration,
-  };
-}
-
-function singleEngineOptions(adapters: Array<NInferEngineAdapter | OpenAICompatibleEngineAdapter | ManagedOpenAIEngineAdapter | ComfyUIEngineAdapter>, recipe: Recipe) {
-  const route: Route = { id: "default", displayName: "Default", recipeId: recipe.id, enabled: true, isDefault: true };
-  const mediaPlaybook = installedLocalComfyUIPlaybook();
-  return {
-    adapters,
-    initialRecipes: [recipe, ...(mediaPlaybook?.recipes ?? [])],
-    initialRoutes: [route, ...(mediaPlaybook?.routes ?? [])],
-  };
-}
 
 function parsePositiveInteger(value: string, name: string): number {
   const parsed = Number.parseInt(value, 10);

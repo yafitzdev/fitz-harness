@@ -25,7 +25,7 @@ describe("HostClient", () => {
       init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
     }));
     const client = new HostClient({ origin: new URL("http://127.0.0.1:8787"), getToken: () => undefined, fetch: request });
-    await expect(client.request("/health", { timeoutMs: 5 })).rejects.toMatchObject<Partial<HostRequestError>>({ code: "timeout", retryable: true });
+    await expect(client.request("/health", { timeoutMs: 5 })).rejects.toMatchObject<Partial<HostRequestError>>({ code: "timeout", retryable: true, message: "The host did not respond to /health within 5 ms" });
   });
 
   it("distinguishes caller cancellation from a timeout", async () => {

@@ -5,7 +5,7 @@ import { createSubagentTool, isDelegatedToolContext, SUBAGENT_ROUTES } from "./s
 
 describe("subagent tool", () => {
   it("pins every role to the configurable internal route", () => {
-    expect(SUBAGENT_ROUTES).toEqual({ worker: "subagent", reviewer: "subagent", researcher: "subagent" });
+    expect(SUBAGENT_ROUTES).toEqual({ worker: "fast", reviewer: "fast", researcher: "fast" });
   });
 
   it("recognizes delegated runs when an older runtime context only carries runId", () => {
@@ -28,7 +28,7 @@ describe("subagent tool", () => {
     store.createSession({ id: "session-1", title: "Subagent test", status: "active", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() });
     store.createAgentRun({ id: "parent", routeId: "default", ownerUserId: "owner", sessionId: "session-1", status: "running", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), lastSequence: 0 }, parentRequest);
     const runSubagent = vi.fn(async () => ({
-      run: { id: "child", routeId: "subagent", ownerUserId: "owner", status: "completed" as const, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), lastSequence: 3 },
+      run: { id: "child", routeId: "fast", ownerUserId: "owner", status: "completed" as const, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), lastSequence: 3 },
       text: "Implemented and tested.",
     }));
     const tool = createSubagentTool({ agentRuns: { runSubagent } as never, store }, { runId: "parent" });
@@ -39,11 +39,11 @@ describe("subagent tool", () => {
       parentRunId: "parent",
       role: "worker",
       ownerUserId: "owner",
-      request: expect.objectContaining({ model: "subagent", accessMode: "full", maxTokens: 10_000 }),
+      request: expect.objectContaining({ model: "fast", accessMode: "full", maxTokens: 10_000 }),
       toolCallBudget: 40,
     }));
     expect(result.content[0]).toMatchObject({ type: "text", text: "Implemented and tested." });
-    expect(result.details).toEqual(expect.objectContaining({ subagentRunId: "child", role: "worker", routeId: "subagent" }));
+    expect(result.details).toEqual(expect.objectContaining({ subagentRunId: "child", role: "worker", routeId: "fast" }));
     expect(tool.executionMode).toBe("parallel");
     store.close();
   });
@@ -56,7 +56,7 @@ describe("subagent tool", () => {
       { model: "default", messages: [{ role: "user", content: "get familiar with the project. use subagents" }] },
     );
     const runSubagent = vi.fn(async () => ({
-      run: { id: `child-${runSubagent.mock.calls.length}`, routeId: "subagent", status: "completed" as const, createdAt: now, updatedAt: now, lastSequence: 3 },
+      run: { id: `child-${runSubagent.mock.calls.length}`, routeId: "fast", status: "completed" as const, createdAt: now, updatedAt: now, lastSequence: 3 },
       text: "Research complete.",
     }));
     const tool = createSubagentTool({ agentRuns: { runSubagent } as never, store }, { runId: "parent" });
@@ -67,7 +67,7 @@ describe("subagent tool", () => {
     expect(runSubagent).toHaveBeenCalledTimes(1);
     expect(runSubagent).toHaveBeenCalledWith(expect.objectContaining({
       toolCallBudget: 20,
-      request: expect.objectContaining({ model: "subagent", accessMode: "read-only", maxTokens: 4_096 }),
+      request: expect.objectContaining({ model: "fast", accessMode: "read-only", maxTokens: 4_096 }),
     }));
     store.close();
   });

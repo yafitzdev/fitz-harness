@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,21 +13,39 @@ import { ArtifactRepository, LocalBlobStore, SqliteStore, StorageDurabilityServi
 import { FakeEngineAdapter } from "@fitz/engine-fake";
 
 describe("Fitz host", () => {
-  it("boots idle and exposes consumer routes instead of recipes", async () => {
+  it("loads the host-owned Default model at startup and exposes only configured chat choices", async () => {
     const runtime = createHost();
+    for (let attempt = 0; attempt < 50 && runtime.lifecycle.snapshot().state !== "READY"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
     const health = await runtime.app.inject({ method: "GET", url: "/health" });
     const models = await runtime.app.inject({ method: "GET", url: "/v1/models" });
 
     expect(health.statusCode).toBe(200);
-    expect(health.json().engine.state).toBe("UNLOADED");
+    expect(health.json().engine.state).toBe("READY");
     expect((await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" })).json().hostName).toEqual(expect.any(String));
-    expect(models.json().data.map((model: { id: string }) => model.id)).toEqual([
-      "default",
-      "fast",
-      "smart",
-    ]);
+    expect(models.json().data.map((model: { id: string }) => model.id)).toEqual(["default"]);
     expect(models.body).not.toContain("fake-best");
     await runtime.app.close();
+  });
+
+  it("repairs an invalid cloud-backed Default to the local host seed", async () => {
+    const store = SqliteStore.memory();
+    store.upsertRecipe({
+      id: "old-cloud-default",
+      playbookId: "old-cloud",
+      displayName: "Old cloud default",
+      adapter: "openai-compatible",
+      modelId: "cloud-model",
+      contextTokens: 128_000,
+      capabilities: { chatCompletions: true, streaming: true, toolCalls: true, responseFormat: false, minP: false, maxConcurrentGenerations: 8 },
+      lifecycle: { loadPolicy: "onDemand", evictionPolicy: "never", idleTtlSeconds: 0, minimumResidencySeconds: 0 },
+      configuration: { baseUrl: "https://example.invalid/v1" },
+    });
+    store.upsertRoute({ id: "default", displayName: "Default", recipeId: "old-cloud-default", enabled: true, isDefault: true });
+    const runtime = createHost({ store });
+    try {
+      expect(runtime.routes.resolve("default").recipe).toMatchObject({ id: "fake-best", adapter: "fake" });
+      expect(runtime.lifecycle.pinnedRecipe()).toMatchObject({ id: "fake-best" });
+    } finally { await runtime.app.close(); }
   });
 
   it("exposes durable usage aggregates after a terminal request", async () => {
@@ -61,32 +79,59 @@ describe("Fitz host", () => {
     const runtime = createHost();
     try {
       const response = await runtime.app.inject({ method: "POST", url: "/api/v1/inference/warm", payload: { model: "default", connectionId: "hosted--local" } });
-      expect(response.statusCode, response.body).toBe(200);
-      expect(response.json().data).toEqual(expect.objectContaining({ state: "READY", recipeId: "fake-best" }));
+      expect(response.statusCode, response.body).toBe(202);
+      expect(response.json().data).toEqual(expect.objectContaining({ requestId: expect.any(String), routeId: "default", status: "queued" }));
+      for (let attempt = 0; attempt < 50 && runtime.lifecycle.snapshot().state !== "READY"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
       expect(runtime.lifecycle.snapshot()).toEqual(expect.objectContaining({ state: "READY", activeLeases: 0 }));
-      expect(runtime.store.listGpuWork()).toEqual([
+      expect(runtime.store.listGpuWork()).toEqual(expect.arrayContaining([
         expect.objectContaining({
           routeId: "default",
           kind: "warm",
           status: "completed",
           position: 0,
         }),
-      ]);
+      ]));
       expect(runtime.store.listInferenceRequests()).toEqual([]);
       const gpuWork = await runtime.app.inject({ method: "GET", url: "/api/v1/management/gpu-work" });
       expect(gpuWork.statusCode, gpuWork.body).toBe(200);
-      expect(gpuWork.json().data).toEqual([
+      expect(gpuWork.json().data).toEqual(expect.arrayContaining([
         expect.objectContaining({ routeId: "default", kind: "warm", status: "completed" }),
-      ]);
+      ]));
     } finally { await runtime.app.close(); }
+  });
+
+  it("acknowledges a warm-up before a cold model finishes loading", async () => {
+    let releaseLoad = () => {};
+    const loadGate = new Promise<void>((resolve) => { releaseLoad = resolve; });
+    class BlockingStartAdapter extends FakeEngineAdapter {
+      override async start(...args: Parameters<FakeEngineAdapter["start"]>) {
+        await loadGate;
+        return super.start(...args);
+      }
+    }
+    const runtime = createHost({ fakeAdapter: new BlockingStartAdapter() });
+    try {
+      const response = await runtime.app.inject({ method: "POST", url: "/api/v1/inference/warm", payload: { model: "default" } });
+      expect(response.statusCode, response.body).toBe(202);
+      expect(response.json().data).toEqual(expect.objectContaining({ requestId: expect.any(String), status: "queued" }));
+      expect(runtime.lifecycle.snapshot().state).not.toBe("READY");
+      releaseLoad();
+      for (let attempt = 0; attempt < 50 && runtime.lifecycle.snapshot().state !== "READY"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(runtime.lifecycle.snapshot().state).toBe("READY");
+    } finally {
+      releaseLoad();
+      await runtime.app.close();
+    }
   });
 
   it("force-unloads the resident model when the desktop closes", async () => {
     const adapter = new FakeEngineAdapter();
-    const runtime = createHost({ fakeAdapter: adapter });
+    const releaseLocalRuntime = vi.fn(async () => undefined);
+    const runtime = createHost({ fakeAdapter: adapter, releaseLocalRuntime });
     try {
-      const warm = await runtime.app.inject({ method: "POST", url: "/api/v1/inference/warm", payload: { model: "fast" } });
-      expect(warm.statusCode, warm.body).toBe(200);
+      const warm = await runtime.app.inject({ method: "POST", url: "/api/v1/inference/warm", payload: { model: "default" } });
+      expect(warm.statusCode, warm.body).toBe(202);
+      for (let attempt = 0; attempt < 50 && runtime.lifecycle.snapshot().state !== "READY"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
       expect(runtime.lifecycle.snapshot().state).toBe("READY");
 
       const stopped = await runtime.app.inject({
@@ -97,6 +142,7 @@ describe("Fitz host", () => {
       expect(stopped.statusCode, stopped.body).toBe(200);
       expect(stopped.json().engine.state).toBe("UNLOADED");
       expect(adapter.stops).toEqual([expect.objectContaining({ mode: "force" })]);
+      expect(releaseLocalRuntime).toHaveBeenCalledWith("desktop-quit");
 
       const invalid = await runtime.app.inject({ method: "POST", url: "/api/v1/management/instances/stop", payload: { mode: "eventually" } });
       expect(invalid.statusCode).toBe(400);
@@ -108,6 +154,7 @@ describe("Fitz host", () => {
       fakeAdapter: new FakeEngineAdapter({ tokenDelayMs: 100 }),
       schedulerOptions: { gpuQueueCapacity: 1 },
     });
+    for (let attempt = 0; attempt < 50 && runtime.lifecycle.snapshot().state !== "READY"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
     const active = runtime.scheduler.enqueue("default", { messages: [{ role: "user", content: "active" }] });
     const queued = runtime.scheduler.enqueue("default", { messages: [{ role: "user", content: "queued" }] });
     const drain = (async () => { try { for await (const _delta of active) { /* drain */ } } catch { /* cancelled below */ } })();
@@ -129,15 +176,69 @@ describe("Fitz host", () => {
     }
   });
 
-  it("keeps internal connection routes out of the public model contract", async () => {
+  it("saves a Default change immediately even when its background warm cannot enter the full queue", async () => {
+    const runtime = createHost({
+      fakeAdapter: new FakeEngineAdapter({ tokenDelayMs: 100 }),
+      schedulerOptions: { gpuQueueCapacity: 1 },
+    });
+    for (let attempt = 0; attempt < 50 && runtime.lifecycle.snapshot().state !== "READY"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+    const active = runtime.scheduler.enqueue("default", { messages: [{ role: "user", content: "active" }] });
+    const queued = runtime.scheduler.enqueue("default", { messages: [{ role: "user", content: "queued" }] });
+    const drains = [active, queued].map(async (stream) => { try { for await (const _delta of stream) { /* drain */ } } catch { /* cancelled below */ } });
+    try {
+      const response = await runtime.app.inject({
+        method: "PUT",
+        url: "/api/v1/management/routes/default",
+        payload: { displayName: "Default", description: "Pinned local model", recipeId: "fake-fast", enabled: true, isDefault: true },
+      });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(runtime.routes.resolve("default").recipe.id).toBe("fake-fast");
+      expect(runtime.lifecycle.pinnedRecipe()?.id).toBe("fake-fast");
+    } finally {
+      active.cancel();
+      queued.cancel();
+      await Promise.all(drains);
+      await runtime.app.close();
+    }
+  });
+
+  it("serializes local generations even when an engine advertises more concurrency", async () => {
+    class CountingAdapter extends FakeEngineAdapter {
+      active = 0;
+      maximumActive = 0;
+      override async *streamChat(...args: Parameters<FakeEngineAdapter["streamChat"]>) {
+        this.active += 1;
+        this.maximumActive = Math.max(this.maximumActive, this.active);
+        try { yield* super.streamChat(...args); }
+        finally { this.active -= 1; }
+      }
+    }
+    const adapter = new CountingAdapter({ tokenDelayMs: 10 });
+    const runtime = createHost({ fakeAdapter: adapter, schedulerOptions: { gpuConcurrency: 8 } });
+    try {
+      for (let attempt = 0; attempt < 50 && runtime.lifecycle.snapshot().state !== "READY"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+      const complete = (content: string) => runtime.app.inject({
+        method: "POST",
+        url: "/v1/chat/completions",
+        payload: { model: "default", stream: false, messages: [{ role: "user", content }] },
+      });
+
+      const responses = await Promise.all([complete("one"), complete("two"), complete("three")]);
+
+      expect(responses.map((response) => response.statusCode)).toEqual([200, 200, 200]);
+      expect(adapter.maximumActive).toBe(1);
+      expect(adapter.starts).toHaveLength(1);
+    } finally { await runtime.app.close(); }
+  });
+
+  it("rejects arbitrary host text routes and keeps them out of the public model contract", async () => {
     const runtime = createHost();
     try {
       const assigned = await runtime.app.inject({ method: "PUT", url: "/api/v1/management/routes/consumer--default", payload: { displayName: "Default", recipeId: "fake-best", enabled: true, isDefault: true } });
-      expect(assigned.statusCode, assigned.body).toBe(200);
-      expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((item: { id: string }) => item.id)).toEqual(["default", "fast", "smart"]);
+      expect(assigned.statusCode, assigned.body).toBe(400);
+      expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((item: { id: string }) => item.id)).toEqual(["default"]);
       const completion = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "consumer--default", stream: false, messages: [{ role: "user", content: "hosted locally" }] } });
-      expect(completion.statusCode, completion.body).toBe(200);
-      expect(completion.json().choices[0].message.content).toContain("Fake response from fake-best-v1");
+      expect(completion.statusCode, completion.body).toBe(404);
     } finally { await runtime.app.close(); }
   });
 
@@ -203,7 +304,7 @@ describe("Fitz host", () => {
     } finally { await runtime.app.close(); }
   });
 
-  it("discovers an external API and routes sessions through the global route model", async () => {
+  it("discovers an external API and exposes the user's Smart and Fast routes", async () => {
     const upstream = createServer((request, response) => {
       if (request.url === "/v1/models") { response.writeHead(200, { "content-type": "application/json" }); response.end('{"data":[{"id":"upstream-model"},{"id":"explicit-chat-model","endpoints":["chat"]},{"id":"embed-v4.0"},{"id":"rerank-v3.5"},{"id":"cohere-transcribe-03-2026"},{"id":"provider-embedding","endpoints":["embed"]}]}'); return; }
       if (request.url === "/v1/chat/completions") { response.writeHead(200, { "content-type": "text/event-stream" }); response.end('data: {"choices":[{"delta":{"content":"upstream ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'); return; }
@@ -213,34 +314,144 @@ describe("Fitz host", () => {
     const address = upstream.address(); if (!address || typeof address === "string") throw new Error("Expected TCP address");
     const runtime = createHost();
     try {
-      const saved = await runtime.app.inject({ method: "PUT", url: "/api/v1/management/connections/test-api", payload: { displayName: "Test API", baseUrl: `http://127.0.0.1:${address.port}/v1`, authType: "none" } });
+      const saved = await runtime.app.inject({ method: "PUT", url: "/api/v1/connections/test-api", payload: { displayName: "Test API", baseUrl: `http://127.0.0.1:${address.port}/v1`, authType: "none" } });
       expect(saved.statusCode).toBe(200);
       const consumerModel = saved.json().data.models[0];
-      expect(consumerModel).toEqual(expect.objectContaining({ id: "upstream-model", routeId: expect.any(String), recipeId: expect.any(String) }));
+      expect(consumerModel).toEqual({ id: "upstream-model", recipeId: expect.any(String) });
       expect(saved.json().data.models.map((model: { id: string }) => model.id)).toEqual(["upstream-model", "explicit-chat-model"]);
-      expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((item: { id: string }) => item.id).sort()).toEqual(["default", "fast", "smart"]);
+      expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((item: { id: string }) => item.id).sort()).toEqual(["default"]);
       const models = await runtime.app.inject({ method: "GET", url: "/v1/models" });
-      expect(models.json().data.map((item: { id: string }) => item.id)).toEqual(["default", "fast", "smart"]);
+      expect(models.json().data.map((item: { id: string }) => item.id)).toEqual(["default"]);
       const recipeTest = await runtime.app.inject({ method: "POST", url: `/api/v1/management/recipes/${consumerModel.recipeId}/test` });
       expect(recipeTest.statusCode, recipeTest.body).toBe(200); expect(recipeTest.json().data.working).toBe(true);
-      await runtime.app.inject({ method: "PUT", url: "/api/v1/management/routes/default", payload: { displayName: "Default", recipeId: consumerModel.recipeId, enabled: true, isDefault: true } });
+      expect((await runtime.app.inject({ method: "PUT", url: "/api/v1/cloud-routes/smart", payload: { recipeId: consumerModel.recipeId } })).statusCode).toBe(200);
+      expect((await runtime.app.inject({ method: "PUT", url: "/api/v1/cloud-routes/fast", payload: { recipeId: consumerModel.recipeId } })).statusCode).toBe(200);
+      expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((item: { id: string }) => item.id)).toEqual(["default", "fast", "smart"]);
       const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Connection routing" } });
-      const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "External", connectionId: "test-api", routeId: "default" } });
-      const run = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", sessionId: session.json().data.id, messages: [{ role: "user", content: "hello" }] } });
+      const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "External", connectionId: "test-api", routeId: "smart" } });
+      const run = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "smart", sessionId: session.json().data.id, messages: [{ role: "user", content: "hello" }] } });
       expect(run.statusCode, run.body).toBe(202);
       // A session's connectionId no longer scopes resolution: the run uses the global default class.
-      expect(run.json().data.routeId).toBe("default");
+      expect(run.json().data.routeId).toBe("smart");
       // The public class remains the sole routing contract after connection refresh.
-      const scopedCompletion = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "default", stream: false, messages: [{ role: "user", content: "hello" }] } });
+      const scopedCompletion = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "smart", stream: false, messages: [{ role: "user", content: "hello" }] } });
       expect(scopedCompletion.statusCode, scopedCompletion.body).toBe(200);
       expect(scopedCompletion.json().choices[0].message.content).toContain("upstream ok");
-      await runtime.app.inject({ method: "PUT", url: "/api/v1/management/connections/test-api", payload: { displayName: "Test API", baseUrl: `http://127.0.0.1:${address.port}/v1`, authType: "none" } });
+      const fastSession = await runtime.app.inject({ method: "POST", url: "/api/v1/chats", payload: { title: "Fast cloud", routeId: "fast" } });
+      expect(fastSession.statusCode, fastSession.body).toBe(201);
+      expect(fastSession.json().data.routeId).toBe("fast");
+      const fastCompletion = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "fast", stream: false, messages: [{ role: "user", content: "hello" }] } });
+      expect(fastCompletion.statusCode, fastCompletion.body).toBe(200);
+      expect(fastCompletion.json().choices[0].message.content).toContain("upstream ok");
+      await runtime.app.inject({ method: "PUT", url: "/api/v1/connections/test-api", payload: { displayName: "Test API", baseUrl: `http://127.0.0.1:${address.port}/v1`, authType: "none" } });
       const refreshedStatus = await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" });
-      expect(refreshedStatus.json().routes).toContainEqual(expect.objectContaining({ id: "default", recipeId: consumerModel.recipeId }));
-      await runtime.app.inject({ method: "DELETE", url: "/api/v1/management/connections/test-api" });
+      expect(refreshedStatus.json().cloudRoutes.smart).toBe(consumerModel.recipeId);
+      expect(refreshedStatus.json().cloudRoutes.fast).toBe(consumerModel.recipeId);
+      await runtime.app.inject({ method: "DELETE", url: "/api/v1/connections/test-api" });
       // Removing the connection releases the global class it had claimed.
-      expect((await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" })).json().routes).not.toContainEqual(expect.objectContaining({ id: "default", recipeId: consumerModel.recipeId }));
+      expect((await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" })).json().cloudRoutes.smart).toBeUndefined();
+      expect((await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" })).json().cloudRoutes.fast).toBeUndefined();
     } finally { await runtime.app.close(); await new Promise<void>((resolve) => upstream.close(() => resolve())); }
+  });
+
+  it("runs independent cloud requests concurrently without displacing local Default", async () => {
+    let active = 0;
+    let maximumActive = 0;
+    const upstream = createServer((request, response) => {
+      if (request.url === "/v1/models") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end('{"data":[{"id":"cloud-planner"}]}');
+        return;
+      }
+      if (request.url === "/v1/chat/completions") {
+        active += 1;
+        maximumActive = Math.max(maximumActive, active);
+        setTimeout(() => {
+          response.writeHead(200, { "content-type": "text/event-stream" });
+          response.end('data: {"choices":[{"delta":{"content":"cloud ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+          active -= 1;
+        }, 40);
+        return;
+      }
+      response.writeHead(404);
+      response.end();
+    });
+    upstream.listen(0, "127.0.0.1");
+    await once(upstream, "listening");
+    const address = upstream.address();
+    if (!address || typeof address === "string") throw new Error("Expected TCP address");
+    const adapter = new FakeEngineAdapter();
+    const runtime = createHost({ fakeAdapter: adapter });
+    try {
+      const saved = await runtime.app.inject({
+        method: "PUT",
+        url: "/api/v1/connections/cloud",
+        payload: { displayName: "Cloud", baseUrl: `http://127.0.0.1:${address.port}/v1`, authType: "none" },
+      });
+      const recipeId = saved.json().data.models[0].recipeId as string;
+      expect((await runtime.app.inject({ method: "PUT", url: "/api/v1/cloud-routes/smart", payload: { recipeId } })).statusCode).toBe(200);
+      for (let attempt = 0; attempt < 50 && runtime.lifecycle.snapshot().state !== "READY"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+
+      const request = () => runtime.app.inject({
+        method: "POST",
+        url: "/v1/chat/completions",
+        payload: { model: "smart", stream: false, messages: [{ role: "user", content: "plan" }] },
+      });
+      const responses = await Promise.all([request(), request()]);
+
+      expect(responses.map((response) => response.statusCode)).toEqual([200, 200]);
+      expect(maximumActive).toBe(2);
+      expect(runtime.lifecycle.snapshot()).toMatchObject({ state: "READY", recipeId: "fake-best" });
+      expect(adapter.starts).toHaveLength(1);
+    } finally {
+      await runtime.app.close();
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    }
+  });
+
+  it("keeps cloud connections and Smart/Fast assignments private to their authenticated owner", async () => {
+    const upstream = createServer((request, response) => {
+      if (request.url === "/v1/models") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end('{"data":[{"id":"private-cloud-model"}]}');
+        return;
+      }
+      response.writeHead(404);
+      response.end();
+    });
+    upstream.listen(0, "127.0.0.1");
+    await once(upstream, "listening");
+    const address = upstream.address();
+    if (!address || typeof address === "string") throw new Error("Expected TCP address");
+    const store = SqliteStore.memory();
+    const security = new SecurityService(store, "owner-isolation-pepper");
+    const alice = security.createUser("Alice");
+    const bob = security.createUser("Bob");
+    const aliceHeaders = { authorization: `Bearer ${security.issueDevice(alice.id, "Alice laptop").token}` };
+    const bobHeaders = { authorization: `Bearer ${security.issueDevice(bob.id, "Bob laptop").token}` };
+    const runtime = createHost({ store, security, authMode: "required" });
+    try {
+      const saved = await runtime.app.inject({
+        method: "PUT",
+        url: "/api/v1/connections/private",
+        headers: aliceHeaders,
+        payload: { displayName: "Alice cloud", baseUrl: `http://127.0.0.1:${address.port}/v1`, authType: "none" },
+      });
+      expect(saved.statusCode, saved.body).toBe(200);
+      const recipeId = saved.json().data.models[0].recipeId as string;
+      expect((await runtime.app.inject({ method: "PUT", url: "/api/v1/cloud-routes/smart", headers: aliceHeaders, payload: { recipeId } })).statusCode).toBe(200);
+      expect((await runtime.app.inject({ method: "PUT", url: "/api/v1/cloud-routes/fast", headers: aliceHeaders, payload: { recipeId } })).statusCode).toBe(200);
+
+      expect((await runtime.app.inject({ method: "GET", url: "/api/v1/connections", headers: aliceHeaders })).json().data).toHaveLength(1);
+      expect((await runtime.app.inject({ method: "GET", url: "/api/v1/connections", headers: bobHeaders })).json().data).toEqual([]);
+      expect((await runtime.app.inject({ method: "GET", url: "/v1/models", headers: aliceHeaders })).json().data.map((model: { id: string }) => model.id)).toEqual(["default", "fast", "smart"]);
+      expect((await runtime.app.inject({ method: "GET", url: "/v1/models", headers: bobHeaders })).json().data.map((model: { id: string }) => model.id)).toEqual(["default"]);
+      expect((await runtime.app.inject({ method: "PUT", url: "/api/v1/cloud-routes/smart", headers: bobHeaders, payload: { recipeId } })).statusCode).toBe(404);
+      expect((await runtime.app.inject({ method: "GET", url: "/api/v1/cloud-routes", headers: bobHeaders })).json().data).toEqual({});
+    } finally {
+      await runtime.app.close();
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    }
   });
 
   it("reports a descriptive error when a recipe test returns no visible text", async () => {
@@ -256,7 +467,7 @@ describe("Fitz host", () => {
     const reasoningAddress = reasoningUpstream.address(); if (!reasoningAddress || typeof reasoningAddress === "string") throw new Error("Expected TCP address");
     const runtime = createHost();
     try {
-      const saved = await runtime.app.inject({ method: "PUT", url: "/api/v1/management/connections/reasoning-api", payload: { displayName: "Reasoning API", baseUrl: `http://127.0.0.1:${reasoningAddress.port}/v1`, authType: "none" } });
+      const saved = await runtime.app.inject({ method: "PUT", url: "/api/v1/connections/reasoning-api", payload: { displayName: "Reasoning API", baseUrl: `http://127.0.0.1:${reasoningAddress.port}/v1`, authType: "none" } });
       expect(saved.statusCode).toBe(200);
       const recipeId = saved.json().data.models[0].recipeId;
       const test = await runtime.app.inject({ method: "POST", url: `/api/v1/management/recipes/${recipeId}/test` });
@@ -312,26 +523,24 @@ describe("Fitz host", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json().data).toEqual(expect.objectContaining({ recipeId: "probe-recipe", working: true, unloaded: true }));
     expect(response.json().data.output).toContain("probe-model");
-    expect(runtime.lifecycle.snapshot().state).toBe("UNLOADED");
+    expect(runtime.lifecycle.snapshot().state).toBe("READY");
     expect(runtime.routes.listRoutes()).toEqual(routesBefore);
     await runtime.app.close();
   });
 
-  it("moves a fixed route assignment to one recipe", async () => {
+  it("allows only Default as a host-owned text route", async () => {
     const runtime = createHost();
-    const response = await runtime.app.inject({
+    const rejected = await runtime.app.inject({
       method: "PUT",
       url: "/api/v1/management/routes/fast",
       payload: { displayName: "Fast", description: "Lowest-latency route", recipeId: "fake-best", enabled: true, isDefault: false },
     });
-    const status = await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" });
-    const fastRoutes = status.json().routes.filter((route: { id: string }) => route.id === "fast");
-    expect(response.statusCode).toBe(200);
-    expect(fastRoutes).toEqual([expect.objectContaining({ recipeId: "fake-best" })]);
+    expect(rejected.statusCode).toBe(400);
+    expect(runtime.routes.listRoutes()).toEqual([expect.objectContaining({ id: "default", recipeId: "fake-best" })]);
     await runtime.app.close();
   });
 
-  it("assigns a general internal subagent route without exposing it as a chat tier", async () => {
+  it("does not expose the removed internal subagent route", async () => {
     const runtime = createHost();
     const response = await runtime.app.inject({
       method: "PUT",
@@ -339,11 +548,19 @@ describe("Fitz host", () => {
       payload: { displayName: "Subagent", description: "Internal delegated-work route", recipeId: "fake-fast", enabled: true },
     });
 
-    expect(response.statusCode).toBe(200);
-    expect(runtime.routes.listRoutes(true)).toContainEqual(expect.objectContaining({ id: "subagent", recipeId: "fake-fast" }));
-    expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((model: { id: string }) => model.id).sort())
-      .toEqual(["default", "fast", "smart"]);
+    expect(response.statusCode).toBe(400);
+    expect(runtime.routes.listRoutes(true)).not.toContainEqual(expect.objectContaining({ id: "subagent" }));
+    expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((model: { id: string }) => model.id)).toEqual(["default"]);
     await runtime.app.close();
+  });
+
+  it("does not retain the removed route-preload API", async () => {
+    const runtime = createHost();
+    try {
+      const saved = await runtime.app.inject({ method: "PUT", url: "/api/v1/management/preload-routes", payload: { routeIds: ["subagent", "fast"] } });
+      expect(saved.statusCode, saved.body).toBe(404);
+      expect((await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" })).json().startupPreloadRouteIds).toBeUndefined();
+    } finally { await runtime.app.close(); }
   });
 
   it("registers an arbitrary engine folder without writing into it", async () => {
@@ -444,7 +661,7 @@ describe("Fitz host", () => {
       method: "POST",
       url: "/v1/chat/completions",
       payload: {
-        model: "fast",
+        model: "default",
         stream: false,
         messages: [{ role: "user", content: "persist me" }],
       },
@@ -456,7 +673,7 @@ describe("Fitz host", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json().data).toEqual([
-      expect.objectContaining({ routeId: "fast", status: "completed" }),
+      expect.objectContaining({ routeId: "default", status: "completed" }),
     ]);
     await runtime.app.close();
   });
@@ -467,7 +684,7 @@ describe("Fitz host", () => {
       method: "POST",
       url: "/v1/chat/completions",
       payload: {
-        model: "fast",
+        model: "default",
         stream: true,
         messages: [{ role: "user", content: "stream this" }],
       },
@@ -567,7 +784,7 @@ describe("Fitz host", () => {
       method: "POST",
       url: "/v1/chat/completions",
       payload: {
-        model: "fast",
+        model: "default",
         stream: false,
         messages: [{ role: "user", content: "observe me" }],
       },
@@ -585,19 +802,15 @@ describe("Fitz host", () => {
     });
 
     expect(metrics.statusCode).toBe(200);
-    expect(metrics.json().counters).toEqual(
-      expect.objectContaining({
-        inference_requests_completed_total: 1,
-        model_loads_total: 1,
-      }),
-    );
+    expect(metrics.json().counters).toEqual(expect.objectContaining({ model_loads_total: 1 }));
+    expect(metrics.json().counters.inference_requests_completed_total).toBeGreaterThanOrEqual(1);
     expect(diagnostics.statusCode).toBe(200);
     expect(diagnostics.json()).toEqual(
       expect.objectContaining({
         versions: expect.objectContaining({ protocol: "1" }),
         metrics: expect.any(Object),
-        recentRequests: [expect.objectContaining({ status: "completed" })],
-        recentGpuWork: [expect.objectContaining({ kind: "chat", status: "completed" })],
+        recentRequests: expect.arrayContaining([expect.objectContaining({ status: "completed" })]),
+        recentGpuWork: expect.arrayContaining([expect.objectContaining({ kind: "chat", status: "completed" })]),
       }),
     );
     expect(diagnostics.body).not.toContain("diagnostic-test-token");
@@ -634,7 +847,7 @@ describe("Fitz host", () => {
     await runtime.app.close();
   });
 
-  it("manages per-user Windows host startup without loading inference", async () => {
+  it("manages per-user Windows host startup independently of Default warm-up", async () => {
     let configured = false;
     const startup = new WindowsStartupManager("C:\\Fitz Host\\start-host.ps1", async (args) => {
       if (args[0] === "add") configured = true;
@@ -646,18 +859,18 @@ describe("Fitz host", () => {
     const headers = { "x-fitz-admin-token": "startup-test-token" };
     expect((await runtime.app.inject({ method: "GET", url: "/api/v1/management/startup", headers })).json().data.configured).toBe(false);
     expect((await runtime.app.inject({ method: "POST", url: "/api/v1/management/startup", headers })).json().data.configured).toBe(true);
-    expect((await runtime.app.inject({ method: "GET", url: "/health" })).json().engine.state).toBe("UNLOADED");
+    expect(["PREPARING", "LOADING", "READY"]).toContain((await runtime.app.inject({ method: "GET", url: "/health" })).json().engine.state);
     expect((await runtime.app.inject({ method: "DELETE", url: "/api/v1/management/startup", headers })).json().data.configured).toBe(false);
     await runtime.app.close();
   });
 
-  it("requires device authentication and filters routes by grants", async () => {
+  it("requires device authentication and gives every user the fixed Default capability", async () => {
     const store = SqliteStore.memory(); const security = new SecurityService(store, "pepper"); const user = security.createUser("Consumer"); security.setRouteGrants(user.id, ["fast"]); const { token } = security.issueDevice(user.id, "Browser");
     const runtime = createHost({ store, security, authMode: "required" });
     const denied = await runtime.app.inject({ method: "GET", url: "/v1/models" });
     const models = await runtime.app.inject({ method: "GET", url: "/v1/models", headers: { authorization: `Bearer ${token}` } });
-    const forbidden = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", headers: { authorization: `Bearer ${token}` }, payload: { model: "default", stream: false, messages: [{ role: "user", content: "hello" }] } });
-    expect(denied.statusCode).toBe(401); expect(models.json().data.map((model: { id: string }) => model.id)).toEqual(["fast"]); expect(forbidden.statusCode).toBe(403); await runtime.app.close();
+    const completion = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", headers: { authorization: `Bearer ${token}` }, payload: { model: "default", stream: false, messages: [{ role: "user", content: "hello" }] } });
+    expect(denied.statusCode).toBe(401); expect(models.json().data.map((model: { id: string }) => model.id)).toEqual(["default"]); expect(completion.statusCode).toBe(200); await runtime.app.close();
   });
 
   it("accepts the private Pi credential only on chat completions", async () => {
@@ -680,7 +893,7 @@ describe("Fitz host", () => {
 
   it("persists native agent events and resumes after a sequence", async () => {
     const runtime = createHost();
-    const created = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", messages: [{ role: "user", content: "native protocol" }], max_tokens: 64 } });
+    const created = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", messages: [{ role: "user", content: "native protocol" }], max_tokens: 64 } });
     expect(created.statusCode).toBe(202); const runId = created.json().data.id as string;
     let run = runtime.agentRuns.get(runId); for (let attempt = 0; attempt < 50 && run?.status !== "completed"; attempt += 1) { await new Promise((resolve) => setTimeout(resolve, 5)); run = runtime.agentRuns.get(runId); }
     expect(run?.status).toBe("completed");
@@ -697,7 +910,7 @@ describe("Fitz host", () => {
     const runtime = createHost();
     const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Idempotent" } });
     const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "Once" } });
-    const payload = { model: "fast", sessionId: session.json().data.id, clientRequestId: "desktop:stable-request", messages: [{ role: "user", content: "run once" }] };
+    const payload = { model: "default", sessionId: session.json().data.id, clientRequestId: "desktop:stable-request", messages: [{ role: "user", content: "run once" }] };
     const first = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload });
     const retried = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload });
     expect(first.statusCode).toBe(202);
@@ -712,7 +925,7 @@ describe("Fitz host", () => {
     const store = SqliteStore.memory(); const now = new Date(0).toISOString();
     store.createProject({ id: "resume-project", name: "Resume", createdAt: now, updatedAt: now });
     store.createSession({ id: "resume-session", projectId: "resume-project", title: "Resume", status: "active", createdAt: now, updatedAt: now });
-    store.createAgentRun({ id: "failed-run", routeId: "fast", sessionId: "resume-session", status: "running", createdAt: now, updatedAt: now, lastSequence: 0 }, { model: "fast", sessionId: "resume-session", accessMode: "full", messages: [{ role: "user", content: "finish the task" }] });
+    store.createAgentRun({ id: "failed-run", routeId: "default", sessionId: "resume-session", status: "running", createdAt: now, updatedAt: now, lastSequence: 0 }, { model: "default", sessionId: "resume-session", accessMode: "full", messages: [{ role: "user", content: "finish the task" }] });
     store.appendAgentEvent({ protocolVersion: "1", runId: "failed-run", sequence: 1, timestamp: now, type: "run.started", data: {} });
     store.appendAgentEvent({ protocolVersion: "1", runId: "failed-run", sequence: 2, timestamp: now, type: "tool.started", data: { toolCallId: "read-1", toolName: "read", input: { path: "README.md" } } });
     store.appendAgentEvent({ protocolVersion: "1", runId: "failed-run", sequence: 3, timestamp: now, type: "tool.completed", data: { toolCallId: "read-1", toolName: "read", result: "ok", isError: false } });
@@ -737,7 +950,7 @@ describe("Fitz host", () => {
     const store = SqliteStore.memory(); const now = new Date(0).toISOString();
     store.createProject({ id: "unsafe-project", name: "Unsafe", createdAt: now, updatedAt: now });
     store.createSession({ id: "unsafe-session", projectId: "unsafe-project", title: "Unsafe", status: "active", createdAt: now, updatedAt: now });
-    store.createAgentRun({ id: "unsafe-run", routeId: "fast", sessionId: "unsafe-session", status: "running", createdAt: now, updatedAt: now, lastSequence: 0 }, { model: "fast", sessionId: "unsafe-session", accessMode: "full", messages: [{ role: "user", content: "publish the result" }] });
+    store.createAgentRun({ id: "unsafe-run", routeId: "default", sessionId: "unsafe-session", status: "running", createdAt: now, updatedAt: now, lastSequence: 0 }, { model: "default", sessionId: "unsafe-session", accessMode: "full", messages: [{ role: "user", content: "publish the result" }] });
     store.appendAgentEvent({ protocolVersion: "1", runId: "unsafe-run", sequence: 1, timestamp: now, type: "run.started", data: {} });
     store.appendAgentEvent({ protocolVersion: "1", runId: "unsafe-run", sequence: 2, timestamp: now, type: "tool.started", data: { toolCallId: "publish-1", toolName: "publish", input: { target: "remote" } } });
     store.updateAgentRun("unsafe-run", "failed", "connection_lost");
@@ -760,7 +973,7 @@ describe("Fitz host", () => {
     const runtime = createHost({ agentRuntime: { id: "test-agent", run: () => { const events = (async function* () { yield { type: "assistant.delta" as const, text: "I will inspect it." }; yield { type: "tool.started" as const, toolCallId: "tool-1", toolName: "read", input: { path: "README.md" } }; yield { type: "tool.completed" as const, toolCallId: "tool-1", toolName: "read", result: "ok", isError: false }; yield { type: "assistant.delta" as const, text: "Inspection complete." }; })(); return Object.assign(events, { cancel: () => undefined }); } } });
     const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Agent" } });
     const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "Activity" } });
-    const created = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", sessionId: session.json().data.id, messages: [{ role: "user", content: "use agent" }] } }); const runId = created.json().data.id;
+    const created = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", sessionId: session.json().data.id, messages: [{ role: "user", content: "use agent" }] } }); const runId = created.json().data.id;
     for (let attempt = 0; attempt < 50 && runtime.agentRuns.get(runId)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
     const replay = await runtime.app.inject({ method: "GET", url: `/api/v1/agent/runs/${runId}/events` });
     expect(replay.json().events.map((event: { type: string }) => event.type)).toEqual(["run.created", "run.queue.updated", "run.queue.updated", "run.started", "assistant.delta", "tool.started", "tool.completed", "assistant.delta", "run.completed"]);
@@ -786,7 +999,7 @@ describe("Fitz host", () => {
     })(); return Object.assign(events, { cancel: () => undefined }); } } });
     const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Thinking" } });
     const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "Reasoning" } });
-    const created = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", sessionId: session.json().data.id, messages: [{ role: "user", content: "think then act" }] } }); const runId = created.json().data.id;
+    const created = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", sessionId: session.json().data.id, messages: [{ role: "user", content: "think then act" }] } }); const runId = created.json().data.id;
     for (let attempt = 0; attempt < 50 && runtime.agentRuns.get(runId)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
     const replay = await runtime.app.inject({ method: "GET", url: `/api/v1/agent/runs/${runId}/events` });
     expect(replay.json().events.map((event: { type: string }) => event.type)).toEqual(["run.created", "run.queue.updated", "run.queue.updated", "run.started", "reasoning.delta", "reasoning.delta", "reasoning.completed", "assistant.delta", "tool.started", "tool.completed", "assistant.delta", "run.completed"]);
@@ -814,7 +1027,7 @@ describe("Fitz host", () => {
     } } });
     const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Steer" } });
     const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "Steering" } });
-    const created = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", sessionId: session.json().data.id, messages: [{ role: "user", content: "begin" }] } });
+    const created = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", sessionId: session.json().data.id, messages: [{ role: "user", content: "begin" }] } });
     const runId = created.json().data.id as string;
     for (let attempt = 0; attempt < 50 && runtime.agentRuns.get(runId)?.status !== "running"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
     const steeredResponse = await runtime.app.inject({ method: "POST", url: `/api/v1/agent/runs/${runId}/steer`, payload: { text: "focus on tests" } });
@@ -839,8 +1052,8 @@ describe("Fitz host", () => {
       const events = (async function* () { await gate; yield { type: "assistant.delta" as const, text: "done" }; })();
       return Object.assign(events, { cancel: () => undefined, steer: () => undefined });
     } } });
-    const first = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", messages: [{ role: "user", content: "first" }] } });
-    const second = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "smart", messages: [{ role: "user", content: "second" }] } });
+    const first = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", messages: [{ role: "user", content: "first" }] } });
+    const second = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", messages: [{ role: "user", content: "second" }] } });
     const firstId = first.json().data.id as string; const secondId = second.json().data.id as string;
     for (let attempt = 0; attempt < 50 && runtime.agentRuns.get(firstId)?.status !== "running"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
     const queued = await runtime.app.inject({ method: "POST", url: `/api/v1/agent/runs/${secondId}/steer`, payload: { text: "nope" } });
@@ -860,19 +1073,19 @@ describe("Fitz host", () => {
       const label = request.messages.at(-1)?.content ?? "unknown"; started.push(label); let release = () => undefined; const gate = new Promise<void>((resolve) => { release = resolve; }); releases.set(label, release);
       const events = (async function* () { await gate; yield { type: "assistant.delta" as const, text: `done ${label}` }; })(); return Object.assign(events, { cancel: release });
     } } });
-    const first = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", messages: [{ role: "user", content: "first" }] } });
-    const second = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "smart", messages: [{ role: "user", content: "second" }] } });
+    const first = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", messages: [{ role: "user", content: "first" }] } });
+    const second = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", messages: [{ role: "user", content: "second" }] } });
     expect(started).toEqual(["first"]);
     const initial = await runtime.app.inject({ method: "GET", url: "/api/v1/work/queue" });
-    expect(initial.json().data).toEqual([
+    expect(initial.json().data.filter((item: { kind: string }) => item.kind === "agent")).toEqual([
       expect.objectContaining({ id: first.json().data.id, kind: "agent", lane: "gpu", status: "running", position: 0, depth: 2 }),
       expect.objectContaining({ id: second.json().data.id, kind: "agent", lane: "gpu", status: "queued", position: 1, depth: 2 }),
     ]);
     const cancelled = await runtime.app.inject({ method: "DELETE", url: `/api/v1/agent/runs/${second.json().data.id}` }); expect(cancelled.statusCode).toBe(202); expect(runtime.agentRuns.get(second.json().data.id)?.status).toBe("cancelled"); expect(started).toEqual(["first"]);
     const third = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", messages: [{ role: "user", content: "third" }] } });
-    expect((await runtime.app.inject({ method: "GET", url: "/api/v1/work/queue" })).json().data.at(-1)).toEqual(expect.objectContaining({ id: third.json().data.id, status: "queued", position: 1 }));
+    expect((await runtime.app.inject({ method: "GET", url: "/api/v1/work/queue" })).json().data.find((item: { id: string }) => item.id === third.json().data.id)).toEqual(expect.objectContaining({ id: third.json().data.id, status: "queued", position: 1 }));
     releases.get("first")?.(); for (let attempt = 0; attempt < 50 && !started.includes("third"); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5)); expect(started).toEqual(["first", "third"]);
-    expect((await runtime.app.inject({ method: "GET", url: "/api/v1/work/queue" })).json().data).toEqual([expect.objectContaining({ id: third.json().data.id, status: "running", position: 0, depth: 1 })]);
+    expect((await runtime.app.inject({ method: "GET", url: "/api/v1/work/queue" })).json().data.filter((item: { kind: string }) => item.kind === "agent")).toEqual([expect.objectContaining({ id: third.json().data.id, status: "running", position: 0, depth: 1 })]);
     releases.get("third")?.(); for (let attempt = 0; attempt < 50 && runtime.agentRuns.get(third.json().data.id)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5)); await runtime.app.close();
   });
 
@@ -889,8 +1102,8 @@ describe("Fitz host", () => {
         },
       },
     });
-    const first = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", messages: [{ role: "user", content: "first" }] } });
-    const second = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "smart", messages: [{ role: "user", content: "second" }] } });
+    const first = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", messages: [{ role: "user", content: "first" }] } });
+    const second = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", messages: [{ role: "user", content: "second" }] } });
     const overflow = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", messages: [{ role: "user", content: "overflow" }] } });
     expect(first.statusCode).toBe(202);
     expect(second.statusCode).toBe(202);
@@ -907,7 +1120,7 @@ describe("Fitz host", () => {
   it("creates projects and sessions and records a canonical run transcript", async () => {
     const runtime = createHost(); const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Fitz", rootPath: "C:\\work\\fitz" } }); const projectId = project.json().data.id; expect(project.json().data.rootPath).toBe("C:\\work\\fitz");
     const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${projectId}/sessions`, payload: { title: "Infrastructure" } }); const sessionId = session.json().data.id;
-    const run = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", sessionId, messages: [{ role: "user", content: "persist this turn" }] } }); const runId = run.json().data.id; for (let attempt = 0; attempt < 400 && runtime.agentRuns.get(runId)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+    const run = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", sessionId, messages: [{ role: "user", content: "persist this turn" }] } }); const runId = run.json().data.id; for (let attempt = 0; attempt < 400 && runtime.agentRuns.get(runId)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
     expect(runtime.agentRuns.get(runId)?.status).toBe("completed");
     const transcript = await runtime.app.inject({ method: "GET", url: `/api/v1/sessions/${sessionId}/transcript` }); expect(transcript.json().data).toEqual([expect.objectContaining({ sequence: 1, role: "user", content: expect.objectContaining({ text: "persist this turn" }) }), expect.objectContaining({ sequence: 2, role: "assistant", content: expect.objectContaining({ runId }) })]); await runtime.app.close();
   });
@@ -998,7 +1211,7 @@ describe("Fitz host", () => {
 
   it("compacts oversized canonical session history before a native run", async () => {
     const store = SqliteStore.memory(); const now = new Date(0).toISOString(); store.createProject({ id: "context-project", name: "Context", createdAt: now, updatedAt: now }); store.createSession({ id: "context-session", projectId: "context-project", title: "Long", status: "active", createdAt: now, updatedAt: now }); store.appendTranscriptEntry({ id: "old", sessionId: "context-session", kind: "message", role: "user", content: { text: "x".repeat(400_000) }, createdAt: now }); const runtime = createHost({ store });
-    const response = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", sessionId: "context-session", messages: [{ role: "user", content: "continue" }] } }); expect(response.statusCode).toBe(202); expect(response.json().context.compacted).toBe(true); const transcript = store.transcriptAfter("context-session", 0); expect(transcript.some((entry) => entry.kind === "compaction")).toBe(true); expect(transcript.some((entry) => entry.role === "user" && entry.content.text === "continue")).toBe(true); await runtime.app.close();
+    const response = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", sessionId: "context-session", messages: [{ role: "user", content: "continue" }] } }); expect(response.statusCode).toBe(202); expect(response.json().context.compacted).toBe(true); const transcript = store.transcriptAfter("context-session", 0); expect(transcript.some((entry) => entry.kind === "compaction")).toBe(true); expect(transcript.some((entry) => entry.role === "user" && entry.content.text === "continue")).toBe(true); await runtime.app.close();
   });
 
   it("manually compacts a session into a reusable context checkpoint", async () => {
@@ -1010,7 +1223,7 @@ describe("Fitz host", () => {
   it("issues and redeems one-time pairing codes without pre-authentication", async () => {
     const store = SqliteStore.memory(); const security = new SecurityService(store, "pairing-pepper"); const admin = security.createUser("Admin", "administrator"); const adminToken = security.issueDevice(admin.id, "Console").token; const runtime = createHost({ store, security, authMode: "required" }); const headers = { authorization: `Bearer ${adminToken}` };
     const issued = await runtime.app.inject({ method: "POST", url: "/api/v1/management/pairing-codes", headers, payload: { intendedRole: "consumer", ttlSeconds: 60 } }); expect(issued.statusCode).toBe(201); const code = issued.json().data.code;
-    const redeemed = await runtime.app.inject({ method: "POST", url: "/api/v1/pairing/redeem", payload: { code, displayName: "Remote", deviceName: "Phone" } }); expect(redeemed.statusCode).toBe(201); const token = redeemed.json().data.token; const authenticated = await runtime.app.inject({ method: "GET", url: "/v1/models", headers: { authorization: `Bearer ${token}` } }); expect(authenticated.statusCode).toBe(200); expect(authenticated.json().data.map((model: { id: string }) => model.id).sort()).toEqual(["default", "fast", "smart"]);
+    const redeemed = await runtime.app.inject({ method: "POST", url: "/api/v1/pairing/redeem", payload: { code, displayName: "Remote", deviceName: "Phone" } }); expect(redeemed.statusCode).toBe(201); const token = redeemed.json().data.token; const authenticated = await runtime.app.inject({ method: "GET", url: "/v1/models", headers: { authorization: `Bearer ${token}` } }); expect(authenticated.statusCode).toBe(200); expect(authenticated.json().data.map((model: { id: string }) => model.id)).toEqual(["default"]);
     const replay = await runtime.app.inject({ method: "POST", url: "/api/v1/pairing/redeem", payload: { code, displayName: "Replay", deviceName: "Other" } }); expect(replay.statusCode).toBe(403); await runtime.app.close();
   });
 

@@ -41,7 +41,15 @@ export class SecurityService {
     const { tokenHash: _tokenHash, user, ...device } = record;
     return { user, device, routeGrants: this.store.listUserRouteGrants(user.id), quota: this.store.getUserQuota(user.id) ?? DEFAULT_QUOTAS[user.role] };
   }
-  authorizeRoute(principal: AuthenticatedPrincipal, routeId: string): boolean { return principal.user.role === "administrator" || principal.routeGrants.includes(routeId); }
+  /** Text roles are product capabilities, not host-model ACLs. Smart and Fast
+   * still resolve only to the authenticated user's own cloud connections. */
+  authorizeRoute(principal: AuthenticatedPrincipal, routeId: string): boolean {
+    return routeId === "default"
+      || routeId === "fast"
+      || routeId === "smart"
+      || principal.user.role === "administrator"
+      || principal.routeGrants.includes(routeId);
+  }
   enforceQuota(principal: AuthenticatedPrincipal, promptChars: number, outputTokens: number, queueDepth: number): void {
     const q = principal.quota;
     if (promptChars > q.maxPromptChars) throw new SecurityPolicyError("Prompt quota exceeded");
@@ -73,7 +81,13 @@ export class SecurityService {
       if (spent + (request.creditCostCents ?? 0) > quota.creditBudgetCents) throw new SecurityPolicyError("Media credit budget exceeded");
     }
   }
-  setRouteGrants(userId: string, routeIds: readonly string[]): void { this.requireUser(userId); this.store.replaceUserRouteGrants(userId, routeIds); }
+  /** Route grants now protect media/custom routes only. Text routing is fixed:
+   * Default is universal while Smart and Fast are owner-scoped cloud roles. */
+  setRouteGrants(userId: string, routeIds: readonly string[]): void {
+    this.requireUser(userId);
+    const textCapabilities = new Set(["default", "smart", "fast", "subagent"]);
+    this.store.replaceUserRouteGrants(userId, [...new Set(routeIds.filter((routeId) => !textCapabilities.has(routeId)))]);
+  }
   setQuota(userId: string, quota: UserQuota): void { this.requireUser(userId); validateQuota(quota); this.store.setUserQuota(userId, quota); }
   audit(action: string, actorUserId?: string, targetType?: string, targetId?: string, detail: Record<string, unknown> = {}): void { this.store.appendAuditEvent({ id: randomUUID(), timestamp: new Date().toISOString(), action, detail, ...(actorUserId ? { actorUserId } : {}), ...(targetType ? { targetType } : {}), ...(targetId ? { targetId } : {}) }); }
   hash(value: string): string { return createHmac("sha256", this.pepper).update(value).digest("hex"); }

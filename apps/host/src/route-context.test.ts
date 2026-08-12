@@ -17,15 +17,31 @@ function recipe(store: SqliteStore, id: string, contextTokens: number): void {
 }
 
 describe("contextTokensForRoute", () => {
-  it("resolves the context window of the recipe the route points at", () => {
+  it("resolves Default and an owner-scoped Smart binding", () => {
     const store = SqliteStore.memory();
     try {
       recipe(store, "deepseek-recipe", 131_072);
       recipe(store, "ninfer-recipe", 100_000);
-      store.upsertRoute({ id: "smart", displayName: "Smart", description: "Smart", recipeId: "deepseek-recipe", enabled: true, isDefault: false });
       store.upsertRoute({ id: "default", displayName: "Default", description: "Default", recipeId: "ninfer-recipe", enabled: true, isDefault: true });
-      expect(contextTokensForRoute(store, "smart")).toBe(131_072);
+      store.setSetting("consumerCloudRoutes", [{ ownerUserId: "alice", role: "smart", recipeId: "deepseek-recipe", updatedAt: new Date(0).toISOString() }]);
+      expect(contextTokensForRoute(store, "smart", "alice")).toBe(131_072);
+      expect(contextTokensForRoute(store, "smart", "bob")).toBe(100_000);
       expect(contextTokensForRoute(store, "default")).toBe(100_000);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("uses the construction default for unconfigured Fast and the owner's cloud worker when configured", () => {
+    const store = SqliteStore.memory();
+    try {
+      recipe(store, "worker-recipe", 32_768);
+      recipe(store, "default-recipe", 65_536);
+      store.upsertRoute({ id: "default", displayName: "Default", recipeId: "default-recipe", enabled: true, isDefault: true });
+      expect(contextTokensForRoute(store, "fast", "alice")).toBe(100_000);
+      store.setSetting("consumerCloudRoutes", [{ ownerUserId: "alice", role: "fast", recipeId: "worker-recipe", updatedAt: new Date(0).toISOString() }]);
+      expect(contextTokensForRoute(store, "fast", "alice")).toBe(32_768);
+      expect(contextTokensForRoute(store, "fast", "bob")).toBe(100_000);
     } finally {
       store.close();
     }

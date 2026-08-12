@@ -6,26 +6,26 @@ import { createHost } from "./create-app.js";
 describe("host security and recovery boundaries", () => {
   it("enforces output, request-rate, and route quotas through both protocols", async () => {
     const store = SqliteStore.memory(); const security = new SecurityService(store, "quota-pepper");
-    const user = security.createUser("Limited"); security.setRouteGrants(user.id, ["fast"]);
+    const user = security.createUser("Limited"); security.setRouteGrants(user.id, ["default", "smart"]);
     security.setQuota(user.id, { maxRequestsPerMinute: 1, maxPromptChars: 20, maxOutputTokens: 2, maxQueueDepth: 1 });
     const token = security.issueDevice(user.id, "Client").token; const headers = { authorization: `Bearer ${token}` };
     const runtime = createHost({ store, security, authMode: "required" });
 
-    const outputDenied = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", headers, payload: { model: "fast", stream: false, max_tokens: 3, messages: [{ role: "user", content: "hello" }] } });
+    const outputDenied = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", headers, payload: { model: "default", stream: false, max_tokens: 3, messages: [{ role: "user", content: "hello" }] } });
     expect(outputDenied.statusCode).toBe(429);
-    const accepted = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", headers, payload: { model: "fast", maxTokens: 2, messages: [{ role: "user", content: "hello" }] } });
+    const accepted = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", headers, payload: { model: "default", maxTokens: 2, messages: [{ role: "user", content: "hello" }] } });
     expect(accepted.statusCode).toBe(202);
-    const rateDenied = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", headers, payload: { model: "fast", maxTokens: 2, messages: [{ role: "user", content: "again" }] } });
+    const rateDenied = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", headers, payload: { model: "default", maxTokens: 2, messages: [{ role: "user", content: "again" }] } });
     expect(rateDenied.statusCode).toBe(429);
-    const routeDenied = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", headers, payload: { model: "default", maxTokens: 2, messages: [{ role: "user", content: "route" }] } });
-    expect(routeDenied.statusCode).toBe(403);
+    const missingSmart = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", headers, payload: { model: "smart", maxTokens: 2, messages: [{ role: "user", content: "route" }] } });
+    expect(missingSmart.statusCode).toBe(429);
     await runtime.app.close();
   });
 
   it("prevents cross-user access to runs, sessions, artifacts, and approvals", async () => {
     const store = SqliteStore.memory(); const security = new SecurityService(store, "isolation-pepper");
     const first = security.createUser("First"); const second = security.createUser("Second");
-    security.setRouteGrants(first.id, ["fast"]); security.setRouteGrants(second.id, ["fast"]);
+    security.setRouteGrants(first.id, ["default", "smart"]); security.setRouteGrants(second.id, ["default", "smart"]);
     const firstHeaders = { authorization: `Bearer ${security.issueDevice(first.id, "One").token}` };
     const secondHeaders = { authorization: `Bearer ${security.issueDevice(second.id, "Two").token}` };
     const runtime = createHost({ store, security, authMode: "required" });
@@ -34,7 +34,7 @@ describe("host security and recovery boundaries", () => {
     const sessionId = session.json().data.id;
     const artifact = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/artifacts`, headers: firstHeaders, payload: { name: "secret.txt", mimeType: "text/plain", contentBase64: Buffer.from("secret").toString("base64") } });
     const approval = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/tool-approvals`, headers: firstHeaders, payload: { toolCallId: "call", toolName: "read", request: {} } });
-    const run = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", headers: firstHeaders, payload: { model: "fast", sessionId, messages: [{ role: "user", content: "private" }] } });
+    const run = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", headers: firstHeaders, payload: { model: "default", sessionId, messages: [{ role: "user", content: "private" }] } });
 
     for (const [method, url] of [
       ["GET", `/api/v1/sessions/${sessionId}`],
@@ -69,7 +69,7 @@ describe("host security and recovery boundaries", () => {
       const events = (async function* () { while (!cancelled) await new Promise((resolve) => setTimeout(resolve, 5)); const error = new Error("cancelled"); error.name = "AbortError"; throw error; yield { type: "assistant.delta" as const, text: "unreachable" }; })();
       return Object.assign(events, { cancel: () => { cancelled = true; } });
     } } });
-    const created = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "fast", messages: [{ role: "user", content: "wait" }] } });
+    const created = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", messages: [{ role: "user", content: "wait" }] } });
     const runId = created.json().data.id;
     const cancel = await runtime.app.inject({ method: "DELETE", url: `/api/v1/agent/runs/${runId}` });
     expect(cancel.statusCode).toBe(202);

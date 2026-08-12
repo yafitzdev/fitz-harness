@@ -8,7 +8,7 @@ import type { ArtifactRepository, SqliteStore } from "@fitz/storage";
 import type { ContextManager } from "@fitz/context";
 
 const LOCAL_CONNECTION_ID = "hosted--local";
-const PUBLIC_ROUTE_IDS = new Set(["fast", "default", "smart"]);
+const PUBLIC_ROUTE_IDS = new Set(["default", "fast", "smart"]);
 const MEDIA_TOOL_NAMES = new Set(["generate_image", "generate_video", "generate_audio"]);
 
 export interface WorkspaceRouteOptions {
@@ -416,10 +416,10 @@ function requireString(value: unknown, name: string): string {
   return value.trim();
 }
 
-function requirePublicRouteId(value: unknown): "fast" | "default" | "smart" {
+function requirePublicRouteId(value: unknown): "default" | "fast" | "smart" {
   if (value === undefined) return "default";
-  if (typeof value !== "string" || !PUBLIC_ROUTE_IDS.has(value)) throw new TypeError("routeId must be fast, default, or smart");
-  return value as "fast" | "default" | "smart";
+  if (typeof value !== "string" || !PUBLIC_ROUTE_IDS.has(value)) throw new TypeError("routeId must be default, fast, or smart");
+  return value as "default" | "fast" | "smart";
 }
 
 function toNonNegativeInteger(value: string | undefined, fallback: number): number {

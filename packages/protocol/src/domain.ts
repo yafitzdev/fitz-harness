@@ -2,7 +2,7 @@ export const PROTOCOL_VERSION = "1" as const;
 /** Exact desktop/host application contract. Unlike the event protocol this is
  * deliberately not backward compatible: a desktop must never drive a stale
  * local host with a different API or persistence contract. */
-export const HOST_CONTRACT_VERSION = "2" as const;
+export const HOST_CONTRACT_VERSION = "3" as const;
 
 export const INSTANCE_STATES = [
   "UNLOADED",

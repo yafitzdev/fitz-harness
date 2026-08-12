@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import {
   InferenceAdmissionError,
   type InferenceScheduler,
-  type RouteResolver,
+  type ResolvedRoute,
   RouteNotFoundError,
 } from "@fitz/inference-core";
 import {
@@ -10,10 +10,10 @@ import {
   type InferenceDelta,
   type ModelListResponse,
   type OpenAIErrorResponse,
-  type Route,
 } from "@fitz/protocol";
 import { SecurityPolicyError, type AuthenticatedPrincipal, type SecurityService } from "@fitz/security";
 import { writeSse, writeSseDone } from "./stream-response.js";
+import { LOCAL_OWNER_ID, type UserRouteResolver } from "./user-route-resolver.js";
 
 interface InternalWorkContext {
   runId?: string;
@@ -25,8 +25,7 @@ interface InternalWorkContext {
 export interface OpenAIRouteOptions {
   app: FastifyInstance;
   scheduler: InferenceScheduler;
-  routes: RouteResolver;
-  publicRoutes(): Route[];
+  userRoutes: UserRouteResolver;
   principals: WeakMap<object, AuthenticatedPrincipal>;
   internalWorkContexts: WeakMap<object, InternalWorkContext>;
   security?: SecurityService;
@@ -34,11 +33,11 @@ export interface OpenAIRouteOptions {
 
 /** Owns Fitz's public OpenAI-compatible model and completion transport. */
 export function registerOpenAIRoutes(options: OpenAIRouteOptions): void {
-  const { app, scheduler, routes, publicRoutes, principals, internalWorkContexts, security } = options;
+  const { app, scheduler, userRoutes, principals, internalWorkContexts, security } = options;
 
   app.get("/v1/models", async (request): Promise<ModelListResponse> => ({
     object: "list",
-    data: publicRoutes().filter((route) => {
+    data: userRoutes.publicRoutes(principals.get(request)?.user.id ?? LOCAL_OWNER_ID).filter((route) => {
       const principal = principals.get(request);
       return !principal || security?.authorizeRoute(principal, route.id);
     }).map((route) => ({
@@ -54,11 +53,14 @@ export function registerOpenAIRoutes(options: OpenAIRouteOptions): void {
   app.post("/v1/chat/completions", async (request, reply) => {
     let body;
     let model: string;
+    let resolved: ResolvedRoute;
     try {
       body = parseChatCompletionRequest(request.body);
       model = body.model;
-      const resolved = routes.resolve(model);
       const principal = principals.get(request);
+      const internalContext = internalWorkContexts.get(request);
+      const ownerUserId = principal?.user.id ?? internalContext?.ownerUserId ?? LOCAL_OWNER_ID;
+      resolved = userRoutes.resolve(model, ownerUserId, Boolean(internalContext));
       if (principal && !security?.authorizeRoute(principal, model)) {
         return reply.code(403).send(openAIError(new SecurityPolicyError("Route access denied"), "permission_error"));
       }
@@ -78,9 +80,9 @@ export function registerOpenAIRoutes(options: OpenAIRouteOptions): void {
 
     const principal = principals.get(request);
     const internalContext = internalWorkContexts.get(request);
-    let stream: ReturnType<InferenceScheduler["enqueue"]>;
+    let stream: ReturnType<InferenceScheduler["enqueueResolved"]>;
     try {
-      stream = scheduler.enqueue(model, {
+      stream = scheduler.enqueueResolved(model, resolved.recipe.id, {
         messages: body.messages,
         ...(body.max_tokens !== undefined ? { maxTokens: body.max_tokens } : {}),
         ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),

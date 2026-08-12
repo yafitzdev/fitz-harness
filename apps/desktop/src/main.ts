@@ -1,7 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from "electron";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -22,7 +22,7 @@ let deviceToken = process.env.FITZ_DEVICE_TOKEN;
 const hostClient = new HostClient({ origin: hostUrl, getToken: () => deviceToken });
 interface DesktopUpdateStatus { state: "idle" | "checking" | "available" | "downloading" | "current" | "downloaded" | "error" | "development"; percent?: number; version?: string }
 let latestUpdateStatus: DesktopUpdateStatus = { state: app.isPackaged ? "idle" : "development" };
-interface StoredConsumerConnection { id: string; displayName: string; baseUrl: string; authType: "none" | "bearer"; apiKey?: string; template: string; models: Array<{ id: string; routeId: string; recipeId: string }>; mediaModels: Array<{ id: string; routeId: string; recipeId: string; modality: string; template: string }>; updatedAt: string }
+interface StoredConsumerConnection { id: string; displayName: string; baseUrl: string; authType: "none" | "bearer"; apiKey?: string; template: string; models: Array<{ id: string; recipeId: string }>; mediaModels: Array<{ id: string; routeId: string; recipeId: string; modality: string; template: string }>; updatedAt: string }
 
 ipcMain.handle("fitz:request", async (event, input: unknown) => {
   if (!isRecord(input)) throw new TypeError("Request must be an object");
@@ -60,7 +60,7 @@ ipcMain.handle("fitz:consumer-connection-save", async (_event, input: unknown) =
   const apiKey = authType === "bearer" ? enteredKey ?? existing?.apiKey : undefined;
   if (authType === "bearer" && !apiKey) throw new Error("API key is required");
   const modelIds = requireModelIds(input.modelIds);
-  const response = await trustedHostRequest(`/api/v1/management/connections/${encodeURIComponent(id)}`, "PUT", {
+  const response = await trustedHostRequest(`/api/v1/connections/${encodeURIComponent(id)}`, "PUT", {
     displayName,
     template,
     ...(baseUrl ? { baseUrl } : {}),
@@ -76,7 +76,7 @@ ipcMain.handle("fitz:consumer-connection-save", async (_event, input: unknown) =
 });
 ipcMain.handle("fitz:consumer-connection-remove", async (_event, value: unknown) => {
   const id = requireBoundedText(value, "Connection ID", 100);
-  const response = await trustedHostRequest(`/api/v1/management/connections/${encodeURIComponent(id)}`, "DELETE");
+  const response = await trustedHostRequest(`/api/v1/connections/${encodeURIComponent(id)}`, "DELETE");
   if (!response.ok && response.status !== 404) throw new Error(hostError(await response.text()));
   persistConsumerConnections(loadConsumerConnections().filter((item) => item.id !== id));
 });
@@ -86,7 +86,7 @@ ipcMain.handle("fitz:consumer-connections-sync", async () => {
   for (const connection of loadConsumerConnections()) {
     try {
       const baseUrl = connection.template === "fal" || connection.template === "replicate" ? undefined : connection.baseUrl;
-      const response = await trustedHostRequest(`/api/v1/management/connections/${encodeURIComponent(connection.id)}`, "PUT", {
+      const response = await trustedHostRequest(`/api/v1/connections/${encodeURIComponent(connection.id)}`, "PUT", {
         displayName: connection.displayName,
         template: connection.template,
         ...(baseUrl ? { baseUrl } : {}),
@@ -153,7 +153,7 @@ app.on("before-quit", createModelUnloadOnQuitHandler({
     const response = await hostClient.fetch("/api/v1/management/instances/stop", {
       method: "POST",
       body: { mode: "force", reason: "desktop-quit" },
-      timeoutMs: 15_000,
+      timeoutMs: 45_000,
     });
     if (!response.ok) throw new Error(hostError(await response.text()));
   },
@@ -172,11 +172,24 @@ if (!primaryInstance) {
   } else {
     if (isLoopbackHost(hostUrl) && !(await ensureLocalHost())) app.quit();
     else {
+      void warmLocalDefault();
       createWindow();
       if (app.isPackaged) void autoUpdater.checkForUpdates().catch(() => undefined);
     }
     app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
     app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
+  }
+}
+async function warmLocalDefault(): Promise<void> {
+  try {
+    const response = await hostClient.fetch("/api/v1/inference/warm", {
+      method: "POST",
+      body: { model: "default" },
+      timeoutMs: 15_000,
+    });
+    if (!response.ok && response.status !== 401) console.warn("Could not preload the local Default model", hostError(await response.text()));
+  } catch (error) {
+    console.warn("Could not preload the local Default model", error);
   }
 }
 async function ensureLocalHost(): Promise<boolean> {
@@ -201,12 +214,41 @@ function requireBoundedText(value: unknown, label: string, maximum: number): str
 function deviceTokenPath(): string { const hostId = createHash("sha256").update(new URL(hostUrl).origin).digest("hex").slice(0, 16); return join(app.getPath("userData"), `device-token-${hostId}.bin`); }
 function persistDeviceToken(token: string): void { mkdirSync(dirname(deviceTokenPath()), { recursive: true }); writeFileSync(deviceTokenPath(), safeStorage.encryptString(token), { flag: "w" }); }
 function loadDeviceToken(): string | undefined { try { if (!safeStorage.isEncryptionAvailable() || !existsSync(deviceTokenPath())) return undefined; return safeStorage.decryptString(readFileSync(deviceTokenPath())); } catch { return undefined; } }
-function consumerConnectionsPath(): string { const hostId = createHash("sha256").update(new URL(hostUrl).origin).digest("hex").slice(0, 16); return join(app.getPath("userData"), `consumer-connections-${hostId}.bin`); }
-function loadConsumerConnections(): StoredConsumerConnection[] { try { if (!safeStorage.isEncryptionAvailable() || !existsSync(consumerConnectionsPath())) return []; const value = JSON.parse(safeStorage.decryptString(readFileSync(consumerConnectionsPath()))) as unknown; return Array.isArray(value) ? value.filter(isStoredConsumerConnection) : []; } catch { return []; } }
+function consumerConnectionsPath(): string {
+  const hostId = createHash("sha256").update(new URL(hostUrl).origin).digest("hex").slice(0, 16);
+  const ownerId = createHash("sha256").update(deviceToken ?? "unpaired").digest("hex").slice(0, 16);
+  return join(app.getPath("userData"), `consumer-connections-${hostId}-${ownerId}.bin`);
+}
+function legacyConsumerConnectionsPath(): string {
+  const hostId = createHash("sha256").update(new URL(hostUrl).origin).digest("hex").slice(0, 16);
+  return join(app.getPath("userData"), `consumer-connections-${hostId}.bin`);
+}
+function readConsumerConnections(path: string): StoredConsumerConnection[] {
+  if (!safeStorage.isEncryptionAvailable() || !existsSync(path)) return [];
+  const value = JSON.parse(safeStorage.decryptString(readFileSync(path))) as unknown;
+  return Array.isArray(value) ? value.filter(isStoredConsumerConnection) : [];
+}
+/** One-time migration from the removed machine-global credential file. The
+ * owner-scoped destination is written first, then the legacy source is retired
+ * so an intentional later deletion can never resurrect old credentials. */
+function loadConsumerConnections(): StoredConsumerConnection[] {
+  try {
+    const currentPath = consumerConnectionsPath();
+    const current = readConsumerConnections(currentPath);
+    const legacyPath = legacyConsumerConnectionsPath();
+    if (current.length > 0 || !existsSync(legacyPath)) return current;
+    const migrated = readConsumerConnections(legacyPath);
+    if (migrated.length === 0) return current;
+    persistConsumerConnections(migrated);
+    try { renameSync(legacyPath, `${legacyPath}.migrated`); }
+    catch (error) { console.warn("Connection migration succeeded, but the retired credential file could not be renamed", error); }
+    return migrated;
+  } catch { return []; }
+}
 function persistConsumerConnections(connections: StoredConsumerConnection[]): void { if (!safeStorage.isEncryptionAvailable()) throw new Error("Secure credential storage is unavailable"); mkdirSync(dirname(consumerConnectionsPath()), { recursive: true }); writeFileSync(consumerConnectionsPath(), safeStorage.encryptString(JSON.stringify(connections)), { flag: "w" }); }
 function publicConsumerConnection(connection: StoredConsumerConnection) { return { id: connection.id, displayName: connection.displayName, baseUrl: connection.baseUrl, authType: connection.authType, hasCredential: Boolean(connection.apiKey), template: connection.template ?? "openai-compatible", models: connection.models, mediaModels: connection.mediaModels ?? [], updatedAt: connection.updatedAt }; }
 function isStoredConsumerConnection(value: unknown): value is StoredConsumerConnection { return isRecord(value) && typeof value.id === "string" && typeof value.displayName === "string" && typeof value.baseUrl === "string" && (value.authType === "none" || value.authType === "bearer") && (value.template === undefined || typeof value.template === "string") && Array.isArray(value.models) && (value.mediaModels === undefined || Array.isArray(value.mediaModels)) && typeof value.updatedAt === "string"; }
-function parseConsumerModels(value: unknown): Array<{ id: string; routeId: string; recipeId: string }> { if (!Array.isArray(value)) return []; return value.flatMap((item) => isRecord(item) && typeof item.id === "string" && typeof item.routeId === "string" && typeof item.recipeId === "string" ? [{ id: item.id, routeId: item.routeId, recipeId: item.recipeId }] : []); }
+function parseConsumerModels(value: unknown): Array<{ id: string; recipeId: string }> { if (!Array.isArray(value)) return []; return value.flatMap((item) => isRecord(item) && typeof item.id === "string" && typeof item.recipeId === "string" ? [{ id: item.id, recipeId: item.recipeId }] : []); }
 function parseConsumerMediaModels(value: unknown): Array<{ id: string; routeId: string; recipeId: string; modality: string; template: string }> { if (!Array.isArray(value)) return []; return value.flatMap((item) => isRecord(item) && typeof item.id === "string" && typeof item.routeId === "string" && typeof item.recipeId === "string" && (item.modality === "image" || item.modality === "video" || item.modality === "audio") ? [{ id: item.id, routeId: item.routeId, recipeId: item.recipeId, modality: item.modality, template: typeof item.template === "string" ? item.template : "openai-compatible" }] : []); }
 function requireConsumerTemplate(value: unknown): string { if (value === undefined) return "openai-compatible"; if (typeof value === "string" && (value === "openai-compatible" || value === "openai-media" || value === "fal" || value === "replicate")) return value; throw new Error("Template must be openai-compatible, openai-media, fal, or replicate"); }
 function requireModelIds(value: unknown): string[] { if (value === undefined) return []; if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !item.trim() || item.trim().length > 200)) throw new Error("Model IDs must be an array of strings"); return [...new Set(value.map((item) => (item as string).trim()).filter(Boolean))]; }

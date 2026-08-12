@@ -72,9 +72,9 @@ export class HostClient {
         signal,
       });
     } catch (error) {
-      if (options.signal?.aborted) throw new HostRequestError("cancelled", "The host request was cancelled", false, error);
-      if (timeoutSignal.aborted) throw new HostRequestError("timeout", `The host did not respond within ${timeoutMs} ms`, true, error);
-      throw new HostRequestError("network", "The Fitz host could not be reached", true, error);
+      if (options.signal?.aborted) throw new HostRequestError("cancelled", `The host request to ${safePath} was cancelled`, false, error);
+      if (timeoutSignal.aborted) throw new HostRequestError("timeout", `The host did not respond to ${safePath} within ${timeoutMs} ms`, true, error);
+      throw new HostRequestError("network", `The Fitz host could not be reached for ${safePath}`, true, error);
     }
   }
 
