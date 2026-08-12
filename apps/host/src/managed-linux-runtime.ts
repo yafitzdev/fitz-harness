@@ -1,5 +1,9 @@
+import { execFile } from "node:child_process";
 import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 import type { FitzRuntimePaths } from "./runtime-paths.js";
+
+const execFileAsync = promisify(execFile);
 
 /** The single Fitz-owned inference filesystem. All local engines, environments,
  * model payloads, registrations, configuration, and logs live inside it. */
@@ -42,6 +46,17 @@ export function managedLinuxRuntimeLayout(paths: FitzRuntimePaths): ManagedLinux
 
 export function managedLinuxRuntimeMap(layout: ManagedLinuxRuntimeLayout): ReadonlyMap<string, { distribution: string }> {
   return new Map([[layout.id, { distribution: layout.distribution }]]);
+}
+
+/** Releases every process and all page cache owned by Fitz's dedicated Linux
+ * inference appliance. The next `wsl -d Fitz-Inference ...` launch starts the
+ * same persistent filesystem again; no model or engine files are removed. */
+export async function terminateManagedLinuxRuntime(
+  layout: ManagedLinuxRuntimeLayout,
+  execute: (file: string, args: string[]) => Promise<unknown> = (file, args) => execFileAsync(file, args, { timeout: 20_000, windowsHide: true }),
+): Promise<void> {
+  if (process.platform !== "win32") return;
+  await execute("wsl.exe", ["--terminate", layout.distribution]);
 }
 
 export function mergeManagedLinuxRuntimeComponent(

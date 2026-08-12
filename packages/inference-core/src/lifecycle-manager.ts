@@ -50,6 +50,7 @@ export class LifecycleManager {
   #lastActivityAt: number | undefined;
   #activeLeases = 0;
   #failureReason: string | undefined;
+  #pinnedRecipe: Recipe | undefined;
   #evictionTask: ScheduledTask | undefined;
   #admissionTail: Promise<void> = Promise.resolve();
   readonly #leaseWaiters = new Set<() => void>();
@@ -59,7 +60,7 @@ export class LifecycleManager {
     this.adapters = options.adapters;
     this.events = options.events ?? new LifecycleEventBus();
     this.#clock = options.clock ?? new SystemClock();
-    this.#allocatePort = options.allocatePort ?? (() => 19_000);
+    this.#allocatePort = options.allocatePort ?? sequentialPortAllocator();
     this.resources = options.resources ?? new ResourceGovernor(new SystemResourceMonitor());
     this.thermalGuard = options.thermalGuard ?? new GpuThermalGuard(this.resources.monitor);
   }
@@ -78,6 +79,43 @@ export class LifecycleManager {
         : {}),
       ...(this.#failureReason ? { failureReason: this.#failureReason } : {}),
     };
+  }
+
+  residencySnapshot(): Record<string, unknown> {
+    const pinned = this.#pinnedRecipe;
+    const active = this.#recipe;
+    return {
+      algorithm: "single-local-default-v1",
+      ...(pinned ? {
+        pinned: {
+          recipeId: pinned.id,
+          modelId: pinned.modelId,
+          adapter: pinned.adapter,
+          state: active && sameRuntimeRecipe(active, pinned) ? this.#state.toLowerCase() : "displaced",
+        },
+      } : {}),
+      ...(active ? { active: { recipeId: active.id, modelId: active.modelId, adapter: active.adapter, state: this.#state.toLowerCase() } } : {}),
+    };
+  }
+
+  /** Declare the host-owned local Default. Pinning changes desired state only;
+   * callers enqueue a normal GPU warm job so route changes remain instant. */
+  pin(recipe: Recipe): void {
+    const adapter = this.adapters.get(recipe.adapter);
+    if (isMediaEngineAdapter(adapter) || (adapter.executionLocation?.(recipe) ?? "local") !== "local") {
+      throw new TypeError("The Default route must use a local text engine");
+    }
+    this.#pinnedRecipe = structuredClone(recipe);
+  }
+
+  pinnedRecipe(): Recipe | undefined {
+    return this.#pinnedRecipe ? structuredClone(this.#pinnedRecipe) : undefined;
+  }
+
+  async restorePinned(signal: AbortSignal = new AbortController().signal): Promise<InstanceSnapshot> {
+    if (!this.#pinnedRecipe) return this.snapshot();
+    await this.#ensureReady(this.#pinnedRecipe, signal);
+    return this.snapshot();
   }
 
   async *run(
@@ -243,15 +281,19 @@ export class LifecycleManager {
     for (const notify of [...this.#leaseWaiters]) notify();
   }
 
-  async prepare(recipe: Recipe): Promise<void> {
+  async prepare(recipe: Recipe, signal?: AbortSignal): Promise<void> {
     const key = preparationKey(recipe);
     const existing = this.#preparationTasks.get(key);
     if (existing) return existing.promise;
     const controller = new AbortController();
+    const abort = () => controller.abort();
+    if (signal?.aborted) controller.abort();
+    else signal?.addEventListener("abort", abort, { once: true });
     const task = this.#prepareRecipe(recipe, controller.signal);
     this.#preparationTasks.set(key, { promise: task, controller });
     try { await task; }
     catch (error) { this.#preparationTasks.delete(key); throw error; }
+    finally { signal?.removeEventListener("abort", abort); }
   }
 
   async cancelPreparations(): Promise<void> {
@@ -314,6 +356,7 @@ export class LifecycleManager {
   }
 
   async #loadRecipe(recipe: Recipe, signal: AbortSignal): Promise<void> {
+    await this.#cancelPreparationsExcept(recipe);
     try { await this.prepare(recipe); }
     catch {
       // Preparation is a latency optimization. A failed cache/runtime warm-up must
@@ -369,6 +412,14 @@ export class LifecycleManager {
     await adapter.prepare?.(recipe, signal);
   }
 
+  async #cancelPreparationsExcept(recipe: Recipe): Promise<void> {
+    const keep = preparationKey(recipe);
+    const cancelled = [...this.#preparationTasks.entries()].filter(([key]) => key !== keep);
+    for (const [, task] of cancelled) task.controller.abort();
+    await Promise.allSettled(cancelled.map(([, task]) => task.promise));
+    for (const [key] of cancelled) this.#preparationTasks.delete(key);
+  }
+
   /** A thermal stop is different from an ordinary provider failure: leaving a
    *  local model resident after its safety guard fired keeps the failed engine
    *  and its VRAM allocation alive without an eviction timer. Only report the
@@ -397,6 +448,7 @@ export class LifecycleManager {
     if (!recipe || !this.#adapter || this.#state !== "READY") return;
     const policy = recipe.lifecycle.evictionPolicy;
     const media = isMediaEngineAdapter(this.#adapter);
+    if (!media && this.#pinnedRecipe && sameRuntimeRecipe(recipe, this.#pinnedRecipe)) return;
     if (!media && (policy === "never" || policy === "manual")) return;
     const idleDelay = media || policy === "immediate"
       ? 0
@@ -408,7 +460,7 @@ export class LifecycleManager {
     );
     this.#evictionTask = this.#clock.schedule(Math.max(idleDelay, residencyRemaining), async () => {
       if (this.#activeLeases === 0 && this.#state === "READY") {
-        await this.stop("idle-ttl-expired");
+        await this.#withAdmissionLock(() => this.#stopUnlocked("idle-ttl-expired", "graceful"));
       }
     });
   }
@@ -441,6 +493,7 @@ export class LifecycleManager {
     this.#activeLeases = 0;
     this.#failureReason = undefined;
   }
+
 }
 
 function isAbortError(error: unknown): boolean {
@@ -473,6 +526,10 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function preparationKey(recipe: Recipe): string {
+  return runtimeRecipeKey(recipe);
+}
+
 function sameRuntimeRecipe(current: Recipe | undefined, requested: Recipe): boolean {
   return current !== undefined
     && current.id === requested.id
@@ -480,10 +537,6 @@ function sameRuntimeRecipe(current: Recipe | undefined, requested: Recipe): bool
     && current.modelId === requested.modelId
     && current.contextTokens === requested.contextTokens
     && isDeepStrictEqual(current.configuration, requested.configuration);
-}
-
-function preparationKey(recipe: Recipe): string {
-  return runtimeRecipeKey(recipe);
 }
 
 function runtimeRecipeKey(recipe: Recipe): string {
@@ -494,4 +547,13 @@ function runtimeRecipeKey(recipe: Recipe): string {
     contextTokens: recipe.contextTokens,
     configuration: recipe.configuration,
   });
+}
+
+function sequentialPortAllocator(first = 19_000, last = 19_999): () => number {
+  let next = first;
+  return () => {
+    const allocated = next;
+    next = next >= last ? first : next + 1;
+    return allocated;
+  };
 }

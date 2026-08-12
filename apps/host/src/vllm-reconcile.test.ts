@@ -24,23 +24,28 @@ describe("vLLM model reconciliation", () => {
     expect(store.listRecipes()).toEqual([expect.objectContaining({
       id: "qwen3.6-35b-a3b-nvfp4",
       playbookId: "vllm",
-      modelId: "qwen36-subagent",
+      modelId: "qwen3.6-35b-a3b-nvfp4",
       contextTokens: 32_768,
-      capabilities: expect.objectContaining({ toolCalls: true, maxConcurrentGenerations: 16 }),
+      capabilities: expect.objectContaining({ toolCalls: true, maxConcurrentGenerations: 1 }),
       configuration: expect.objectContaining({
         runtime: "linux-managed",
         runtimeId: "inference-linux",
         command: `${layout.environmentRoot}/vllm/bin/vllm`,
         readinessTimeoutMs: 900_000,
+        environment: {
+          VLLM_HOST_IP: "127.0.0.1",
+          INSTANTTENSOR_BACKEND: "BUFFERED",
+          VLLM_ENABLE_STARTUP_PLAN: "1",
+        },
       }),
     })]);
     const args = store.listRecipes()[0]!.configuration.args as string[];
     expect(args).toEqual(expect.arrayContaining([
-      "--max-num-seqs", "16", "-O2", "--tool-call-parser", "qwen3_xml", "--reasoning-parser", "qwen3",
+      "--load-format", "instanttensor", "--language-model-only", "--skip-mm-profiling",
+      "--mm-processor-cache-gb", "0", "--max-num-seqs", "1", "--max-num-batched-tokens", "2048",
+      "-O2", "--tool-call-parser", "qwen3_xml", "--reasoning-parser", "qwen3",
     ]));
-    expect(store.listRoutes()).toEqual([expect.objectContaining({
-      id: "subagent", recipeId: "qwen3.6-35b-a3b-nvfp4", enabled: true,
-    })]);
+    expect(store.listRoutes()).toEqual([]);
     store.close();
   });
 
@@ -61,7 +66,7 @@ describe("vLLM model reconciliation", () => {
     expect(store.listRoutes()).toEqual([]);
     expect(store.getEngine("vllm")).toBeUndefined();
     expect(() => routes.resolve("research")).toThrow();
-    expect(() => routes.recipe("qwen3.6-35b-a3b-nvfp4")).toThrow();
+    expect(() => routes.resolveRecipe("qwen3.6-35b-a3b-nvfp4")).toThrow();
     store.close();
   });
 
@@ -99,26 +104,26 @@ describe("vLLM model reconciliation", () => {
     store.close();
   });
 
-  it("does not steal the general subagent route from another engine", () => {
+  it("materializes recipes without creating or mutating text routes", () => {
     const { store, paths, layout } = fixture();
     store.upsertRecipe(externalRecipe());
-    store.upsertRoute({ id: "subagent", displayName: "Subagent", recipeId: "cloud-worker", enabled: true });
+    store.upsertRoute({ id: "research", displayName: "Research", recipeId: "cloud-worker", enabled: true });
     writeRegistration(paths.modelRoot, qwenRegistration(layout.modelRoot));
 
     new VllmModelReconciler(store, paths, layout, { runtimePathExists: () => true }).reconcile();
 
-    expect(store.listRoutes()).toContainEqual(expect.objectContaining({ id: "subagent", recipeId: "cloud-worker" }));
+    expect(store.listRoutes()).toEqual([expect.objectContaining({ id: "research", recipeId: "cloud-worker" })]);
     store.close();
   });
 
-  it("leaves a non-vLLM subagent assignment intact when no vLLM registrations exist", () => {
+  it("leaves unrelated routes intact when no vLLM registrations exist", () => {
     const { store, paths, layout } = fixture();
     store.upsertRecipe(externalRecipe());
-    store.upsertRoute({ id: "subagent", displayName: "Subagent", recipeId: "cloud-worker", enabled: true });
+    store.upsertRoute({ id: "research", displayName: "Research", recipeId: "cloud-worker", enabled: true });
 
     expect(new VllmModelReconciler(store, paths, layout, { runtimePathExists: () => false }).reconcile())
       .toEqual({ registered: [], unregistered: [] });
-    expect(store.listRoutes()).toContainEqual(expect.objectContaining({ id: "subagent", recipeId: "cloud-worker" }));
+    expect(store.listRoutes()).toContainEqual(expect.objectContaining({ id: "research", recipeId: "cloud-worker" }));
     store.close();
   });
 });
@@ -160,13 +165,20 @@ function qwenRegistration(modelRoot: string) {
     recipe: {
       id: "qwen3.6-35b-a3b-nvfp4",
       displayName: "Qwen 3.6",
-      modelId: "qwen36-subagent",
+      modelId: "qwen3.6-35b-a3b-nvfp4",
       contextTokens: 32_768,
-      maxConcurrentGenerations: 16,
       optimizationLevel: 2,
+      serving: {
+        loadFormat: "instanttensor",
+        instantTensorBackend: "buffered",
+        languageModelOnly: true,
+        skipMmProfiling: true,
+        mmProcessorCacheGb: 0,
+        maxNumBatchedTokens: 2_048,
+        persistStartupPlan: true,
+      },
       toolCallParser: "qwen3_xml",
       reasoningParser: "qwen3",
-      routeId: "subagent",
     },
     files: 1,
     bytes: 1,

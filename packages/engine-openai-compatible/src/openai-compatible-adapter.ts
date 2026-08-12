@@ -39,6 +39,8 @@ export interface OpenAICompatibleAdapterOptions {
 
 export class OpenAICompatibleEngineAdapter implements EngineAdapter<OpenAICompatibleHandle> {
   readonly id = "openai-compatible";
+
+  executionLocation(): "remote" { return "remote"; }
   readonly #fetch: typeof globalThis.fetch;
   readonly #environment: Readonly<Record<string, string | undefined>>;
 

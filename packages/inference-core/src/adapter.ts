@@ -55,6 +55,10 @@ export class InferenceRequestRejectedError extends Error {
 
 export interface EngineAdapter<THandle extends EngineInstanceHandle = EngineInstanceHandle> {
   readonly id: string;
+  /** Where text generation compute runs. Local is the conservative default;
+   * remote adapters use the independent cloud lane and never displace the
+   * host's pinned local model. */
+  executionLocation?(recipe: Recipe): "local" | "remote";
   /** Prepare host/runtime state without starting a model-bearing process or occupying model VRAM. */
   prepare?(recipe: Recipe, signal: AbortSignal): Promise<void>;
   validateRecipe(recipe: Recipe): Promise<ValidationReport>;

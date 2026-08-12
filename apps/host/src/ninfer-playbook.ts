@@ -36,26 +36,12 @@ export function createNInferPlaybook(runtime: NInferRuntimeLayout): NInferPlaybo
   ];
   const routes: Route[] = [
     {
-      id: "fast",
-      displayName: "Fast",
-      description: "Lowest-latency route",
-      recipeId: recipes[1]!.id,
-      enabled: true,
-    },
-    {
       id: "default",
       displayName: "Default",
       description: "Primary route",
       recipeId: recipes[0]!.id,
       enabled: true,
       isDefault: true,
-    },
-    {
-      id: "smart",
-      displayName: "Smart",
-      description: "Highest-capability route",
-      recipeId: recipes[0]!.id,
-      enabled: true,
     },
   ];
   return { id: NINFER_PLAYBOOK_ID, displayName: "ninfer", recipes, routes };
@@ -67,7 +53,7 @@ function recipe(id: string, displayName: string, modelId: string, artifact: stri
     ...value,
     playbookId: NINFER_PLAYBOOK_ID,
     displayName,
-    lifecycle: { ...value.lifecycle, idleTtlSeconds: 600 },
+    lifecycle: { ...value.lifecycle, evictionPolicy: "never", idleTtlSeconds: 0, minimumResidencySeconds: 0 },
     configuration: {
       ...value.configuration,
       readinessTimeoutMs: 180_000,

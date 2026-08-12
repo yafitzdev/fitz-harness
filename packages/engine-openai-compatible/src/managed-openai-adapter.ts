@@ -23,6 +23,7 @@ export interface ManagedOpenAIConfiguration {
   workingDirectory: string;
   healthPath: string;
   readinessTimeoutMs: number;
+  environment: Record<string, string>;
 }
 
 export interface ManagedLinuxRuntimeTarget { distribution: string }
@@ -74,9 +75,12 @@ export class ManagedOpenAIEngineAdapter implements EngineAdapter<ManagedOpenAIHa
     const command = isPathLike(config.command) && !posix.isAbsolute(config.command)
       ? posix.resolve(workingDirectory, config.command)
       : config.command;
+    const guestCommand = Object.keys(config.environment).length > 0
+      ? ["/usr/bin/env", ...Object.entries(config.environment).map(([key, value]) => `${key}=${value}`), command, ...args]
+      : [command, ...args];
     return {
       executable: "wsl.exe",
-      args: ["-d", target.distribution, "-u", "root", "--", "sh", "-s", "--", workingDirectory, command, ...args],
+      args: ["-d", target.distribution, "-u", "root", "--", "sh", "-s", "--", workingDirectory, ...guestCommand],
       env: {}, internalHost: allocation.host, internalPort: allocation.port,
     };
   }
@@ -149,6 +153,7 @@ export function readManagedOpenAIConfiguration(recipe: Recipe): ManagedOpenAICon
     enginePath: stringValue(value.enginePath, "enginePath"), runtime, command: stringValue(value.command, "command"),
     args: stringArray(value.args, "args"), workingDirectory: optionalString(value.workingDirectory, "workingDirectory") ?? ".",
     healthPath: optionalString(value.healthPath, "healthPath") ?? "/v1/models", readinessTimeoutMs,
+    environment: optionalStringRecord(value.environment, "environment") ?? {},
     runtimeId: stringValue(value.runtimeId, "runtimeId"),
   };
 }
@@ -183,6 +188,15 @@ function stringValue(value: unknown, name: string): string { if (typeof value !=
 function optionalString(value: unknown, name: string): string | undefined { return value === undefined ? undefined : stringValue(value, name); }
 function numberValue(value: unknown, name: string): number { if (typeof value !== "number" || !Number.isFinite(value)) throw new TypeError(`${name} must be finite`); return value; }
 function stringArray(value: unknown, name: string): string[] { if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) throw new TypeError(`${name} must be an array of strings`); return value; }
+function optionalStringRecord(value: unknown, name: string): Record<string, string> | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${name} must be an object of strings`);
+  const entries = Object.entries(value);
+  if (entries.some(([key, item]) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || typeof item !== "string")) {
+    throw new TypeError(`${name} must contain valid environment names and string values`);
+  }
+  return Object.fromEntries(entries);
+}
 function abortError(): Error { const error = new Error("Operation aborted"); error.name = "AbortError"; return error; }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 async function signalGuest(process: { pid: number; distribution: string }, signal: "TERM" | "KILL"): Promise<void> {

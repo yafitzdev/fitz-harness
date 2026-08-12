@@ -207,6 +207,42 @@ describe("MediaEngineAdapter registry", () => {
 });
 
 describe("InferenceScheduler media jobs", () => {
+  it("temporarily displaces local Default for media and restores it before releasing the GPU lane", async () => {
+    const chatAdapter = new FakeEngineAdapter();
+    const mediaAdapter = new MediaFakeEngineAdapter();
+    const defaultRecipe = recipe("local-default", 1);
+    const lifecycle = new LifecycleManager({
+      adapters: new EngineAdapterRegistry([chatAdapter, mediaAdapter]),
+      thermalGuard: safeThermalGuard(),
+    });
+    const scheduler = new InferenceScheduler(
+      new RouteResolver(
+        [route("default", defaultRecipe.id), route("image", "image-recipe", "image")],
+        [defaultRecipe, mediaRecipe("image-recipe", 60, "image")],
+      ),
+      lifecycle,
+    );
+    lifecycle.pin(defaultRecipe);
+    await scheduler.enqueueWarm("default").result;
+
+    expect(lifecycle.snapshot()).toMatchObject({ state: "READY", recipeId: defaultRecipe.id });
+    await collectMedia(scheduler.enqueueMedia(
+      "image",
+      mediaInput("image", "a lighthouse"),
+      undefined,
+      mediaOptions(),
+    ).events);
+
+    expect(mediaAdapter.starts).toHaveLength(1);
+    expect(mediaAdapter.stops).toEqual([expect.objectContaining({ mode: "graceful" })]);
+    expect(chatAdapter.starts).toHaveLength(2);
+    expect(lifecycle.snapshot()).toMatchObject({ state: "READY", recipeId: defaultRecipe.id, activeLeases: 0 });
+    expect(lifecycle.residencySnapshot()).toEqual(expect.objectContaining({
+      algorithm: "single-local-default-v1",
+      pinned: expect.objectContaining({ recipeId: defaultRecipe.id, state: "ready" }),
+    }));
+  });
+
   it("uses an explicitly pinned media recipe instead of a reassigned route recipe", async () => {
     const mediaAdapter = new MediaFakeEngineAdapter();
     const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([mediaAdapter]) });

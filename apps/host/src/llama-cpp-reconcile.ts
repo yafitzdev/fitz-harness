@@ -110,7 +110,7 @@ export class LlamaCppModelReconciler {
       modelId: fileName,
       contextTokens: 32_768,
       capabilities: { chatCompletions: true, streaming: true, toolCalls: true, responseFormat: true, minP: true, maxConcurrentGenerations: 1 },
-      lifecycle: { loadPolicy: "onDemand", evictionPolicy: "idle-ttl", idleTtlSeconds: 600, minimumResidencySeconds: 0 },
+      lifecycle: { loadPolicy: "onDemand", evictionPolicy: "never", idleTtlSeconds: 0, minimumResidencySeconds: 0 },
       configuration: {
         enginePath: `${this.#runtime.engineRoot}/llama.cpp`,
         runtime: "linux-managed",
@@ -120,6 +120,7 @@ export class LlamaCppModelReconciler {
         workingDirectory: ".",
         healthPath: "/v1/models",
         readinessTimeoutMs: 300_000,
+        preloadPaths: preloadGgufPaths(args),
       },
     };
   }
@@ -173,9 +174,16 @@ export class LlamaCppModelReconciler {
         runtimeId: this.#runtime.id,
         command: "./build-linux-cuda/bin/llama-server",
         workingDirectory: ".",
+        preloadPaths: preloadGgufPaths(recipe.configuration.args),
       },
     };
   }
+}
+
+function preloadGgufPaths(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((item): item is string => typeof item === "string"
+    && posix.isAbsolute(item) && item.toLowerCase().endsWith(".gguf")))];
 }
 
 function discoverMainGgufFiles(root: string): string[] {

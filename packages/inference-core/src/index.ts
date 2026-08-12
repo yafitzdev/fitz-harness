@@ -8,6 +8,7 @@ export * from "./owner-fair-queue.js";
 export * from "./route-resolver.js";
 export * from "./resources.js";
 export * from "./remote-media-executor.js";
+export * from "./remote-text-executor.js";
 export * from "./scheduler.js";
 export * from "./state-machine.js";
 export * from "./thermal.js";

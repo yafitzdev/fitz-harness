@@ -15,20 +15,16 @@ describe("production NiNfer playbook", () => {
     executable: "/opt/fitz/llm/environments/ninfer/bin/ninfer-serve",
   };
 
-  it("contains exactly two validated recipes and the fixed fast/default/smart routes", () => {
+  it("contains two validated recipes and one host-owned Default route", () => {
     const playbook = createNInferPlaybook(runtime);
 
     expect(playbook).toMatchObject({ id: "ninfer", displayName: "ninfer" });
     expect(new Set(playbook.recipes.map((recipe) => recipe.playbookId))).toEqual(new Set([NINFER_PLAYBOOK_ID]));
     expect(playbook.recipes).toHaveLength(2);
     expect(playbook.recipes.every((recipe) => validateNInferConfiguration(recipe).length === 0)).toBe(true);
-    expect(playbook.recipes.every((recipe) => recipe.lifecycle.idleTtlSeconds === 600)).toBe(true);
+    expect(playbook.recipes.every((recipe) => recipe.lifecycle.evictionPolicy === "never" && recipe.lifecycle.idleTtlSeconds === 0)).toBe(true);
     expect(playbook.recipes.map((recipe) => readNInferConfiguration(recipe).draftTokens)).toEqual([4, 3]);
-    expect(playbook.routes).toEqual([
-      expect.objectContaining({ id: "fast", recipeId: playbook.recipes[1]!.id }),
-      expect.objectContaining({ id: "default", recipeId: playbook.recipes[0]!.id, isDefault: true }),
-      expect.objectContaining({ id: "smart", recipeId: playbook.recipes[0]!.id }),
-    ]);
+    expect(playbook.routes).toEqual([expect.objectContaining({ id: "default", recipeId: playbook.recipes[0]!.id, isDefault: true })]);
   });
 
   it("resolves logical recipes into the managed Linux runtime", () => {

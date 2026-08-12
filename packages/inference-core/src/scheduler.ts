@@ -5,6 +5,7 @@ import { BoundedWorkLane, type WorkLaneStatus } from "./bounded-work-lane.js";
 import { LifecycleEventBus } from "./event-bus.js";
 import { LifecycleManager } from "./lifecycle-manager.js";
 import { RemoteMediaExecutor } from "./remote-media-executor.js";
+import { RemoteTextExecutor } from "./remote-text-executor.js";
 import { RouteResolver } from "./route-resolver.js";
 
 export interface WorkContext {
@@ -89,9 +90,12 @@ export class InferenceScheduler {
   readonly #gpuLane: BoundedWorkLane<QueueJob>;
   readonly #cloudLane: BoundedWorkLane<QueueJob>;
   readonly #remoteMedia: RemoteMediaExecutor;
+  readonly #remoteText: RemoteTextExecutor;
   readonly #streamBufferItems: number;
   readonly #streamBufferBytes: number;
   readonly #recordUsage: InferenceSchedulerOptions["recordUsage"];
+  #quiescing = false;
+  #quiesceTask: Promise<void> | undefined;
 
   constructor(
     readonly routes: RouteResolver,
@@ -100,6 +104,7 @@ export class InferenceScheduler {
     options: InferenceSchedulerOptions = {},
   ) {
     this.#remoteMedia = options.remoteMedia ?? new RemoteMediaExecutor(lifecycle.adapters);
+    this.#remoteText = new RemoteTextExecutor(lifecycle.adapters);
     this.#streamBufferItems = options.streamBufferItems ?? 64;
     this.#streamBufferBytes = options.streamBufferBytes ?? 1024 * 1024;
     this.#recordUsage = options.recordUsage;
@@ -122,6 +127,11 @@ export class InferenceScheduler {
   enqueueRecipe(recipeId: string, input: Omit<InferenceRequest, "id" | "routeId">, externalSignal?: AbortSignal, options: RecipeEnqueueOptions = {}): ScheduledStream {
     this.routes.resolveRecipe(recipeId);
     return this.#enqueue(`recipe:${recipeId}`, input, externalSignal, recipeId, options.unloadAfterCompletion, options.context ?? {});
+  }
+
+  enqueueResolved(routeId: string, recipeId: string, input: Omit<InferenceRequest, "id" | "routeId">, externalSignal?: AbortSignal, context: WorkContext = {}): ScheduledStream {
+    this.routes.resolveRecipe(recipeId);
+    return this.#enqueue(routeId, input, externalSignal, recipeId, undefined, context);
   }
 
   enqueueMedia(routeId: string, input: Omit<MediaGenerationRequest, "id" | "routeId">, externalSignal: AbortSignal | undefined, options: MediaEnqueueOptions): ScheduledMediaJob {
@@ -170,17 +180,44 @@ export class InferenceScheduler {
   }
 
   async shutdown(): Promise<void> {
+    await this.#quiesceTask;
     await Promise.all([this.#gpuLane.shutdown(), this.#cloudLane.shutdown()]);
     await this.lifecycle.stop("host-shutdown", "force");
   }
 
+  /** Establish a reusable zero-work barrier, then unload the local runtime.
+   * Unlike shutdown(), this lets a later desktop session submit new work. */
+  async quiesce(reason = "hosting-plane-closed"): Promise<void> {
+    if (this.#quiesceTask) return this.#quiesceTask;
+    this.#quiescing = true;
+    const task = (async () => {
+      await Promise.all([this.#gpuLane.cancelAllAndWait(), this.#cloudLane.cancelAllAndWait()]);
+      await this.lifecycle.cancelPreparations();
+      await this.lifecycle.stop(reason, "force");
+    })();
+    this.#quiesceTask = task;
+    try { await task; }
+    finally {
+      this.#quiescing = false;
+      this.#quiesceTask = undefined;
+    }
+  }
+
   #enqueue(routeId: string, input: Omit<InferenceRequest, "id" | "routeId">, externalSignal: AbortSignal | undefined, recipeId: string | undefined, unloadAfterCompletion: boolean | undefined, context: WorkContext): ScheduledStream {
+    let lane: InferenceLane = "gpu";
+    try {
+      const recipe = recipeId ? this.routes.resolveRecipe(recipeId) : this.routes.resolve(routeId).recipe;
+      const adapter = this.lifecycle.adapters.get(recipe.adapter);
+      lane = (adapter.executionLocation?.(recipe) ?? "local") === "remote" ? "cloud" : "gpu";
+    } catch {
+      // Preserve scheduled error delivery for invalid route/recipe requests.
+    }
     const id = randomUUID();
     const output = this.#outputChannel<InferenceDelta>();
-    const job: QueueJob = { kind: "chat", id, routeId, lane: "gpu", enqueuedAt: new Date().toISOString(), context, request: { ...input, id, routeId }, output, controller: new AbortController(), ...(recipeId ? { recipeId } : {}), ...(unloadAfterCompletion ? { unloadAfterCompletion: true } : {}) };
+    const job: QueueJob = { kind: "chat", id, routeId, lane, enqueuedAt: new Date().toISOString(), context, request: { ...input, id, routeId }, output, controller: new AbortController(), ...(recipeId ? { recipeId } : {}), ...(unloadAfterCompletion ? { unloadAfterCompletion: true } : {}) };
     this.#attachAbort(job, externalSignal);
     this.#submit(job);
-    return Object.assign(output, { requestId: id, cancel: () => this.#gpuLane.cancel(job) });
+    return Object.assign(output, { requestId: id, cancel: () => this.#lane(lane).cancel(job) });
   }
 
   #createLane(concurrency: number, maxQueued: number): BoundedWorkLane<QueueJob> {
@@ -208,6 +245,10 @@ export class InferenceScheduler {
       job.detachExternalAbort?.();
       return;
     }
+    if (this.#quiescing) {
+      job.detachExternalAbort?.();
+      throw new InferenceAdmissionError(job.lane, "scheduler_closed");
+    }
     const result = this.#lane(job.lane).enqueue(job);
     if (result === "accepted") return;
     job.detachExternalAbort?.();
@@ -224,7 +265,8 @@ export class InferenceScheduler {
     try {
       if (job.kind === "chat") {
         chatRecipe = job.recipeId ? this.routes.resolveRecipe(job.recipeId) : this.routes.resolve(job.routeId).recipe;
-        for await (const delta of this.lifecycle.run(chatRecipe, job.request, job.controller.signal, {
+        const execution = job.lane === "cloud" ? this.#remoteText : this.lifecycle;
+        for await (const delta of execution.run(chatRecipe, job.request, job.controller.signal, {
           onInferenceStarted: () => { localTelemetry.inferenceStarted = new Date(); },
         })) {
           if (!firstOutput && (delta.text || delta.reasoning || delta.toolCalls?.length)) firstOutput = new Date();
@@ -237,14 +279,28 @@ export class InferenceScheduler {
           if (delta.completionTokens !== undefined) completionTokens = delta.completionTokens;
           await job.output.push(delta, job.controller.signal);
         }
-        if (job.unloadAfterCompletion) await this.lifecycle.stop(`recipe-test:${chatRecipe.id}`, "graceful");
+        if (job.unloadAfterCompletion && job.lane === "gpu") {
+          await this.lifecycle.stop(`recipe-test:${chatRecipe.id}`, "graceful");
+          if (!this.#quiescing) await this.lifecycle.restorePinned();
+        }
       } else if (job.kind === "media") {
         const recipe = job.recipeId ? this.routes.resolveRecipe(job.recipeId) : this.routes.resolve(job.routeId).recipe;
         const events = job.lane === "cloud"
           ? this.#remoteMedia.run(recipe, job.mediaRequest, job.controller.signal)
           : this.lifecycle.runMedia(recipe, job.mediaRequest, job.controller.signal);
-        for await (const event of events) await job.output.push(event, job.controller.signal);
-      } else {
+        let generationError: unknown;
+        try {
+          for await (const event of events) await job.output.push(event, job.controller.signal);
+        } catch (error) {
+          generationError = error;
+          throw error;
+        } finally {
+          if (job.lane === "gpu" && !this.#quiescing) {
+            try { await this.lifecycle.restorePinned(); }
+            catch (error) { if (!generationError) throw error; }
+          }
+        }
+      } else if (job.kind === "warm") {
         const recipe = this.routes.resolve(job.routeId).recipe;
         job.result.resolve(await this.lifecycle.warm(recipe, job.controller.signal));
       }
@@ -331,7 +387,7 @@ export class InferenceScheduler {
 interface Deferred<T> { promise: Promise<T>; resolve(value: T): void; reject(reason: unknown): void }
 function deferred<T>(): Deferred<T> { let resolve!: (value: T) => void; let reject!: (reason: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject } }
 function failJob(job: QueueJob, error: unknown): void { if (job.kind === "warm") job.result.reject(error); else job.output.fail(error) }
-function closeJob(job: QueueJob): void { if (job.kind !== "warm") job.output.close() }
+function closeJob(job: QueueJob): void { if (job.kind === "chat" || job.kind === "media") job.output.close() }
 function abortError(): Error { const error = new Error("Inference request was cancelled"); error.name = "AbortError"; return error }
 function queueItem(job: QueueJob, status: "running" | "queued", position: number): InferenceQueueItem { return { id: job.id, routeId: job.routeId, kind: job.kind, lane: job.lane, status, position, enqueuedAt: job.enqueuedAt, context: job.context } }
 function serializedSize(value: unknown): number { return Buffer.byteLength(JSON.stringify(value), "utf8") }

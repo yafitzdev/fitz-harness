@@ -276,6 +276,30 @@ describe("InferenceScheduler", () => {
     expect(lifecycle.snapshot()).toMatchObject({ state: "READY", activeLeases: 0 });
   });
 
+  it("quiesces all work before unloading and remains reusable", async () => {
+    const adapter = new FakeEngineAdapter({ tokenDelayMs: 5, responseFactory: () => "x".repeat(400) });
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]) });
+    const scheduler = new InferenceScheduler(
+      new RouteResolver([route("default", "default")], [recipe("default", 60)]),
+      lifecycle,
+    );
+    const active = scheduler.enqueue("default", { messages: [{ role: "user", content: "active" }] });
+    const queued = scheduler.enqueueWarm("default");
+    const activeResult = collect(active).catch((error) => error);
+    const queuedResult = queued.result.catch((error) => error);
+    await waitFor(() => lifecycle.snapshot().state === "BUSY");
+
+    await scheduler.quiesce("desktop-quit");
+
+    await expect(activeResult).resolves.toMatchObject({ name: "AbortError" });
+    await expect(queuedResult).resolves.toMatchObject({ name: "AbortError" });
+    expect(scheduler.queueDepth).toBe(0);
+    expect(lifecycle.snapshot().state).toBe("UNLOADED");
+    expect(adapter.stops).toContainEqual(expect.objectContaining({ mode: "force" }));
+    await expect(collect(scheduler.enqueue("default", { messages: [{ role: "user", content: "after reopen" }] }))).resolves.toContain("x");
+    expect(adapter.starts).toHaveLength(2);
+  });
+
   it("applies finite backpressure and settles already-aborted submissions", async () => {
     const adapter = new FakeEngineAdapter({ tokenDelayMs: 30 });
     const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]) });

@@ -43,6 +43,26 @@ describe("ManagedOpenAIEngineAdapter", () => {
     });
   });
 
+  it("passes a validated managed guest environment explicitly", async () => {
+    const adapter = new ManagedOpenAIEngineAdapter({ linuxRuntimes: new Map([["inference-linux", { distribution: "Fitz-Inference" }]]) });
+    const recipe = managedRecipe({
+      enginePath: "/opt/fitz/llm/engines/vllm",
+      runtime: "linux-managed",
+      runtimeId: "inference-linux",
+      command: "/opt/fitz/llm/environments/vllm/bin/vllm",
+      args: ["serve", "/models/qwen"],
+      workingDirectory: ".",
+      healthPath: "/health",
+      readinessTimeoutMs: 900_000,
+      environment: { VLLM_SERVER_DEV_MODE: "1" },
+    });
+
+    await expect(adapter.validateRecipe(recipe)).resolves.toEqual({ valid: true, issues: [] });
+    await expect(adapter.buildLaunchSpec(recipe, { host: "127.0.0.1", port: 18181 })).resolves.toMatchObject({
+      args: ["-d", "Fitz-Inference", "-u", "root", "--", "sh", "-s", "--", "/opt/fitz/llm/engines/vllm", "/usr/bin/env", "VLLM_SERVER_DEV_MODE=1", "/opt/fitz/llm/environments/vllm/bin/vllm", "serve", "/models/qwen"],
+    });
+  });
+
   it("rejects unnamed WSL recipes so distribution details cannot leak into playbooks", async () => {
     const adapter = new ManagedOpenAIEngineAdapter();
     await expect(adapter.validateRecipe(managedRecipe({

@@ -15,11 +15,18 @@ interface VllmRecipeRegistration {
   displayName: string;
   modelId: string;
   contextTokens: number;
-  maxConcurrentGenerations: number;
   optimizationLevel: 0 | 1 | 2 | 3;
+  serving: {
+    loadFormat: "instanttensor";
+    instantTensorBackend: "buffered";
+    languageModelOnly: boolean;
+    skipMmProfiling: boolean;
+    mmProcessorCacheGb: number;
+    maxNumBatchedTokens: number;
+    persistStartupPlan: boolean;
+  };
   toolCallParser?: string;
   reasoningParser?: string;
-  routeId?: "subagent";
 }
 
 interface VllmModelRegistration {
@@ -100,7 +107,6 @@ export class VllmModelReconciler {
       routes?.upsertRecipe(recipe);
       if (!existing) registered.push(recipe.id);
     }
-    this.#reconcileInternalRoute(runnable, routes);
     return { registered, unregistered };
   }
 
@@ -113,29 +119,6 @@ export class VllmModelReconciler {
     }
     if (this.#store.getEngine(VLLM_PLAYBOOK_ID)) this.#store.deleteEngine(VLLM_PLAYBOOK_ID);
     return { registered: [], unregistered };
-  }
-
-  #reconcileInternalRoute(runnable: Map<string, VllmModelRegistration>, routes?: RouteResolver): void {
-    const claimant = [...runnable.values()].find((registration) => registration.recipe.routeId === "subagent");
-    const existing = this.#store.listRoutes().find((route) => route.id === "subagent");
-    const existingIsValid = existing && this.#store.listRecipes().some((recipe) => recipe.id === existing.recipeId);
-    // Subagent is a general text-model assignment owned by Connections. A vLLM
-    // registration may seed it only when no valid user assignment exists; it
-    // must never steal the route from llama.cpp, NInfer, or a cloud provider.
-    if (existingIsValid) return;
-    if (!claimant) {
-      if (existing) { this.#store.deleteRoute(existing.id); routes?.deleteRoute(existing.id); }
-      return;
-    }
-    const route = {
-      id: "subagent",
-      displayName: "Subagent",
-      description: "Internal delegated-work route",
-      recipeId: claimant.recipe.id,
-      enabled: true,
-    };
-    this.#store.upsertRoute(route);
-    routes?.upsertRoute(route);
   }
 
   #readRegistrations(): Map<string, VllmModelRegistration> {
@@ -153,22 +136,30 @@ export class VllmModelReconciler {
 
   #recipe(registration: VllmModelRegistration, executable: string, existingDisplayName?: string): Recipe {
     const declared = registration.recipe;
+    const serving = declared.serving;
     // Optimization level is registration-owned because vLLM startup/throughput
     // tradeoffs vary materially by model and must not be hidden host defaults.
+    // The loader/profile contract is registration-owned for the same reason:
+    // ModelOpt NVFP4 checkpoints on consumer Blackwell otherwise spend most of
+    // every cold start repacking weights and profiling unused multimodal work.
     const args = [
       "serve", registration.payload.path,
       "--served-model-name", "{model}",
       "--host", "{host}",
       "--port", "{port}",
       "--quantization", "modelopt",
+      "--load-format", serving.loadFormat,
       "--max-model-len", "{context}",
-      "--max-num-seqs", String(declared.maxConcurrentGenerations),
-      "--max-num-batched-tokens", "8192",
+      "--max-num-seqs", "1",
+      "--max-num-batched-tokens", String(serving.maxNumBatchedTokens),
       "--kv-cache-dtype", "fp8",
       "--gpu-memory-utilization", "0.90",
       "--enable-prefix-caching",
       `-O${declared.optimizationLevel}`,
     ];
+    if (serving.languageModelOnly) args.push("--language-model-only");
+    if (serving.skipMmProfiling) args.push("--skip-mm-profiling");
+    args.push("--mm-processor-cache-gb", String(serving.mmProcessorCacheGb));
     if (declared.toolCallParser) args.push("--enable-auto-tool-choice", "--tool-call-parser", declared.toolCallParser);
     if (declared.reasoningParser) args.push("--reasoning-parser", declared.reasoningParser);
     return {
@@ -184,9 +175,9 @@ export class VllmModelReconciler {
         toolCalls: Boolean(declared.toolCallParser),
         responseFormat: true,
         minP: true,
-        maxConcurrentGenerations: declared.maxConcurrentGenerations,
+        maxConcurrentGenerations: 1,
       },
-      lifecycle: { loadPolicy: "onDemand", evictionPolicy: "idle-ttl", idleTtlSeconds: 600, minimumResidencySeconds: 0 },
+      lifecycle: { loadPolicy: "onDemand", evictionPolicy: "never", idleTtlSeconds: 0, minimumResidencySeconds: 0 },
       configuration: {
         enginePath: `${this.#layout.engineRoot}/vllm`,
         runtime: "linux-managed",
@@ -196,6 +187,13 @@ export class VllmModelReconciler {
         workingDirectory: ".",
         healthPath: "/v1/models",
         readinessTimeoutMs: 900_000,
+        environment: {
+          // The managed engine is single-host. Loopback avoids PyTorch's
+          // reverse-DNS timeout against WSL's ephemeral private address.
+          VLLM_HOST_IP: "127.0.0.1",
+          INSTANTTENSOR_BACKEND: serving.instantTensorBackend.toUpperCase(),
+          ...(serving.persistStartupPlan ? { VLLM_ENABLE_STARTUP_PLAN: "1" } : {}),
+        },
       },
     };
   }
@@ -250,11 +248,21 @@ function validRecipeRegistration(value: VllmRecipeRegistration | undefined, regi
     && typeof value.displayName === "string" && value.displayName.trim()
     && safeId(value.modelId)
     && positiveInteger(value.contextTokens)
-    && positiveInteger(value.maxConcurrentGenerations)
     && validOptimizationLevel(value.optimizationLevel)
+    && validServingRegistration(value.serving)
     && optionalSafeArgument(value.toolCallParser)
-    && optionalSafeArgument(value.reasoningParser)
-    && (value.routeId === undefined || value.routeId === "subagent"));
+    && optionalSafeArgument(value.reasoningParser));
+}
+
+function validServingRegistration(value: VllmRecipeRegistration["serving"] | undefined): value is VllmRecipeRegistration["serving"] {
+  return Boolean(value
+    && value.loadFormat === "instanttensor"
+    && value.instantTensorBackend === "buffered"
+    && typeof value.languageModelOnly === "boolean"
+    && typeof value.skipMmProfiling === "boolean"
+    && typeof value.mmProcessorCacheGb === "number" && Number.isFinite(value.mmProcessorCacheGb) && value.mmProcessorCacheGb >= 0
+    && positiveInteger(value.maxNumBatchedTokens)
+    && typeof value.persistStartupPlan === "boolean");
 }
 
 function insideRuntimeModelRoot(path: unknown, layout: ManagedLinuxRuntimeLayout): path is string {

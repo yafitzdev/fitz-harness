@@ -46,25 +46,11 @@ export const DEFAULT_RECIPES: Recipe[] = [
 
 export const DEFAULT_ROUTES: Route[] = [
   {
-    id: "fast",
-    displayName: "Fast",
-    description: "Lower-latency development route",
-    recipeId: "fake-fast",
-    enabled: true,
-  },
-  {
     id: "default",
     displayName: "Default",
     description: "Balanced default route",
     recipeId: "fake-best",
     enabled: true,
     isDefault: true,
-  },
-  {
-    id: "smart",
-    displayName: "Smart",
-    description: "Highest-capability development route",
-    recipeId: "fake-best",
-    enabled: true,
   },
 ];

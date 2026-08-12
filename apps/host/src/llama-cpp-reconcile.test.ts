@@ -32,6 +32,7 @@ describe("llama.cpp model reconciliation", () => {
     const added = reconciler.reconcile();
     expect(added.registered).toHaveLength(1);
     expect(store.listRecipes()).toEqual([expect.objectContaining({ playbookId: "llama.cpp", modelId: "Model-Q5_K_M" })]);
+    expect(store.listRecipes()[0]!.lifecycle).toMatchObject({ evictionPolicy: "never", idleTtlSeconds: 0 });
     expect(store.listRecipes()[0]!.configuration.args).toContain("/opt/fitz/llm/models/gguf/org/repo/mmproj-Model-BF16.gguf");
     expect(store.listRecipes()[0]!.configuration).toMatchObject({ runtime: "linux-managed", runtimeId: "inference-linux" });
 
@@ -65,7 +66,7 @@ function recipe(id: string, modelPath: string): Recipe {
   return {
     id, playbookId: "llama.cpp", displayName: id, adapter: "openai-managed", modelId: id, contextTokens: 100_000,
     capabilities: { chatCompletions: true, streaming: true, toolCalls: true, responseFormat: true, minP: true, maxConcurrentGenerations: 1 },
-    lifecycle: { loadPolicy: "onDemand", evictionPolicy: "idle-ttl", idleTtlSeconds: 600, minimumResidencySeconds: 0 },
+    lifecycle: { loadPolicy: "onDemand", evictionPolicy: "never", idleTtlSeconds: 0, minimumResidencySeconds: 0 },
     configuration: { enginePath: "/opt/fitz/llm/engines/llama.cpp", runtime: "linux-managed", runtimeId: "inference-linux", command: "./server", args: ["--model", modelPath], workingDirectory: ".", healthPath: "/v1/models", readinessTimeoutMs: 30_000 },
   };
 }

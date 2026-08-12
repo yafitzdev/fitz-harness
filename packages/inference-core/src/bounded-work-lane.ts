@@ -75,6 +75,13 @@ export class BoundedWorkLane<T extends LaneWorkItem> {
 
   async shutdown(): Promise<void> {
     this.#accepting = false;
+    await this.cancelAllAndWait();
+  }
+
+  /** Cancel every admitted item and wait for active executors to settle while
+   * keeping the lane reusable. Used when the desktop hosting plane closes: no
+   * queued request may race the model stop and load another runtime afterward. */
+  async cancelAllAndWait(): Promise<void> {
     for (const item of this.#queued.values()) this.cancel(item);
     for (const item of this.#active) item.controller.abort();
     if (this.depth > 0) await new Promise<void>((resolve) => this.#idleWaiters.push(resolve));
