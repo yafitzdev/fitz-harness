@@ -8,8 +8,11 @@ import type { MediaGenerationParams } from "@fitz/protocol";
 export function validateMediaGenerationParams(params: MediaGenerationParams): MediaGenerationParams {
   const prompt = params.prompt.trim();
   if (!prompt) throw new TypeError("prompt must not be empty");
-  if (params.operation === "edit" && !params.refs?.length) {
-    throw new TypeError("edit operation requires a source image reference");
+  if ((params.operation === "edit" || params.operation === "animate") && !params.refs?.length) {
+    throw new TypeError(`${params.operation} operation requires a source image reference`);
+  }
+  if (params.operation === "animate" && params.refs?.length !== 1) {
+    throw new TypeError("animate operation requires exactly one source image reference");
   }
 
   positiveFinite(params.durationSeconds, "durationSeconds");

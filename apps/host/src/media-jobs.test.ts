@@ -125,6 +125,60 @@ describe("Fitz host media jobs", () => {
     }
   });
 
+  it("animates a completed image through the video route with durable lineage", async () => {
+    const mediaFake = new FakeMediaEngineAdapter();
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), mediaFake] });
+    try {
+      await registerMediaRecipe(runtime, "image-source", ["image"]);
+      const videoRecipe = mediaRecipe("h3-video", ["video"]);
+      videoRecipe.capabilities.modalities!.limits = { maxResolution: "1344x768", maxRefs: 1 };
+      videoRecipe.configuration = { sizeGrid: 32, defaults: { resolution: "1344x768" } };
+      const registered = await runtime.app.inject({ method: "PUT", url: "/api/v1/management/recipes/h3-video", payload: videoRecipe });
+      expect(registered.statusCode, registered.body).toBe(200);
+      await assignRoute(runtime, "image", "image-source");
+      await assignRoute(runtime, "video", "h3-video");
+      const originalResponse = await runtime.app.inject({
+        method: "POST", url: "/api/v1/media/jobs",
+        payload: { routeId: "image", modality: "image", params: { prompt: "a dog swimming" } },
+      });
+      const original = await waitForJobStatus(runtime, originalResponse.json().data.id, "completed");
+      const response = await runtime.app.inject({
+        method: "POST", url: `/api/v1/media/jobs/${original.id}/animations`,
+        payload: { prompt: "slow camera orbit" },
+      });
+      expect(response.statusCode, response.body).toBe(202);
+      expect(response.json().data).toMatchObject({
+        sourceJobId: original.id, routeId: "video", modality: "video",
+        execution: { recipeId: "h3-video" },
+        params: { operation: "animate", prompt: "slow camera orbit", size: "768x768", refs: [{ artifactId: original.artifactId }] },
+      });
+      const animated = await waitForJobStatus(runtime, response.json().data.id, "completed");
+      expect(runtime.store.getArtifact(animated.artifactId)?.metadata).toMatchObject({
+        operation: "animate", sourceArtifactId: original.artifactId, mediaJobId: animated.id,
+      });
+      expect(mediaFake.submitted.at(-1)?.params).toMatchObject({
+        operation: "animate", refs: [{ url: expect.stringMatching(/^data:image\/png;base64,/) }],
+      });
+      expect(runtime.mediaJobs.lineage(animated.id).map((job) => job.id)).toEqual([original.id, animated.id]);
+
+      // The attachment-driven /video flow uses the generic submit endpoint;
+      // its HTTP parser must preserve the same explicit operation.
+      const attached = await runtime.app.inject({
+        method: "POST", url: "/api/v1/media/jobs",
+        payload: {
+          routeId: "video", modality: "video",
+          params: { operation: "animate", prompt: "subtle motion", refs: [{ artifactId: original.artifactId }] },
+        },
+      });
+      expect(attached.statusCode, attached.body).toBe(202);
+      expect(attached.json().data.params.operation).toBe("animate");
+      expect(attached.json().data.params.size).toBe("768x768");
+      await waitForJobStatus(runtime, attached.json().data.id, "completed");
+    } finally {
+      await runtime.app.close();
+    }
+  });
+
   it.each([
     [{ prompt: "invalid", durationSeconds: 0 }, "durationSeconds"],
     [{ prompt: "invalid", fps: -1 }, "fps"],
@@ -323,6 +377,7 @@ describe("Fitz host media jobs", () => {
     try {
       const recipe = mediaRecipe("h3-video", ["video"]);
       recipe.capabilities.modalities!.limits = { maxResolution: "1344x768" };
+      recipe.configuration = { sizeGrid: 32 };
       const registered = await runtime.app.inject({ method: "PUT", url: "/api/v1/management/recipes/h3-video", payload: recipe });
       expect(registered.statusCode, registered.body).toBe(200);
       await assignRoute(runtime, "video", "h3-video");
@@ -333,7 +388,7 @@ describe("Fitz host media jobs", () => {
 
       expect(retry.statusCode, retry.body).toBe(202);
       expect(retry.json().data.id).not.toBe(failed.id);
-      expect(retry.json().data.params).toEqual(expect.objectContaining({ prompt: "first attempt", size: "1344x756" }));
+      expect(retry.json().data.params).toEqual(expect.objectContaining({ prompt: "first attempt", size: "1344x768" }));
     } finally {
       await runtime.app.close();
     }
@@ -444,10 +499,13 @@ describe("Fitz host media jobs", () => {
     store.upsertRoute({ id: "image", displayName: "Image generation", recipeId: "h3-img", enabled: true, kind: "image" });
 
     reconcileNInferConfiguration(store, {
-      id: "ninfer-linux",
-      distribution: "Fitz-NInfer",
-      hostRoot: "C:\\Users\\tester\\.llm\\runtimes\\ninfer-linux",
+      id: "inference-linux",
+      distribution: "Fitz-Inference",
+      hostRoot: "C:\\Users\\tester\\.llm\\runtimes\\inference-linux",
       guestRoot: "/opt/fitz/llm",
+      engineRoot: "/opt/fitz/llm/engines",
+      environmentRoot: "/opt/fitz/llm/environments",
+      logRoot: "/opt/fitz/llm/logs",
       modelRoot: "/opt/fitz/llm/models/ninfer",
       executable: "/opt/fitz/llm/engines/ninfer/ninfer-serve",
     });
@@ -500,7 +558,7 @@ function mediaRecipe(id: string, modalities: MediaModality[], costCentsPerJob?: 
       responseFormat: false,
       minP: false,
       maxConcurrentGenerations: 1,
-      modalities: { input: ["text"], output: modalities },
+      modalities: { input: ["text", "image"], output: modalities },
     },
     lifecycle: {
       loadPolicy: "onDemand",

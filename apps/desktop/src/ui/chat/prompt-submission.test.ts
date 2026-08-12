@@ -145,6 +145,18 @@ describe("PromptSubmissionController", () => {
     expect(options.startRun).not.toHaveBeenCalled();
   });
 
+  it("submits an attached image to /video as an animation", async () => {
+    const attachment = { kind: "image" as const, dataUrl: "data:image/png;base64,AAAA", mimeType: "image/png", name: "ref.png" };
+    const { controller, options } = setup({ consumeAttachments: () => [attachment], draft: () => ({ content: "gentle camera orbit", mediaCommand: "video" }) });
+    await controller.submit();
+    const request = mediaCreationRequest(options);
+    expect(request.refs).toEqual([{ artifactId: "artifact-1" }]);
+    await request.submit({ prompt: "gentle camera orbit", durationSeconds: 4 });
+    expect(options.submitMedia).toHaveBeenCalledWith(expect.objectContaining({
+      operation: "animate", refs: [{ artifactId: "artifact-1" }], durationSeconds: 4,
+    }));
+  });
+
   it("does not upload refs for audio commands", async () => {
     const attachment = { kind: "image" as const, dataUrl: "data:image/png;base64,AAAA", mimeType: "image/png", name: "ref.png" };
     const { controller, options } = setup({ consumeAttachments: () => [attachment], draft: () => ({ content: "narrate this", mediaCommand: "audio" }) });

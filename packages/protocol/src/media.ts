@@ -15,12 +15,13 @@ export function isActiveMediaJobStatus(status: string): status is ActiveMediaJob
   return (ACTIVE_MEDIA_JOB_STATUSES as readonly string[]).includes(status);
 }
 
-export type MediaGenerationOperation = "generate" | "edit";
+export type MediaGenerationOperation = "generate" | "edit" | "animate";
 
 export interface MediaGenerationParams {
   prompt: string;
-  /** Explicit intent for unified image routes. Edit jobs must also carry the
-   * source artifact in `refs`; adapters must not infer editing from refs alone. */
+  /** Explicit intent for unified media routes. Edit and animate jobs must also
+   * carry their source artifact in `refs`; adapters do not infer intent from
+   * reference presence alone. */
   operation?: MediaGenerationOperation;
   negativePrompt?: string;
   /** image-to-video / reference editing. `url` may be a provider URL or a Fitz artifact download URL. */

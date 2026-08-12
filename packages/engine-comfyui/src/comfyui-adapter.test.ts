@@ -187,6 +187,7 @@ describe("ComfyUIEngineAdapter configuration surface", () => {
       executable: "python", cwd: "/engines/comfyui", expectedVramMiB: 24_576, readinessTimeoutMs: 30_000,
       comfyuiWorkflow: JSON.stringify(VIDEO_WORKFLOW), outputFormats: ["mp4"],
       comfyuiEditWorkflow: VIDEO_WORKFLOW,
+      comfyuiAnimateWorkflow: VIDEO_WORKFLOW,
       defaults: { resolution: "1280x720", fps: 30 }, comfyuiOverrides: { promptNodeId: "1", seedNodeIds: ["1"] },
     }));
     expect(config).toMatchObject({
@@ -199,6 +200,7 @@ describe("ComfyUIEngineAdapter configuration surface", () => {
     });
     expect(config.comfyuiWorkflow).toEqual(VIDEO_WORKFLOW);
     expect(config.comfyuiEditWorkflow).toEqual(VIDEO_WORKFLOW);
+    expect(config.comfyuiAnimateWorkflow).toEqual(VIDEO_WORKFLOW);
     expect(config.defaults).toEqual({ resolution: "1280x720", fps: 30 });
   });
 
@@ -361,6 +363,37 @@ describe("ComfyUIEngineAdapter progress streaming", () => {
     }), new AbortController().signal)).rejects.toThrow("does not configure an image edit workflow");
   });
 
+  it("selects the animation graph and uploads its source frame", async () => {
+    let submitted: Record<string, unknown> | undefined;
+    const adapter = new ComfyUIEngineAdapter({
+      validatePaths: false,
+      createWebSocket: () => new FakeWebSocket(),
+      fetch: stubFetch({ captureSubmit: (body) => { submitted = body; } }),
+    });
+    const recipe = recipeFor({
+      baseUrl: "http://127.0.0.1:8188", comfyuiWorkflow: VIDEO_WORKFLOW, comfyuiAnimateWorkflow: EDIT_WORKFLOW,
+    });
+    const spec = await adapter.buildLaunchSpec(recipe, { host: "127.0.0.1", port: 0 });
+    const instance = await adapter.start(recipe, spec, new AbortController().signal);
+    await adapter.submit(instance, mediaRequest("video", {
+      operation: "animate", prompt: "camera orbit", refs: [{ url: "data:image/png;base64,AA==" }],
+    }), new AbortController().signal);
+    expect(submitted?.prompt).toEqual({
+      "8": { class_type: "LoadImage", inputs: { image: "uploaded-reference.png" } },
+      "9": { class_type: "ImageEdit", inputs: { image: ["8", 0], prompt: "camera orbit" } },
+    });
+  });
+
+  it("rejects animation when the recipe has no animation graph", async () => {
+    const adapter = new ComfyUIEngineAdapter({ validatePaths: false, fetch: stubFetch({}) });
+    const recipe = recipeFor({ baseUrl: "http://127.0.0.1:8188", comfyuiWorkflow: VIDEO_WORKFLOW });
+    const spec = await adapter.buildLaunchSpec(recipe, { host: "127.0.0.1", port: 0 });
+    const instance = await adapter.start(recipe, spec, new AbortController().signal);
+    await expect(adapter.submit(instance, mediaRequest("video", {
+      operation: "animate", prompt: "camera orbit", refs: [{ url: "data:image/png;base64,AA==" }],
+    }), new AbortController().signal)).rejects.toThrow("does not configure an image animation workflow");
+  });
+
   it("reports WebSocket-streamed progress for a running job", async () => {
     const sockets: FakeWebSocket[] = [];
     let submitted: Record<string, unknown> | undefined;
@@ -433,9 +466,14 @@ describe("ComfyUIEngineAdapter progress streaming", () => {
     expect(sockets[0]!.closed).toBe(true);
 
     const job2 = await adapter.submit(instance, mediaRequest("video", { prompt: "boom" }), new AbortController().signal);
-    history["job-1"] = { outputs: {}, status: { status_str: "error" } };
+    history["job-1"] = {
+      outputs: {},
+      status: { status_str: "error", messages: [["execution_error", {
+        node_id: "14", node_type: "SamplerCustomAdvanced", exception_message: "invalid latent shape\n",
+      }]] },
+    };
     const failed = await adapter.poll(instance, job2, new AbortController().signal);
-    expect(failed.status).toBe("failed");
+    expect(failed).toEqual({ status: "failed", error: "ComfyUI SamplerCustomAdvanced (node 14) failed: invalid latent shape" });
     expect(sockets[1]!.closed).toBe(true);
   });
 

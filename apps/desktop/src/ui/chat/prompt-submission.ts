@@ -44,7 +44,7 @@ export interface PromptSubmissionOptions {
   submitMedia: (request: {
     routeId: string;
     modality: MediaModality;
-    operation?: "generate" | "edit";
+    operation?: "generate" | "edit" | "animate";
     prompt: string;
     sessionId: string;
     size?: string;
@@ -145,6 +145,7 @@ export class PromptSubmissionController {
               routeId: mediaCommand,
               modality: mediaCommand,
               ...(mediaCommand === "image" && refs.length > 0 ? { operation: "edit" } : {}),
+              ...(mediaCommand === "video" && refs.length > 0 ? { operation: "animate" } : {}),
               prompt: params.prompt,
               sessionId,
               ...(params.size ? { size: params.size } : {}),

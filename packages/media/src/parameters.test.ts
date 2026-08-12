@@ -24,4 +24,14 @@ describe("validateMediaGenerationParams", () => {
       prompt: "make it blue", operation: "edit", refs: [{ artifactId: "source" }],
     });
   });
+
+  it("requires exactly one source image for animation", () => {
+    expect(() => validateMediaGenerationParams({ prompt: "make it move", operation: "animate" })).toThrow("source image reference");
+    expect(() => validateMediaGenerationParams({
+      prompt: "make it move", operation: "animate", refs: [{ artifactId: "one" }, { artifactId: "two" }],
+    })).toThrow("exactly one");
+    expect(validateMediaGenerationParams({ prompt: "make it move", operation: "animate", refs: [{ artifactId: "source" }] })).toEqual({
+      prompt: "make it move", operation: "animate", refs: [{ artifactId: "source" }],
+    });
+  });
 });

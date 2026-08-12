@@ -26,6 +26,10 @@ function setup() {
       id: "job-edit", routeId: "image", sessionId: "session-1", modality: "image" as const,
       status: "queued", params: { operation: "edit", prompt },
     })),
+    animateImage: vi.fn(async (_job: any, prompt: string) => ({
+      id: "job-animate", routeId: "video", sessionId: "session-1", modality: "video" as const,
+      status: "queued", params: { operation: "animate", prompt },
+    })),
     watch: vi.fn(),
     showStatus: vi.fn(),
     errorMessage: vi.fn((error: unknown) => String(error)),
@@ -143,6 +147,27 @@ describe("MediaJobFeed", () => {
     expect(sourceCard.getAttribute("aria-expanded")).toBe("true");
   });
 
+  it("animates a completed image inline and starts a video job", async () => {
+    const { feed, messages, calls } = setup();
+    feed.render({
+      id: "job-source", routeId: "image", sessionId: "session-1", modality: "image", status: "completed",
+      params: { prompt: "a dog swimming" },
+    }, undefined, { id: "artifact-source", name: "dog.png" });
+    messages.querySelector<HTMLElement>("[data-media-job-id='job-source']")!.click();
+    const prompt = messages.querySelector<HTMLTextAreaElement>("[name='animationPrompt']")!;
+    const button = messages.querySelector<HTMLButtonElement>(".media-job-animate-submit")!;
+    expect(prompt.placeholder).toBe("Describe movement or camera motion");
+    expect(button.textContent).toBe("Animate");
+    expect(button.classList.contains("media-job-open")).toBe(true);
+    prompt.value = "slow camera orbit";
+    prompt.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await vi.waitFor(() => expect(calls.animateImage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "job-source" }), "slow camera orbit",
+    ));
+    expect(calls.watch).toHaveBeenCalledWith("job-animate");
+    expect(messages.textContent).toContain("Video animation in progress");
+  });
+
   it("places settings above the edit control inside expanded card details", () => {
     const { feed, messages } = setup();
     feed.render({
@@ -160,11 +185,13 @@ describe("MediaJobFeed", () => {
     const content = details.textContent ?? "";
     expect([...details.querySelectorAll(":scope > .media-job-section")].map((section) => section.className)).toEqual([
       "media-job-section media-job-settings",
-      "media-job-section media-job-edit",
+      "media-job-section media-job-prompt-action media-job-edit",
+      "media-job-section media-job-prompt-action media-job-animate",
       "media-job-section media-job-prompts",
     ]);
     expect(details.querySelector(".media-job-settings")?.getAttribute("aria-label")).toBe("Settings");
-    expect(details.querySelector(".media-job-edit")?.getAttribute("aria-label")).toBe("Edit image");
+    expect(details.querySelector(".media-job-edit")?.getAttribute("aria-label")).toBe("Edit");
+    expect(details.querySelector(".media-job-animate")?.getAttribute("aria-label")).toBe("Animate");
     expect(details.querySelector(".media-job-prompts")?.getAttribute("aria-label")).toBe("Prompt chain");
     expect(details.querySelector(".media-job-section > strong")).toBeNull();
     expect(content).toContain("Qwen Image 2512 + Edit 2511");

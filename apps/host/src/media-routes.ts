@@ -103,6 +103,24 @@ export function registerMediaRoutes(options: RegisterMediaRoutesOptions): void {
     }
   });
 
+  app.post("/api/v1/media/jobs/:jobId/animations", async (request, reply) => {
+    const jobId = (request.params as { jobId: string }).jobId;
+    const source = mediaJobs.get(jobId);
+    if (!source) return reply.code(404).send({ error: "Media job not found" });
+    const principal = principals.get(request);
+    if (!canAccessMediaJob(principal, source)) return reply.code(403).send({ error: "Media job access denied" });
+    try {
+      const body = requireRecord(request.body);
+      const animated = await mediaJobs.submitAnimation(source, requireString(body.prompt, "prompt"), principal);
+      security?.audit("media-job.animated", principal?.user.id, "media-job", animated.id, { sourceJobId: source.id, routeId: animated.routeId });
+      return reply.code(202).send({ data: animated });
+    } catch (error) {
+      const statusCode = mediaSubmissionStatus(error);
+      if (error instanceof MediaJobAdmissionError) reply.header("retry-after", "2");
+      return reply.code(statusCode).send({ error: errorMessage(error), ...(error instanceof MediaJobAdmissionError ? { data: { jobId: error.jobId } } : {}) });
+    }
+  });
+
   app.post("/api/v1/media/jobs/:jobId/cancel", async (request, reply) => {
     const jobId = (request.params as { jobId: string }).jobId;
     const job = mediaJobs.get(jobId);
@@ -342,10 +360,10 @@ function parseMediaParams(value: unknown): MediaGenerationParams {
   };
 }
 
-function parseMediaOperation(value: unknown): "generate" | "edit" | undefined {
+function parseMediaOperation(value: unknown): "generate" | "edit" | "animate" | undefined {
   if (value === undefined) return undefined;
-  if (value === "generate" || value === "edit") return value;
-  throw new TypeError("params.operation must be generate or edit");
+  if (value === "generate" || value === "edit" || value === "animate") return value;
+  throw new TypeError("params.operation must be generate, edit, or animate");
 }
 
 function parseImageGenerationRequest(value: unknown): ImageGenerationRequest {

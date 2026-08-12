@@ -11,11 +11,10 @@ import type {
   Recipe,
   RequestUsageRecord,
 } from "@fitz/protocol";
-import { validateMediaGenerationParams } from "@fitz/media";
+import { classifyArtifact, imageDimensions, normalizeMimeType, validateMediaGenerationParams, type ImageDimensions } from "@fitz/media";
 import { InferenceAdmissionError, type InferenceScheduler, type RouteResolver, type ScheduledMediaJob } from "@fitz/inference-core";
 import { SecurityPolicyError, type AuthenticatedPrincipal, type SecurityService } from "@fitz/security";
 import { ArtifactQuotaExceededError, BlobSizeLimitError, type ArtifactRepository, type BlobSource, type MediaJobEventEnvelope, type SqliteStore } from "@fitz/storage";
-import { classifyArtifact, normalizeMimeType } from "@fitz/media";
 
 export interface MediaSubmitInput {
   routeId: string;
@@ -118,7 +117,11 @@ export class MediaJobCoordinator {
     }
 
     const requestedParams = constrainMediaParams(validateMediaGenerationParams(input.params), recipe);
-    const params = this.#scheduler.resolveMediaParams(route.id, requestedParams, input.recipeId);
+    if (requestedParams.refs?.length && !recipe.capabilities.modalities?.input.includes("image")) {
+      throw new TypeError(`Recipe ${recipe.id} does not accept image references`);
+    }
+    const resolvedParams = this.#scheduler.resolveMediaParams(route.id, requestedParams, input.recipeId);
+    const params = await this.#preserveAnimationAspectRatio(resolvedParams, recipe);
     const executionParams = await this.#materializeReferences(params);
     const id = randomUUID();
     const now = new Date().toISOString();
@@ -193,6 +196,35 @@ export class MediaJobCoordinator {
     return { ...params, refs };
   }
 
+  /** Animation resolutions are a bounding canvas, not permission to distort
+   * the source. Fit its aspect ratio inside that canvas and retain the recipe's
+   * spatial grid so image and video latents remain compatible. */
+  async #preserveAnimationAspectRatio(params: MediaGenerationParams, recipe: Recipe): Promise<MediaGenerationParams> {
+    if (params.operation !== "animate" || !params.refs?.[0]) return params;
+    const defaults = isRecord(recipe.configuration.defaults) ? recipe.configuration.defaults : undefined;
+    const budget = parseResolution(params.size ?? (typeof defaults?.resolution === "string" ? defaults.resolution : undefined));
+    if (!budget) return params;
+    const source = await this.#referenceDimensions(params.refs[0]);
+    if (!source) return params;
+    const configuredGrid = recipe.configuration.sizeGrid;
+    const grid = typeof configuredGrid === "number" && Number.isSafeInteger(configuredGrid) && configuredGrid > 0 ? configuredGrid : 1;
+    return { ...params, size: fitAspectRatio(source, budget, grid) };
+  }
+
+  async #referenceDimensions(ref: { artifactId: string } | { url: string }): Promise<ImageDimensions | undefined> {
+    if ("url" in ref) return dimensionsFromDataUrl(ref.url);
+    const artifact = this.#store.getArtifact(ref.artifactId);
+    if (!artifact) return undefined;
+    const metadataWidth = artifact.metadata.width;
+    const metadataHeight = artifact.metadata.height;
+    if (typeof metadataWidth === "number" && typeof metadataHeight === "number") {
+      const known = validDimensions(metadataWidth, metadataHeight);
+      if (known) return known;
+    }
+    const bytes = await this.#artifacts.read(ref.artifactId);
+    return bytes ? imageDimensions(bytes) : undefined;
+  }
+
   get(id: string): MediaJobRecord | undefined {
     return this.#store.getMediaJob(id);
   }
@@ -237,6 +269,20 @@ export class MediaJobCoordinator {
       sourceJobId: source.id,
       modality: "image",
       params: { ...inherited, operation: "edit", prompt, refs: [{ artifactId: source.artifactId }] },
+      ...(source.sessionId ? { sessionId: source.sessionId } : {}),
+      ...(!principal && source.createdByUserId ? { userId: source.createdByUserId } : {}),
+    }, principal);
+  }
+
+  submitAnimation(source: MediaJobRecord, prompt: string, principal?: AuthenticatedPrincipal): Promise<MediaJobRecord> {
+    if (source.modality !== "image" || source.status !== "completed" || !source.artifactId) {
+      throw new TypeError("Only completed image jobs can be animated");
+    }
+    return this.submit({
+      routeId: "video",
+      sourceJobId: source.id,
+      modality: "video",
+      params: { operation: "animate", prompt, refs: [{ artifactId: source.artifactId }] },
       ...(source.sessionId ? { sessionId: source.sessionId } : {}),
       ...(!principal && source.createdByUserId ? { userId: source.createdByUserId } : {}),
     }, principal);
@@ -384,7 +430,7 @@ export class MediaJobCoordinator {
               modelId: job.execution.modelId,
               adapter: job.execution.adapter,
             } : {}),
-            ...(job.params.operation === "edit" && job.params.refs?.[0] && "artifactId" in job.params.refs[0]
+            ...((job.params.operation === "edit" || job.params.operation === "animate") && job.params.refs?.[0] && "artifactId" in job.params.refs[0]
               ? { sourceArtifactId: job.params.refs[0].artifactId }
               : {}),
             ...(result.width !== undefined ? { width: result.width } : {}),
@@ -511,8 +557,8 @@ function constrainMediaParams(params: MediaGenerationParams, recipe: Recipe): Me
  * Fits a requested resolution inside the recipe's maximum box, then snaps it
  * to the model's spatial grid. The box is orientation-agnostic — the two
  * numbers are the longest and shortest allowed side — so landscape AND
- * portrait 720p both fit "1280x720". The grid (H3's latent needs multiples
- * of 16) keeps latent dims integral: without it a request like "1920x1080"
+ * portrait 720p both fit "1280x720". The configured grid (32 pixels for H3)
+ * keeps latent dims integral: without it a request like "1920x1080"
  * would reach the model off-grid and fail mid-job.
  */
 function constrainResolution(
@@ -551,6 +597,44 @@ function parseResolution(value: string | undefined): { width: number; height: nu
   const match = /^(\d+)[xX](\d+)$/.exec(value.trim());
   if (!match) return undefined;
   return { width: Number(match[1]), height: Number(match[2]) };
+}
+
+function fitAspectRatio(source: ImageDimensions, canvas: ImageDimensions, grid: number): string {
+  const long = Math.max(canvas.width, canvas.height);
+  const short = Math.min(canvas.width, canvas.height);
+  const target = source.width === source.height
+    ? { width: short, height: short }
+    : source.width > source.height
+      ? { width: long, height: short }
+      : { width: short, height: long };
+  const scale = Math.min(target.width / source.width, target.height / source.height);
+  const snap = (value: number, maximum: number): number => {
+    const gridMaximum = Math.max(grid, Math.floor(maximum / grid) * grid);
+    return Math.min(gridMaximum, Math.max(grid, Math.round(value / grid) * grid));
+  };
+  return `${snap(source.width * scale, target.width)}x${snap(source.height * scale, target.height)}`;
+}
+
+function dimensionsFromDataUrl(url: string): ImageDimensions | undefined {
+  if (!url.startsWith("data:image/")) return undefined;
+  const comma = url.indexOf(",");
+  if (comma < 0) return undefined;
+  try {
+    const header = url.slice(0, comma);
+    const payload = url.slice(comma + 1);
+    const bytes = header.includes(";base64") ? Buffer.from(payload, "base64") : Buffer.from(decodeURIComponent(payload));
+    return imageDimensions(bytes);
+  } catch {
+    return undefined;
+  }
+}
+
+function validDimensions(width: number, height: number): ImageDimensions | undefined {
+  return Number.isSafeInteger(width) && width > 0 && Number.isSafeInteger(height) && height > 0 ? { width, height } : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** The submit-time credit cost for a recipe's job, from `configuration.costCentsPerJob`

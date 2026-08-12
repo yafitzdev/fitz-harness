@@ -27,7 +27,7 @@ describe("MiniMax H3 via ComfyUI (PR 7)", () => {
     const h3Video = playbook.recipes.find((recipe) => recipe.id === "h3-video");
     expect(h3Video).toMatchObject({
       adapter: "comfyui",
-      capabilities: { modalities: { input: ["text"], output: ["video", "audio"], limits: { maxDurationSeconds: 6, maxFps: 30, maxResolution: "1280x720" } } },
+      capabilities: { modalities: { input: ["text", "image"], output: ["video", "audio"], limits: { maxDurationSeconds: 6, maxFps: 30, maxResolution: "1344x768", maxRefs: 1 } } },
       configuration: { executable: "python", cwd: "/engines/comfyui", expectedVramMiB: 24_576 },
     });
     expect(playbook.recipes.map((recipe) => recipe.id)).toEqual(["h3-video"]);
@@ -37,6 +37,10 @@ describe("MiniMax H3 via ComfyUI (PR 7)", () => {
     expect(playbook.routes).toContainEqual(expect.objectContaining({ id: "video", recipeId: "h3-video", kind: "video", enabled: true }));
     // H3 is a video model; no fake text-to-image route is exposed.
     expect(playbook.routes).not.toContainEqual(expect.objectContaining({ id: "image" }));
+    const animation = h3Video!.configuration.comfyuiAnimateWorkflow as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+    expect(animation["103"]).toEqual({ class_type: "LoadImage", inputs: { image: "{{ref_0}}" } });
+    expect(animation["104"].inputs.first_frame).toEqual(["103", 0]);
+    expect(h3Video!.configuration).toMatchObject({ sizeGrid: 32, defaults: { resolution: "1344x768" } });
   });
 
   it("onboards Krea 2 base and NSFW LoRA as independent image recipes", async () => {

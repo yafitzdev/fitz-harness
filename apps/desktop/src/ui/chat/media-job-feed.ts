@@ -18,6 +18,7 @@ export interface MediaJobFeedOptions {
   openArtifact: (artifact: Json) => void | Promise<void>;
   retry: (job: MediaJobSummary) => Promise<MediaJobSummary>;
   editImage: (job: MediaJobSummary, prompt: string) => Promise<MediaJobSummary>;
+  animateImage: (job: MediaJobSummary, prompt: string) => Promise<MediaJobSummary>;
   watch: (jobId: string) => void;
   showStatus: ActionFeedback;
   errorMessage: (error: unknown) => string;
@@ -122,8 +123,8 @@ export class MediaJobFeed {
       row.append(progress);
     }
 
-    const editable = completed && job.modality === "image" && Boolean(artifact?.id);
-    const specification = this.#specification(job, editable);
+    const imageActions = completed && job.modality === "image" && Boolean(artifact?.id);
+    const specification = this.#specification(job, imageActions);
     specification.hidden = !wasOpen;
     row.append(specification);
 
@@ -165,7 +166,9 @@ export class MediaJobFeed {
   }
 
   #terminalMessage(job: MediaJobSummary): string {
-    if (job.status === "completed") return job.params?.operation === "edit" ? "Here is your edited image!" : `Here is your ${job.modality}!`;
+    if (job.status === "completed") return job.params?.operation === "edit"
+      ? "Here is your edited image!"
+      : job.params?.operation === "animate" ? "Here is your animated video!" : `Here is your ${job.modality}!`;
     if (job.status === "cancelled") return `${this.#capitalized(job.modality)} generation was cancelled.`;
     if (job.status === "interrupted") return `${this.#capitalized(job.modality)} generation was interrupted.`;
     return `I couldn't generate your ${job.modality}.`;
@@ -210,7 +213,7 @@ export class MediaJobFeed {
     messages.scrollTop += overflow;
   }
 
-  #specification(job: MediaJobSummary, editable: boolean): HTMLElement {
+  #specification(job: MediaJobSummary, imageActions: boolean): HTMLElement {
     const details = document.createElement("div");
     details.className = "media-job-specification";
     const list = document.createElement("dl");
@@ -225,7 +228,16 @@ export class MediaJobFeed {
     settingsSection.append(list);
     details.append(settingsSection);
     // The expanded card reads execution facts → next action → provenance.
-    if (editable) details.append(this.#editForm(job));
+    if (imageActions) details.append(
+      this.#promptActionForm(job, {
+        kind: "edit", name: "editPrompt", placeholder: "Describe what should change", ariaLabel: "Edit prompt",
+        buttonLabel: "Edit", submit: (source, prompt) => this.#options.editImage(source, prompt),
+      }),
+      this.#promptActionForm(job, {
+        kind: "animate", name: "animationPrompt", placeholder: "Describe movement or camera motion", ariaLabel: "Animation prompt",
+        buttonLabel: "Animate", submit: (source, prompt) => this.#options.animateImage(source, prompt),
+      }),
+    );
     const chain = document.createElement("ol");
     chain.className = "media-job-prompt-chain";
     for (const item of mediaPromptChain(job, (current) => this.#parentJob(current as MediaJobSummary))) {
@@ -236,8 +248,8 @@ export class MediaJobFeed {
       prompt.type = "button";
       prompt.className = "media-job-prompt-link";
       prompt.textContent = item.prompt;
-      prompt.title = `Jump to ${item.label.toLowerCase()} image card`;
-      prompt.setAttribute("aria-label", `${item.label}: ${item.prompt}. Jump to image card`);
+      prompt.title = `Jump to ${item.label.toLowerCase()} media card`;
+      prompt.setAttribute("aria-label", `${item.label}: ${item.prompt}. Jump to media card`);
       prompt.addEventListener("click", (event) => {
         event.stopPropagation();
         this.#jumpToJob(item.jobId);
@@ -274,18 +286,25 @@ export class MediaJobFeed {
     window.setTimeout(() => target.classList.remove("jump-target"), 1_200);
   }
 
-  #editForm(job: MediaJobSummary): HTMLFormElement {
-    const form = createMediaCardSection("media-job-edit", "Edit image", "form") as HTMLFormElement;
+  #promptActionForm(job: MediaJobSummary, options: {
+    kind: "edit" | "animate";
+    name: string;
+    placeholder: string;
+    ariaLabel: string;
+    buttonLabel: string;
+    submit: (job: MediaJobSummary, prompt: string) => Promise<MediaJobSummary>;
+  }): HTMLFormElement {
+    const form = createMediaCardSection(`media-job-prompt-action media-job-${options.kind}`, options.buttonLabel, "form") as HTMLFormElement;
     const label = document.createElement("label");
-    label.className = "media-job-edit-field";
+    label.className = "media-job-action-field";
     const controls = document.createElement("span");
-    controls.className = "media-job-edit-controls";
+    controls.className = "media-job-action-controls";
     const prompt = document.createElement("textarea");
     prompt.rows = 1;
-    prompt.name = "editPrompt";
+    prompt.name = options.name;
     prompt.required = true;
-    prompt.placeholder = "Describe what should change";
-    prompt.setAttribute("aria-label", "Edit prompt");
+    prompt.placeholder = options.placeholder;
+    prompt.setAttribute("aria-label", options.ariaLabel);
     const resizePrompt = (): void => {
       prompt.style.height = "29px";
       prompt.style.height = `${Math.min(96, Math.max(29, prompt.scrollHeight))}px`;
@@ -293,19 +312,19 @@ export class MediaJobFeed {
     prompt.addEventListener("input", resizePrompt);
     const submit = document.createElement("button");
     submit.type = "submit";
-    submit.className = "media-job-open media-job-edit-submit";
-    submit.textContent = "Edit";
+    submit.className = `media-job-open media-job-${options.kind}-submit`;
+    submit.textContent = options.buttonLabel;
     controls.append(prompt, submit);
     label.append(controls);
     const error = document.createElement("small");
-    error.className = "media-job-edit-error";
+    error.className = "media-job-action-error";
     error.hidden = true;
     form.append(label, error);
     form.addEventListener("click", (event) => event.stopPropagation());
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      void this.#edit(job, prompt, submit, error);
+      void this.#submitPromptAction(job, prompt, submit, error, options.submit);
     });
     prompt.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
@@ -315,10 +334,16 @@ export class MediaJobFeed {
     return form;
   }
 
-  async #edit(job: MediaJobSummary, prompt: HTMLTextAreaElement, submit: HTMLButtonElement, error: HTMLElement): Promise<void> {
+  async #submitPromptAction(
+    job: MediaJobSummary,
+    prompt: HTMLTextAreaElement,
+    submit: HTMLButtonElement,
+    error: HTMLElement,
+    action: (job: MediaJobSummary, prompt: string) => Promise<MediaJobSummary>,
+  ): Promise<void> {
     const instruction = prompt.value.trim();
     if (!instruction) {
-      prompt.setCustomValidity("Describe what should change");
+      prompt.setCustomValidity("Enter a prompt");
       prompt.reportValidity();
       return;
     }
@@ -327,11 +352,11 @@ export class MediaJobFeed {
     submit.disabled = true;
     error.hidden = true;
     try {
-      const edited = await this.#options.editImage(job, instruction);
+      const created = await action(job, instruction);
       prompt.value = "";
       prompt.style.height = "29px";
-      this.render(edited);
-      this.#options.watch(edited.id);
+      this.render(created);
+      this.#options.watch(created.id);
     } catch (caught) {
       error.textContent = this.#options.errorMessage(caught);
       error.hidden = false;

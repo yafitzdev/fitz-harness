@@ -44,4 +44,18 @@ describe("media card model", () => {
     original.sourceJobId = "edit";
     expect(mediaPromptChain(edit, (job) => job.sourceJobId ? jobs.get(job.sourceJobId) : undefined)).toHaveLength(2);
   });
+
+  it("presents animation state and labels image-to-video lineage", () => {
+    const original: MediaCardJob = { id: "original", modality: "image", status: "completed", params: { prompt: "dog swimming" } };
+    const animation: MediaCardJob = {
+      id: "animation", sourceJobId: "original", modality: "video", status: "queued",
+      params: { operation: "animate", prompt: "slow underwater tracking shot" },
+    };
+    expect(mediaCardPresentation(animation).title).toBe("Video animation in progress");
+    expect(mediaExecutionSettings(animation)).toContainEqual(["Operation", "Animate"]);
+    expect(mediaPromptChain(animation, (job) => job.sourceJobId ? original : undefined)).toEqual([
+      { jobId: "original", label: "Original", prompt: "dog swimming" },
+      { jobId: "animation", label: "Animation 1", prompt: "slow underwater tracking shot" },
+    ]);
+  });
 });

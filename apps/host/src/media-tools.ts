@@ -111,6 +111,7 @@ export function createMediaTools(options: MediaToolsOptions): (context: { cwd: s
             ...(params.duration_seconds !== undefined ? { durationSeconds: params.duration_seconds } : {}),
             ...(params.resolution !== undefined ? { size: params.resolution } : {}),
             ...(params.fps !== undefined ? { fps: params.fps } : {}),
+            ...(params.refs?.length ? { operation: "animate" as const } : {}),
             ...(params.refs !== undefined ? { refs: mapRefs(params.refs) } : {}),
           }, params.route_id);
           return mediaJobResult(job, "video");

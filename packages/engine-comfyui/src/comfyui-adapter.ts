@@ -65,6 +65,8 @@ export interface ComfyUIConfiguration {
    * operation, allowing one image route to own generation and editing without
    * making reference presence double as an intent signal. */
   comfyuiEditWorkflow?: Readonly<Record<string, unknown>>;
+  /** Optional first-frame image-to-video graph selected for `animate`. */
+  comfyuiAnimateWorkflow?: Readonly<Record<string, unknown>>;
   /** Pinned workflow: path to a workflow JSON file (absolute, or relative to
    *  `cwd` when managed). Mutually exclusive with `comfyuiWorkflow`. */
   comfyuiWorkflowPath?: string;
@@ -269,9 +271,14 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
     if (request.params.operation === "edit" && !instance.config.comfyuiEditWorkflow) {
       throw new Error(`ComfyUI recipe ${instance.recipeId} does not configure an image edit workflow`);
     }
+    if (request.params.operation === "animate" && !instance.config.comfyuiAnimateWorkflow) {
+      throw new Error(`ComfyUI recipe ${instance.recipeId} does not configure an image animation workflow`);
+    }
     const graph = request.params.operation === "edit"
       ? instance.config.comfyuiEditWorkflow!
-      : await this.#loadWorkflow(instance, signal);
+      : request.params.operation === "animate"
+        ? instance.config.comfyuiAnimateWorkflow!
+        : await this.#loadWorkflow(instance, signal);
     const overrides = instance.config.comfyuiOverrides;
     const params = applyGenerationDefaults(request.params, instance.config.defaults);
     const referenceNames = await this.#uploadReferences(instance, params, signal);
@@ -319,7 +326,7 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
     if (entry) {
       if (entry.status?.status_str === "error") {
         this.#closeListener(instance, job.id);
-        return { status: "failed", error: "ComfyUI workflow execution failed" };
+        return { status: "failed", error: comfyUIExecutionError(entry) };
       }
       const file = pickOutputFile(entry, job.modality);
       if (!file) {
@@ -435,6 +442,7 @@ export function readComfyUIConfiguration(recipe: Recipe): ComfyUIConfiguration {
     ...(value.readinessTimeoutMs !== undefined ? { readinessTimeoutMs: nonNegativeNumber(value.readinessTimeoutMs, "readinessTimeoutMs") } : {}),
     ...(value.comfyuiWorkflow !== undefined ? { comfyuiWorkflow: parseWorkflowValue(value.comfyuiWorkflow) } : {}),
     ...(value.comfyuiEditWorkflow !== undefined ? { comfyuiEditWorkflow: parseWorkflowValue(value.comfyuiEditWorkflow) } : {}),
+    ...(value.comfyuiAnimateWorkflow !== undefined ? { comfyuiAnimateWorkflow: parseWorkflowValue(value.comfyuiAnimateWorkflow) } : {}),
     ...(value.comfyuiWorkflowPath !== undefined ? { comfyuiWorkflowPath: stringValue(value.comfyuiWorkflowPath, "comfyuiWorkflowPath") } : {}),
     ...(value.outputFormats !== undefined ? { outputFormats: stringArray(value.outputFormats, "outputFormats") } : {}),
     ...(value.defaults !== undefined ? { defaults: readDefaults(value.defaults) } : {}),
@@ -461,6 +469,9 @@ export function validateComfyUIConfiguration(recipe: Recipe): ValidationIssue[] 
     }
     if (config.comfyuiEditWorkflow !== undefined && !isGraph(config.comfyuiEditWorkflow)) {
       issues.push({ level: "error", code: "invalid_edit_workflow_graph", message: "comfyuiEditWorkflow must be a non-empty object of { class_type, inputs } nodes" });
+    }
+    if (config.comfyuiAnimateWorkflow !== undefined && !isGraph(config.comfyuiAnimateWorkflow)) {
+      issues.push({ level: "error", code: "invalid_animate_workflow_graph", message: "comfyuiAnimateWorkflow must be a non-empty object of { class_type, inputs } nodes" });
     }
     const external = config.baseUrl !== undefined;
     const managed = config.executable !== undefined || config.cwd !== undefined || config.launchArgs !== undefined;
@@ -735,6 +746,24 @@ function isGraph(value: unknown): value is Readonly<Record<string, unknown>> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** ComfyUI records the actionable exception inside status.messages. Keep the
+ * adapter boundary compact, but do not replace a real node error with the
+ * useless generic "workflow execution failed" message. */
+function comfyUIExecutionError(entry: ComfyUIHistoryEntry): string {
+  for (const message of [...(entry.status?.messages ?? [])].reverse()) {
+    if (!Array.isArray(message) || message[0] !== "execution_error" || !isRecord(message[1])) continue;
+    const payload = message[1];
+    const detail = typeof payload.exception_message === "string"
+      ? payload.exception_message.trim().replace(/\s+/g, " ").slice(0, 600)
+      : "workflow execution failed";
+    const nodeType = typeof payload.node_type === "string" ? payload.node_type : undefined;
+    const nodeId = typeof payload.node_id === "string" ? payload.node_id : undefined;
+    const node = nodeType ? ` ${nodeType}${nodeId ? ` (node ${nodeId})` : ""}` : " workflow";
+    return `ComfyUI${node} failed: ${detail}`;
+  }
+  return "ComfyUI workflow execution failed";
 }
 
 function resolvePath(path: string, cwd: string | undefined): string {

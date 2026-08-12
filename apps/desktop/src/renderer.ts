@@ -372,6 +372,10 @@ const mediaJobFeed = new MediaJobFeed({
     const response = await api(`/api/v1/media/jobs/${encodeURIComponent(job.id)}/edits`, "POST", { prompt });
     return response.data as MediaJobSummary;
   },
+  animateImage: async (job, prompt) => {
+    const response = await api(`/api/v1/media/jobs/${encodeURIComponent(job.id)}/animations`, "POST", { prompt });
+    return response.data as MediaJobSummary;
+  },
   watch: (jobId) => mediaJobs.watch(jobId),
   showStatus,
   errorMessage,

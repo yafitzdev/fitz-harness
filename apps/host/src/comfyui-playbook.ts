@@ -37,8 +37,9 @@ const QWEN_IMAGE_MODEL = "qwen_image_2512_fp8_e4m3fn.safetensors";
 const QWEN_IMAGE_EDIT_MODEL = "qwen_image_edit_2511_int8_convrot.safetensors";
 const QWEN_IMAGE_ENCODER = "qwen_2.5_vl_7b_fp8_scaled.safetensors";
 
-function h3VideoWorkflow(unetName: string) {
+function h3VideoWorkflow(unetName: string, firstFrame?: string) {
   return {
+    ...(firstFrame ? { "103": { class_type: "LoadImage", inputs: { image: firstFrame } } } : {}),
     "6": {
       class_type: "UNETLoader",
       inputs: { unet_name: unetName, weight_dtype: "default" },
@@ -69,6 +70,7 @@ function h3VideoWorkflow(unetName: string) {
         width: "{{width}}",
         height: "{{height}}",
         length: ["107", 1],
+        ...(firstFrame ? { first_frame: ["103", 0] } : {}),
       },
     },
     "16": { class_type: "BasicGuider", inputs: { model: ["6", 0], conditioning: ["104", 0] } },
@@ -197,8 +199,8 @@ function qwenImageEditWorkflow() {
   };
 }
 
-/** Local ComfyUI media playbook. H3 owns the official 1280×720 text-to-video
- * plus stereo-audio graph; Krea 2 Turbo and its optional LoRA own text-to-image.
+/** Local ComfyUI media playbook. H3 owns the official 1344×768 text/image-to-video
+ * plus stereo-audio graphs; Krea 2 Turbo and its optional LoRA own text-to-image.
  * Every independently downloaded weight remains in Fitz's external registry. */
 export function createComfyUIPlaybook(options: ComfyUIPlaybookOptions): ComfyUIPlaybook {
   const { engineDir, executable, entrypoint, baseUrl, expectedVramMiB, launchArgs } = options;
@@ -215,21 +217,22 @@ export function createComfyUIPlaybook(options: ComfyUIPlaybookOptions): ComfyUIP
   if (recipeIds.has("h3-video")) {
     recipes.push(recipe({
       id: "h3-video",
-      displayName: "MiniMax H3 · Text to Video + Audio",
+      displayName: "MiniMax H3 · Text/Image to Video + Audio",
       modelId: "minimax-h3-fl2va-int8",
-      modalities: { input: ["text"], output: ["video", "audio"] },
-      limits: { maxDurationSeconds: 6, maxFps: 30, maxResolution: "1280x720" },
+      modalities: { input: ["text", "image"], output: ["video", "audio"] },
+      limits: { maxDurationSeconds: 6, maxFps: 30, maxResolution: "1344x768", maxRefs: 1 },
       configuration: {
         ...launch,
         expectedVramMiB: expectedVramMiB ?? 24_576,
         readinessTimeoutMs: 300_000,
         comfyuiWorkflow: h3VideoWorkflow(OFFICIAL_H3_MODEL),
+        comfyuiAnimateWorkflow: h3VideoWorkflow(OFFICIAL_H3_MODEL, "{{ref_0}}"),
         outputFormats: ["mp4"],
-        // H3's latent grid needs multiples of 16 (the DiT consumes height/16
-        // by width/16 patches); the server snaps requested sizes before they
-        // reach the graph.
-        sizeGrid: 16,
-        defaults: { resolution: "1280x720", fps: 24, durationSeconds: 2, sampler: "res_multistep", steps: 20 },
+        // MiniMaxH3ImageToVideo declares a 32-pixel spatial grid. A 720px
+        // height creates mismatched keyframe/video latents and fails during
+        // patchification, so every requested size is snapped before execution.
+        sizeGrid: 32,
+        defaults: { resolution: "1344x768", fps: 24, durationSeconds: 2, sampler: "res_multistep", steps: 20 },
       },
     }));
   }

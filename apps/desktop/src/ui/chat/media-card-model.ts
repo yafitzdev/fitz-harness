@@ -12,12 +12,12 @@ export interface MediaCardPresentation {
   label: string;
   title: string;
   detail: string;
-  operation: "generation" | "edit";
+  operation: "generation" | "edit" | "animation";
 }
 
 export function mediaCardPresentation(job: MediaCardJob, failure?: string, artifactName?: string): MediaCardPresentation {
   const label = `${job.modality[0]!.toUpperCase()}${job.modality.slice(1)}`;
-  const operation = job.params?.operation === "edit" ? "edit" : "generation";
+  const operation = job.params?.operation === "edit" ? "edit" : job.params?.operation === "animate" ? "animation" : "generation";
   const completed = job.status === "completed";
   const title = completed ? `${label} ready`
     : job.status === "failed" || job.status === "interrupted" ? `${label} ${operation} failed`
@@ -41,7 +41,7 @@ export function mediaExecutionSettings(job: MediaCardJob): Array<[string, string
   if (typeof execution.adapter === "string") settings.push(["Engine", execution.adapter === "comfyui" ? "ComfyUI" : execution.adapter]);
   if (Object.keys(execution).length === 0) settings.push(["Execution details", "Not recorded for this earlier job"]);
   if (typeof job.routeId === "string") settings.push(["Route", job.routeId]);
-  settings.push(["Operation", params.operation === "edit" ? "Edit" : "Generate"]);
+  settings.push(["Operation", params.operation === "edit" ? "Edit" : params.operation === "animate" ? "Animate" : "Generate"]);
   const labels: Record<string, string> = {
     size: "Resolution", seed: "Seed", sampler: "Sampler", steps: "Steps", guidance: "Guidance",
     negativePrompt: "Negative prompt", durationSeconds: "Duration (seconds)", fps: "Frame rate (fps)",
@@ -63,14 +63,19 @@ export function mediaPromptChain(job: MediaCardJob, parent: (job: MediaCardJob) 
     const params = current.params && typeof current.params === "object" ? current.params as Record<string, unknown> : {};
     lineage.unshift({
       jobId: current.id,
-      operation: params.operation === "edit" ? "edit" : "generate",
+      operation: params.operation === "edit" ? "edit" : params.operation === "animate" ? "animate" : "generate",
       prompt: typeof params.prompt === "string" ? params.prompt : "Not recorded",
     });
     current = parent(current);
   }
   let editNumber = 0;
+  let animationNumber = 0;
   return lineage.map((item, index) => {
-    if (item.operation !== "edit" && index === 0) return { jobId: item.jobId, label: "Original", prompt: item.prompt };
+    if (item.operation === "generate" && index === 0) return { jobId: item.jobId, label: "Original", prompt: item.prompt };
+    if (item.operation === "animate") {
+      animationNumber += 1;
+      return { jobId: item.jobId, label: lineage.length === 1 ? "Animation" : `Animation ${animationNumber}`, prompt: item.prompt };
+    }
     editNumber += 1;
     return { jobId: item.jobId, label: lineage.length === 1 ? "Edit" : `Edit ${editNumber}`, prompt: item.prompt };
   });

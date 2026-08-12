@@ -5,7 +5,7 @@
 export interface ComfyUIHistoryEntry {
   /** Node-id → output maps (images / videos / audio lists with file refs). */
   outputs: Record<string, ComfyUIOutput>;
-  status?: { status_str?: string; completed?: boolean };
+  status?: { status_str?: string; completed?: boolean; messages?: unknown[] };
 }
 
 export interface ComfyUIFileRef {
