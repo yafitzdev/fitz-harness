@@ -1,6 +1,9 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+const MANAGED_INFERENCE_DISTRIBUTION = "Fitz-Inference";
+const MANAGED_INFERENCE_GUEST_ROOT = "/opt/fitz/llm";
+
 export interface FitzRuntimePaths {
   dataRoot: string;
   databasePath: string;
@@ -12,9 +15,9 @@ export interface FitzRuntimePaths {
   modelRoot: string;
   /** Physical GGUF payload store managed by the model catalog. */
   ggufModelRoot: string;
-  /** Host-native language/package environments. Linux-only environments live in a managed runtime. */
+  /** Linux language/package environments in the canonical inference registry. */
   environmentRoot: string;
-  /** App-managed platform runtimes (for example the shared inference Linux VHDX). */
+  /** Host-side VM/container infrastructure. This is not part of the logical LLM registry. */
   runtimeRoot: string;
   /** Per-run pre-flight snapshots of the workspace, used to restore after a bad run. */
   snapshotsDir: string;
@@ -26,7 +29,7 @@ export interface FitzRuntimePaths {
 
 export function resolveRuntimePaths(environment: NodeJS.ProcessEnv = process.env): FitzRuntimePaths {
   const dataRoot = resolve(environment.FITZ_DATA_ROOT ?? defaultDataRoot(environment));
-  const llmRoot = resolve(environment.FITZ_LLM_ROOT ?? join(homedir(), ".llm"));
+  const llmRoot = resolve(environment.FITZ_LLM_ROOT ?? defaultLlmRoot());
   return {
     dataRoot,
     databasePath: resolve(join(dataRoot, "database", "fitz.db")),
@@ -38,11 +41,18 @@ export function resolveRuntimePaths(environment: NodeJS.ProcessEnv = process.env
     modelRoot: resolve(environment.FITZ_MODEL_ROOT ?? join(llmRoot, "models")),
     ggufModelRoot: resolve(environment.FITZ_GGUF_MODEL_ROOT ?? join(environment.FITZ_MODEL_ROOT ?? join(llmRoot, "models"), "gguf")),
     environmentRoot: resolve(environment.FITZ_ENVIRONMENT_ROOT ?? join(llmRoot, "environments")),
-    runtimeRoot: resolve(environment.FITZ_RUNTIME_ROOT ?? join(llmRoot, "runtimes")),
+    runtimeRoot: resolve(environment.FITZ_RUNTIME_ROOT ?? join(dataRoot, "runtimes")),
     snapshotsDir: resolve(environment.FITZ_SNAPSHOTS_DIR ?? join(dataRoot, "snapshots")),
     artifactsDir: resolve(environment.FITZ_ARTIFACTS_DIR ?? join(dataRoot, "artifacts")),
     backupsDir: resolve(environment.FITZ_BACKUPS_DIR ?? join(dataRoot, "backups")),
   };
+}
+
+function defaultLlmRoot(): string {
+  if (process.platform === "win32") {
+    return `\\\\wsl.localhost\\${MANAGED_INFERENCE_DISTRIBUTION}${MANAGED_INFERENCE_GUEST_ROOT.replaceAll("/", "\\")}`;
+  }
+  return join(homedir(), ".llm");
 }
 
 function defaultDataRoot(environment: NodeJS.ProcessEnv): string {

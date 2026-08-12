@@ -388,8 +388,8 @@ describe("Fitz host", () => {
     const store = SqliteStore.memory();
     const timestamp = new Date(0).toISOString();
     store.upsertEngine({
-      id: "comfyui", folderName: "ComfyUI", displayName: "comfyui", connectionMode: "managed", runtime: "windows",
-      baseUrl: "http://127.0.0.1", healthPath: "/system_stats", launchCommand: "python", launchArguments: ["main.py"], workingDirectory: ".",
+      id: "comfyui", folderName: "ComfyUI", displayName: "comfyui", connectionMode: "managed", runtime: "linux-managed",
+      baseUrl: "http://127.0.0.1", healthPath: "/system_stats", launchCommand: "python", launchArguments: ["main.py"], workingDirectory: ".", runtimeId: "inference-linux",
       createdAt: timestamp, updatedAt: timestamp,
     });
     const runtime = createHost({ engineRoot, store });
@@ -397,8 +397,8 @@ describe("Fitz host", () => {
       const response = await runtime.app.inject({
         method: "PUT", url: "/api/v1/management/engines/ComfyUI",
         payload: {
-          displayName: "comfyui", connectionMode: "managed", runtime: "windows",
-          baseUrl: "http://127.0.0.1", healthPath: "/system_stats", launchCommand: "python", launchArguments: ["main.py"], workingDirectory: ".",
+          displayName: "comfyui", connectionMode: "managed", runtime: "linux-managed",
+          baseUrl: "http://127.0.0.1", healthPath: "/system_stats", launchCommand: "python", launchArguments: ["main.py"], workingDirectory: ".", runtimeId: "inference-linux",
         },
       });
       expect(response.statusCode).toBe(200);

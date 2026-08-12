@@ -3,12 +3,13 @@ import type { Recipe } from "@fitz/protocol";
 import { ManagedOpenAIEngineAdapter } from "./managed-openai-adapter.js";
 
 describe("ManagedOpenAIEngineAdapter", () => {
-  it("builds an engine-agnostic Windows launch without changing the repository", async () => {
-    const adapter = new ManagedOpenAIEngineAdapter();
+  it("builds an engine-agnostic launch inside the managed inference runtime", async () => {
+    const adapter = new ManagedOpenAIEngineAdapter({ linuxRuntimes: new Map([["inference-linux", { distribution: "Fitz-Inference" }]]) });
     const recipe = managedRecipe({
-      enginePath: "C:\\Users\\test\\engines\\private-fork",
-      runtime: "windows",
-      command: ".\\build\\server.exe",
+      enginePath: "/opt/fitz/llm/engines/private-fork",
+      runtime: "linux-managed",
+      runtimeId: "inference-linux",
+      command: "./build/server",
       args: ["--host", "{host}", "--port", "{port}", "--model", "{model}", "--ctx-size", "{context}"],
       workingDirectory: ".",
       healthPath: "/v1/models",
@@ -17,9 +18,8 @@ describe("ManagedOpenAIEngineAdapter", () => {
 
     await expect(adapter.validateRecipe(recipe)).resolves.toEqual({ valid: true, issues: [] });
     await expect(adapter.buildLaunchSpec(recipe, { host: "127.0.0.1", port: 19191 })).resolves.toMatchObject({
-      executable: "C:\\Users\\test\\engines\\private-fork\\build\\server.exe",
-      cwd: "C:\\Users\\test\\engines\\private-fork",
-      args: ["--host", "127.0.0.1", "--port", "19191", "--model", "custom-model", "--ctx-size", "32768"],
+      executable: "wsl.exe",
+      args: ["-d", "Fitz-Inference", "-u", "root", "--", "sh", "-s", "--", "/opt/fitz/llm/engines/private-fork", "/opt/fitz/llm/engines/private-fork/build/server", "--host", "127.0.0.1", "--port", "19191", "--model", "custom-model", "--ctx-size", "32768"],
     });
   });
 
@@ -54,11 +54,11 @@ describe("ManagedOpenAIEngineAdapter", () => {
   it("rejects working directories and relative commands that escape the engine checkout", async () => {
     const adapter = new ManagedOpenAIEngineAdapter();
     await expect(adapter.validateRecipe(managedRecipe({
-      enginePath: "C:\\Users\\test\\engines\\private-fork", runtime: "windows", command: "python",
+      enginePath: "/opt/fitz/llm/engines/private-fork", runtime: "linux-managed", runtimeId: "inference-linux", command: "python",
       args: [], workingDirectory: "..", healthPath: "/v1/models", readinessTimeoutMs: 30_000,
     }))).resolves.toMatchObject({ valid: false, issues: [expect.objectContaining({ code: "invalid_working_directory" })] });
     await expect(adapter.validateRecipe(managedRecipe({
-      enginePath: "C:\\Users\\test\\engines\\private-fork", runtime: "windows", command: "..\\outside.exe",
+      enginePath: "/opt/fitz/llm/engines/private-fork", runtime: "linux-managed", runtimeId: "inference-linux", command: "../outside",
       args: [], workingDirectory: ".", healthPath: "/v1/models", readinessTimeoutMs: 30_000,
     }))).resolves.toMatchObject({ valid: false, issues: [expect.objectContaining({ code: "invalid_command_path" })] });
   });

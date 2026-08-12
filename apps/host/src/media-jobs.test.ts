@@ -507,7 +507,7 @@ describe("Fitz host media jobs", () => {
       environmentRoot: "/opt/fitz/llm/environments",
       logRoot: "/opt/fitz/llm/logs",
       modelRoot: "/opt/fitz/llm/models/ninfer",
-      executable: "/opt/fitz/llm/engines/ninfer/ninfer-serve",
+      executable: "/opt/fitz/llm/environments/ninfer/bin/ninfer-serve",
     });
 
     const image = store.listRoutes().find((route) => route.id === "image");

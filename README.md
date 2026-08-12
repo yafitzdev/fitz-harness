@@ -22,8 +22,8 @@ pnpm dev
 
 The development host binds to `127.0.0.1`. `pnpm dev` (also available as `pnpm dev:ninfer`) starts
 the real NiNfer configuration and exposes the configured recipes through the Fast, Default, and
-Smart connection routes. On Windows, Linux-only engines run inside Fitz's shared `inference-linux`
-runtime while the desktop continues to connect to `127.0.0.1:8787`.
+Smart connection routes. On Windows, every local inference engine and model lives inside Fitz's shared
+`inference-linux` runtime while the native desktop continues to connect to `127.0.0.1:8787`.
 
 Development keeps all mutable state in the repository under `data/` (`FITZ_DATA_ROOT`): sessions and
 artifact metadata in `data/database/fitz.db`, content-addressed artifact payloads in `data/artifacts/`,
@@ -33,7 +33,8 @@ The dev scripts build workspace packages before starting and refuse to start if 
 occupies the port; set `FITZ_PORT` to override the default `8787`.
 
 Production installs bundle Electron, the host, Node, Pi, and npm. Mutable database, Pi package, log,
-cache, artifact, and backup state lives beneath `%LOCALAPPDATA%\Fitz Codex`; clean engine repositories
-and model files live beneath `%USERPROFILE%\.llm`. Tailscale remains an independently installed Windows service.
+cache, artifact, and backup state lives beneath `%LOCALAPPDATA%\Fitz Codex`. The canonical local
+inference registry lives at `/opt/fitz/llm` inside the managed `Fitz-Inference` WSL distribution and is
+visible to Windows at `\\wsl.localhost\Fitz-Inference\opt\fitz\llm`. Tailscale remains an independently installed Windows service.
 
 Use `pnpm dev:fake` only when deterministic fake inference is explicitly needed for UI development.

@@ -645,24 +645,6 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   );
 
   app.put(
-    "/api/v1/management/engine-root",
-    { preHandler: adminGuard(options.adminToken, authMode, principals) },
-    async (request, reply) => {
-      try {
-        const body = requireRecord(request.body);
-        const rootPath = requireString(body.rootPath, "rootPath");
-        if (!isAbsolute(rootPath)) throw new TypeError("rootPath must be absolute");
-        const resolvedRoot = resolve(rootPath);
-        if (!existsSync(resolvedRoot) || !statSync(resolvedRoot).isDirectory()) throw new TypeError("rootPath must be an existing folder");
-        store.setSetting("engineRoot", resolvedRoot);
-        return { data: { rootPath: resolvedRoot } };
-      } catch (error) {
-        return reply.code(400).send({ error: errorMessage(error) });
-      }
-    },
-  );
-
-  app.put(
     "/api/v1/management/engines/:folderName",
     { preHandler: adminGuard(options.adminToken, authMode, principals) },
     async (request, reply) => {
@@ -986,7 +968,7 @@ function parseConnectionMode(value: unknown): EngineConnectionMode {
 }
 
 function parseEngineRuntime(value: unknown): EngineRuntime {
-  if (value !== "windows" && value !== "linux-managed") throw new TypeError("runtime must be windows or linux-managed");
+  if (value !== "linux-managed") throw new TypeError("runtime must be linux-managed");
   return value;
 }
 

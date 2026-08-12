@@ -27,6 +27,9 @@ export interface ComfyUIPlaybookOptions {
   /** Additional managed ComfyUI CLI arguments, such as the external Fitz model
    *  registry and an output folder outside the upstream engine checkout. */
   launchArgs?: string[];
+  /** Managed Linux runtime. Omitted only for external/test configurations. */
+  runtime?: "linux-managed";
+  runtimeId?: string;
   /** Recipes whose independently stored model artifacts are available. */
   recipeIds?: readonly ComfyUIRecipeId[];
 }
@@ -203,13 +206,14 @@ function qwenImageEditWorkflow() {
  * plus stereo-audio graphs; Krea 2 Turbo and its optional LoRA own text-to-image.
  * Every independently downloaded weight remains in Fitz's external registry. */
 export function createComfyUIPlaybook(options: ComfyUIPlaybookOptions): ComfyUIPlaybook {
-  const { engineDir, executable, entrypoint, baseUrl, expectedVramMiB, launchArgs } = options;
+  const { engineDir, executable, entrypoint, baseUrl, expectedVramMiB, launchArgs, runtime, runtimeId } = options;
   const recipeIds = new Set(options.recipeIds ?? ["h3-video"]);
   const launch = baseUrl
     ? { baseUrl }
     : {
         executable: executable ?? "python",
         cwd: engineDir,
+        ...(runtime ? { runtime, runtimeId } : {}),
         ...(entrypoint ? { entrypoint } : {}),
         ...(launchArgs?.length ? { launchArgs } : {}),
       };

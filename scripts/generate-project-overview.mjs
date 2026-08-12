@@ -9,7 +9,7 @@
  *   - git branch, commit count, last commit date
  *   - HTTP routes extracted from apps/host/src/server/create-app.ts
  *   - route ids extracted from engine playbook files
- *   - model families under ~/.llm/models
+ *   - model families in the canonical managed-Linux registry
  *   - desktop UI controllers
  *   - feature bullets from docs/implementation-status.md
  *
@@ -19,11 +19,13 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const llmRoot = process.env.FITZ_LLM_ROOT ?? (process.platform === "win32"
+  ? "\\\\wsl.localhost\\Fitz-Inference\\opt\\fitz\\llm"
+  : "/opt/fitz/llm");
 const TEST_CACHE = join(root, "scripts", ".overview-tests.json");
 const OUT = join(root, "docs", "project-overview.html");
 
@@ -150,7 +152,7 @@ const routeIds = [...playbookIds].filter((id) => !["ninfer", "default-agent"].in
 
 let modelFamilies = [];
 try {
-  modelFamilies = readdirSync(join(homedir(), ".llm", "models")).filter((d) => !d.startsWith("."));
+  modelFamilies = readdirSync(join(llmRoot, "models")).filter((d) => !d.startsWith("."));
 } catch { /* not present on this machine */ }
 
 /* ---------------- 8. desktop controllers ---------------- */
@@ -433,10 +435,10 @@ ${apiRows}
 
   <section id="inference">
     <h3 class="section-title">Inference engine &amp; routing</h3>
-    <div class="section-sub">Stable routes extracted from engine playbooks; model families from <span class="chip">~/.llm/models</span>.</div>
+    <div class="section-sub">Stable routes extracted from engine playbooks; model families from <span class="chip">/opt/fitz/llm/models</span>.</div>
     <div class="grid">
       <div class="card"><span class="mono">routes</span><h5>Stable route ids</h5><p>${routeChips || '<span class="faint">none found</span>'}</p></div>
-      <div class="card"><span class="mono">models on disk</span><h5>Model families</h5><p>${modelChips || '<span class="faint">~/.llm/models not present on this machine</span>'}</p></div>
+      <div class="card"><span class="mono">models on disk</span><h5>Model families</h5><p>${modelChips || '<span class="faint">/opt/fitz/llm/models not present on this machine</span>'}</p></div>
     </div>
     <h4>Lifecycle</h4>
     <pre><code><span class="tok-c">// packages/inference-core — the state machine that owns every engine</span>

@@ -16,7 +16,6 @@
     "@fitz/connectivity": "workspace:*",
     "@fitz/context": "workspace:*",
     "@fitz/engine-fake": "workspace:*",
-    "@fitz/engine-llama-cpp": "workspace:*",
     "@fitz/engine-comfyui": "workspace:*",
     "@fitz/engine-media-fake": "workspace:*",
     "@fitz/engine-ninfer": "workspace:*",

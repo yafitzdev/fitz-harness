@@ -65,7 +65,7 @@ export interface Recipe {
 }
 
 export type EngineConnectionMode = "managed" | "external";
-export type EngineRuntime = "windows" | "linux-managed";
+export type EngineRuntime = "linux-managed";
 
 export interface EngineRegistration {
   id: string;

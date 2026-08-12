@@ -1,6 +1,8 @@
 import { access, readFile } from "node:fs/promises";
 import { randomBytes, randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { Readable } from "node:stream";
 import { isAbsolute, join } from "node:path";
 import type {
@@ -51,6 +53,8 @@ export interface ComfyUIConfiguration {
   /** Managed mode: extra arguments appended after the Fitz-managed
    *  `--listen`/`--port`/`--disable-auto-launch` arguments. */
   launchArgs?: string[];
+  runtime?: "linux-managed";
+  runtimeId?: string;
   /** External mode: base URL of an already-running ComfyUI server
    *  (same pattern as OpenAICompatibleEngineAdapter). */
   baseUrl?: string;
@@ -89,6 +93,7 @@ export interface ComfyUIHandle extends EngineInstanceHandle {
   readinessTimeoutMs: number;
   /** Managed-mode child process; external-mode handles omit it. */
   process?: ChildProcessWithoutNullStreams;
+  guestProcess?: { pid?: number; distribution: string };
   logs?: string[];
   /** WebSocket progress listeners keyed by ComfyUI prompt id. */
   progressListeners?: Map<string, ComfyUIProgressListener>;
@@ -106,7 +111,10 @@ export interface ComfyUIAdapterOptions {
   defaultPollIntervalMs?: number;
   readinessTimeoutMs?: number;
   stopTimeoutMs?: number;
+  linuxRuntimes?: ReadonlyMap<string, { distribution: string }>;
 }
+
+const execFileAsync = promisify(execFile);
 
 /** First real local media engine (§5.4, KD-1): drives a ComfyUI server — spawned
  *  and owned in managed mode, or an external endpoint in connection mode — via
@@ -124,6 +132,7 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
   readonly #pollIntervalMs: number;
   readonly #readinessTimeoutMs: number;
   readonly #stopTimeoutMs: number;
+  readonly #linuxRuntimes: ReadonlyMap<string, { distribution: string }>;
 
   constructor(options: ComfyUIAdapterOptions = {}) {
     this.#fetch = options.fetch ?? globalThis.fetch;
@@ -133,6 +142,7 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
     this.defaultPollIntervalMs = options.defaultPollIntervalMs ?? 1_000;
     this.#readinessTimeoutMs = options.readinessTimeoutMs ?? 120_000;
     this.#stopTimeoutMs = options.stopTimeoutMs ?? 10_000;
+    this.#linuxRuntimes = options.linuxRuntimes ?? new Map();
   }
 
   resolveParams(recipe: Recipe, params: MediaGenerationParams): MediaGenerationParams {
@@ -160,7 +170,7 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
           issues.push({ level: "error", code: "invalid_workflow_file", message: `Workflow file is not readable JSON: ${resolved}: ${errorMessage(error)}` });
         }
       }
-      if (config.executable && !config.baseUrl) {
+      if (config.executable && !config.baseUrl && config.runtime !== "linux-managed") {
         try {
           await access(config.executable);
         } catch {
@@ -188,20 +198,23 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
         internalPort: Number(url.port || (url.protocol === "https:" ? 443 : 80)),
       };
     }
-    return {
-      executable: config.executable ?? "python",
-      args: [
-        config.entrypoint ?? "main.py",
-        "--listen", allocation.host,
-        "--port", String(allocation.port),
-        "--disable-auto-launch",
-        ...(config.launchArgs ?? []),
-      ],
-      ...(config.cwd ? { cwd: config.cwd } : {}),
-      env: {},
-      internalHost: allocation.host,
-      internalPort: allocation.port,
-    };
+    const args = [
+      config.entrypoint ?? "main.py",
+      "--listen", allocation.host,
+      "--port", String(allocation.port),
+      "--disable-auto-launch",
+      ...(config.launchArgs ?? []),
+    ];
+    if (config.runtime === "linux-managed") {
+      const target = this.#linuxRuntimes.get(config.runtimeId!);
+      if (!target) throw new Error(`Managed Linux runtime is unavailable: ${config.runtimeId}`);
+      return {
+        executable: "wsl.exe",
+        args: ["-d", target.distribution, "-u", "root", "--", "sh", "-s", "--", config.cwd!, config.executable!, ...args],
+        env: {}, internalHost: allocation.host, internalPort: allocation.port,
+      };
+    }
+    return { executable: config.executable ?? "python", args, ...(config.cwd ? { cwd: config.cwd } : {}), env: {}, internalHost: allocation.host, internalPort: allocation.port };
   }
 
   async start(recipe: Recipe, spec: LaunchSpec, signal: AbortSignal): Promise<ComfyUIHandle> {
@@ -228,8 +241,15 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
       stdio: "pipe",
     });
     const logs: string[] = [];
+    const guestProcess = config.runtime === "linux-managed"
+      ? { distribution: this.#linuxRuntimes.get(config.runtimeId!)!.distribution } as { pid?: number; distribution: string }
+      : undefined;
     captureLines(child.stdout, logs, "stdout");
-    captureLines(child.stderr, logs, "stderr");
+    captureLines(child.stderr, logs, "stderr", (line) => {
+      const match = /^__FITZ_GUEST_PID=(\d+)$/.exec(line);
+      if (match && guestProcess) guestProcess.pid = Number.parseInt(match[1]!, 10);
+    });
+    if (guestProcess) child.stdin.end('cd "$1"\nprintf "__FITZ_GUEST_PID=%s\\n" "$$" >&2\nshift\nexec "$@"\n');
     await waitForSpawn(child, signal);
     return {
       id: randomUUID(),
@@ -242,6 +262,7 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
       ...(config.cwd ? { cwd: config.cwd } : {}),
       readinessTimeoutMs: config.readinessTimeoutMs ?? this.#readinessTimeoutMs,
       process: child,
+      ...(guestProcess ? { guestProcess } : {}),
       logs,
       progressListeners: new Map(),
     };
@@ -372,9 +393,11 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
     instance.progressListeners?.clear();
     if (!instance.process) return { stopped: true, detail: "External endpoint left running" };
     if (hasExited(instance.process)) return { stopped: true };
-    instance.process.kill(mode === "force" ? "SIGKILL" : "SIGTERM");
+    if (instance.guestProcess?.pid) await signalGuest({ pid: instance.guestProcess.pid, distribution: instance.guestProcess.distribution }, mode === "force" ? "KILL" : "TERM");
+    else instance.process.kill(mode === "force" ? "SIGKILL" : "SIGTERM");
     const exited = await waitForExit(instance.process, this.#stopTimeoutMs);
     if (!exited && mode !== "force") {
+      if (instance.guestProcess?.pid) await signalGuest({ pid: instance.guestProcess.pid, distribution: instance.guestProcess.distribution }, "KILL");
       instance.process.kill("SIGKILL");
       await waitForExit(instance.process, Math.min(this.#stopTimeoutMs, 2_000));
     }
@@ -437,6 +460,8 @@ export function readComfyUIConfiguration(recipe: Recipe): ComfyUIConfiguration {
     ...(value.cwd !== undefined ? { cwd: stringValue(value.cwd, "cwd") } : {}),
     ...(value.entrypoint !== undefined ? { entrypoint: stringValue(value.entrypoint, "entrypoint") } : {}),
     ...(value.launchArgs !== undefined ? { launchArgs: stringArray(value.launchArgs, "launchArgs") } : {}),
+    ...(value.runtime !== undefined ? { runtime: linuxRuntimeValue(value.runtime) } : {}),
+    ...(value.runtimeId !== undefined ? { runtimeId: stringValue(value.runtimeId, "runtimeId") } : {}),
     ...(value.baseUrl !== undefined ? { baseUrl: stringValue(value.baseUrl, "baseUrl") } : {}),
     ...(value.expectedVramMiB !== undefined ? { expectedVramMiB: nonNegativeNumber(value.expectedVramMiB, "expectedVramMiB") } : {}),
     ...(value.readinessTimeoutMs !== undefined ? { readinessTimeoutMs: nonNegativeNumber(value.readinessTimeoutMs, "readinessTimeoutMs") } : {}),
@@ -483,6 +508,9 @@ export function validateComfyUIConfiguration(recipe: Recipe): ValidationIssue[] 
     }
     if (!external && !config.cwd) {
       issues.push({ level: "error", code: "missing_cwd", message: "managed ComfyUI requires cwd (the ComfyUI checkout folder)" });
+    }
+    if (config.runtime === "linux-managed" && !config.runtimeId) {
+      issues.push({ level: "error", code: "missing_runtime_id", message: "managed Linux ComfyUI requires runtimeId" });
     }
     if (config.launchArgs?.some((arg) => arg === "--listen" || arg === "--port" || arg.startsWith("--listen=") || arg.startsWith("--port="))) {
       issues.push({ level: "error", code: "reserved_argument", message: "launchArgs cannot override Fitz-managed --listen/--port arguments" });
@@ -770,14 +798,20 @@ function resolvePath(path: string, cwd: string | undefined): string {
   return isAbsolute(path) ? path : join(cwd ?? process.cwd(), path);
 }
 
-function captureLines(stream: Readable, logs: string[], source: string): void {
+function captureLines(stream: Readable, logs: string[], source: string, onLine?: (line: string) => void): void {
   stream.setEncoding("utf8");
   stream.on("data", (chunk: string) => {
     for (const line of chunk.split(/\r?\n/).filter(Boolean)) {
+      onLine?.(line);
       logs.push(`${source}: ${line}`);
       if (logs.length > 500) logs.shift();
     }
   });
+}
+
+async function signalGuest(process: { pid: number; distribution: string }, signal: "TERM" | "KILL"): Promise<void> {
+  try { await execFileAsync("wsl.exe", ["-d", process.distribution, "-u", "root", "--", "kill", `-${signal}`, String(process.pid)], { timeout: 10_000, windowsHide: true }); }
+  catch { /* A guest that exited between inspection and signaling is already stopped. */ }
 }
 
 async function waitForSpawn(child: ChildProcessWithoutNullStreams, signal: AbortSignal): Promise<void> {
@@ -821,6 +855,11 @@ function recentLogs(logs: string[]): string {
 
 function stringValue(value: unknown, name: string): string {
   if (typeof value !== "string" || !value) throw new TypeError(`${name} must be a non-empty string`);
+  return value;
+}
+
+function linuxRuntimeValue(value: unknown): "linux-managed" {
+  if (value !== "linux-managed") throw new TypeError("runtime must be linux-managed");
   return value;
 }
 

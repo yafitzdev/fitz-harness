@@ -6,7 +6,6 @@ import { NInferEngineAdapter } from "@fitz/engine-ninfer";
 import { FakeEngineAdapter } from "@fitz/engine-fake";
 import { FakeMediaEngineAdapter } from "@fitz/engine-media-fake";
 import { ManagedOpenAIEngineAdapter, OpenAICompatibleEngineAdapter } from "@fitz/engine-openai-compatible";
-import { LlamaCppEngineAdapter } from "@fitz/engine-llama-cpp";
 import { ComfyUIEngineAdapter } from "@fitz/engine-comfyui";
 import type { Recipe, Route } from "@fitz/protocol";
 import { applyPendingStorageRestore, ArtifactRepository, LocalBlobStore, SqliteStore, StorageDurabilityService } from "@fitz/storage";
@@ -62,7 +61,7 @@ const restoredStorage = await applyPendingStorageRestore(runtimePaths);
 if (restoredStorage) console.info("Scheduled storage restore applied", restoredStorage);
 mkdirSync(dirname(databasePath), { recursive: true });
 for (const directory of [runtimePaths.piAgentDir, runtimePaths.logsDir, runtimePaths.cacheDir, runtimePaths.engineRoot, runtimePaths.modelRoot, runtimePaths.ggufModelRoot, runtimePaths.environmentRoot, runtimePaths.runtimeRoot, runtimePaths.snapshotsDir, runtimePaths.artifactsDir, runtimePaths.backupsDir]) mkdirSync(directory, { recursive: true });
-ensureComfyUISafeModeExtension(localComfyUIPaths(runtimePaths).baseDir);
+ensureComfyUISafeModeExtension(localComfyUIPaths(runtimePaths).hostBaseDir);
 const linuxRuntimeLayout = managedLinuxRuntimeLayout(runtimePaths);
 const linuxRuntimes = managedLinuxRuntimeMap(linuxRuntimeLayout);
 const ninferRuntime = engineMode === "ninfer" && process.platform === "win32"
@@ -225,7 +224,7 @@ function ninferOptions() {
   const mediaPlaybook = installedLocalComfyUIPlaybook();
   const adapter = new NInferEngineAdapter({ managedLinux: { distribution: ninferRuntime.layout.distribution, user: "root" } });
   return {
-    adapters: [adapter, new ComfyUIEngineAdapter(), managedOpenAIAdapter(), new OpenAICompatibleEngineAdapter()],
+    adapters: [adapter, new ComfyUIEngineAdapter({ linuxRuntimes }), managedOpenAIAdapter(), new OpenAICompatibleEngineAdapter()],
     initialRecipes: [...playbook.recipes, ...(mediaPlaybook?.recipes ?? [])],
     initialRoutes: [...playbook.routes, ...(mediaPlaybook?.routes ?? [])],
   };
@@ -239,6 +238,8 @@ function installedLocalComfyUIPlaybook() {
     engineDir: local.engineDir,
     executable: local.executable,
     launchArgs: ["--base-directory", local.baseDir, "--extra-model-paths-config", local.modelConfigPath, "--output-directory", local.outputDir],
+    runtime: "linux-managed",
+    runtimeId: linuxRuntimeLayout.id,
     recipeIds,
   });
 }
@@ -275,7 +276,7 @@ function engineModeOptions(mode: string) {
     const mediaPlaybook = installedLocalComfyUIPlaybook();
     return {
       fakeAdapter,
-      adapters: [fakeAdapter, new FakeMediaEngineAdapter(), new ComfyUIEngineAdapter(), managedOpenAIAdapter(), new OpenAICompatibleEngineAdapter()],
+      adapters: [fakeAdapter, new FakeMediaEngineAdapter(), new ComfyUIEngineAdapter({ linuxRuntimes }), managedOpenAIAdapter(), new OpenAICompatibleEngineAdapter()],
       initialRecipes: [...DEFAULT_RECIPES, ...(mediaPlaybook?.recipes ?? [])],
       initialRoutes: [...DEFAULT_ROUTES, ...(mediaPlaybook?.routes ?? [])],
     };
@@ -287,16 +288,7 @@ function engineModeOptions(mode: string) {
       ...(process.env.FITZ_OPENAI_API_KEY_ENV ? { apiKeyEnv: process.env.FITZ_OPENAI_API_KEY_ENV } : {}),
       ...(process.env.FITZ_OPENAI_ALLOW_INSECURE_REMOTE === "true" ? { allowInsecureRemote: true } : {}),
     });
-    return singleEngineOptions([new OpenAICompatibleEngineAdapter(), managedOpenAIAdapter(), new ComfyUIEngineAdapter()], recipe);
-  }
-  if (mode === "llama-cpp") {
-    const recipe = engineRecipe("llama-cpp", {
-      executable: requiredEnvironment("FITZ_LLAMA_CPP_EXECUTABLE"),
-      modelPath: requiredEnvironment("FITZ_LLAMA_CPP_MODEL"),
-      contextTokens: parsePositiveInteger(process.env.FITZ_MODEL_CONTEXT_TOKENS ?? "32768", "FITZ_MODEL_CONTEXT_TOKENS"),
-      ...(process.env.FITZ_LLAMA_CPP_GPU_LAYERS ? { gpuLayers: parseNonNegativeInteger(process.env.FITZ_LLAMA_CPP_GPU_LAYERS, "FITZ_LLAMA_CPP_GPU_LAYERS") } : {}),
-    });
-    return singleEngineOptions([new LlamaCppEngineAdapter(), managedOpenAIAdapter(), new OpenAICompatibleEngineAdapter(), new ComfyUIEngineAdapter()], recipe);
+    return singleEngineOptions([new OpenAICompatibleEngineAdapter(), managedOpenAIAdapter(), new ComfyUIEngineAdapter({ linuxRuntimes })], recipe);
   }
   if (mode === "comfyui") return comfyuiOptions();
   throw new Error(`Unsupported FITZ_ENGINE_MODE: ${mode}`);
@@ -327,9 +319,10 @@ function comfyuiOptions() {
       ? { expectedVramMiB: parseNonNegativeInteger(process.env.FITZ_COMFYUI_EXPECTED_VRAM_MIB, "FITZ_COMFYUI_EXPECTED_VRAM_MIB") }
       : {}),
     ...(installedRecipeIds.length ? { recipeIds: installedRecipeIds } : {}),
+    ...(!process.env.FITZ_COMFYUI_BASE_URL ? { runtime: "linux-managed" as const, runtimeId: linuxRuntimeLayout.id } : {}),
   });
   return {
-    adapters: [new ComfyUIEngineAdapter(), managedOpenAIAdapter(), new OpenAICompatibleEngineAdapter()],
+    adapters: [new ComfyUIEngineAdapter({ linuxRuntimes }), managedOpenAIAdapter(), new OpenAICompatibleEngineAdapter()],
     initialRecipes: playbook.recipes,
     initialRoutes: playbook.routes,
   };
@@ -339,18 +332,18 @@ function managedOpenAIAdapter(): ManagedOpenAIEngineAdapter {
   return new ManagedOpenAIEngineAdapter({ linuxRuntimes });
 }
 
-function engineRecipe(adapter: "openai-compatible" | "llama-cpp", configuration: Record<string, unknown>): Recipe {
+function engineRecipe(adapter: "openai-compatible", configuration: Record<string, unknown>): Recipe {
   const modelId = process.env.FITZ_MODEL_ID ?? "local-model";
   const contextTokens = parsePositiveInteger(process.env.FITZ_MODEL_CONTEXT_TOKENS ?? "32768", "FITZ_MODEL_CONTEXT_TOKENS");
   return {
     id: `${adapter}-default`, playbookId: adapter, displayName: modelId, adapter, modelId, contextTokens,
     capabilities: { chatCompletions: true, streaming: true, toolCalls: false, responseFormat: false, minP: false, maxConcurrentGenerations: 1 },
-    lifecycle: { loadPolicy: "onDemand", evictionPolicy: adapter === "openai-compatible" ? "never" : "idle-ttl", idleTtlSeconds: 600, minimumResidencySeconds: 0 },
+    lifecycle: { loadPolicy: "onDemand", evictionPolicy: "never", idleTtlSeconds: 600, minimumResidencySeconds: 0 },
     configuration,
   };
 }
 
-function singleEngineOptions(adapters: Array<NInferEngineAdapter | OpenAICompatibleEngineAdapter | ManagedOpenAIEngineAdapter | LlamaCppEngineAdapter | ComfyUIEngineAdapter>, recipe: Recipe) {
+function singleEngineOptions(adapters: Array<NInferEngineAdapter | OpenAICompatibleEngineAdapter | ManagedOpenAIEngineAdapter | ComfyUIEngineAdapter>, recipe: Recipe) {
   const route: Route = { id: "default", displayName: "Default", recipeId: recipe.id, enabled: true, isDefault: true };
   const mediaPlaybook = installedLocalComfyUIPlaybook();
   return {

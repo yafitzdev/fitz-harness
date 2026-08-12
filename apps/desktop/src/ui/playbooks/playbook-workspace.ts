@@ -203,7 +203,7 @@ export class PlaybookWorkspaceController {
       addRecipe.type = "button";
       addRecipe.className = "quiet-button compact-button";
       addRecipe.textContent = "Add recipe";
-      addRecipe.addEventListener("click", () => this.openRecipeEditor(undefined, { ...engine, rootPath: folder.rootPath }));
+      addRecipe.addEventListener("click", () => this.openRecipeEditor(undefined, { ...engine, folderName: folder.folderName, rootPath: folder.rootPath }));
       actions.push(addRecipe);
     }
     const section = CollapsibleSection.create({
@@ -310,7 +310,7 @@ export class PlaybookWorkspaceController {
     const engine = folder?.engine;
     this.elements.engineDisplayName.value = engine?.displayName ?? folderName;
     this.elements.engineConnection.value = engine?.connectionMode ?? "managed";
-    this.elements.engineRuntime.value = engine?.runtime ?? "windows";
+    this.elements.engineRuntime.value = "linux-managed";
     this.elements.engineBaseUrl.value = engine?.baseUrl ?? "http://127.0.0.1:18080";
     this.elements.engineHealthPath.value = engine?.healthPath ?? "/v1/models";
     this.elements.engineCommand.value = engine?.launchCommand ?? "";

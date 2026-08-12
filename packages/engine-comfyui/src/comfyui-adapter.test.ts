@@ -58,6 +58,12 @@ describe("validateComfyUIConfiguration", () => {
     ]);
   });
 
+  it("requires a runtime id for managed Linux recipes", () => {
+    expect(validateComfyUIConfiguration(recipeFor({
+      executable: "/venv/bin/python", cwd: "/engines/comfyui", runtime: "linux-managed", comfyuiWorkflow: VIDEO_WORKFLOW,
+    }))).toEqual([expect.objectContaining({ code: "missing_runtime_id" })]);
+  });
+
   it("rejects reserved launch args and conflicting modes", () => {
     expect(validateComfyUIConfiguration(recipeFor({
       executable: "python", cwd: "/e", comfyuiWorkflow: VIDEO_WORKFLOW, launchArgs: ["--port=1"],
@@ -225,6 +231,34 @@ describe("ComfyUIEngineAdapter configuration surface", () => {
       env: {},
       internalHost: "127.0.0.1",
       internalPort: 8188,
+    });
+  });
+
+  it("builds a managed Linux launch through the named inference runtime", async () => {
+    const adapter = new ComfyUIEngineAdapter({
+      validatePaths: false,
+      linuxRuntimes: new Map([["inference-linux", { distribution: "Fitz-Inference" }]]),
+    });
+    const spec = await adapter.buildLaunchSpec(
+      recipeFor({
+        executable: "/opt/fitz/llm/environments/comfyui/bin/python",
+        cwd: "/opt/fitz/llm/engines/ComfyUI",
+        runtime: "linux-managed",
+        runtimeId: "inference-linux",
+        comfyuiWorkflow: VIDEO_WORKFLOW,
+        launchArgs: ["--base-directory", "/opt/fitz/llm/config/comfyui"],
+      }),
+      { host: "127.0.0.1", port: 8188 },
+    );
+    expect(spec).toEqual({
+      executable: "wsl.exe",
+      args: [
+        "-d", "Fitz-Inference", "-u", "root", "--", "sh", "-s", "--",
+        "/opt/fitz/llm/engines/ComfyUI", "/opt/fitz/llm/environments/comfyui/bin/python",
+        "main.py", "--listen", "127.0.0.1", "--port", "8188", "--disable-auto-launch",
+        "--base-directory", "/opt/fitz/llm/config/comfyui",
+      ],
+      env: {}, internalHost: "127.0.0.1", internalPort: 8188,
     });
   });
 

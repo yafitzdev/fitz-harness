@@ -2,6 +2,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { SqliteStore } from "@fitz/storage";
 import type { FitzRuntimePaths } from "./runtime-paths.js";
+import { managedLinuxRuntimeLayout } from "./managed-linux-runtime.js";
 import {
   createComfyUIPlaybook,
   RETIRED_COMFYUI_RECIPE_IDS,
@@ -9,6 +10,11 @@ import {
 } from "./comfyui-playbook.js";
 
 export interface LocalComfyUIPaths {
+  hostBaseDir: string;
+  hostEngineDir: string;
+  hostEnvironmentMarker: string;
+  hostModelConfigPath: string;
+  hostOutputDir: string;
   baseDir: string;
   engineDir: string;
   executable: string;
@@ -17,12 +23,18 @@ export interface LocalComfyUIPaths {
 }
 
 export function localComfyUIPaths(paths: FitzRuntimePaths): LocalComfyUIPaths {
+  const runtime = managedLinuxRuntimeLayout(paths);
   return {
-    baseDir: join(paths.dataRoot, "comfyui"),
-    engineDir: join(paths.engineRoot, "ComfyUI"),
-    executable: join(paths.environmentRoot, "comfyui-python", process.platform === "win32" ? "Scripts/python.exe" : "bin/python"),
-    modelConfigPath: join(paths.llmRoot, "config", "comfyui-extra-model-paths.yaml"),
-    outputDir: join(paths.cacheDir, "comfyui-output"),
+    hostBaseDir: join(paths.llmRoot, "config", "comfyui"),
+    hostEngineDir: join(paths.engineRoot, "ComfyUI"),
+    hostEnvironmentMarker: join(paths.environmentRoot, "comfyui", "pyvenv.cfg"),
+    hostModelConfigPath: join(paths.llmRoot, "config", "comfyui-extra-model-paths.yaml"),
+    hostOutputDir: join(paths.llmRoot, "logs", "comfyui-output"),
+    baseDir: `${runtime.guestRoot}/config/comfyui`,
+    engineDir: `${runtime.engineRoot}/ComfyUI`,
+    executable: `${runtime.environmentRoot}/comfyui/bin/python`,
+    modelConfigPath: `${runtime.guestRoot}/config/comfyui-extra-model-paths.yaml`,
+    outputDir: `${runtime.logRoot}/comfyui-output`,
   };
 }
 
@@ -86,11 +98,13 @@ export function reconcileLocalComfyUIConfiguration(store: SqliteStore, paths: Fi
   const recipeIds = localComfyUIRecipeIds(paths, local);
   if (recipeIds.length === 0) return changed;
 
-  mkdirSync(local.outputDir, { recursive: true });
+  mkdirSync(local.hostOutputDir, { recursive: true });
   const playbook = createComfyUIPlaybook({
     engineDir: local.engineDir,
     executable: local.executable,
     launchArgs: ["--base-directory", local.baseDir, "--extra-model-paths-config", local.modelConfigPath, "--output-directory", local.outputDir],
+    runtime: "linux-managed",
+    runtimeId: "inference-linux",
     recipeIds,
   });
   const now = new Date().toISOString();
@@ -101,12 +115,13 @@ export function reconcileLocalComfyUIConfiguration(store: SqliteStore, paths: Fi
       folderName: "ComfyUI",
       displayName: playbook.displayName,
       connectionMode: "managed",
-      runtime: "windows",
+      runtime: "linux-managed",
       baseUrl: "http://127.0.0.1",
       healthPath: "/system_stats",
       launchCommand: local.executable,
       launchArguments: ["main.py", "--base-directory", local.baseDir, "--extra-model-paths-config", local.modelConfigPath, "--output-directory", local.outputDir],
       workingDirectory: ".",
+      runtimeId: "inference-linux",
       createdAt: now,
       updatedAt: now,
     });
@@ -132,7 +147,10 @@ export function reconcileLocalComfyUIConfiguration(store: SqliteStore, paths: Fi
 }
 
 function localComfyUIRuntimeFiles(local: LocalComfyUIPaths): string[] {
-  return [join(local.engineDir, "main.py"), local.executable, local.modelConfigPath];
+  // Linux venv executables are symlinks. Through the WSL UNC provider Node can
+  // report those symlinks as EISDIR, so discovery uses the regular venv marker
+  // while launch still uses the guest `bin/python` path.
+  return [join(local.hostEngineDir, "main.py"), local.hostEnvironmentMarker, local.hostModelConfigPath];
 }
 
 function localH3SharedFiles(models: string): string[] {

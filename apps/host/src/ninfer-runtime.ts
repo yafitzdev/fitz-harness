@@ -1,10 +1,8 @@
 import { execFile } from "node:child_process";
-import { createReadStream, existsSync } from "node:fs";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
-import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
-import { createHash } from "node:crypto";
 import type { FitzRuntimePaths } from "./runtime-paths.js";
 import {
   managedLinuxRuntimeLayout,
@@ -95,9 +93,9 @@ export function createNInferModelRegistration(model: NInferRuntimeManifestModel,
   };
 }
 
-/** Owns the Linux-only NInfer runtime while keeping its physical VHDX inside
- * the normal Fitz `.llm` registry. All operations are idempotent and only one
- * mutation is admitted at a time. */
+/** Owns NInfer inside the shared inference distro. The distro's host-side VHDX
+ * is application infrastructure; the canonical `.llm` registry is its guest
+ * filesystem at `/opt/fitz/llm`. */
 export class NInferRuntimeManager {
   readonly layout: NInferRuntimeLayout;
   readonly #paths: FitzRuntimePaths;
@@ -115,11 +113,11 @@ export class NInferRuntimeManager {
     this.#run = options.run ?? defaultCommandRunner;
     const shared = managedLinuxRuntimeLayout(options.paths);
     const hostRoot = shared.hostRoot;
-    assertInside(options.paths.llmRoot, hostRoot);
+    assertInside(options.paths.runtimeRoot, hostRoot);
     this.layout = {
       ...shared,
       modelRoot: `${shared.modelRoot}/ninfer`,
-      executable: `${shared.engineRoot}/ninfer/ninfer-serve`,
+      executable: `${shared.environmentRoot}/ninfer/bin/ninfer-serve`,
     };
   }
 
@@ -129,11 +127,11 @@ export class NInferRuntimeManager {
     const installed = await this.#distributionInstalled();
     const models = installed ? await this.#modelStatus() : await this.#sourceModelStatus();
     if (this.#failure) return this.#base("failed", "failed", 0, this.#failure, models);
-    if (!installed) return this.#base("not-installed", "not-installed", 0, "Set up the Linux runtime and move installed NInfer models into it.", models);
+    if (!installed) return this.#base("not-installed", "not-installed", 0, "Set up the canonical inference runtime.", models);
     const engineReady = await this.#guestTest("-x", this.layout.executable);
     const installedModels = models.filter((model) => model.sourcePresent || model.runtimePresent);
     const complete = engineReady && installedModels.length > 0 && installedModels.every((model) => model.runtimePresent);
-    return this.#base(complete ? "ready" : "not-installed", complete ? "ready" : "migration-needed", complete ? 100 : 25, complete ? "NInfer is running from managed Linux storage." : "The runtime exists, but its engine or models still need migration.", models);
+    return this.#base(complete ? "ready" : "not-installed", complete ? "ready" : "migration-needed", complete ? 100 : 25, complete ? "Ready." : "The NInfer engine or its registered models are incomplete.", models);
   }
 
   startProvisioning(moveModels = true): NInferRuntimeStatus {
@@ -149,10 +147,10 @@ export class NInferRuntimeManager {
 
   async waitForIdle(): Promise<void> { await this.#operation; }
 
-  async #provision(moveModels: boolean): Promise<void> {
+  async #provision(_moveModels: boolean): Promise<void> {
     await mkdir(this.#paths.runtimeRoot, { recursive: true });
     if (!await this.#distributionInstalled()) {
-      this.#setWorking("installing-wsl", 5, `Installing the shared Linux runtime into .llm/runtimes/${this.layout.id}…`);
+      this.#setWorking("installing-wsl", 5, `Installing the shared Linux runtime into Fitz application storage…`);
       await this.#run("wsl.exe", ["--install", "Ubuntu-24.04", "--name", this.layout.distribution, "--location", this.layout.hostRoot, "--no-launch", "--web-download"], { timeout: 20 * 60_000 });
     }
     this.#setWorking("installing-dependencies", 15, "Installing the NInfer runtime libraries…");
@@ -162,47 +160,33 @@ export class NInferRuntimeManager {
     this.#setWorking("copying-cuda-runtime", 24, "Copying the small CUDA runtime dependency set…");
     await this.#copyCudaRuntime();
 
-    const sourceEngine = resolve(join(this.#paths.engineRoot, "ninfer", "build", "apps", "ninfer-serve"));
-    if (!existsSync(sourceEngine)) throw new Error(`NInfer executable was not found at ${sourceEngine}`);
-    this.#setWorking("copying-engine", 27, "Installing the NInfer executable into the managed runtime…");
-    await this.#guestShell(`install -m 0755 ${shellQuote(guestPath(sourceEngine))} ${shellQuote(this.layout.executable)}`, 120_000);
+    if (!await this.#guestTest("-x", this.layout.executable)) {
+      const builtExecutable = `${this.layout.engineRoot}/ninfer/build/apps/ninfer-serve`;
+      if (!await this.#guestTest("-f", builtExecutable)) throw new Error(`NInfer executable was not found at ${this.layout.executable}`);
+      this.#setWorking("installing-engine", 27, "Installing the NInfer executable inside the registry…");
+      await this.#guestShell(`install -m 0755 ${shellQuote(builtExecutable)} ${shellQuote(this.layout.executable)}`, 120_000);
+    }
 
     const installedModels: NInferRuntimeManifestModel[] = [];
-    const migratedSources: string[] = [];
-    const candidates = [] as Array<{ id: string; fileName: string; source?: string; bytes: number }>;
+    const candidates = [] as Array<{ id: string; fileName: string; bytes: number }>;
     for (const known of KNOWN_MODELS) {
-      const source = resolve(join(this.#paths.modelRoot, "ninfer", known.fileName));
-      if (existsSync(source)) {
-        candidates.push({ ...known, source, bytes: (await stat(source)).size });
-        continue;
-      }
       const runtimeBytes = await this.#guestSize(`${this.layout.modelRoot}/${known.fileName}`);
       if (runtimeBytes !== undefined) candidates.push({ ...known, bytes: runtimeBytes });
     }
-    if (!candidates.length) throw new Error(`No NInfer model artifacts were found in ${join(this.#paths.modelRoot, "ninfer")}`);
+    if (!candidates.length) throw new Error(`No NInfer model artifacts were found in ${this.layout.modelRoot}`);
     const totalBytes = candidates.reduce((sum, candidate) => sum + candidate.bytes, 0);
     let completedBytes = 0;
     for (const candidate of candidates) {
       const destination = `${this.layout.modelRoot}/${candidate.fileName}`;
-      const existingBytes = await this.#guestSize(destination);
-      if (existingBytes !== candidate.bytes && candidate.source) {
-        this.#setWorking("moving-models", 30 + Math.floor(60 * completedBytes / totalBytes), `Moving ${candidate.fileName} to Linux storage…`);
-        await this.#guestShell(`rm -f ${shellQuote(`${destination}.partial`)} && dd if=${shellQuote(guestPath(candidate.source))} of=${shellQuote(`${destination}.partial`)} bs=64M conv=fsync status=none && mv ${shellQuote(`${destination}.partial`)} ${shellQuote(destination)}`, 60 * 60_000);
-      }
       const copiedBytes = await this.#guestSize(destination);
       if (copiedBytes !== candidate.bytes) throw new Error(`Verification failed for ${candidate.fileName}: expected ${candidate.bytes} bytes, found ${copiedBytes}`);
       this.#setWorking("verifying-models", 90, `Verifying ${candidate.fileName}…`);
       const runtimeHash = (await this.#guestShell(`sha256sum ${shellQuote(destination)} | cut -d ' ' -f 1`, 60 * 60_000)).stdout.trim();
       if (!runtimeHash) throw new Error(`Checksum verification failed for ${candidate.fileName}`);
-      if (candidate.source) {
-        const sourceHash = await sha256File(candidate.source);
-        if (runtimeHash !== sourceHash) throw new Error(`Checksum verification failed for ${candidate.fileName}`);
-      }
       installedModels.push({ id: candidate.id, fileName: candidate.fileName, bytes: candidate.bytes, sha256: runtimeHash });
       completedBytes += candidate.bytes;
-      if (moveModels && candidate.source) migratedSources.push(candidate.source);
     }
-    const manifestPath = join(this.layout.hostRoot, "manifest.json");
+    const manifestPath = join(this.#paths.llmRoot, "manifest.json");
     const existingManifest = await readRuntimeManifest(manifestPath);
     const manifest = mergeManagedLinuxRuntimeComponent(this.layout, "ninfer", {
       enginePath: this.layout.executable,
@@ -218,8 +202,7 @@ export class NInferRuntimeManager {
       assertInside(registrationRoot, registrationPath);
       await writeFile(registrationPath, `${JSON.stringify(createNInferModelRegistration(model, this.layout), null, 2)}\n`, "utf8");
     }));
-    await Promise.all(migratedSources.map((source) => rm(source)));
-    this.#setWorking("ready", 100, "NInfer is ready on managed Linux storage.");
+    this.#setWorking("ready", 100, "Ready.");
   }
 
   async #copyCudaRuntime(): Promise<void> {
@@ -236,22 +219,14 @@ export class NInferRuntimeManager {
   async #modelStatus(): Promise<NInferRuntimeModelStatus[]> {
     const values: NInferRuntimeModelStatus[] = [];
     for (const known of KNOWN_MODELS) {
-      const source = resolve(join(this.#paths.modelRoot, "ninfer", known.fileName));
-      const sourceBytes = existsSync(source) ? (await stat(source)).size : undefined;
       const runtimeBytes = await this.#guestSize(`${this.layout.modelRoot}/${known.fileName}`);
-      values.push({ ...known, sourcePresent: sourceBytes !== undefined, runtimePresent: runtimeBytes !== undefined, ...(sourceBytes !== undefined ? { sourceBytes } : {}), ...(runtimeBytes !== undefined ? { runtimeBytes } : {}) });
+      values.push({ ...known, sourcePresent: false, runtimePresent: runtimeBytes !== undefined, ...(runtimeBytes !== undefined ? { runtimeBytes } : {}) });
     }
     return values;
   }
 
   async #sourceModelStatus(): Promise<NInferRuntimeModelStatus[]> {
-    const values: NInferRuntimeModelStatus[] = [];
-    for (const known of KNOWN_MODELS) {
-      const source = resolve(join(this.#paths.modelRoot, "ninfer", known.fileName));
-      const sourceBytes = existsSync(source) ? (await stat(source)).size : undefined;
-      values.push({ ...known, sourcePresent: sourceBytes !== undefined, runtimePresent: false, ...(sourceBytes !== undefined ? { sourceBytes } : {}) });
-    }
-    return values;
+    return KNOWN_MODELS.map((known) => ({ ...known, sourcePresent: false, runtimePresent: false }));
   }
 
   async #distributionInstalled(): Promise<boolean> {
@@ -305,12 +280,6 @@ function guestPath(hostPath: string): string {
 
 function shellQuote(value: string): string { return `'${value.replaceAll("'", `'\\''`)}'`; }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
-
-async function sha256File(path: string): Promise<string> {
-  const hash = createHash("sha256");
-  await pipeline(createReadStream(path), hash);
-  return hash.digest("hex");
-}
 
 async function readRuntimeManifest(path: string): Promise<ManagedLinuxRuntimeManifest | undefined> {
   if (!existsSync(path)) return undefined;

@@ -45,8 +45,8 @@ function sampleConfiguration(): Json {
       {
         folderName: "ninfer", rootPath: "C:\\Users\\me\\.llm\\engines\\ninfer",
         engine: {
-          displayName: "NiNfer", connectionMode: "managed", runtime: "windows", baseUrl: "http://127.0.0.1:18080",
-          healthPath: "/v1/models", launchCommand: "run.bat", launchArguments: ["--host", "127.0.0.1"], workingDirectory: ".",
+          displayName: "NiNfer", connectionMode: "managed", runtime: "linux-managed", baseUrl: "http://127.0.0.1:18080",
+          healthPath: "/v1/models", launchCommand: "./run", launchArguments: ["--host", "127.0.0.1"], workingDirectory: ".", runtimeId: "inference-linux",
         },
         registered: true,
       },
@@ -82,7 +82,7 @@ function setup(
   // Mirror the static markup in renderer/index.html so that setting
   // select.value behaves like it does in the real page.
   for (const value of ["managed", "external"]) elements.engineConnection.add(new Option(value, value));
-  for (const value of ["windows", "linux-managed"]) elements.engineRuntime.add(new Option(value, value));
+  elements.engineRuntime.add(new Option("linux-managed", "linux-managed"));
   const showStatus = vi.fn();
   const reloadConfiguration = vi.fn(async () => configuration);
   const controller = new PlaybookWorkspaceController(elements, {
@@ -229,7 +229,7 @@ describe("PlaybookWorkspaceController", () => {
     expect(elements.engineEditorTitle.textContent).toBe("Configure engine");
     expect(elements.engineFolder.value).toBe("ninfer");
     expect(elements.engineDisplayName.value).toBe("NiNfer");
-    expect(elements.engineCommand.value).toBe("run.bat");
+    expect(elements.engineCommand.value).toBe("./run");
     expect(elements.engineArguments.value).toBe("--host\n127.0.0.1");
 
     // Switching the folder repopulates the managed fields for an unregistered engine.

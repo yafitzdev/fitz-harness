@@ -3,18 +3,18 @@ import { resolveRuntimePaths } from "./runtime-paths.js";
 import { createNInferModelRegistration, NInferRuntimeManager } from "./ninfer-runtime.js";
 
 describe("managed NInfer runtime", () => {
-  it("uses the shared managed Linux distribution inside the .llm registry", async () => {
+  it("uses the shared managed Linux distribution beside application data", async () => {
     const run = vi.fn(async () => ({ stdout: "Ubuntu\r\n", stderr: "" }));
-    const paths = resolveRuntimePaths({ FITZ_LLM_ROOT: "D:\\registry" });
+    const paths = resolveRuntimePaths({ FITZ_LLM_ROOT: "D:\\registry", FITZ_RUNTIME_ROOT: "D:\\fitz-runtimes" });
     const runtime = new NInferRuntimeManager({ paths, platform: "win32", run });
 
     expect(runtime.layout).toMatchObject({
       id: "inference-linux",
       distribution: "Fitz-Inference",
-      hostRoot: "D:\\registry\\runtimes\\inference-linux",
+      hostRoot: "D:\\fitz-runtimes\\inference-linux",
       environmentRoot: "/opt/fitz/llm/environments",
       modelRoot: "/opt/fitz/llm/models/ninfer",
-      executable: "/opt/fitz/llm/engines/ninfer/ninfer-serve",
+      executable: "/opt/fitz/llm/environments/ninfer/bin/ninfer-serve",
     });
     await expect(runtime.status()).resolves.toMatchObject({
       available: true,

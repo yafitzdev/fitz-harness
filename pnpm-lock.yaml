@@ -79,9 +79,6 @@ importers:
       '@fitz/engine-fake':
         specifier: workspace:*
         version: link:../../packages/engine-fake
-      '@fitz/engine-llama-cpp':
-        specifier: workspace:*
-        version: link:../../packages/engine-llama-cpp
       '@fitz/engine-media-fake':
         specifier: workspace:*
         version: link:../../packages/engine-media-fake

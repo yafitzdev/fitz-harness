@@ -1,18 +1,22 @@
 # Engine adapters
 
-Fitz supports four engine modes through `FITZ_ENGINE_MODE`:
+Fitz supports three engine modes through `FITZ_ENGINE_MODE`:
 
 - `fake` is the deterministic development default.
 - `ninfer` manages the locally installed NInfer server and the imported Fitz recipes.
 - `openai-compatible` connects to an already-running OpenAI-compatible HTTP server.
-- `llama-cpp` launches and owns a `llama-server` process.
 
-## Engine repository folder
+Local engines, including llama.cpp, are registered through Playbooks and launched inside the managed
+Linux runtime. `FITZ_ENGINE_MODE` has no engine-specific local fallback.
 
-The Playbooks workspace discovers immediate child folders beneath one configurable root. On Windows the default is `C:\Users\<user>\llm\engines`. Every child is an independent engine repository:
+## Canonical inference registry
+
+The Playbooks workspace discovers immediate child folders beneath `/opt/fitz/llm/engines` in the
+managed `Fitz-Inference` WSL distribution. Windows accesses the same directory through the WSL UNC
+share; there is no second host registry. Every child is an independent engine repository:
 
 ```text
-C:\Users\<user>\llm\engines\
+/opt/fitz/llm/engines/
   engine-one\       # untouched Git checkout
   engine-two\       # untouched Git checkout
   private-fork\     # untouched Git checkout
@@ -24,10 +28,10 @@ Add or clone any engine into the root, refresh Playbooks, and its folder appears
 
 An engine can use either connection mode:
 
-- **Managed**: Fitz launches and stops a configured command either on Windows or in the named managed Linux runtime. Arguments can contain `{host}`, `{port}`, `{model}`, and `{context}` placeholders. Windows recipes stay inside the host engine repository; Linux recipes stay inside the deployed `/opt/fitz/llm/engines/<engine-id>` tree. Recipes identify `runtimeId: "inference-linux"` and never select a WSL distribution directly.
+- **Managed**: Fitz launches and stops a configured command in the named managed Linux runtime. Arguments can contain `{host}`, `{port}`, `{model}`, and `{context}` placeholders. Recipes use guest paths beneath `/opt/fitz/llm`, identify `runtimeId: "inference-linux"`, and never select a WSL distribution directly.
 - **External**: Fitz connects to an already-running OpenAI-compatible server URL.
 
-Recipes belong to their registered engine. Model artifacts live separately beneath `C:\Users\<user>\.llm\models`. Fast, Default, Smart, and the internal Subagent execution route are assigned only from Connections. Subagent does not appear in the chat tier picker. Independent delegated calls are submitted together, while the assigned recipe's `maxConcurrentGenerations` controls actual execution: `1` serializes isolated workers and larger values admit that many concurrent generations. Cloud recipes and continuously batched local servers use the same contract.
+Recipes belong to their registered engine. Model artifacts live separately beneath `/opt/fitz/llm/models`. Fast, Default, Smart, and the internal Subagent execution route are assigned only from Connections. Subagent does not appear in the chat tier picker. Independent delegated calls are submitted together, while the assigned recipe's `maxConcurrentGenerations` controls actual execution: `1` serializes isolated workers and larger values admit that many concurrent generations. Cloud recipes and continuously batched local servers use the same contract.
 
 ## Generic OpenAI-compatible server
 
@@ -35,6 +39,6 @@ Set `FITZ_ENGINE_MODE=openai-compatible`, `FITZ_OPENAI_BASE_URL`, and `FITZ_MODE
 
 ## llama.cpp
 
-Set `FITZ_ENGINE_MODE=llama-cpp`, `FITZ_LLAMA_CPP_EXECUTABLE`, `FITZ_LLAMA_CPP_MODEL`, and optionally `FITZ_MODEL_ID`, `FITZ_MODEL_CONTEXT_TOKENS`, and `FITZ_LLAMA_CPP_GPU_LAYERS`. Fitz binds the managed server to its allocated interface and port, generates a per-process API key, polls readiness, streams through the common OpenAI-compatible transport, and terminates the process during eviction.
+The registered CUDA build is `/opt/fitz/llm/engines/llama.cpp/build-linux-cuda/bin/llama-server`; GGUF payloads live beneath `/opt/fitz/llm/models/gguf`. Fitz binds the managed server to its allocated interface and port, polls readiness, streams through the common OpenAI-compatible transport, and terminates the guest process during eviction.
 
 `llama-server` enables continuous batching by default, but concurrency still requires multiple server slots via `--parallel N`. A recipe must declare the same capacity in `capabilities.maxConcurrentGenerations`; Fitz deliberately treats its current auto-discovered llama.cpp recipes as sequential because they launch with `--parallel 1`. Increasing slots also increases KV-cache pressure, so it is a per-recipe performance choice rather than a global default.

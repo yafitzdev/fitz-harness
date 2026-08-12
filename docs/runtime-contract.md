@@ -118,6 +118,8 @@ modules receive explicit capabilities; they do not reach back into host bootstra
 ## Canonical local filesystem
 
 - Mutable application state lives below the configured Fitz data root.
-- Engine repositories and model payloads live below `%USERPROFILE%\.llm`.
+- Every local engine, environment, model payload, registration, and inference log lives below
+  `/opt/fitz/llm` in the managed `Fitz-Inference` WSL distribution. Windows sees the registry through
+  `\\wsl.localhost\Fitz-Inference\opt\fitz\llm`; the VHDX is infrastructure below the Fitz data root.
 - Recipe configuration stores adapter-specific typed fields. The UI does not expose arbitrary JSON or
   hidden adapter aliases.

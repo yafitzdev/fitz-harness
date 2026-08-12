@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { isAbsolute, posix, relative, resolve } from "node:path";
+import { posix } from "node:path";
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { promisify } from "node:util";
 import type { Readable } from "node:stream";
@@ -16,8 +16,8 @@ import { OpenAICompatibleClient } from "./openai-compatible-client.js";
 
 export interface ManagedOpenAIConfiguration {
   enginePath: string;
-  runtime: "windows" | "linux-managed";
-  runtimeId?: string;
+  runtime: "linux-managed";
+  runtimeId: string;
   command: string;
   args: string[];
   workingDirectory: string;
@@ -68,46 +68,37 @@ export class ManagedOpenAIEngineAdapter implements EngineAdapter<ManagedOpenAIHa
     const config = readManagedOpenAIConfiguration(recipe);
     const values = { host: allocation.host, port: String(allocation.port), model: recipe.modelId, context: String(recipe.contextTokens) };
     const args = config.args.map((argument) => interpolate(argument, values));
-    const workingDirectory = config.runtime === "linux-managed"
-      ? posix.resolve(config.enginePath, config.workingDirectory)
-      : resolve(config.enginePath, config.workingDirectory);
-    if (config.runtime === "linux-managed") {
-      const target = this.#linuxRuntimes.get(config.runtimeId!);
-      if (!target) throw new Error(`Managed Linux runtime is unavailable: ${config.runtimeId}`);
-      const command = isPathLike(config.command) && !posix.isAbsolute(config.command)
-        ? posix.resolve(workingDirectory, config.command)
-        : config.command;
-      return {
-        executable: "wsl.exe",
-        args: ["-d", target.distribution, "-u", "root", "--", "sh", "-s", "--", workingDirectory, command, ...args],
-        env: {}, internalHost: allocation.host, internalPort: allocation.port,
-      };
-    }
-    const executable = isPathLike(config.command) && !isAbsolute(config.command) ? resolve(workingDirectory, config.command) : config.command;
-    return { executable, args, cwd: workingDirectory, env: {}, internalHost: allocation.host, internalPort: allocation.port };
+    const workingDirectory = posix.resolve(config.enginePath, config.workingDirectory);
+    const target = this.#linuxRuntimes.get(config.runtimeId);
+    if (!target) throw new Error(`Managed Linux runtime is unavailable: ${config.runtimeId}`);
+    const command = isPathLike(config.command) && !posix.isAbsolute(config.command)
+      ? posix.resolve(workingDirectory, config.command)
+      : config.command;
+    return {
+      executable: "wsl.exe",
+      args: ["-d", target.distribution, "-u", "root", "--", "sh", "-s", "--", workingDirectory, command, ...args],
+      env: {}, internalHost: allocation.host, internalPort: allocation.port,
+    };
   }
 
   async start(recipe: Recipe, spec: LaunchSpec, signal: AbortSignal): Promise<ManagedOpenAIHandle> {
     if (signal.aborted) throw abortError();
     const config = readManagedOpenAIConfiguration(recipe);
-    const linuxManaged = config.runtime === "linux-managed";
     const child = spawn(spec.executable, spec.args, { ...(spec.cwd ? { cwd: spec.cwd } : {}), env: { ...process.env, ...spec.env }, shell: false, windowsHide: true, stdio: "pipe" });
     const logs: string[] = [];
-    const guestProcess: { pid?: number; distribution: string } | undefined = linuxManaged
-      ? { distribution: this.#linuxRuntimes.get(config.runtimeId!)!.distribution }
-      : undefined;
+    const guestProcess: { pid?: number; distribution: string } = { distribution: this.#linuxRuntimes.get(config.runtimeId)!.distribution };
     captureLines(child.stdout, logs, "stdout");
     captureLines(child.stderr, logs, "stderr", (line) => {
       const match = /^__FITZ_GUEST_PID=(\d+)$/.exec(line);
       if (match && guestProcess) guestProcess.pid = Number.parseInt(match[1]!, 10);
     });
-    if (linuxManaged) child.stdin.end('cd "$1"\nprintf "__FITZ_GUEST_PID=%s\\n" "$$" >&2\nshift\nexec "$@"\n');
+    child.stdin.end('cd "$1"\nprintf "__FITZ_GUEST_PID=%s\\n" "$$" >&2\nshift\nexec "$@"\n');
     await waitForSpawn(child, signal);
     return {
       id: randomUUID(), recipeId: recipe.id, modelId: recipe.modelId,
       baseUrl: `http://${spec.internalHost}:${spec.internalPort}`, startedAt: new Date(), process: child,
       client: new OpenAICompatibleClient({ fetch: this.#fetch }), logs, healthPath: config.healthPath, readinessTimeoutMs: config.readinessTimeoutMs,
-      ...(guestProcess ? { guestProcess } : {}),
+      guestProcess,
     };
   }
 
@@ -152,28 +143,25 @@ export function readManagedOpenAIConfiguration(recipe: Recipe): ManagedOpenAICon
   if (recipe.adapter !== "openai-managed") throw new TypeError("Recipe adapter must be openai-managed");
   const value = recipe.configuration;
   const runtime = value.runtime;
-  if (runtime !== "windows" && runtime !== "linux-managed") throw new TypeError("runtime must be windows or linux-managed");
+  if (runtime !== "linux-managed") throw new TypeError("runtime must be linux-managed");
   const readinessTimeoutMs = value.readinessTimeoutMs === undefined ? 120_000 : numberValue(value.readinessTimeoutMs, "readinessTimeoutMs");
   return {
     enginePath: stringValue(value.enginePath, "enginePath"), runtime, command: stringValue(value.command, "command"),
     args: stringArray(value.args, "args"), workingDirectory: optionalString(value.workingDirectory, "workingDirectory") ?? ".",
     healthPath: optionalString(value.healthPath, "healthPath") ?? "/v1/models", readinessTimeoutMs,
-    ...(runtime === "linux-managed" ? { runtimeId: stringValue(value.runtimeId, "runtimeId") } : {}),
+    runtimeId: stringValue(value.runtimeId, "runtimeId"),
   };
 }
 
 export function validateManagedOpenAIConfiguration(recipe: Recipe): ValidationIssue[] {
   try {
     const config = readManagedOpenAIConfiguration(recipe);
-    const linuxManaged = config.runtime === "linux-managed";
-    const absolute = linuxManaged ? posix.isAbsolute(config.enginePath) : isAbsolute(config.enginePath);
-    if (!absolute) return [{ level: "error", code: "invalid_engine_path", message: "enginePath must be absolute" }];
-    const workingDirectory = linuxManaged ? posix.resolve(config.enginePath, config.workingDirectory) : resolve(config.enginePath, config.workingDirectory);
-    const within = linuxManaged ? isWithinPosix : isWithin;
-    if (!within(config.enginePath, workingDirectory)) return [{ level: "error", code: "invalid_working_directory", message: "workingDirectory must stay inside enginePath" }];
-    const commandAbsolute = linuxManaged ? posix.isAbsolute(config.command) : isAbsolute(config.command);
-    const resolvedCommand = linuxManaged ? posix.resolve(workingDirectory, config.command) : resolve(workingDirectory, config.command);
-    if (isPathLike(config.command) && !commandAbsolute && !within(config.enginePath, resolvedCommand)) {
+    if (!posix.isAbsolute(config.enginePath)) return [{ level: "error", code: "invalid_engine_path", message: "enginePath must be absolute" }];
+    const workingDirectory = posix.resolve(config.enginePath, config.workingDirectory);
+    if (!isWithinPosix(config.enginePath, workingDirectory)) return [{ level: "error", code: "invalid_working_directory", message: "workingDirectory must stay inside enginePath" }];
+    const commandAbsolute = posix.isAbsolute(config.command);
+    const resolvedCommand = posix.resolve(workingDirectory, config.command);
+    if (isPathLike(config.command) && !commandAbsolute && !isWithinPosix(config.enginePath, resolvedCommand)) {
       return [{ level: "error", code: "invalid_command_path", message: "Relative command paths must stay inside enginePath" }];
     }
     if (!config.healthPath.startsWith("/") || config.healthPath.startsWith("//")) return [{ level: "error", code: "invalid_health_path", message: "healthPath must be an absolute URL path" }];
@@ -184,7 +172,6 @@ export function validateManagedOpenAIConfiguration(recipe: Recipe): ValidationIs
 
 function interpolate(value: string, replacements: Record<string, string>): string { return value.replace(/\{(host|port|model|context)\}/g, (_match, key: string) => replacements[key] ?? ""); }
 function isPathLike(value: string): boolean { return value.startsWith(".") || value.includes("/") || value.includes("\\"); }
-function isWithin(parent: string, child: string): boolean { const path = relative(resolve(parent), resolve(child)); return path === "" || (!path.startsWith("..") && !isAbsolute(path)); }
 function isWithinPosix(parent: string, child: string): boolean { const path = posix.relative(posix.resolve(parent), posix.resolve(child)); return path === "" || (!path.startsWith("..") && !posix.isAbsolute(path)); }
 function captureLines(stream: Readable, logs: string[], source: string, onLine?: (line: string) => void): void { stream.setEncoding("utf8"); stream.on("data", (chunk: string) => { for (const line of chunk.split(/\r?\n/).filter(Boolean)) { onLine?.(line); logs.push(`${source}: ${line}`); if (logs.length > 500) logs.shift(); } }); }
 async function waitForSpawn(child: ChildProcessWithoutNullStreams, signal: AbortSignal): Promise<void> { await new Promise<void>((resolvePromise, reject) => { const spawned = () => finish(resolvePromise); const failed = (error: Error) => finish(() => reject(error)); const aborted = () => { child.kill("SIGKILL"); finish(() => reject(abortError())); }; const finish = (action: () => void) => { child.off("spawn", spawned); child.off("error", failed); signal.removeEventListener("abort", aborted); action(); }; child.once("spawn", spawned); child.once("error", failed); signal.addEventListener("abort", aborted, { once: true }); }); }

@@ -64,14 +64,14 @@ Key behaviors baked in (from the design doc §5):
 - **`create-app.ts` style**: one endpoint per line (compact Fastify handlers), giant file (~1830 lines). Match it; reviewers expect consistency.
 - **Never write `*/` inside a JSDoc block comment** — e.g. describe `Content-Range` as `bytes * /<total>` (space between `*` and `/`). `*/` terminates the comment early and produces bizarre TS syntax errors (a real bug in PR 8; it was fixed).
 - **Migrations are versioned in `packages/storage/src/migrations.ts`** — v8 is the `sessions_v8` rebuild, v9 is `media_jobs` + `media_job_events`. If you add a migration, append v10+; never edit applied migrations.
-- **Engine modes** are selected by `FITZ_ENGINE_MODE` (default `ninfer`; also `comfyui`, `fake`, `openai-compatible`, `llama-cpp`) in `apps/host/src/server.ts`. `comfyui` mode **requires** `FITZ_COMFYUI_DIR` unless `FITZ_COMFYUI_BASE_URL` is set; optional `FITZ_COMFYUI_EXECUTABLE`, `FITZ_COMFYUI_ENTRYPOINT` (default `main.py`), `FITZ_COMFYUI_EXPECTED_VRAM_MIB`.
+- **Engine modes** are selected by `FITZ_ENGINE_MODE` (default `ninfer`; also `comfyui`, `fake`, `openai-compatible`) in `apps/host/src/server.ts`. Local engines such as llama.cpp are registered through Playbooks and launched in the managed Linux runtime. `comfyui` mode **requires** `FITZ_COMFYUI_DIR` unless `FITZ_COMFYUI_BASE_URL` is set; optional `FITZ_COMFYUI_EXECUTABLE`, `FITZ_COMFYUI_ENTRYPOINT` (default `main.py`), `FITZ_COMFYUI_EXPECTED_VRAM_MIB`.
 - **Desktop spawns the bundled host** (`apps/desktop/src/main.ts` `ensureBundledLocalHost`): `release/host/runtime/node.exe release/host/dist/server.js` with **only** `FITZ_HOST` + `FITZ_PORT` env, after a `/health` check. So the desktop's host is always ninfer mode — to test comfyui you must run the host yourself first so the `/health` check reuses it.
 
 ## Machine/runtime state (the user's actual Windows box)
 
 - Host DB: `C:\Users\yanfi\AppData\Local\Fitz Codex\database\fitz.db` (via `resolveRuntimePaths`). **Currently at schema v7** — the host that last wrote it predates media. No `media_jobs` / `media_job_events` / `engines` tables; only ninfer Qwen recipes/routes.
 - Bundled host binary: `release/host/dist/server.js` built **2026-08-06 01:05** — stale, pre-media. Source `apps/host/src/server.ts` was modified 2026-08-08 23:01. **The installed app does not have the media code yet.**
-- Settings in the DB include `engineRoot = "C:\\Users\\yanfi\\.llm\\engines"` and `security.authPepper`.
+- The host always supplies the canonical WSL engine root, so any historical `engineRoot` value in the DB is overwritten with `\\wsl.localhost\Fitz-Inference\opt\fitz\llm\engines` at startup.
 - Engine roots are **read-only engine repositories** (see `docs/engine-adapters.md`); the settings UI and catalog target GGUF models only.
 - Dev runs use a repo-contained data root (`FITZ_DATA_ROOT` → `data/` in the repo) via `scripts/dev.mjs`, which builds first, guards port 8787, and supports **only** `--fake` and ninfer modes (no `--comfyui` flag — run the host directly for that).
 

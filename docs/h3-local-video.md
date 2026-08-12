@@ -8,12 +8,12 @@ and generated output do not pollute that repository.
 
 | Purpose | Location |
 | --- | --- |
-| Upstream ComfyUI checkout | `%USERPROFILE%/.llm/engines/ComfyUI` |
-| Isolated Python environment | `%USERPROFILE%/.llm/environments/comfyui-python` |
-| H3 model files | `%USERPROFILE%/.llm/models/comfyui` |
-| ComfyUI LoRAs | `%USERPROFILE%/.llm/models/comfyui/loras` |
-| ComfyUI model-path config | `%USERPROFILE%/.llm/config/comfyui-extra-model-paths.yaml` |
-| Generated intermediates | Fitz data root `cache/comfyui-output` |
+| Upstream ComfyUI checkout | `/opt/fitz/llm/engines/ComfyUI` |
+| Isolated Python environment | `/opt/fitz/llm/environments/comfyui` |
+| H3 model files | `/opt/fitz/llm/models/comfyui` |
+| ComfyUI LoRAs | `/opt/fitz/llm/models/comfyui/loras` |
+| ComfyUI model-path config | `/opt/fitz/llm/config/comfyui-extra-model-paths.yaml` |
+| Generated intermediates | `/opt/fitz/llm/logs/comfyui-output` |
 
 The first local install uses Comfy-Org's official FL2VA subset (about 42.5 GB):
 

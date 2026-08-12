@@ -12,7 +12,7 @@ describe("production NiNfer playbook", () => {
     environmentRoot: "/opt/fitz/llm/environments",
     logRoot: "/opt/fitz/llm/logs",
     modelRoot: "/opt/fitz/llm/models/ninfer",
-    executable: "/opt/fitz/llm/engines/ninfer/ninfer-serve",
+    executable: "/opt/fitz/llm/environments/ninfer/bin/ninfer-serve",
   };
 
   it("contains exactly two validated recipes and the fixed fast/default/smart routes", () => {

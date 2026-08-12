@@ -16,11 +16,11 @@ describe("local ComfyUI reconciliation", () => {
     const paths: FitzRuntimePaths = {
       dataRoot: join(root, "data"), databasePath: join(root, "data", "fitz.db"), piAgentDir: join(root, "data", "pi"),
       logsDir: join(root, "data", "logs"), cacheDir: join(root, "data", "cache"), llmRoot: join(root, "llm"),
-      engineRoot: join(root, "llm", "engines"), modelRoot: join(root, "llm", "models"), environmentRoot: join(root, "llm", "environments"), snapshotsDir: join(root, "data", "snapshots"),
+      engineRoot: join(root, "llm", "engines"), modelRoot: join(root, "llm", "models"), ggufModelRoot: join(root, "llm", "models", "gguf"), environmentRoot: join(root, "llm", "environments"), runtimeRoot: join(root, "data", "runtimes"), snapshotsDir: join(root, "data", "snapshots"), artifactsDir: join(root, "data", "artifacts"), backupsDir: join(root, "data", "backups"),
     };
     const local = localComfyUIPaths(paths);
     for (const file of [
-      join(local.engineDir, "main.py"), local.executable, local.modelConfigPath,
+      join(local.hostEngineDir, "main.py"), local.hostEnvironmentMarker, local.hostModelConfigPath,
       join(paths.modelRoot, "comfyui", "diffusion_models", "minimax_h3_fl2va_pruned_int8_convrot.safetensors"),
       join(paths.modelRoot, "comfyui", "text_encoders", "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"),
       join(paths.modelRoot, "comfyui", "vae", "minimax_h3_video_vae_fp16.safetensors"),
@@ -42,11 +42,11 @@ describe("local ComfyUI reconciliation", () => {
     const paths: FitzRuntimePaths = {
       dataRoot: join(root, "data"), databasePath: join(root, "data", "fitz.db"), piAgentDir: join(root, "data", "pi"),
       logsDir: join(root, "data", "logs"), cacheDir: join(root, "data", "cache"), llmRoot: join(root, "llm"),
-      engineRoot: join(root, "llm", "engines"), modelRoot: join(root, "llm", "models"), environmentRoot: join(root, "llm", "environments"), snapshotsDir: join(root, "data", "snapshots"),
+      engineRoot: join(root, "llm", "engines"), modelRoot: join(root, "llm", "models"), ggufModelRoot: join(root, "llm", "models", "gguf"), environmentRoot: join(root, "llm", "environments"), runtimeRoot: join(root, "data", "runtimes"), snapshotsDir: join(root, "data", "snapshots"), artifactsDir: join(root, "data", "artifacts"), backupsDir: join(root, "data", "backups"),
     };
     const local = localComfyUIPaths(paths);
     for (const file of [
-      join(local.engineDir, "main.py"), local.executable, local.modelConfigPath,
+      join(local.hostEngineDir, "main.py"), local.hostEnvironmentMarker, local.hostModelConfigPath,
       join(paths.modelRoot, "comfyui", "diffusion_models", "minimax_h3_fl2va_pruned_int8_convrot.safetensors"),
       join(paths.modelRoot, "comfyui", "diffusion_models", "krea2_turbo_nvfp4.safetensors"),
       join(paths.modelRoot, "comfyui", "diffusion_models", "qwen_image_2512_fp8_e4m3fn.safetensors"),
@@ -79,11 +79,11 @@ describe("local ComfyUI reconciliation", () => {
     const paths: FitzRuntimePaths = {
       dataRoot: join(root, "data"), databasePath: join(root, "data", "fitz.db"), piAgentDir: join(root, "data", "pi"),
       logsDir: join(root, "data", "logs"), cacheDir: join(root, "data", "cache"), llmRoot: join(root, "llm"),
-      engineRoot: join(root, "llm", "engines"), modelRoot: join(root, "llm", "models"), environmentRoot: join(root, "llm", "environments"), snapshotsDir: join(root, "data", "snapshots"),
+      engineRoot: join(root, "llm", "engines"), modelRoot: join(root, "llm", "models"), ggufModelRoot: join(root, "llm", "models", "gguf"), environmentRoot: join(root, "llm", "environments"), runtimeRoot: join(root, "data", "runtimes"), snapshotsDir: join(root, "data", "snapshots"), artifactsDir: join(root, "data", "artifacts"), backupsDir: join(root, "data", "backups"),
     };
     const local = localComfyUIPaths(paths);
     for (const file of [
-      join(local.engineDir, "main.py"), local.executable, local.modelConfigPath,
+      join(local.hostEngineDir, "main.py"), local.hostEnvironmentMarker, local.hostModelConfigPath,
       join(paths.modelRoot, "comfyui", "diffusion_models", "minimax_h3_fl2va_pruned_int8_convrot.safetensors"),
       join(paths.modelRoot, "comfyui", "text_encoders", "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"),
       join(paths.modelRoot, "comfyui", "vae", "minimax_h3_video_vae_fp16.safetensors"),
@@ -106,11 +106,11 @@ describe("local ComfyUI reconciliation", () => {
     const paths: FitzRuntimePaths = {
       dataRoot: join(root, "data"), databasePath: join(root, "data", "fitz.db"), piAgentDir: join(root, "data", "pi"),
       logsDir: join(root, "data", "logs"), cacheDir: join(root, "data", "cache"), llmRoot: join(root, "llm"),
-      engineRoot: join(root, "llm", "engines"), modelRoot: join(root, "llm", "models"), environmentRoot: join(root, "llm", "environments"), snapshotsDir: join(root, "data", "snapshots"),
+      engineRoot: join(root, "llm", "engines"), modelRoot: join(root, "llm", "models"), ggufModelRoot: join(root, "llm", "models", "gguf"), environmentRoot: join(root, "llm", "environments"), runtimeRoot: join(root, "data", "runtimes"), snapshotsDir: join(root, "data", "snapshots"), artifactsDir: join(root, "data", "artifacts"), backupsDir: join(root, "data", "backups"),
     };
     const local = localComfyUIPaths(paths);
     for (const file of [
-      join(local.engineDir, "main.py"), local.executable, local.modelConfigPath,
+      join(local.hostEngineDir, "main.py"), local.hostEnvironmentMarker, local.hostModelConfigPath,
       join(paths.modelRoot, "comfyui", "diffusion_models", "minimax_h3_fl2va_pruned_int8_convrot.safetensors"),
       join(paths.modelRoot, "comfyui", "text_encoders", "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"),
       join(paths.modelRoot, "comfyui", "vae", "minimax_h3_video_vae_fp16.safetensors"),

@@ -1,17 +1,16 @@
-import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveRuntimePaths } from "./runtime-paths.js";
 
 describe("Fitz runtime paths", () => {
-  it("uses the hidden user LLM directory by default", () => {
+  it("uses the managed Linux registry by default on Windows", () => {
     const paths = resolveRuntimePaths({ LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local" });
-    expect(paths.llmRoot).toBe(resolve(homedir(), ".llm"));
-    expect(paths.engineRoot).toBe(resolve(homedir(), ".llm", "engines"));
-    expect(paths.modelRoot).toBe(resolve(homedir(), ".llm", "models"));
-    expect(paths.ggufModelRoot).toBe(resolve(homedir(), ".llm", "models", "gguf"));
-    expect(paths.environmentRoot).toBe(resolve(homedir(), ".llm", "environments"));
-    expect(paths.runtimeRoot).toBe(resolve(homedir(), ".llm", "runtimes"));
+    expect(paths.llmRoot).toBe("\\\\wsl.localhost\\Fitz-Inference\\opt\\fitz\\llm");
+    expect(paths.engineRoot).toBe("\\\\wsl.localhost\\Fitz-Inference\\opt\\fitz\\llm\\engines");
+    expect(paths.modelRoot).toBe("\\\\wsl.localhost\\Fitz-Inference\\opt\\fitz\\llm\\models");
+    expect(paths.ggufModelRoot).toBe("\\\\wsl.localhost\\Fitz-Inference\\opt\\fitz\\llm\\models\\gguf");
+    expect(paths.environmentRoot).toBe("\\\\wsl.localhost\\Fitz-Inference\\opt\\fitz\\llm\\environments");
+    expect(paths.runtimeRoot).toBe("C:\\Users\\tester\\AppData\\Local\\Fitz Codex\\runtimes");
   });
 
   it("keeps mutable host state and Pi packages outside the installation", () => {
@@ -25,7 +24,7 @@ describe("Fitz runtime paths", () => {
     expect(paths.modelRoot).toBe("C:\\Users\\tester\\llm\\models");
     expect(paths.ggufModelRoot).toBe("C:\\Users\\tester\\llm\\models\\gguf");
     expect(paths.environmentRoot).toBe("C:\\Users\\tester\\llm\\environments");
-    expect(paths.runtimeRoot).toBe("C:\\Users\\tester\\llm\\runtimes");
+    expect(paths.runtimeRoot).toBe("C:\\Users\\tester\\AppData\\Local\\Fitz Codex\\runtimes");
   });
 
   it("derives the database from the data root and allows canonical roots to be overridden", () => {

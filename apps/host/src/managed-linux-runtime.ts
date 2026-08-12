@@ -1,9 +1,8 @@
 import { join, resolve } from "node:path";
 import type { FitzRuntimePaths } from "./runtime-paths.js";
 
-/** One Fitz-owned Linux filesystem shared by Linux-only inference engines.
- * Engine source remains in the host registry; only deployed executables,
- * package environments, and runtime-resident model payloads live here. */
+/** The single Fitz-owned inference filesystem. All local engines, environments,
+ * model payloads, registrations, configuration, and logs live inside it. */
 export const MANAGED_LINUX_RUNTIME_ID = "inference-linux";
 export const MANAGED_LINUX_DISTRIBUTION = "Fitz-Inference";
 export const MANAGED_LINUX_GUEST_ROOT = "/opt/fitz/llm";
