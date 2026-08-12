@@ -4,10 +4,13 @@ import { createNInferPlaybook, NINFER_PLAYBOOK_ID } from "./ninfer-playbook.js";
 
 describe("production NiNfer playbook", () => {
   const runtime = {
-    id: "ninfer-linux",
-    distribution: "Fitz-NInfer",
-    hostRoot: "C:\\Users\\tester\\.llm\\runtimes\\ninfer-linux",
+    id: "inference-linux",
+    distribution: "Fitz-Inference",
+    hostRoot: "C:\\Users\\tester\\.llm\\runtimes\\inference-linux",
     guestRoot: "/opt/fitz/llm",
+    engineRoot: "/opt/fitz/llm/engines",
+    environmentRoot: "/opt/fitz/llm/environments",
+    logRoot: "/opt/fitz/llm/logs",
     modelRoot: "/opt/fitz/llm/models/ninfer",
     executable: "/opt/fitz/llm/engines/ninfer/ninfer-serve",
   };
@@ -30,8 +33,8 @@ describe("production NiNfer playbook", () => {
 
   it("resolves logical recipes into the managed Linux runtime", () => {
     const playbook = createNInferPlaybook(runtime);
-    expect(playbook.recipes.every((recipe) => recipe.configuration.runtimeId === "ninfer-linux")).toBe(true);
-    expect(playbook.recipes.every((recipe) => recipe.configuration.runtimeDistribution === "Fitz-NInfer")).toBe(true);
+    expect(playbook.recipes.every((recipe) => recipe.configuration.runtimeId === "inference-linux")).toBe(true);
+    expect(playbook.recipes.every((recipe) => recipe.configuration.runtimeDistribution === undefined)).toBe(true);
     expect(playbook.recipes[1]!.configuration).toMatchObject({
       executable: runtime.executable,
       artifact: "/opt/fitz/llm/models/ninfer/qwen3_6_27b_nvfp4.ninfer",

@@ -25,6 +25,7 @@ import { contextTokensForRoute } from "./route-context.js";
 import { WindowsStartupManager } from "@fitz/connectivity";
 import { resolveRuntimePaths } from "./runtime-paths.js";
 import { NInferRuntimeManager } from "./ninfer-runtime.js";
+import { managedLinuxRuntimeLayout, managedLinuxRuntimeMap } from "./managed-linux-runtime.js";
 import { AgentSafetyService } from "./agent-safety/index.js";
 import { localComfyUIPaths, localComfyUIRecipeIds, reconcileLocalComfyUIConfiguration } from "./comfyui-reconcile.js";
 import { ensureComfyUISafeModeExtension } from "./comfyui-safe-mode.js";
@@ -32,6 +33,9 @@ import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
 import { HostInstanceLock } from "./host-instance-lock.js";
 import { installGracefulShutdown } from "./graceful-shutdown.js";
 import { LlamaCppModelReconciler } from "./llama-cpp-reconcile.js";
+import { VllmModelReconciler } from "./vllm-reconcile.js";
+import { createSubagentTool, isDelegatedToolContext } from "./subagent-tools.js";
+import type { AgentRunCoordinator } from "./agent-runs.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const runtimePaths = resolveRuntimePaths();
@@ -59,12 +63,15 @@ if (restoredStorage) console.info("Scheduled storage restore applied", restoredS
 mkdirSync(dirname(databasePath), { recursive: true });
 for (const directory of [runtimePaths.piAgentDir, runtimePaths.logsDir, runtimePaths.cacheDir, runtimePaths.engineRoot, runtimePaths.modelRoot, runtimePaths.ggufModelRoot, runtimePaths.environmentRoot, runtimePaths.runtimeRoot, runtimePaths.snapshotsDir, runtimePaths.artifactsDir, runtimePaths.backupsDir]) mkdirSync(directory, { recursive: true });
 ensureComfyUISafeModeExtension(localComfyUIPaths(runtimePaths).baseDir);
+const linuxRuntimeLayout = managedLinuxRuntimeLayout(runtimePaths);
+const linuxRuntimes = managedLinuxRuntimeMap(linuxRuntimeLayout);
 const ninferRuntime = engineMode === "ninfer" && process.platform === "win32"
   ? new NInferRuntimeManager({ paths: runtimePaths, sourceDistribution: process.env.FITZ_NINFER_SOURCE_WSL_DISTRIBUTION ?? "Ubuntu" })
   : undefined;
 const engineOptions = engineModeOptions(engineMode);
 const store = new SqliteStore(databasePath);
 const llamaCppModels = new LlamaCppModelReconciler(store, runtimePaths);
+const vllmModels = new VllmModelReconciler(store, runtimePaths, linuxRuntimeLayout);
 const artifacts = new ArtifactRepository(store, new LocalBlobStore(runtimePaths.artifactsDir), { quotaBytes: () => store.getSetting<number>("artifactStorageQuotaBytes") });
 const artifactRecovery = await artifacts.initialize();
 if (artifactRecovery.migrated || artifactRecovery.collected) console.info("Artifact store reconciled", artifactRecovery);
@@ -75,7 +82,7 @@ const authPepper = authMode === "required" ? resolveAuthPepper(store) : undefine
 // tools: in-process submits build device-less principals via `principalForUser` (§5.9).
 const security = authPepper ? new SecurityService(store, authPepper) : undefined;
 if (engineMode === "ninfer") {
-  if (!ninferRuntime) throw new Error("NInfer requires the canonical ninfer-linux runtime");
+  if (!ninferRuntime) throw new Error("NInfer requires the canonical inference-linux runtime");
   reconcileNInferConfiguration(store, ninferRuntime.layout);
 }
 // A fresh store is seeded atomically by createHost from engineOptions. Existing
@@ -93,6 +100,7 @@ const safety = new AgentSafetyService({
 // Late-bound: the media coordinator is constructed inside createHost, but customTools
 // runs per agent run — after host startup — so the closure reads the assigned instance.
 let mediaJobs: MediaJobCoordinator | undefined;
+let agentRuns: AgentRunCoordinator | undefined;
 const workspaceMutationLeases = new WorkspaceMutationLeaseManager();
 const runtime = createHost({
   store,
@@ -118,7 +126,10 @@ const runtime = createHost({
     modelRoot: runtimePaths.ggufModelRoot,
     ...(process.env.FITZ_HF_ENDPOINT ? { endpoint: process.env.FITZ_HF_ENDPOINT } : {}),
   }),
-  reconcileLocalModels: (routes) => llamaCppModels.reconcile(routes),
+  reconcileLocalModels: (routes) => {
+    llamaCppModels.reconcile(routes);
+    vllmModels.reconcile(routes);
+  },
   ...(ninferRuntime ? { ninferRuntime } : {}),
   ...(authPepper ? { authPepper } : {}),
   ...engineOptions,
@@ -133,7 +144,11 @@ const runtime = createHost({
       contextWindow: (request) => contextTokensForRoute(store, request.model),
       cwd: (request) => {
         if (process.env.FITZ_AGENT_CWD) return process.env.FITZ_AGENT_CWD;
-        const session = request.sessionId ? store.getSession(request.sessionId) : undefined;
+        const inheritedSessionId = request.delegation
+          ? store.getAgentRun(request.delegation.parentRunId)?.sessionId
+          : undefined;
+        const sessionId = request.sessionId ?? inheritedSessionId;
+        const session = sessionId ? store.getSession(sessionId) : undefined;
         const project = session?.projectId ? store.getProject(session.projectId) : undefined;
         return project?.rootPath ?? process.cwd();
       },
@@ -142,19 +157,24 @@ const runtime = createHost({
       toolPolicy: safety.createToolEvaluator(),
       toolLease: workspaceMutationLeases.acquire,
       redactToolResult: safety.createResultRedactor(),
-      customTools: (context) => [
-        ...safety.createCustomTools()(context),
-        // Authenticated runs enforce the owner's media quota and route grants.
-        // Explicit local auth-disabled mode has no user and follows the existing
-        // administrator-diagnostic path used by the management media test.
-        ...(mediaJobs ? createMediaTools({ mediaJobs, store, ...(security ? { security } : {}) })(context) : []),
-      ],
+      customTools: (context) => {
+        const delegated = isDelegatedToolContext(store, context);
+        return [
+          ...safety.createCustomTools()(context),
+          // Authenticated runs enforce the owner's media quota and route grants.
+          // Explicit local auth-disabled mode has no user and follows the existing
+          // administrator-diagnostic path used by the management media test.
+          ...(!delegated && mediaJobs ? createMediaTools({ mediaJobs, store, ...(security ? { security } : {}) })(context) : []),
+          ...(!delegated && agentRuns ? [createSubagentTool({ agentRuns, store }, context)] : []),
+        ];
+      },
       agentDir: runtimePaths.piAgentDir,
       llmRoot: runtimePaths.llmRoot,
     }),
   } : {}),
 });
 mediaJobs = runtime.mediaJobs;
+agentRuns = runtime.agentRuns;
 let removeSignalHandlers: () => void = () => undefined;
 runtime.app.addHook("onClose", async () => {
   removeSignalHandlers();
@@ -200,13 +220,12 @@ function resolveAuthPepper(store: SqliteStore): string {
 }
 
 function ninferOptions() {
-  if (!ninferRuntime) throw new Error("NInfer requires the canonical ninfer-linux runtime");
+  if (!ninferRuntime) throw new Error("NInfer requires the canonical inference-linux runtime");
   const playbook = createNInferPlaybook(ninferRuntime.layout);
   const mediaPlaybook = installedLocalComfyUIPlaybook();
-  const wslDistribution = process.env.FITZ_NINFER_WSL_DISTRIBUTION ?? ninferRuntime?.layout.distribution ?? (process.platform === "win32" ? "Ubuntu" : undefined);
-  const adapter = new NInferEngineAdapter({ ...(wslDistribution ? { wslDistribution, wslUser: process.env.FITZ_NINFER_WSL_USER ?? "root" } : {}) });
+  const adapter = new NInferEngineAdapter({ managedLinux: { distribution: ninferRuntime.layout.distribution, user: "root" } });
   return {
-    adapters: [adapter, new ComfyUIEngineAdapter(), new ManagedOpenAIEngineAdapter(), new OpenAICompatibleEngineAdapter()],
+    adapters: [adapter, new ComfyUIEngineAdapter(), managedOpenAIAdapter(), new OpenAICompatibleEngineAdapter()],
     initialRecipes: [...playbook.recipes, ...(mediaPlaybook?.recipes ?? [])],
     initialRoutes: [...playbook.routes, ...(mediaPlaybook?.routes ?? [])],
   };
@@ -256,7 +275,7 @@ function engineModeOptions(mode: string) {
     const mediaPlaybook = installedLocalComfyUIPlaybook();
     return {
       fakeAdapter,
-      adapters: [fakeAdapter, new FakeMediaEngineAdapter(), new ComfyUIEngineAdapter(), new ManagedOpenAIEngineAdapter(), new OpenAICompatibleEngineAdapter()],
+      adapters: [fakeAdapter, new FakeMediaEngineAdapter(), new ComfyUIEngineAdapter(), managedOpenAIAdapter(), new OpenAICompatibleEngineAdapter()],
       initialRecipes: [...DEFAULT_RECIPES, ...(mediaPlaybook?.recipes ?? [])],
       initialRoutes: [...DEFAULT_ROUTES, ...(mediaPlaybook?.routes ?? [])],
     };
@@ -268,7 +287,7 @@ function engineModeOptions(mode: string) {
       ...(process.env.FITZ_OPENAI_API_KEY_ENV ? { apiKeyEnv: process.env.FITZ_OPENAI_API_KEY_ENV } : {}),
       ...(process.env.FITZ_OPENAI_ALLOW_INSECURE_REMOTE === "true" ? { allowInsecureRemote: true } : {}),
     });
-    return singleEngineOptions([new OpenAICompatibleEngineAdapter(), new ManagedOpenAIEngineAdapter(), new ComfyUIEngineAdapter()], recipe);
+    return singleEngineOptions([new OpenAICompatibleEngineAdapter(), managedOpenAIAdapter(), new ComfyUIEngineAdapter()], recipe);
   }
   if (mode === "llama-cpp") {
     const recipe = engineRecipe("llama-cpp", {
@@ -277,7 +296,7 @@ function engineModeOptions(mode: string) {
       contextTokens: parsePositiveInteger(process.env.FITZ_MODEL_CONTEXT_TOKENS ?? "32768", "FITZ_MODEL_CONTEXT_TOKENS"),
       ...(process.env.FITZ_LLAMA_CPP_GPU_LAYERS ? { gpuLayers: parseNonNegativeInteger(process.env.FITZ_LLAMA_CPP_GPU_LAYERS, "FITZ_LLAMA_CPP_GPU_LAYERS") } : {}),
     });
-    return singleEngineOptions([new LlamaCppEngineAdapter(), new ManagedOpenAIEngineAdapter(), new OpenAICompatibleEngineAdapter(), new ComfyUIEngineAdapter()], recipe);
+    return singleEngineOptions([new LlamaCppEngineAdapter(), managedOpenAIAdapter(), new OpenAICompatibleEngineAdapter(), new ComfyUIEngineAdapter()], recipe);
   }
   if (mode === "comfyui") return comfyuiOptions();
   throw new Error(`Unsupported FITZ_ENGINE_MODE: ${mode}`);
@@ -310,10 +329,14 @@ function comfyuiOptions() {
     ...(installedRecipeIds.length ? { recipeIds: installedRecipeIds } : {}),
   });
   return {
-    adapters: [new ComfyUIEngineAdapter(), new ManagedOpenAIEngineAdapter(), new OpenAICompatibleEngineAdapter()],
+    adapters: [new ComfyUIEngineAdapter(), managedOpenAIAdapter(), new OpenAICompatibleEngineAdapter()],
     initialRecipes: playbook.recipes,
     initialRoutes: playbook.routes,
   };
+}
+
+function managedOpenAIAdapter(): ManagedOpenAIEngineAdapter {
+  return new ManagedOpenAIEngineAdapter({ linuxRuntimes });
 }
 
 function engineRecipe(adapter: "openai-compatible" | "llama-cpp", configuration: Record<string, unknown>): Recipe {

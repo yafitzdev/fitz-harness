@@ -51,7 +51,8 @@ export class LifecycleManager {
   #activeLeases = 0;
   #failureReason: string | undefined;
   #evictionTask: ScheduledTask | undefined;
-  #readinessTask: { recipeId: string; promise: Promise<void> } | undefined;
+  #admissionTail: Promise<void> = Promise.resolve();
+  readonly #leaseWaiters = new Set<() => void>();
   readonly #preparationTasks = new Map<string, { promise: Promise<void>; controller: AbortController }>();
 
   constructor(options: LifecycleManagerOptions) {
@@ -85,38 +86,28 @@ export class LifecycleManager {
     signal: AbortSignal,
     hooks: LifecycleRunHooks = {},
   ): AsyncIterable<InferenceDelta> {
-    await this.#ensureReady(recipe, signal);
-    if (!this.#adapter || !this.#handle) throw new Error("Engine instance is not ready");
-    if (isMediaEngineAdapter(this.#adapter)) {
+    const { adapter, handle } = await this.#acquireLease(recipe, signal);
+    if (isMediaEngineAdapter(adapter)) {
+      await this.#releaseLease(false, signal.aborted ? "generation-cancelled" : "generation-rejected");
       throw new Error(`Recipe ${recipe.id} uses a media engine adapter; runMedia is required`);
     }
-
-    this.#cancelEviction();
-    this.#activeLeases += 1;
-    this.#transition("BUSY", "generation-started");
     hooks.onInferenceStarted?.();
     let requestRejected = false;
+    let generationFailed = false;
     try {
-      for await (const delta of this.#adapter.streamChat(this.#handle, request, signal)) {
+      for await (const delta of adapter.streamChat(handle, request, signal)) {
         this.#lastActivityAt = this.#clock.now();
         yield delta;
       }
     } catch (error) {
       requestRejected = error instanceof InferenceRequestRejectedError;
-      if (!isAbortError(error) && !requestRejected) {
-        this.#failureReason = errorMessage(error);
-        this.#transition("FAILED", "generation-failed");
-      }
+      generationFailed = !isAbortError(error) && !requestRejected;
+      if (generationFailed) this.#failureReason = errorMessage(error);
       throw error;
     } finally {
-      this.#activeLeases = Math.max(0, this.#activeLeases - 1);
-      this.#lastActivityAt = this.#clock.now();
-      if (this.#state === "BUSY") {
-        this.#transition("READY", signal.aborted
-          ? "generation-cancelled"
-          : requestRejected ? "generation-rejected" : "generation-completed");
-        this.#scheduleEviction();
-      }
+      await this.#releaseLease(generationFailed, signal.aborted
+        ? "generation-cancelled"
+        : requestRejected ? "generation-rejected" : generationFailed ? "generation-failed" : "generation-completed");
     }
   }
 
@@ -128,16 +119,12 @@ export class LifecycleManager {
     request: MediaGenerationRequest,
     signal: AbortSignal,
   ): AsyncIterable<MediaJobEvent> {
-    await this.#ensureReady(recipe, signal);
-    const adapter = this.#mediaAdapter(recipe);
-    if (!this.#handle) throw new Error("Engine instance is not ready");
-    const handle = this.#handle;
+    const lease = await this.#acquireLease(recipe, signal);
+    const adapter = this.#mediaAdapter(recipe, lease.adapter);
+    const handle = lease.handle;
     const thermal = this.thermalGuard.start((adapter.executionLocation?.(recipe) ?? "local") === "local");
-
-    this.#cancelEviction();
-    this.#activeLeases += 1;
-    this.#transition("BUSY", "media-generation-started");
     let job: MediaJobHandle | undefined;
+    let generationFailed = false;
     try {
       await thermal.regulate();
       job = await adapter.submit(handle, request, signal);
@@ -167,19 +154,16 @@ export class LifecycleManager {
         }
       }
       if (!isAbortError(error)) {
+        generationFailed = true;
         this.#failureReason = errorMessage(error);
-        this.#transition("FAILED", "media-generation-failed");
         if (thermalFailure) await this.#unloadAfterThermalFailure(adapter, handle);
       }
       throw error;
     } finally {
       await thermal.close();
-      this.#activeLeases = Math.max(0, this.#activeLeases - 1);
-      this.#lastActivityAt = this.#clock.now();
-      if (this.#state === "BUSY") {
-        this.#transition("READY", signal.aborted ? "generation-cancelled" : "generation-completed");
-        this.#scheduleEviction();
-      }
+      await this.#releaseLease(generationFailed, signal.aborted
+        ? "generation-cancelled"
+        : generationFailed ? "media-generation-failed" : "generation-completed");
     }
   }
 
@@ -187,6 +171,76 @@ export class LifecycleManager {
     await this.#ensureReady(recipe, signal);
     this.#scheduleEviction();
     return this.snapshot();
+  }
+
+  async #acquireLease(recipe: Recipe, signal: AbortSignal): Promise<{ adapter: EngineAdapter | MediaEngineAdapter; handle: EngineInstanceHandle }> {
+    for (;;) {
+      let wait: Promise<void> | undefined;
+      const lease = await this.#withAdmissionLock(async () => {
+        if (signal.aborted) throw abortError();
+        this.#cancelEviction();
+        const sameRecipe = sameRuntimeRecipe(this.#recipe, recipe);
+        if (this.#state === "BUSY") {
+          if (!sameRecipe || this.#activeLeases >= recipe.capabilities.maxConcurrentGenerations) {
+            wait = this.#waitForLeaseChange(signal);
+            return undefined;
+          }
+        } else if (this.#state !== "READY" || !sameRecipe) {
+          await this.#loadRecipe(recipe, signal);
+        }
+        if (!this.#adapter || !this.#handle || (this.#state !== "READY" && this.#state !== "BUSY")) {
+          throw new Error("Engine instance is not ready");
+        }
+        const firstLease = this.#activeLeases === 0;
+        this.#activeLeases += 1;
+        if (firstLease) this.#transition("BUSY", isMediaEngineAdapter(this.#adapter) ? "media-generation-started" : "generation-started");
+        return { adapter: this.#adapter, handle: this.#handle };
+      });
+      if (lease) return lease;
+      await wait;
+    }
+  }
+
+  async #releaseLease(failed: boolean, reason: string): Promise<void> {
+    await this.#withAdmissionLock(async () => {
+      this.#activeLeases = Math.max(0, this.#activeLeases - 1);
+      this.#lastActivityAt = this.#clock.now();
+      if (this.#activeLeases === 0) {
+        if (this.#state === "BUSY") {
+          if (failed) this.#transition("FAILED", reason);
+          else {
+            this.#failureReason = undefined;
+            this.#transition("READY", reason);
+            this.#scheduleEviction();
+          }
+        }
+        this.#notifyLeaseWaiters();
+      }
+    });
+  }
+
+  async #withAdmissionLock<T>(operation: () => T | Promise<T>): Promise<T> {
+    const predecessor = this.#admissionTail;
+    let release!: () => void;
+    const slot = new Promise<void>((resolve) => { release = resolve; });
+    this.#admissionTail = predecessor.catch(() => undefined).then(() => slot);
+    await predecessor.catch(() => undefined);
+    try { return await operation(); }
+    finally { release(); }
+  }
+
+  #waitForLeaseChange(signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return Promise.reject(abortError());
+    return new Promise<void>((resolve, reject) => {
+      const changed = () => { signal.removeEventListener("abort", aborted); this.#leaseWaiters.delete(changed); resolve(); };
+      const aborted = () => { this.#leaseWaiters.delete(changed); reject(abortError()); };
+      this.#leaseWaiters.add(changed);
+      signal.addEventListener("abort", aborted, { once: true });
+    });
+  }
+
+  #notifyLeaseWaiters(): void {
+    for (const notify of [...this.#leaseWaiters]) notify();
   }
 
   async prepare(recipe: Recipe): Promise<void> {
@@ -208,6 +262,10 @@ export class LifecycleManager {
   }
 
   async stop(reason = "manual-stop", mode: "graceful" | "force" = "graceful"): Promise<void> {
+    await this.#withAdmissionLock(() => this.#stopUnlocked(reason, mode));
+  }
+
+  async #stopUnlocked(reason: string, mode: "graceful" | "force"): Promise<void> {
     this.#cancelEviction();
     if (this.#state === "UNLOADED") return;
     if (this.#state === "BUSY" && mode !== "force") {
@@ -226,11 +284,11 @@ export class LifecycleManager {
     if (this.#adapter && this.#handle) await this.#adapter.stop(this.#handle, mode);
     this.#clearInstance();
     this.#transition("UNLOADED", reason);
+    this.#notifyLeaseWaiters();
   }
 
   /** Media recipes must resolve to a MediaEngineAdapter; used only by runMedia. */
-  #mediaAdapter(recipe: Recipe): MediaEngineAdapter {
-    const adapter = this.adapters.get(recipe.adapter);
+  #mediaAdapter(recipe: Recipe, adapter = this.adapters.get(recipe.adapter)): MediaEngineAdapter {
     if (!isMediaEngineAdapter(adapter)) {
       throw new Error(`Recipe ${recipe.id} does not use a media engine adapter (${recipe.adapter})`);
     }
@@ -238,16 +296,21 @@ export class LifecycleManager {
   }
 
   async #ensureReady(recipe: Recipe, signal: AbortSignal): Promise<void> {
-    this.#cancelEviction();
-    if (this.#state === "READY" && sameRuntimeRecipe(this.#recipe, recipe)) return;
-    if (this.#state === "BUSY") throw new Error("Lifecycle manager received concurrent generations");
-    if (this.#readinessTask?.recipeId === recipe.id) return this.#readinessTask.promise;
-    if (this.#readinessTask) await this.#readinessTask.promise;
-
-    const promise = this.#loadRecipe(recipe, signal);
-    this.#readinessTask = { recipeId: recipe.id, promise };
-    try { await promise; }
-    finally { if (this.#readinessTask?.promise === promise) this.#readinessTask = undefined; }
+    for (;;) {
+      let wait: Promise<void> | undefined;
+      const ready = await this.#withAdmissionLock(async () => {
+        this.#cancelEviction();
+        if ((this.#state === "READY" || this.#state === "BUSY") && sameRuntimeRecipe(this.#recipe, recipe)) return true;
+        if (this.#state === "BUSY") {
+          wait = this.#waitForLeaseChange(signal);
+          return false;
+        }
+        await this.#loadRecipe(recipe, signal);
+        return true;
+      });
+      if (ready) return;
+      await wait;
+    }
   }
 
   async #loadRecipe(recipe: Recipe, signal: AbortSignal): Promise<void> {
@@ -257,7 +320,7 @@ export class LifecycleManager {
       // never prevent the adapter's normal cold activation path from running.
     }
     if (this.#state !== "UNLOADED" && this.#state !== "FAILED") {
-      await this.stop("recipe-switch");
+      await this.#stopUnlocked("recipe-switch", "graceful");
     } else if (this.#state === "FAILED") {
       if (this.#adapter && this.#handle) {
         await this.#adapter.stop(this.#handle, "force");
@@ -315,14 +378,18 @@ export class LifecycleManager {
     adapter: MediaEngineAdapter,
     handle: EngineInstanceHandle,
   ): Promise<void> {
-    try {
-      const report = await adapter.stop(handle, "force");
-      if (!report.stopped) return;
-    } catch {
-      return;
-    }
-    this.#clearInstance();
-    this.#transition("UNLOADED", "thermal-safety-eviction");
+    await this.#withAdmissionLock(async () => {
+      if (this.#state === "BUSY") this.#transition("FAILED", "media-generation-failed");
+      try {
+        const report = await adapter.stop(handle, "force");
+        if (!report.stopped) return;
+      } catch {
+        return;
+      }
+      this.#clearInstance();
+      this.#transition("UNLOADED", "thermal-safety-eviction");
+      this.#notifyLeaseWaiters();
+    });
   }
 
   #scheduleEviction(): void {

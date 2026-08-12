@@ -331,6 +331,21 @@ describe("Fitz host", () => {
     await runtime.app.close();
   });
 
+  it("assigns a general internal subagent route without exposing it as a chat tier", async () => {
+    const runtime = createHost();
+    const response = await runtime.app.inject({
+      method: "PUT",
+      url: "/api/v1/management/routes/subagent",
+      payload: { displayName: "Subagent", description: "Internal delegated-work route", recipeId: "fake-fast", enabled: true },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(runtime.routes.listRoutes(true)).toContainEqual(expect.objectContaining({ id: "subagent", recipeId: "fake-fast" }));
+    expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((model: { id: string }) => model.id).sort())
+      .toEqual(["default", "fast", "smart"]);
+    await runtime.app.close();
+  });
+
   it("registers an arbitrary engine folder without writing into it", async () => {
     const engineRoot = await mkdtemp(join(tmpdir(), "fitz-engines-"));
     const engineFolder = join(engineRoot, "llama-custom");
@@ -345,13 +360,13 @@ describe("Fitz host", () => {
         payload: {
           displayName: "My llama.cpp fork",
           connectionMode: "managed",
-          runtime: "wsl",
+          runtime: "linux-managed",
           baseUrl: "http://127.0.0.1:18080",
           healthPath: "/v1/models",
           launchCommand: "./build/bin/llama-server",
           launchArguments: ["--port", "{port}"],
           workingDirectory: ".",
-          wslDistribution: "Ubuntu",
+          runtimeId: "inference-linux",
         },
       });
       expect(response.statusCode).toBe(200);

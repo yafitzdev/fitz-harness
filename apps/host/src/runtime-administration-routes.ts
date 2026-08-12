@@ -71,7 +71,7 @@ export function registerRuntimeAdministrationRoutes(options: RuntimeAdministrati
       const moveModels = body.moveModels === undefined ? true : body.moveModels === true;
       if (body.moveModels !== undefined && typeof body.moveModels !== "boolean") throw new TypeError("moveModels must be a boolean");
       const status = ninferRuntime.startProvisioning(moveModels);
-      security?.audit("ninfer-runtime.provision-requested", principals.get(request)?.user.id, "runtime", "ninfer-linux", { moveModels });
+      security?.audit("ninfer-runtime.provision-requested", principals.get(request)?.user.id, "runtime", ninferRuntime.layout.id, { moveModels });
       return reply.code(202).send({ data: status });
     } catch (error) {
       const active = errorMessage(error).includes("already in progress");

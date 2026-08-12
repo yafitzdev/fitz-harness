@@ -65,7 +65,7 @@ export interface Recipe {
 }
 
 export type EngineConnectionMode = "managed" | "external";
-export type EngineRuntime = "windows" | "wsl";
+export type EngineRuntime = "windows" | "linux-managed";
 
 export interface EngineRegistration {
   id: string;
@@ -78,7 +78,7 @@ export interface EngineRegistration {
   launchCommand?: string;
   launchArguments: string[];
   workingDirectory?: string;
-  wslDistribution?: string;
+  runtimeId?: string;
   createdAt: string;
   updatedAt: string;
 }

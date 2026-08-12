@@ -254,7 +254,7 @@ export class SqliteStore {
         launchCommand: engine.launchCommand,
         launchArguments: engine.launchArguments,
         workingDirectory: engine.workingDirectory,
-        wslDistribution: engine.wslDistribution,
+        runtimeId: engine.runtimeId,
       }),
       engine.createdAt,
       engine.updatedAt,

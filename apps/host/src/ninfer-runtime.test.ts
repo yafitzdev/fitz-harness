@@ -3,15 +3,16 @@ import { resolveRuntimePaths } from "./runtime-paths.js";
 import { createNInferModelRegistration, NInferRuntimeManager } from "./ninfer-runtime.js";
 
 describe("managed NInfer runtime", () => {
-  it("keeps the dedicated WSL distribution inside the .llm registry", async () => {
+  it("uses the shared managed Linux distribution inside the .llm registry", async () => {
     const run = vi.fn(async () => ({ stdout: "Ubuntu\r\n", stderr: "" }));
     const paths = resolveRuntimePaths({ FITZ_LLM_ROOT: "D:\\registry" });
     const runtime = new NInferRuntimeManager({ paths, platform: "win32", run });
 
     expect(runtime.layout).toMatchObject({
-      id: "ninfer-linux",
-      distribution: "Fitz-NInfer",
-      hostRoot: "D:\\registry\\runtimes\\ninfer-linux",
+      id: "inference-linux",
+      distribution: "Fitz-Inference",
+      hostRoot: "D:\\registry\\runtimes\\inference-linux",
+      environmentRoot: "/opt/fitz/llm/environments",
       modelRoot: "/opt/fitz/llm/models/ninfer",
       executable: "/opt/fitz/llm/engines/ninfer/ninfer-serve",
     });
@@ -25,7 +26,7 @@ describe("managed NInfer runtime", () => {
 
   it("recognizes an installed engine and model as ready", async () => {
     const run = vi.fn(async (_file: string, args: string[]) => {
-      if (args.includes("--list")) return { stdout: "Ubuntu\0\r\0\n\0Fitz-NInfer\0\r\0\n\0", stderr: "" };
+      if (args.includes("--list")) return { stdout: "Ubuntu\0\r\0\n\0Fitz-Inference\0\r\0\n\0", stderr: "" };
       if (args.includes("test")) return { stdout: "", stderr: "" };
       if (args.some((value) => value.endsWith("qwen3_6_27b_nvfp4.ninfer"))) return { stdout: "18324064000\n", stderr: "" };
       throw new Error("missing");
@@ -57,7 +58,7 @@ describe("managed NInfer runtime", () => {
       format: "ninfer",
       payload: {
         backend: "runtime-filesystem",
-        runtimeId: "ninfer-linux",
+        runtimeId: "inference-linux",
         path: "/opt/fitz/llm/models/ninfer/qwen3_6_27b_nvfp4.ninfer",
       },
       bytes: 18_324_064_000,

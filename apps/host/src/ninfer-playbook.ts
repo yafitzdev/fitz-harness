@@ -73,7 +73,6 @@ function recipe(id: string, displayName: string, modelId: string, artifact: stri
       readinessTimeoutMs: 180_000,
       requestLogJsonl: `${runtime.guestRoot}/logs/ninfer-requests.jsonl`,
       runtimeId: runtime.id,
-      runtimeDistribution: runtime.distribution,
       engineRef: "llm://engines/ninfer",
       modelRef: `llm://models/${modelId}`,
     },

@@ -12,9 +12,9 @@ export interface FitzRuntimePaths {
   modelRoot: string;
   /** Physical GGUF payload store managed by the model catalog. */
   ggufModelRoot: string;
-  /** Language/package environments used by engines (for example a Python venv). */
+  /** Host-native language/package environments. Linux-only environments live in a managed runtime. */
   environmentRoot: string;
-  /** App-managed platform runtimes (for example the NInfer Linux VHDX). */
+  /** App-managed platform runtimes (for example the shared inference Linux VHDX). */
   runtimeRoot: string;
   /** Per-run pre-flight snapshots of the workspace, used to restore after a bad run. */
   snapshotsDir: string;

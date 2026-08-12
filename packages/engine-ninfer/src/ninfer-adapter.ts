@@ -42,8 +42,7 @@ export interface NInferAdapterOptions {
   pollIntervalMs?: number;
   stopTimeoutMs?: number;
   readinessTimeoutMs?: number;
-  wslDistribution?: string;
-  wslUser?: string;
+  managedLinux?: { distribution: string; user?: string };
 }
 
 export interface NInferProcessLaunch {
@@ -61,8 +60,7 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
   readonly #pollIntervalMs: number;
   readonly #stopTimeoutMs: number;
   readonly #readinessTimeoutMs: number;
-  readonly #wslDistribution: string | undefined;
-  readonly #wslUser: string;
+  readonly #managedLinux: { distribution: string; user: string } | undefined;
 
   constructor(options: NInferAdapterOptions = {}) {
     this.#fetch = options.fetch ?? globalThis.fetch;
@@ -70,22 +68,23 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
     this.#pollIntervalMs = options.pollIntervalMs ?? 250;
     this.#stopTimeoutMs = options.stopTimeoutMs ?? 10_000;
     this.#readinessTimeoutMs = options.readinessTimeoutMs ?? 120_000;
-    this.#wslDistribution = options.wslDistribution;
-    this.#wslUser = options.wslUser ?? "root";
+    this.#managedLinux = options.managedLinux
+      ? { distribution: options.managedLinux.distribution, user: options.managedLinux.user ?? "root" }
+      : undefined;
   }
 
   async prepare(recipe: Recipe, signal: AbortSignal): Promise<void> {
     const config = readNInferConfiguration(recipe);
-    if (!this.#wslDistribution) {
+    if (!this.#managedLinux) {
       await access(config.executable);
       await access(config.artifact);
       return;
     }
     await execFileAsync("wsl.exe", [
-      "-d", this.#wslDistribution, "-u", this.#wslUser, "--", "test", "-x", config.executable,
+      "-d", this.#managedLinux.distribution, "-u", this.#managedLinux.user, "--", "test", "-x", config.executable,
     ], { windowsHide: true, signal });
     await execFileAsync("wsl.exe", [
-      "-d", this.#wslDistribution, "-u", this.#wslUser, "--", "test", "-r", config.artifact,
+      "-d", this.#managedLinux.distribution, "-u", this.#managedLinux.user, "--", "test", "-r", config.artifact,
     ], { windowsHide: true, signal });
   }
 
@@ -153,8 +152,8 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
     if (signal.aborted) throw abortError();
     const config = readNInferConfiguration(recipe);
     const apiKey = randomBytes(32).toString("base64url");
-    const launch = buildNInferProcessLaunch(spec, apiKey, this.#wslDistribution, this.#wslUser);
-    const guestProcess: { pid?: number } | undefined = this.#wslDistribution ? {} : undefined;
+    const launch = buildNInferProcessLaunch(spec, apiKey, this.#managedLinux);
+    const guestProcess: { pid?: number } | undefined = this.#managedLinux ? {} : undefined;
     const child = spawn(launch.executable, launch.args, {
       ...(spec.cwd ? { cwd: spec.cwd } : {}),
       env: { ...process.env, ...spec.env },
@@ -269,14 +268,14 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
 
   async stop(instance: NInferInstanceHandle, mode: StopMode): Promise<StopReport> {
     if (hasExited(instance.process)) return { stopped: true };
-    if (this.#wslDistribution && instance.guestProcess?.pid) {
+    if (this.#managedLinux && instance.guestProcess?.pid) {
       await this.#signalGuest(instance.guestProcess.pid, mode === "force" ? "KILL" : "TERM");
     } else {
       instance.process.kill(mode === "force" ? "SIGKILL" : "SIGTERM");
     }
     const exited = await waitForExit(instance.process, this.#stopTimeoutMs);
     if (!exited && mode !== "force") {
-      if (this.#wslDistribution && instance.guestProcess?.pid) await this.#signalGuest(instance.guestProcess.pid, "KILL");
+      if (this.#managedLinux && instance.guestProcess?.pid) await this.#signalGuest(instance.guestProcess.pid, "KILL");
       instance.process.kill("SIGKILL");
       await waitForExit(instance.process, Math.min(this.#stopTimeoutMs, 2_000));
     }
@@ -302,13 +301,13 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
   }
 
   async #assertReadable(path: string): Promise<void> {
-    if (!this.#wslDistribution) { await access(path); return; }
-    await execFileAsync("wsl.exe", ["-d", this.#wslDistribution, "-u", this.#wslUser, "--", "test", "-r", path], { timeout: 10_000, windowsHide: true });
+    if (!this.#managedLinux) { await access(path); return; }
+    await execFileAsync("wsl.exe", ["-d", this.#managedLinux.distribution, "-u", this.#managedLinux.user, "--", "test", "-r", path], { timeout: 10_000, windowsHide: true });
   }
 
   async #signalGuest(pid: number, signal: "TERM" | "KILL"): Promise<void> {
     try {
-      await execFileAsync("wsl.exe", ["-d", this.#wslDistribution!, "-u", this.#wslUser, "--", "kill", `-${signal}`, String(pid)], { timeout: 10_000, windowsHide: true });
+      await execFileAsync("wsl.exe", ["-d", this.#managedLinux!.distribution, "-u", this.#managedLinux!.user, "--", "kill", `-${signal}`, String(pid)], { timeout: 10_000, windowsHide: true });
     } catch {
       // A process that exited between inspection and signaling is already stopped.
     }
@@ -322,12 +321,12 @@ function recentInstanceLogs(instance: Pick<NInferInstanceHandle, "logs" | "apiKe
     .join(" | ");
 }
 
-export function buildNInferProcessLaunch(spec: LaunchSpec, apiKey: string, wslDistribution?: string, wslUser = "root"): NInferProcessLaunch {
+export function buildNInferProcessLaunch(spec: LaunchSpec, apiKey: string, managedLinux?: { distribution: string; user: string }): NInferProcessLaunch {
   const engineArgs = [...spec.args, "--api-key", apiKey];
-  if (!wslDistribution) return { executable: spec.executable, args: engineArgs };
+  if (!managedLinux) return { executable: spec.executable, args: engineArgs };
   return {
     executable: "wsl.exe",
-    args: ["-d", wslDistribution, "-u", wslUser, "--", "sh", "-s", "--", spec.executable, ...engineArgs],
+    args: ["-d", managedLinux.distribution, "-u", managedLinux.user, "--", "sh", "-s", "--", spec.executable, ...engineArgs],
     stdin: 'printf "__FITZ_GUEST_PID=%s\\n" "$$" >&2\nexec "$@"\n',
   };
 }

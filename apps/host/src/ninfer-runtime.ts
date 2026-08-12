@@ -1,28 +1,26 @@
 import { execFile } from "node:child_process";
 import { createReadStream, existsSync } from "node:fs";
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
 import type { FitzRuntimePaths } from "./runtime-paths.js";
+import {
+  managedLinuxRuntimeLayout,
+  mergeManagedLinuxRuntimeComponent,
+  type ManagedLinuxRuntimeManifest,
+  type ManagedLinuxRuntimeLayout,
+} from "./managed-linux-runtime.js";
 
 const execFileAsync = promisify(execFile);
-
-export const NINFER_RUNTIME_ID = "ninfer-linux";
-export const NINFER_RUNTIME_DISTRIBUTION = "Fitz-NInfer";
-export const NINFER_RUNTIME_GUEST_ROOT = "/opt/fitz/llm";
 
 const KNOWN_MODELS = [
   { id: "qwen3.6-35b-a3b", fileName: "qwen3_6_35b_a3b.ninfer" },
   { id: "qwen3.6-27b", fileName: "qwen3_6_27b_nvfp4.ninfer" },
 ] as const;
 
-export interface NInferRuntimeLayout {
-  id: string;
-  distribution: string;
-  hostRoot: string;
-  guestRoot: string;
+export interface NInferRuntimeLayout extends ManagedLinuxRuntimeLayout {
   modelRoot: string;
   executable: string;
 }
@@ -65,15 +63,6 @@ export interface NInferRuntimeManifestModel {
   fileName: string;
   bytes: number;
   sha256: string;
-}
-
-interface RuntimeManifest {
-  schemaVersion: 1;
-  id: string;
-  distribution: string;
-  guestRoot: string;
-  provisionedAt: string;
-  models: NInferRuntimeManifestModel[];
 }
 
 export interface NInferModelRegistration {
@@ -124,15 +113,13 @@ export class NInferRuntimeManager {
     this.#platform = options.platform ?? process.platform;
     this.#sourceDistribution = options.sourceDistribution ?? "Ubuntu";
     this.#run = options.run ?? defaultCommandRunner;
-    const hostRoot = resolve(join(options.paths.runtimeRoot, NINFER_RUNTIME_ID));
+    const shared = managedLinuxRuntimeLayout(options.paths);
+    const hostRoot = shared.hostRoot;
     assertInside(options.paths.llmRoot, hostRoot);
     this.layout = {
-      id: NINFER_RUNTIME_ID,
-      distribution: NINFER_RUNTIME_DISTRIBUTION,
-      hostRoot,
-      guestRoot: NINFER_RUNTIME_GUEST_ROOT,
-      modelRoot: `${NINFER_RUNTIME_GUEST_ROOT}/models/ninfer`,
-      executable: `${NINFER_RUNTIME_GUEST_ROOT}/engines/ninfer/ninfer-serve`,
+      ...shared,
+      modelRoot: `${shared.modelRoot}/ninfer`,
+      executable: `${shared.engineRoot}/ninfer/ninfer-serve`,
     };
   }
 
@@ -165,7 +152,7 @@ export class NInferRuntimeManager {
   async #provision(moveModels: boolean): Promise<void> {
     await mkdir(this.#paths.runtimeRoot, { recursive: true });
     if (!await this.#distributionInstalled()) {
-      this.#setWorking("installing-wsl", 5, "Installing Ubuntu into .llm/runtimes/ninfer-linux…");
+      this.#setWorking("installing-wsl", 5, `Installing the shared Linux runtime into .llm/runtimes/${this.layout.id}…`);
       await this.#run("wsl.exe", ["--install", "Ubuntu-24.04", "--name", this.layout.distribution, "--location", this.layout.hostRoot, "--no-launch", "--web-download"], { timeout: 20 * 60_000 });
     }
     this.#setWorking("installing-dependencies", 15, "Installing the NInfer runtime libraries…");
@@ -180,7 +167,7 @@ export class NInferRuntimeManager {
     this.#setWorking("copying-engine", 27, "Installing the NInfer executable into the managed runtime…");
     await this.#guestShell(`install -m 0755 ${shellQuote(guestPath(sourceEngine))} ${shellQuote(this.layout.executable)}`, 120_000);
 
-    const installedModels: RuntimeManifest["models"] = [];
+    const installedModels: NInferRuntimeManifestModel[] = [];
     const migratedSources: string[] = [];
     const candidates = [] as Array<{ id: string; fileName: string; source?: string; bytes: number }>;
     for (const known of KNOWN_MODELS) {
@@ -215,8 +202,14 @@ export class NInferRuntimeManager {
       completedBytes += candidate.bytes;
       if (moveModels && candidate.source) migratedSources.push(candidate.source);
     }
-    const manifest: RuntimeManifest = { schemaVersion: 1, id: this.layout.id, distribution: this.layout.distribution, guestRoot: this.layout.guestRoot, provisionedAt: new Date().toISOString(), models: installedModels };
-    await writeFile(join(this.layout.hostRoot, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    const manifestPath = join(this.layout.hostRoot, "manifest.json");
+    const existingManifest = await readRuntimeManifest(manifestPath);
+    const manifest = mergeManagedLinuxRuntimeComponent(this.layout, "ninfer", {
+      enginePath: this.layout.executable,
+      modelRoot: this.layout.modelRoot,
+      models: installedModels,
+    }, existingManifest);
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
     const registrationRoot = resolve(join(this.#paths.modelRoot, "ninfer"));
     assertInside(this.#paths.modelRoot, registrationRoot);
     await mkdir(registrationRoot, { recursive: true });
@@ -317,4 +310,13 @@ async function sha256File(path: string): Promise<string> {
   const hash = createHash("sha256");
   await pipeline(createReadStream(path), hash);
   return hash.digest("hex");
+}
+
+async function readRuntimeManifest(path: string): Promise<ManagedLinuxRuntimeManifest | undefined> {
+  if (!existsSync(path)) return undefined;
+  const value = JSON.parse(await readFile(path, "utf8")) as ManagedLinuxRuntimeManifest;
+  if (!value || value.schemaVersion !== 2 || typeof value.components !== "object" || value.components === null) {
+    throw new Error(`Invalid managed Linux runtime manifest: ${path}`);
+  }
+  return value;
 }

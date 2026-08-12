@@ -46,7 +46,7 @@ function sampleConfiguration(): Json {
         folderName: "ninfer", rootPath: "C:\\Users\\me\\.llm\\engines\\ninfer",
         engine: {
           displayName: "NiNfer", connectionMode: "managed", runtime: "windows", baseUrl: "http://127.0.0.1:18080",
-          healthPath: "/v1/models", launchCommand: "run.bat", launchArguments: ["--host", "127.0.0.1"], workingDirectory: ".", wslDistribution: "Ubuntu",
+          healthPath: "/v1/models", launchCommand: "run.bat", launchArguments: ["--host", "127.0.0.1"], workingDirectory: ".",
         },
         registered: true,
       },
@@ -69,8 +69,8 @@ function setup(
     refresh: node("button"),
     engineForm: node("form"), engineFolder: node("select"), engineDisplayName: node("input"), engineConnection: node("select"),
     engineRuntime: node("select"), engineBaseUrl: node("input"), engineHealthPath: node("input"), engineCommand: node("input"),
-    engineArguments: node("textarea"), engineWorkingDirectory: node("input"), engineWslDistribution: node("input"),
-    engineManagedFields: node("div"), engineRuntimeField: node("div"), engineBaseUrlField: node("div"), engineWslField: node("div"),
+    engineArguments: node("textarea"), engineWorkingDirectory: node("input"), engineRuntimeId: node("input"),
+    engineManagedFields: node("div"), engineRuntimeField: node("div"), engineBaseUrlField: node("div"), engineRuntimeIdField: node("div"),
     engineEditorTitle: node("h1"),
     recipeForm: node("form"), recipePlaybookId: node("input"), recipeId: node("input"), recipeDisplayName: node("input"),
     recipeAdapter: node("input"), recipeModelId: node("input"), recipeContextTokens: node("input"), recipeConfiguration: node("section"),
@@ -82,7 +82,7 @@ function setup(
   // Mirror the static markup in renderer/index.html so that setting
   // select.value behaves like it does in the real page.
   for (const value of ["managed", "external"]) elements.engineConnection.add(new Option(value, value));
-  for (const value of ["windows", "wsl"]) elements.engineRuntime.add(new Option(value, value));
+  for (const value of ["windows", "linux-managed"]) elements.engineRuntime.add(new Option(value, value));
   const showStatus = vi.fn();
   const reloadConfiguration = vi.fn(async () => configuration);
   const controller = new PlaybookWorkspaceController(elements, {

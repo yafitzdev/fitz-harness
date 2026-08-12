@@ -25,11 +25,11 @@ export interface PlaybookWorkspaceElements {
   engineCommand: HTMLInputElement;
   engineArguments: HTMLTextAreaElement;
   engineWorkingDirectory: HTMLInputElement;
-  engineWslDistribution: HTMLInputElement;
+  engineRuntimeId: HTMLInputElement;
   engineManagedFields: HTMLElement;
   engineRuntimeField: HTMLElement;
   engineBaseUrlField: HTMLElement;
-  engineWslField: HTMLElement;
+  engineRuntimeIdField: HTMLElement;
   engineEditorTitle: HTMLElement;
   recipeForm: HTMLFormElement;
   recipePlaybookId: HTMLInputElement;
@@ -163,7 +163,7 @@ export class PlaybookWorkspaceController {
     this.elements.recipeModelId.value = recipe?.modelId ?? "";
     this.elements.recipeContextTokens.value = String(recipe?.contextTokens ?? 131_072);
     const defaultConfiguration = playbook?.connectionMode === "managed"
-      ? { enginePath: playbook.rootPath, runtime: playbook.runtime, command: playbook.launchCommand, args: playbook.launchArguments, workingDirectory: playbook.workingDirectory ?? ".", healthPath: playbook.healthPath, readinessTimeoutMs: 120_000, ...(playbook.wslDistribution ? { wslDistribution: playbook.wslDistribution } : {}) }
+      ? { enginePath: playbook.runtime === "linux-managed" ? `/opt/fitz/llm/engines/${playbook.folderName}` : playbook.rootPath, runtime: playbook.runtime, command: playbook.launchCommand, args: playbook.launchArguments, workingDirectory: playbook.workingDirectory ?? ".", healthPath: playbook.healthPath, readinessTimeoutMs: 120_000, ...(playbook.runtimeId ? { runtimeId: playbook.runtimeId } : {}) }
       : playbook ? { baseUrl: playbook.baseUrl, healthPath: playbook.healthPath, allowInsecureRemote: false } : {};
     this.configurationEditor.load(adapter, recipe?.configuration ?? defaultConfiguration);
     this.showEditor("recipe"); this.elements.recipeId.focus();
@@ -275,7 +275,7 @@ export class PlaybookWorkspaceController {
         launchCommand: this.elements.engineCommand.value.trim(),
         launchArguments: this.elements.engineArguments.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
         workingDirectory: this.elements.engineWorkingDirectory.value.trim(),
-        wslDistribution: this.elements.engineWslDistribution.value.trim(),
+        runtimeId: this.elements.engineRuntimeId.value.trim(),
       });
       this.closeEditor();
       await this.options.reloadConfiguration();
@@ -316,7 +316,7 @@ export class PlaybookWorkspaceController {
     this.elements.engineCommand.value = engine?.launchCommand ?? "";
     this.elements.engineArguments.value = (engine?.launchArguments ?? []).join("\n");
     this.elements.engineWorkingDirectory.value = engine?.workingDirectory ?? ".";
-    this.elements.engineWslDistribution.value = engine?.wslDistribution ?? "Ubuntu";
+    this.elements.engineRuntimeId.value = engine?.runtimeId ?? "inference-linux";
     const submit = this.elements.engineForm.querySelector<HTMLButtonElement>('button[type="submit"]');
     if (submit) submit.disabled = !folder;
     this.updateEngineFieldVisibility();
@@ -327,7 +327,7 @@ export class PlaybookWorkspaceController {
     this.elements.engineManagedFields.hidden = !managed;
     this.elements.engineRuntimeField.hidden = !managed;
     this.elements.engineBaseUrlField.hidden = managed;
-    this.elements.engineWslField.hidden = !managed || this.elements.engineRuntime.value !== "wsl";
+    this.elements.engineRuntimeIdField.hidden = !managed || this.elements.engineRuntime.value !== "linux-managed";
   }
 }
 

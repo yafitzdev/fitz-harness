@@ -6,8 +6,8 @@ if (process.env.FITZ_ALLOW_LIVE_NINFER !== "1") {
 }
 
 const runtimeLayout = {
-  id: "ninfer-linux",
-  distribution: "Fitz-NInfer",
+  id: "inference-linux",
+  distribution: "Fitz-Inference",
   hostRoot: "",
   guestRoot: "/opt/fitz/llm",
   modelRoot: "/opt/fitz/llm/models/ninfer",
@@ -18,7 +18,7 @@ const recipes = playbook.recipes.map(configuredRecipe);
 const routes = playbook.routes;
 
 const runtime = createHost({
-  adapters: [new NInferEngineAdapter({ pollIntervalMs: 500, stopTimeoutMs: 15_000, wslDistribution: runtimeLayout.distribution, wslUser: "root" })],
+  adapters: [new NInferEngineAdapter({ pollIntervalMs: 500, stopTimeoutMs: 15_000, managedLinux: { distribution: runtimeLayout.distribution, user: "root" } })],
   initialRecipes: recipes,
   initialRoutes: routes,
 });

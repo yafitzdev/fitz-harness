@@ -18,6 +18,7 @@ describe("WorkspaceMutationLeaseManager", () => {
   it("does not lease read-only or media tools and removes cancelled waiters", async () => {
     expect(isWorkspaceMutation("read")).toBe(false);
     expect(isWorkspaceMutation("generate_video")).toBe(false);
+    expect(isWorkspaceMutation("subagent")).toBe(false);
     expect(isWorkspaceMutation("unknown-extension-tool")).toBe(true);
     const leases = new WorkspaceMutationLeaseManager();
     const first = await leases.acquire({ cwd: "C:/work/a", toolCallId: "t1", toolName: "edit" }, new AbortController().signal);

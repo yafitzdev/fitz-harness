@@ -17,15 +17,15 @@ export function reconcileNInferConfiguration(store: SqliteStore, runtime: NInfer
   const templatesById = new Map(playbook.recipes.map((recipe) => [recipe.id, recipe]));
   for (const recipe of store.listRecipes()) {
     const template = templatesById.get(recipe.id);
+    const { runtimeDistribution: _discardedDistribution, ...currentConfiguration } = recipe.configuration;
     const migratedConfiguration = template && recipe.adapter === "ninfer"
       ? {
-          ...recipe.configuration,
+          ...currentConfiguration,
           executable: template.configuration.executable,
           artifact: template.configuration.artifact,
           requestLogJsonl: template.configuration.requestLogJsonl,
           ...(template.configuration.runtimeId ? {
             runtimeId: template.configuration.runtimeId,
-            runtimeDistribution: template.configuration.runtimeDistribution,
             engineRef: template.configuration.engineRef,
             modelRef: template.configuration.modelRef,
           } : {}),
@@ -34,7 +34,11 @@ export function reconcileNInferConfiguration(store: SqliteStore, runtime: NInfer
     const configurationChanged = migratedConfiguration !== recipe.configuration
       && (migratedConfiguration.executable !== recipe.configuration.executable
         || migratedConfiguration.artifact !== recipe.configuration.artifact
-        || migratedConfiguration.requestLogJsonl !== recipe.configuration.requestLogJsonl);
+        || migratedConfiguration.requestLogJsonl !== recipe.configuration.requestLogJsonl
+        || migratedConfiguration.runtimeId !== recipe.configuration.runtimeId
+        || migratedConfiguration.engineRef !== recipe.configuration.engineRef
+        || migratedConfiguration.modelRef !== recipe.configuration.modelRef
+        || "runtimeDistribution" in recipe.configuration);
     if (configurationChanged) {
       store.upsertRecipe({ ...recipe, configuration: migratedConfiguration });
     }

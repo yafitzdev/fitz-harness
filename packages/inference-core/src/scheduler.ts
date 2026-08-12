@@ -53,6 +53,10 @@ export interface InferenceQueueItem {
 }
 
 export interface InferenceSchedulerOptions {
+  /** Maximum local requests admitted concurrently. LifecycleManager still
+   * enforces each active recipe's maxConcurrentGenerations and exclusive
+   * recipe switching. */
+  gpuConcurrency?: number;
   cloudConcurrency?: number;
   gpuQueueCapacity?: number;
   cloudQueueCapacity?: number;
@@ -78,8 +82,9 @@ export class InferenceAdmissionError extends Error {
   }
 }
 
-/** Coordinates all inference work through explicit resource lanes. The GPU
- * lane is permanently single-slot; cloud media uses its own bounded lane. */
+/** Coordinates all inference work through explicit resource lanes. Local
+ * concurrency is bounded here and again by the active recipe; cloud media uses
+ * its own independent bounded lane. */
 export class InferenceScheduler {
   readonly #gpuLane: BoundedWorkLane<QueueJob>;
   readonly #cloudLane: BoundedWorkLane<QueueJob>;
@@ -98,7 +103,7 @@ export class InferenceScheduler {
     this.#streamBufferItems = options.streamBufferItems ?? 64;
     this.#streamBufferBytes = options.streamBufferBytes ?? 1024 * 1024;
     this.#recordUsage = options.recordUsage;
-    this.#gpuLane = this.#createLane(1, options.gpuQueueCapacity ?? 256);
+    this.#gpuLane = this.#createLane(options.gpuConcurrency ?? 1, options.gpuQueueCapacity ?? 256);
     this.#cloudLane = this.#createLane(options.cloudConcurrency ?? 4, options.cloudQueueCapacity ?? 64);
   }
 

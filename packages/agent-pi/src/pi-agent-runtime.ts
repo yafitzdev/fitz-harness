@@ -61,6 +61,9 @@ export type PiSessionFactory = (options: {
   agentDir: string;
   llmRoot: string;
   thinkingLevel?: ThinkingLevel;
+  /** Per-run compaction headroom. Delegated workers use a deliberately smaller
+   * recent window so tool output cannot fill their shorter shared context. */
+  compaction?: { reserveTokens: number; keepRecentTokens: number };
   approveTool: (request: PiToolCall) => Promise<PiToolApprovalResult>;
   sessionReader?: PiSessionReader;
   /** Deterministic policy evaluation. When present it runs before `approveTool` for every tool call. */
@@ -94,7 +97,7 @@ export interface PiAgentRuntimeOptions {
   /** Redacts secrets from tool results before the model reads them. */
   redactToolResult?: ToolResultRedactor;
   /** Extra tools to register for each run; called with the run's resolved working directory. */
-  customTools?: (context: { cwd: string; runId?: string }) => ToolDefinition[];
+  customTools?: (context: { cwd: string; runId?: string; request?: AgentRunRequest }) => ToolDefinition[];
   /** Forward task correlation headers to the model endpoint. Enable only for Fitz's bundled localhost gateway. */
   forwardWorkContext?: boolean;
 }
@@ -111,7 +114,12 @@ export const TRASH_TOOL = "fitz_trash";
  * runtime and policy engine use to treat them as money-spending calls.
  */
 export const MEDIA_TOOLS = new Set(["generate_image", "generate_video", "generate_audio"]);
-const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls", SESSION_LOOKUP_TOOL]);
+const READ_ONLY_TOOLS = new Set([
+  "read", "grep", "find", "ls", SESSION_LOOKUP_TOOL,
+  // Fitz's bundled research extension tools only fetch public content and are
+  // safe in researcher/reviewer read-only child sessions.
+  "web_search", "fetch_content", "get_search_content",
+]);
 
 export class PiAgentRuntime implements AgentRuntime {
   readonly id = "pi";
@@ -129,7 +137,7 @@ export class PiAgentRuntime implements AgentRuntime {
   readonly #toolPolicy: ToolEvaluator | undefined;
   readonly #toolLease: ToolLeaseAcquirer | undefined;
   readonly #redactToolResult: ToolResultRedactor | undefined;
-  readonly #customTools: ((context: { cwd: string; runId?: string }) => ToolDefinition[]) | undefined;
+  readonly #customTools: ((context: { cwd: string; runId?: string; request?: AgentRunRequest }) => ToolDefinition[]) | undefined;
   readonly #forwardWorkContext: boolean;
   constructor(options: PiAgentRuntimeOptions = {}) {
     this.#cwd = options.cwd ?? process.cwd();
@@ -152,6 +160,27 @@ export class PiAgentRuntime implements AgentRuntime {
   run(request: AgentRunRequest, signal?: AbortSignal, options?: AgentRuntimeRunOptions): AgentRuntimeRun {
     const channel = new EventChannel(); let session: PiSession | undefined; const controller = new AbortController();
     let completedMediaHandoff = false;
+    let delegatedToolCalls = 0;
+    let budgetSteered = false;
+    const initialDelegationCount = requestedInitialSubagents(request);
+    const admittedInitialSubagents = new Set<string>();
+    const delegationGate = (toolCall: PiToolCall): string | undefined => {
+      if (initialDelegationCount === 0 || request.delegation) return undefined;
+      if (toolCall.toolName === "subagent") {
+        admittedInitialSubagents.add(toolCall.toolCallId);
+        return undefined;
+      }
+      if (admittedInitialSubagents.size >= initialDelegationCount) return undefined;
+      const remaining = initialDelegationCount - admittedInitialSubagents.size;
+      return `The user explicitly requested delegation first. Launch the remaining ${remaining} subagent${remaining === 1 ? "" : "s"} before using parent tools; do not research the project in the parent first.`;
+    };
+    const toolCallBudget = request.delegation?.toolCallBudget;
+    const consumeDelegatedToolCall = (): string | undefined => {
+      if (toolCallBudget === undefined) return undefined;
+      if (delegatedToolCalls >= toolCallBudget) return subagentBudgetReason(toolCallBudget);
+      delegatedToolCalls += 1;
+      return undefined;
+    };
     const cancel = () => { controller.abort(); void session?.abort(); }; if (signal) { if (signal.aborted) cancel(); else signal.addEventListener("abort", cancel, { once: true }); }
     const cwd = typeof this.#cwd === "function" ? this.#cwd(request) : this.#cwd;
     const contextWindow = typeof this.#contextWindow === "function" ? this.#contextWindow(request) : this.#contextWindow;
@@ -168,16 +197,27 @@ export class PiAgentRuntime implements AgentRuntime {
         agentDir: this.#agentDir,
         llmRoot: this.#llmRoot,
         thinkingLevel: this.#thinkingLevel,
-        approveTool: (toolCall) => this.#approveTool(request.accessMode ?? "full", toolCall, controller.signal, channel),
+        ...(request.delegation ? { compaction: delegatedCompaction(contextWindow, request.maxTokens ?? 16_384) } : {}),
+        approveTool: (toolCall) => {
+          const delegationReason = delegationGate(toolCall);
+          if (delegationReason) return Promise.resolve({ allowed: false, reason: delegationReason });
+          const budgetReason = consumeDelegatedToolCall();
+          return budgetReason ? Promise.resolve({ allowed: false, reason: budgetReason }) : this.#approveTool(request.accessMode ?? "full", toolCall, controller.signal, channel);
+        },
         ...(this.#sessionReader ? { sessionReader: this.#sessionReader } : {}),
         ...(this.#toolPolicy || this.#requestToolApproval
-          ? { evaluateTool: (toolCall) => this.#evaluateTool(cwd, request.accessMode ?? "full", request.sessionId, options?.runId, toolCall, controller.signal, channel) }
+          ? { evaluateTool: (toolCall) => {
+              const delegationReason = delegationGate(toolCall);
+              if (delegationReason) return Promise.resolve({ action: "block" as const, reason: delegationReason });
+              const budgetReason = consumeDelegatedToolCall();
+              return budgetReason ? Promise.resolve({ action: "block" as const, reason: budgetReason }) : this.#evaluateTool(cwd, request.accessMode ?? "full", request.sessionId, options?.runId, toolCall, controller.signal, channel);
+            } }
           : {}),
         ...(this.#toolLease
           ? { acquireToolLease: (toolCall) => this.#toolLease!({ ...toolCall, cwd, ...(options?.runId ? { runId: options.runId } : {}) }, controller.signal) }
           : {}),
         ...(this.#redactToolResult ? { redactResult: this.#redactToolResult } : {}),
-        ...(this.#customTools ? { customTools: this.#customTools({ cwd, ...(options?.runId ? { runId: options.runId } : {}) }) } : {}),
+        ...(this.#customTools ? { customTools: this.#customTools({ cwd, ...(options?.runId ? { runId: options.runId } : {}), request }) } : {}),
         ...(this.#forwardWorkContext && options ? { workContext: { ...options, ...(forcedToolName ? { forcedToolName } : {}) } } : {}),
       }); session = created; if (controller.signal.aborted) { await created.abort(); throw abortError(); }
       return created;
@@ -200,6 +240,10 @@ export class PiAgentRuntime implements AgentRuntime {
         }
         const translated = translateEvent(event);
         if (translated) { if (translated.type === "assistant.delta") sawAssistant = true; channel.push(translated); }
+        if (event.type === "tool_execution_end" && toolCallBudget !== undefined && delegatedToolCalls >= toolCallBudget && !budgetSteered) {
+          budgetSteered = true;
+          queueMicrotask(() => void activeSession.steer(subagentBudgetReason(toolCallBudget)).catch(() => undefined));
+        }
         if (isCompletedMediaHandoff(event)) {
           // Media generation is an asynchronous handoff. Letting Pi request one
           // more text completion here makes that request sit behind the several-
@@ -210,7 +254,7 @@ export class PiAgentRuntime implements AgentRuntime {
           queueMicrotask(() => void activeSession.abort());
         }
       }); try {
-        await activeSession.prompt(formatPrompt(request));
+        await activeSession.prompt(formatPrompt(request, initialDelegationCount));
         if (completedMediaHandoff) { channel.close(); return; }
         if (controller.signal.aborted) throw abortError();
         if (!sawAssistant) throw new Error("Pi agent completed without an assistant response");
@@ -281,6 +325,16 @@ export class PiAgentRuntime implements AgentRuntime {
 
 async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promise<PiSession> {
   const sdk = await import("@earendil-works/pi-coding-agent");
+  const settingsManager = sdk.SettingsManager.create(options.cwd, options.agentDir);
+  if (options.compaction) {
+    settingsManager.applyOverrides({
+      compaction: {
+        enabled: true,
+        reserveTokens: options.compaction.reserveTokens,
+        keepRecentTokens: options.compaction.keepRecentTokens,
+      },
+    });
+  }
   const modelRuntime = await sdk.ModelRuntime.create({ modelsPath: null });
   await modelRuntime.setRuntimeApiKey("openrouter", options.apiKey, { allowNetwork: false });
   const model: Model<"openai-completions"> = {
@@ -308,6 +362,7 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
   const resourceLoader = new sdk.DefaultResourceLoader({
     cwd: options.cwd,
     agentDir: options.agentDir,
+    settingsManager,
     // Fitz owns the Pi extension layout: `{agentDir}/extensions/` is the registry
     // (extensions/registry.json), so upstream auto-discovery and settings.json packages
     // must not leak in. Only the registry's enabled package dirs are loaded.
@@ -366,6 +421,7 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
     thinkingLevel: options.thinkingLevel ?? "off",
     modelRuntime,
     resourceLoader,
+    settingsManager,
     ...(options.sessionReader || options.customTools?.length
       ? { customTools: [...(options.sessionReader ? [createSessionLookupTool(options.sessionReader)] : []), ...(options.customTools ?? [])] }
       : {}),
@@ -544,10 +600,16 @@ function isCompletedMediaHandoff(event: PiEvent): boolean {
   return Boolean(details && typeof details === "object" && "mediaJobId" in details && typeof details.mediaJobId === "string" && details.mediaJobId);
 }
 function piFailure(event: PiEvent): Error | undefined { return event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason === "error" ? new Error(event.message.errorMessage ?? "Pi model request failed") : undefined; }
-function formatPrompt(request: AgentRunRequest): string {
+function subagentBudgetReason(toolCallBudget: number): string { return `The subagent's ${toolCallBudget}-tool budget is exhausted. Stop using tools and return the concise final report now.`; }
+function formatPrompt(request: AgentRunRequest, initialDelegationCount = requestedInitialSubagents(request)): string {
   const mediaCommand = request.mediaCommand;
   if (!mediaCommand) {
-    return request.messages.map((message) => `${message.role.toUpperCase()}: ${extractTextFromContent(message.content)}`).join("\n\n");
+    const transcript = request.messages.map((message) => `${message.role.toUpperCase()}: ${extractTextFromContent(message.content)}`).join("\n\n");
+    if (initialDelegationCount === 0 || request.delegation) return transcript;
+    return [
+      `SYSTEM: DELEGATION ORDER: The user explicitly requested ${initialDelegationCount} subagent${initialDelegationCount === 1 ? "" : "s"}. Your first tool calls must launch all ${initialDelegationCount} subagents. Do not inspect files, search, or perform the delegated research in the parent before dispatching them. Dispatch independent scopes together, then wait and synthesize.`,
+      transcript,
+    ].join("\n\n");
   }
   // A media command run exposes exactly one tool (`generate_<modality>`, see the
   // activeTools allowlist above), and the host no longer forces tool_choice because
@@ -562,6 +624,31 @@ function formatPrompt(request: AgentRunRequest): string {
     const prompt = stripMediaCommandPrefix(text) || DEFAULT_MEDIA_PROMPTS[mediaCommand];
     return `USER: The user issued the /${mediaCommand} media command. Call the ${toolName} tool immediately with the following prompt, and reply with nothing but the tool call:\n\n${prompt}`;
   }).join("\n\n");
+}
+
+function delegatedCompaction(contextWindow: number, maxTokens: number): { reserveTokens: number; keepRecentTokens: number } {
+  const outputHeadroom = Math.max(2_048, Math.min(maxTokens, Math.floor(contextWindow / 4)));
+  return {
+    reserveTokens: Math.min(Math.floor(contextWindow / 3), Math.max(8_192, outputHeadroom)),
+    keepRecentTokens: Math.max(2_048, Math.min(4_096, Math.floor(contextWindow / 8))),
+  };
+}
+
+function requestedInitialSubagents(request: AgentRunRequest): number {
+  if (request.delegation) return 0;
+  const lastUserText = [...request.messages].reverse().find((message) => message.role === "user");
+  if (!lastUserText) return 0;
+  const text = extractTextFromContent(lastUserText.content).toLowerCase();
+  if (!/\b(?:launch|spawn|run|use|delegate(?:\s+to)?)\b/.test(text)) return 0;
+  if (!/\b(?:subagents?|researcher\s+subagents?|worker\s+subagents?|reviewer\s+subagents?)\b/.test(text)) return 0;
+  const words: Record<string, number> = {
+    one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
+    nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+  };
+  const count = text.match(/\b(?:launch|spawn|run|use)\s+(?:up\s+to\s+)?(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen)\b/)?.[1];
+  if (!count) return 1;
+  const parsed = /^\d+$/.test(count) ? Number(count) : words[count];
+  return Math.max(1, Math.min(16, parsed ?? 1));
 }
 
 const DEFAULT_MEDIA_PROMPTS: Record<MediaModality, string> = {

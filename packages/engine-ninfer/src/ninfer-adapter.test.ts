@@ -48,10 +48,10 @@ describe("NInferEngineAdapter launch contract", () => {
   it("wraps the exact launch argv for a Windows WSL host", async () => {
     const recipe = buildCurrentNInferRecipe("qwen-27b", "qwen3.6-27b", "/models/ninfer/model.ninfer", 3, "/engines/ninfer/build/apps/ninfer-serve");
     const spec = await new NInferEngineAdapter({ validatePaths: false }).buildLaunchSpec(recipe, { host: "127.0.0.1", port: 19_001 });
-    const launch = buildNInferProcessLaunch(spec, "generated-secret", "Ubuntu", "root");
+    const launch = buildNInferProcessLaunch(spec, "generated-secret", { distribution: "Fitz-Inference", user: "root" });
 
     expect(launch.executable).toBe("wsl.exe");
-    expect(launch.args.slice(0, 8)).toEqual(["-d", "Ubuntu", "-u", "root", "--", "sh", "-s", "--"]);
+    expect(launch.args.slice(0, 8)).toEqual(["-d", "Fitz-Inference", "-u", "root", "--", "sh", "-s", "--"]);
     expect(launch.args).toContain("/engines/ninfer/build/apps/ninfer-serve");
     expect(launch.args.slice(-2)).toEqual(["--api-key", "generated-secret"]);
     expect(launch.stdin).toContain('exec "$@"');

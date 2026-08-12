@@ -146,6 +146,36 @@ describe("InferenceScheduler", () => {
     expect(events.after(0).some((event) => event.type === "queue.updated")).toBe(true);
   });
 
+  it("runs one recipe concurrently up to its declared limit and switches only after the batch drains", async () => {
+    const adapter = new FakeEngineAdapter({ tokenDelayMs: 20 });
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]) });
+    const scheduler = new InferenceScheduler(
+      new RouteResolver(
+        [route("subagent", "batched"), route("default", "main")],
+        [recipe("batched", 60, 4), recipe("main", 60)],
+      ),
+      lifecycle,
+      undefined,
+      { gpuConcurrency: 4 },
+    );
+
+    const first = scheduler.enqueue("subagent", { messages: [{ role: "user", content: "alpha" }] });
+    const second = scheduler.enqueue("subagent", { messages: [{ role: "user", content: "beta" }] });
+    await waitFor(() => lifecycle.snapshot().activeLeases === 2);
+    expect(lifecycle.snapshot()).toMatchObject({ state: "BUSY", recipeId: "batched", activeLeases: 2 });
+    expect(adapter.starts).toHaveLength(1);
+
+    const main = scheduler.enqueue("default", { messages: [{ role: "user", content: "main" }] });
+    const [firstText, secondText, mainText] = await Promise.all([collect(first), collect(second), collect(main)]);
+
+    expect(firstText).toContain("alpha");
+    expect(secondText).toContain("beta");
+    expect(mainText).toContain("main");
+    expect(adapter.starts.map((instance) => instance.modelId)).toEqual(["batched-model", "main-model"]);
+    expect(adapter.stops).toHaveLength(1);
+    expect(lifecycle.snapshot()).toMatchObject({ state: "READY", recipeId: "main", activeLeases: 0 });
+  });
+
   it("round-robins queued GPU work across users without reordering either user", async () => {
     const adapter = new FakeEngineAdapter({ tokenDelayMs: 15 });
     const events = new LifecycleEventBus();
@@ -375,7 +405,7 @@ function route(id: string, recipeId: string): Route {
   return { id, displayName: id, recipeId, enabled: true };
 }
 
-function recipe(id: string, ttlSeconds: number): Recipe {
+function recipe(id: string, ttlSeconds: number, maxConcurrentGenerations = 1): Recipe {
   return {
     id,
     playbookId: "fake",
@@ -389,7 +419,7 @@ function recipe(id: string, ttlSeconds: number): Recipe {
       toolCalls: false,
       responseFormat: false,
       minP: false,
-      maxConcurrentGenerations: 1,
+      maxConcurrentGenerations,
     },
     lifecycle: {
       loadPolicy: "onDemand",

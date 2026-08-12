@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { isAbsolute, relative, resolve } from "node:path";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { isAbsolute, posix, relative, resolve } from "node:path";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { promisify } from "node:util";
 import type { Readable } from "node:stream";
 import type {
   EngineAdapter,
@@ -15,14 +16,18 @@ import { OpenAICompatibleClient } from "./openai-compatible-client.js";
 
 export interface ManagedOpenAIConfiguration {
   enginePath: string;
-  runtime: "windows" | "wsl";
+  runtime: "windows" | "linux-managed";
+  runtimeId?: string;
   command: string;
   args: string[];
   workingDirectory: string;
-  wslDistribution?: string;
   healthPath: string;
   readinessTimeoutMs: number;
 }
+
+export interface ManagedLinuxRuntimeTarget { distribution: string }
+
+const execFileAsync = promisify(execFile);
 
 export interface ManagedOpenAIHandle {
   id: string;
@@ -35,6 +40,7 @@ export interface ManagedOpenAIHandle {
   logs: string[];
   healthPath: string;
   readinessTimeoutMs: number;
+  guestProcess?: { pid?: number; distribution: string };
 }
 
 export class ManagedOpenAIEngineAdapter implements EngineAdapter<ManagedOpenAIHandle> {
@@ -42,11 +48,13 @@ export class ManagedOpenAIEngineAdapter implements EngineAdapter<ManagedOpenAIHa
   readonly #fetch: typeof globalThis.fetch;
   readonly #pollIntervalMs: number;
   readonly #stopTimeoutMs: number;
+  readonly #linuxRuntimes: ReadonlyMap<string, ManagedLinuxRuntimeTarget>;
 
-  constructor(options: { fetch?: typeof globalThis.fetch; pollIntervalMs?: number; stopTimeoutMs?: number } = {}) {
+  constructor(options: { fetch?: typeof globalThis.fetch; pollIntervalMs?: number; stopTimeoutMs?: number; linuxRuntimes?: ReadonlyMap<string, ManagedLinuxRuntimeTarget> } = {}) {
     this.#fetch = options.fetch ?? globalThis.fetch;
     this.#pollIntervalMs = options.pollIntervalMs ?? 250;
     this.#stopTimeoutMs = options.stopTimeoutMs ?? 10_000;
+    this.#linuxRuntimes = options.linuxRuntimes ?? new Map();
   }
 
   async validateRecipe(recipe: Recipe): Promise<ValidationReport> {
@@ -60,11 +68,18 @@ export class ManagedOpenAIEngineAdapter implements EngineAdapter<ManagedOpenAIHa
     const config = readManagedOpenAIConfiguration(recipe);
     const values = { host: allocation.host, port: String(allocation.port), model: recipe.modelId, context: String(recipe.contextTokens) };
     const args = config.args.map((argument) => interpolate(argument, values));
-    const workingDirectory = resolve(config.enginePath, config.workingDirectory);
-    if (config.runtime === "wsl") {
+    const workingDirectory = config.runtime === "linux-managed"
+      ? posix.resolve(config.enginePath, config.workingDirectory)
+      : resolve(config.enginePath, config.workingDirectory);
+    if (config.runtime === "linux-managed") {
+      const target = this.#linuxRuntimes.get(config.runtimeId!);
+      if (!target) throw new Error(`Managed Linux runtime is unavailable: ${config.runtimeId}`);
+      const command = isPathLike(config.command) && !posix.isAbsolute(config.command)
+        ? posix.resolve(workingDirectory, config.command)
+        : config.command;
       return {
         executable: "wsl.exe",
-        args: ["-d", config.wslDistribution ?? "Ubuntu", "--cd", windowsPathToWsl(workingDirectory), "--", config.command, ...args],
+        args: ["-d", target.distribution, "-u", "root", "--", "sh", "-s", "--", workingDirectory, command, ...args],
         env: {}, internalHost: allocation.host, internalPort: allocation.port,
       };
     }
@@ -75,14 +90,24 @@ export class ManagedOpenAIEngineAdapter implements EngineAdapter<ManagedOpenAIHa
   async start(recipe: Recipe, spec: LaunchSpec, signal: AbortSignal): Promise<ManagedOpenAIHandle> {
     if (signal.aborted) throw abortError();
     const config = readManagedOpenAIConfiguration(recipe);
+    const linuxManaged = config.runtime === "linux-managed";
     const child = spawn(spec.executable, spec.args, { ...(spec.cwd ? { cwd: spec.cwd } : {}), env: { ...process.env, ...spec.env }, shell: false, windowsHide: true, stdio: "pipe" });
     const logs: string[] = [];
-    captureLines(child.stdout, logs, "stdout"); captureLines(child.stderr, logs, "stderr");
+    const guestProcess: { pid?: number; distribution: string } | undefined = linuxManaged
+      ? { distribution: this.#linuxRuntimes.get(config.runtimeId!)!.distribution }
+      : undefined;
+    captureLines(child.stdout, logs, "stdout");
+    captureLines(child.stderr, logs, "stderr", (line) => {
+      const match = /^__FITZ_GUEST_PID=(\d+)$/.exec(line);
+      if (match && guestProcess) guestProcess.pid = Number.parseInt(match[1]!, 10);
+    });
+    if (linuxManaged) child.stdin.end('cd "$1"\nprintf "__FITZ_GUEST_PID=%s\\n" "$$" >&2\nshift\nexec "$@"\n');
     await waitForSpawn(child, signal);
     return {
       id: randomUUID(), recipeId: recipe.id, modelId: recipe.modelId,
       baseUrl: `http://${spec.internalHost}:${spec.internalPort}`, startedAt: new Date(), process: child,
       client: new OpenAICompatibleClient({ fetch: this.#fetch }), logs, healthPath: config.healthPath, readinessTimeoutMs: config.readinessTimeoutMs,
+      ...(guestProcess ? { guestProcess } : {}),
     };
   }
 
@@ -104,9 +129,15 @@ export class ManagedOpenAIEngineAdapter implements EngineAdapter<ManagedOpenAIHa
 
   async stop(instance: ManagedOpenAIHandle, mode: StopMode): Promise<StopReport> {
     if (hasExited(instance.process)) return { stopped: true };
-    instance.process.kill(mode === "force" ? "SIGKILL" : "SIGTERM");
+    const guestPid = instance.guestProcess?.pid;
+    if (guestPid) await signalGuest({ pid: guestPid, distribution: instance.guestProcess!.distribution }, mode === "force" ? "KILL" : "TERM");
+    else instance.process.kill(mode === "force" ? "SIGKILL" : "SIGTERM");
     const exited = await waitForExit(instance.process, this.#stopTimeoutMs);
-    if (!exited && mode !== "force") { instance.process.kill("SIGKILL"); await waitForExit(instance.process, Math.min(this.#stopTimeoutMs, 2_000)); }
+    if (!exited && mode !== "force") {
+      if (guestPid) await signalGuest({ pid: guestPid, distribution: instance.guestProcess!.distribution }, "KILL");
+      instance.process.kill("SIGKILL");
+      await waitForExit(instance.process, Math.min(this.#stopTimeoutMs, 2_000));
+    }
     return { stopped: hasExited(instance.process) };
   }
 
@@ -121,23 +152,28 @@ export function readManagedOpenAIConfiguration(recipe: Recipe): ManagedOpenAICon
   if (recipe.adapter !== "openai-managed") throw new TypeError("Recipe adapter must be openai-managed");
   const value = recipe.configuration;
   const runtime = value.runtime;
-  if (runtime !== "windows" && runtime !== "wsl") throw new TypeError("runtime must be windows or wsl");
+  if (runtime !== "windows" && runtime !== "linux-managed") throw new TypeError("runtime must be windows or linux-managed");
   const readinessTimeoutMs = value.readinessTimeoutMs === undefined ? 120_000 : numberValue(value.readinessTimeoutMs, "readinessTimeoutMs");
   return {
     enginePath: stringValue(value.enginePath, "enginePath"), runtime, command: stringValue(value.command, "command"),
     args: stringArray(value.args, "args"), workingDirectory: optionalString(value.workingDirectory, "workingDirectory") ?? ".",
     healthPath: optionalString(value.healthPath, "healthPath") ?? "/v1/models", readinessTimeoutMs,
-    ...(optionalString(value.wslDistribution, "wslDistribution") ? { wslDistribution: String(value.wslDistribution) } : {}),
+    ...(runtime === "linux-managed" ? { runtimeId: stringValue(value.runtimeId, "runtimeId") } : {}),
   };
 }
 
 export function validateManagedOpenAIConfiguration(recipe: Recipe): ValidationIssue[] {
   try {
     const config = readManagedOpenAIConfiguration(recipe);
-    if (!isAbsolute(config.enginePath)) return [{ level: "error", code: "invalid_engine_path", message: "enginePath must be absolute" }];
-    const workingDirectory = resolve(config.enginePath, config.workingDirectory);
-    if (!isWithin(config.enginePath, workingDirectory)) return [{ level: "error", code: "invalid_working_directory", message: "workingDirectory must stay inside enginePath" }];
-    if (isPathLike(config.command) && !isAbsolute(config.command) && !isWithin(config.enginePath, resolve(workingDirectory, config.command))) {
+    const linuxManaged = config.runtime === "linux-managed";
+    const absolute = linuxManaged ? posix.isAbsolute(config.enginePath) : isAbsolute(config.enginePath);
+    if (!absolute) return [{ level: "error", code: "invalid_engine_path", message: "enginePath must be absolute" }];
+    const workingDirectory = linuxManaged ? posix.resolve(config.enginePath, config.workingDirectory) : resolve(config.enginePath, config.workingDirectory);
+    const within = linuxManaged ? isWithinPosix : isWithin;
+    if (!within(config.enginePath, workingDirectory)) return [{ level: "error", code: "invalid_working_directory", message: "workingDirectory must stay inside enginePath" }];
+    const commandAbsolute = linuxManaged ? posix.isAbsolute(config.command) : isAbsolute(config.command);
+    const resolvedCommand = linuxManaged ? posix.resolve(workingDirectory, config.command) : resolve(workingDirectory, config.command);
+    if (isPathLike(config.command) && !commandAbsolute && !within(config.enginePath, resolvedCommand)) {
       return [{ level: "error", code: "invalid_command_path", message: "Relative command paths must stay inside enginePath" }];
     }
     if (!config.healthPath.startsWith("/") || config.healthPath.startsWith("//")) return [{ level: "error", code: "invalid_health_path", message: "healthPath must be an absolute URL path" }];
@@ -147,10 +183,10 @@ export function validateManagedOpenAIConfiguration(recipe: Recipe): ValidationIs
 }
 
 function interpolate(value: string, replacements: Record<string, string>): string { return value.replace(/\{(host|port|model|context)\}/g, (_match, key: string) => replacements[key] ?? ""); }
-function windowsPathToWsl(value: string): string { const match = /^([A-Za-z]):[\\/](.*)$/.exec(value); return match ? `/mnt/${match[1]!.toLowerCase()}/${match[2]!.replaceAll("\\", "/")}` : value.replaceAll("\\", "/"); }
 function isPathLike(value: string): boolean { return value.startsWith(".") || value.includes("/") || value.includes("\\"); }
 function isWithin(parent: string, child: string): boolean { const path = relative(resolve(parent), resolve(child)); return path === "" || (!path.startsWith("..") && !isAbsolute(path)); }
-function captureLines(stream: Readable, logs: string[], source: string): void { stream.setEncoding("utf8"); stream.on("data", (chunk: string) => { for (const line of chunk.split(/\r?\n/).filter(Boolean)) { logs.push(`${source}: ${line}`); if (logs.length > 500) logs.shift(); } }); }
+function isWithinPosix(parent: string, child: string): boolean { const path = posix.relative(posix.resolve(parent), posix.resolve(child)); return path === "" || (!path.startsWith("..") && !posix.isAbsolute(path)); }
+function captureLines(stream: Readable, logs: string[], source: string, onLine?: (line: string) => void): void { stream.setEncoding("utf8"); stream.on("data", (chunk: string) => { for (const line of chunk.split(/\r?\n/).filter(Boolean)) { onLine?.(line); logs.push(`${source}: ${line}`); if (logs.length > 500) logs.shift(); } }); }
 async function waitForSpawn(child: ChildProcessWithoutNullStreams, signal: AbortSignal): Promise<void> { await new Promise<void>((resolvePromise, reject) => { const spawned = () => finish(resolvePromise); const failed = (error: Error) => finish(() => reject(error)); const aborted = () => { child.kill("SIGKILL"); finish(() => reject(abortError())); }; const finish = (action: () => void) => { child.off("spawn", spawned); child.off("error", failed); signal.removeEventListener("abort", aborted); action(); }; child.once("spawn", spawned); child.once("error", failed); signal.addEventListener("abort", aborted, { once: true }); }); }
 async function waitForExit(child: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<boolean> { if (hasExited(child)) return true; return new Promise((resolvePromise) => { const timeout = setTimeout(() => finish(false), timeoutMs); const exited = () => finish(true); const finish = (value: boolean) => { clearTimeout(timeout); child.off("exit", exited); resolvePromise(value); }; child.once("exit", exited); }); }
 async function delay(milliseconds: number, signal: AbortSignal): Promise<void> { if (signal.aborted) throw abortError(); await new Promise<void>((resolvePromise, reject) => { const timeout = setTimeout(() => { signal.removeEventListener("abort", aborted); resolvePromise(); }, milliseconds); const aborted = () => { clearTimeout(timeout); reject(abortError()); }; signal.addEventListener("abort", aborted, { once: true }); }); }
@@ -162,3 +198,7 @@ function numberValue(value: unknown, name: string): number { if (typeof value !=
 function stringArray(value: unknown, name: string): string[] { if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) throw new TypeError(`${name} must be an array of strings`); return value; }
 function abortError(): Error { const error = new Error("Operation aborted"); error.name = "AbortError"; return error; }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+async function signalGuest(process: { pid: number; distribution: string }, signal: "TERM" | "KILL"): Promise<void> {
+  try { await execFileAsync("wsl.exe", ["-d", process.distribution, "-u", "root", "--", "kill", `-${signal}`, String(process.pid)], { timeout: 10_000, windowsHide: true }); }
+  catch { /* A guest that exited between inspection and signaling is already stopped. */ }
+}

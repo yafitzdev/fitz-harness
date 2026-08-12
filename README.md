@@ -22,8 +22,8 @@ pnpm dev
 
 The development host binds to `127.0.0.1`. `pnpm dev` (also available as `pnpm dev:ninfer`) starts
 the real NiNfer configuration and exposes the configured recipes through the Fast, Default, and
-Smart connection routes. On Windows, Fitz launches and stops the engine inside the configured Ubuntu
-WSL distribution while the desktop continues to connect to `127.0.0.1:8787`.
+Smart connection routes. On Windows, Linux-only engines run inside Fitz's shared `inference-linux`
+runtime while the desktop continues to connect to `127.0.0.1:8787`.
 
 Development keeps all mutable state in the repository under `data/` (`FITZ_DATA_ROOT`): sessions and
 artifact metadata in `data/database/fitz.db`, content-addressed artifact payloads in `data/artifacts/`,

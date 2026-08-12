@@ -361,6 +361,7 @@ describe("PiAgentRuntime", () => {
       requestToolApproval: (request) => { approvals += 1; return { approvalId: "never", decision: Promise.resolve("denied") }; },
       createSession: async (options) => ({ subscribe: (next) => { listener = next; return () => undefined; }, prompt: async () => {
         expect(await options.approveTool({ toolCallId: "read-1", toolName: "read", input: { path: "README.md" } })).toEqual({ allowed: true });
+        expect(await options.approveTool({ toolCallId: "web-1", toolName: "web_search", input: { query: "Pi extensions" } })).toEqual({ allowed: true });
         expect(await options.approveTool({ toolCallId: "img-1", toolName: "generate_image", input: { prompt: "a cat" } })).toEqual({ allowed: false, reason: "generate_image is blocked in Read only mode" });
         listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "blocked" } });
       }, abort: async () => undefined, dispose: () => undefined }) });
@@ -597,7 +598,7 @@ describe("PiAgentRuntime", () => {
   });
 
   it("registers host custom tools with the run context", async () => {
-    const seen: Array<{ cwd: string; runId?: string }> = [];
+    const seen: Array<{ cwd: string; runId?: string; request: AgentRunRequest }> = [];
     const runtime = new PiAgentRuntime({
       cwd: "C:/project",
       customTools: (context) => { seen.push(context); return []; },
@@ -608,8 +609,90 @@ describe("PiAgentRuntime", () => {
     });
     const events = [];
     for await (const event of runtime.run({ model: "fast", messages: [{ role: "user", content: "hi" }] }, undefined, { runId: "run-xyz" })) events.push(event);
-    expect(seen).toEqual([{ cwd: "C:/project", runId: "run-xyz" }]);
+    expect(seen).toEqual([{ cwd: "C:/project", runId: "run-xyz", request: { model: "fast", messages: [{ role: "user", content: "hi" }] } }]);
     expect(events).toEqual([{ type: "assistant.delta", text: "ok" }]);
+  });
+
+  it("blocks delegated tool calls after the child budget and steers it to report", async () => {
+    let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+    const steer = vi.fn(async () => undefined);
+    const runtime = new PiAgentRuntime({
+      toolPolicy: async () => ({ action: "allow" }),
+      createSession: async (options) => ({
+        subscribe: (next) => { listener = next; return () => undefined; },
+        prompt: async () => {
+          expect(await options.evaluateTool!({ toolCallId: "read-1", toolName: "read", input: { path: "a" } })).toEqual({ action: "allow" });
+          expect(await options.evaluateTool!({ toolCallId: "read-2", toolName: "read", input: { path: "b" } })).toEqual({ action: "allow" });
+          const blocked = await options.evaluateTool!({ toolCallId: "read-3", toolName: "read", input: { path: "c" } });
+          expect(blocked).toMatchObject({ action: "block", reason: expect.stringContaining("2-tool budget") });
+          listener({ type: "tool_execution_end", toolCallId: "read-2", toolName: "read", result: "ok" });
+          await Promise.resolve();
+          listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "report" } });
+        },
+        steer,
+        abort: async () => undefined,
+        dispose: () => undefined,
+      }),
+    });
+    const events = [];
+    for await (const event of runtime.run({
+      model: "default",
+      accessMode: "read-only",
+      delegation: { role: "researcher", parentRunId: "parent", toolCallBudget: 2 },
+      messages: [{ role: "user", content: "research" }],
+    })) events.push(event);
+
+    expect(steer).toHaveBeenCalledWith(expect.stringContaining("return the concise final report"));
+    expect(events).toContainEqual({ type: "assistant.delta", text: "report" });
+  });
+
+  it("forces explicitly requested subagents to launch before parent research tools", async () => {
+    const runtime = new PiAgentRuntime({
+      toolPolicy: async () => ({ action: "allow" }),
+      createSession: async (options) => ({
+        subscribe: (listener) => { listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "done" } }); return () => undefined; },
+        prompt: async (prompt) => {
+          expect(prompt).toContain("Your first tool calls must launch all 4 subagents");
+          expect(await options.evaluateTool!({ toolCallId: "read-early", toolName: "read", input: { path: "README.md" } }))
+            .toMatchObject({ action: "block", reason: expect.stringContaining("remaining 4 subagents") });
+          for (let index = 1; index <= 4; index += 1) {
+            expect(await options.evaluateTool!({ toolCallId: `subagent-${index}`, toolName: "subagent", input: { task: index } }))
+              .toEqual({ action: "allow" });
+          }
+          expect(await options.evaluateTool!({ toolCallId: "read-after", toolName: "read", input: { path: "README.md" } }))
+            .toEqual({ action: "allow" });
+        },
+        abort: async () => undefined,
+        dispose: () => undefined,
+      }),
+    });
+    const events = [];
+    for await (const event of runtime.run({
+      model: "default",
+      messages: [{ role: "user", content: "Launch four researcher subagents in parallel, then synthesize their findings." }],
+    })) events.push(event);
+    expect(events).toContainEqual({ type: "assistant.delta", text: "done" });
+  });
+
+  it("reserves compaction headroom for delegated workers", async () => {
+    const runtime = new PiAgentRuntime({
+      contextWindow: 32_768,
+      createSession: async (options) => {
+        expect(options.compaction).toEqual({ reserveTokens: 8_192, keepRecentTokens: 4_096 });
+        return {
+          subscribe: (listener) => { listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "report" } }); return () => undefined; },
+          prompt: async () => undefined,
+          abort: async () => undefined,
+          dispose: () => undefined,
+        };
+      },
+    });
+    for await (const _event of runtime.run({
+      model: "subagent",
+      maxTokens: 4_096,
+      delegation: { role: "researcher", parentRunId: "parent", toolCallBudget: 24 },
+      messages: [{ role: "user", content: "research" }],
+    })) { /* consume */ }
   });
 });
 

@@ -128,8 +128,8 @@ export interface CreateHostOptions {
   agentRuntime?: AgentRuntime;
   /** Maximum number of whole agent turns admitted at once (running + queued). */
   agentQueueCapacity?: number;
-  /** Independent Pi state machines allowed at once. GPU inference remains
-   * serialized by the scheduler; this keeps tool and remote-model work moving. */
+  /** Independent Pi state machines allowed at once. Local inference overlaps
+   * only when the active recipe explicitly declares batching capacity. */
   agentConcurrency?: number;
   /** Prevent one authenticated user from occupying every agent state machine. */
   agentConcurrencyPerOwner?: number;
@@ -262,6 +262,8 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   void Promise.allSettled(localRecipes.map((recipe) => lifecycle.prepare(recipe)));
   const scheduler = new InferenceScheduler(routes, lifecycle, events, {
     ...options.schedulerOptions,
+    gpuConcurrency: options.schedulerOptions?.gpuConcurrency
+      ?? Math.max(1, ...routes.listRecipes().map((recipe) => recipe.capabilities.maxConcurrentGenerations)),
     recordUsage: async (record) => {
       store.recordRequestUsage(record);
       await options.schedulerOptions?.recordUsage?.(record);
@@ -679,7 +681,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         const launchCommand = typeof body.launchCommand === "string" && body.launchCommand.trim() ? body.launchCommand.trim() : undefined;
         if (connectionMode === "managed" && !launchCommand) throw new TypeError("launchCommand is required for a managed engine");
         const workingDirectory = typeof body.workingDirectory === "string" && body.workingDirectory.trim() ? validateWorkingDirectory(rootPath, body.workingDirectory.trim()) : undefined;
-        const wslDistribution = typeof body.wslDistribution === "string" && body.wslDistribution.trim() ? body.wslDistribution.trim() : undefined;
+        const runtimeId = runtime === "linux-managed" ? requireString(body.runtimeId, "runtimeId") : undefined;
         const now = new Date().toISOString();
         const previous = store.listEngines().find((candidate) => candidate.folderName === folderName);
         const engine: EngineRegistration = {
@@ -693,7 +695,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
           ...(launchCommand ? { launchCommand } : {}),
           launchArguments,
           ...(workingDirectory ? { workingDirectory } : {}),
-          ...(wslDistribution ? { wslDistribution } : {}),
+          ...(runtimeId ? { runtimeId } : {}),
           createdAt: previous?.createdAt ?? now,
           updatedAt: now,
         };
@@ -984,7 +986,7 @@ function parseConnectionMode(value: unknown): EngineConnectionMode {
 }
 
 function parseEngineRuntime(value: unknown): EngineRuntime {
-  if (value !== "windows" && value !== "wsl") throw new TypeError("runtime must be windows or wsl");
+  if (value !== "windows" && value !== "linux-managed") throw new TypeError("runtime must be windows or linux-managed");
   return value;
 }
 

@@ -38,8 +38,8 @@ describe("SqliteStore", () => {
       isDefault: true,
     };
     const engine: EngineRegistration = {
-      id: "engine-1", folderName: "engine-1", displayName: "Engine 1", connectionMode: "managed", runtime: "wsl",
-      baseUrl: "http://127.0.0.1:18080", healthPath: "/v1/models", launchCommand: "./serve", launchArguments: ["--port", "{port}"], workingDirectory: ".", wslDistribution: "Ubuntu",
+      id: "engine-1", folderName: "engine-1", displayName: "Engine 1", connectionMode: "managed", runtime: "linux-managed",
+      baseUrl: "http://127.0.0.1:18080", healthPath: "/v1/models", launchCommand: "./serve", launchArguments: ["--port", "{port}"], workingDirectory: ".", runtimeId: "inference-linux",
       createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),
     };
 

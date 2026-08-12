@@ -24,7 +24,7 @@ export interface BoundedWorkLaneOptions<T extends LaneWorkItem> {
 export type WorkLaneEnqueueResult = "accepted" | "full" | "closed";
 
 /** A bounded, cancellation-aware, owner-fair lane. The concurrency limit is
- * the resource contract: the GPU lane uses one; cloud work uses a small bound. */
+ * the outer resource contract; individual engines may enforce a lower bound. */
 export class BoundedWorkLane<T extends LaneWorkItem> {
   readonly #queued: OwnerFairQueue<T>;
   readonly #active = new Set<T>();

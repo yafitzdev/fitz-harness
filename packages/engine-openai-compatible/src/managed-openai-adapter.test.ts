@@ -23,23 +23,32 @@ describe("ManagedOpenAIEngineAdapter", () => {
     });
   });
 
-  it("builds a generic WSL launch rooted in the selected engine checkout", async () => {
-    const adapter = new ManagedOpenAIEngineAdapter();
+  it("builds a launch entirely inside a named managed Linux runtime", async () => {
+    const adapter = new ManagedOpenAIEngineAdapter({ linuxRuntimes: new Map([["inference-linux", { distribution: "Fitz-Inference" }]]) });
     const recipe = managedRecipe({
-      enginePath: "C:\\Users\\test\\engines\\another-engine",
-      runtime: "wsl",
+      enginePath: "/opt/fitz/llm/environments/vllm",
+      runtime: "linux-managed",
+      runtimeId: "inference-linux",
       command: "./serve.sh",
       args: ["--port", "{port}"],
-      workingDirectory: "runtime",
-      wslDistribution: "Ubuntu-24.04",
+      workingDirectory: "bin",
       healthPath: "/health",
       readinessTimeoutMs: 45_000,
     });
 
+    await expect(adapter.validateRecipe(recipe)).resolves.toEqual({ valid: true, issues: [] });
     await expect(adapter.buildLaunchSpec(recipe, { host: "127.0.0.1", port: 18181 })).resolves.toMatchObject({
       executable: "wsl.exe",
-      args: ["-d", "Ubuntu-24.04", "--cd", "/mnt/c/Users/test/engines/another-engine/runtime", "--", "./serve.sh", "--port", "18181"],
+      args: ["-d", "Fitz-Inference", "-u", "root", "--", "sh", "-s", "--", "/opt/fitz/llm/environments/vllm/bin", "/opt/fitz/llm/environments/vllm/bin/serve.sh", "--port", "18181"],
     });
+  });
+
+  it("rejects unnamed WSL recipes so distribution details cannot leak into playbooks", async () => {
+    const adapter = new ManagedOpenAIEngineAdapter();
+    await expect(adapter.validateRecipe(managedRecipe({
+      enginePath: "/opt/fitz/llm/engines/vllm", runtime: "wsl", command: "vllm",
+      args: [], workingDirectory: ".", healthPath: "/v1/models", readinessTimeoutMs: 30_000,
+    }))).resolves.toMatchObject({ valid: false, issues: [expect.objectContaining({ code: "invalid_configuration" })] });
   });
 
   it("rejects working directories and relative commands that escape the engine checkout", async () => {

@@ -1,4 +1,4 @@
-import type { AgentEventEnvelope, AgentEventType, AgentQueueItem, AgentRunRecord, AgentRunRequest } from "@fitz/protocol";
+import type { AgentEventEnvelope, AgentEventType, AgentQueueItem, AgentRunRecord, AgentRunRequest, SubagentRole } from "@fitz/protocol";
 import { AGENT_PROTOCOL_VERSION } from "@fitz/protocol";
 import { OwnerFairQueue, type InferenceScheduler, type ScheduledStream } from "@fitz/inference-core";
 import type { AgentRuntime, AgentRuntimeEvent, AgentRuntimeRun } from "@fitz/agent-core";
@@ -12,6 +12,11 @@ interface AgentQueueJob {
   stream: AgentRuntimeRun | ScheduledStream | undefined;
   cancelRequested: boolean;
   shutdownRequested: boolean;
+}
+
+export interface SubagentRunResult {
+  run: AgentRunRecord;
+  text: string;
 }
 
 export class AgentQueueCapacityError extends Error {
@@ -28,6 +33,7 @@ export class AgentRunCoordinator {
   readonly #active = new Map<string, AgentQueueJob>();
   readonly #tasks = new Set<Promise<void>>();
   readonly #completionTasks = new Set<Promise<void>>();
+  readonly #activeSubagents = new Map<string, AgentQueueJob>();
   #accepting = true;
   /** Fired once per run after it reaches a terminal state, so the safety layer can sweep retention. */
   constructor(private readonly store: SqliteStore, private readonly scheduler: InferenceScheduler, private readonly runtime?: AgentRuntime, private readonly onRunCompleted?: (runId: string) => void | Promise<void>, private readonly maxDepth = 256, private readonly maxConcurrent = 4, private readonly maxConcurrentPerOwner = 1) {
@@ -56,6 +62,69 @@ export class AgentRunCoordinator {
     }
     this.#queue.enqueue({ id, request, stream: undefined, cancelRequested: false, shutdownRequested: false, ...(ownerUserId ? { ownerUserId } : {}) }); this.#publishQueue(); this.#pump();
     return this.store.getAgentRun(id)!;
+  }
+
+  /**
+   * Runs one delegated child outside the ordinary owner queue. The ordinary
+   * per-owner queue cannot be used here: the waiting parent already occupies
+   * that owner's slot. Independent children may overlap; each remains a durable
+   * agent run and uses the
+   * same runtime, scheduler, safety layer, usage records, and shutdown path.
+   */
+  async runSubagent(input: {
+    parentRunId: string;
+    role: SubagentRole;
+    toolCallBudget: number;
+    request: Omit<AgentRunRequest, "delegation" | "sessionId">;
+    ownerUserId?: string;
+    signal?: AbortSignal;
+  }): Promise<SubagentRunResult> {
+    if (!this.#accepting) throw new AgentCoordinatorClosedError();
+    const parentRequest = this.store.getAgentRunRequest(input.parentRunId);
+    if (!parentRequest) throw new Error(`Parent agent run ${input.parentRunId} was not found`);
+    if (parentRequest.delegation) throw new Error("Subagents cannot delegate to other subagents");
+
+    let job: AgentQueueJob | undefined;
+    try {
+      if (!this.#accepting) throw new AgentCoordinatorClosedError();
+      if (input.signal?.aborted) throw abortError();
+      const request: AgentRunRequest = {
+        ...input.request,
+        delegation: { role: input.role, parentRunId: input.parentRunId, toolCallBudget: input.toolCallBudget },
+      };
+      const id = randomUUID();
+      const now = new Date().toISOString();
+      const run: AgentRunRecord = {
+        id,
+        routeId: request.model,
+        status: "queued",
+        createdAt: now,
+        updatedAt: now,
+        lastSequence: 0,
+        ...(input.ownerUserId ? { ownerUserId: input.ownerUserId } : {}),
+      };
+      this.store.createAgentRun(run, request);
+      this.#emit(id, "run.created", { routeId: request.model, subagent: true, role: input.role, parentRunId: input.parentRunId });
+      job = { id, request, stream: undefined, cancelRequested: false, shutdownRequested: false, ...(input.ownerUserId ? { ownerUserId: input.ownerUserId } : {}) };
+      this.#activeSubagents.set(id, job);
+      const cancel = () => { job!.cancelRequested = true; job!.stream?.cancel(); };
+      input.signal?.addEventListener("abort", cancel, { once: true });
+      const task = this.#runJob(job);
+      this.#tasks.add(task);
+      try { await task; }
+      finally {
+        this.#tasks.delete(task);
+        input.signal?.removeEventListener("abort", cancel);
+      }
+      const completed = this.store.getAgentRun(id)!;
+      const text = this.store.agentEventsAfter(id, 0)
+        .filter((event) => event.type === "assistant.delta")
+        .map((event) => String(event.data.text ?? ""))
+        .join("");
+      return { run: completed, text };
+    } finally {
+      if (job) this.#activeSubagents.delete(job.id);
+    }
   }
 
   get(id: string): AgentRunRecord | undefined { return this.store.getAgentRun(id); }
@@ -106,6 +175,10 @@ export class AgentRunCoordinator {
       this.#notifyCompletion(job.id);
     }
     for (const job of this.#active.values()) {
+      job.shutdownRequested = true;
+      job.stream?.cancel();
+    }
+    for (const job of this.#activeSubagents.values()) {
       job.shutdownRequested = true;
       job.stream?.cancel();
     }
@@ -197,6 +270,10 @@ export class AgentRunCoordinator {
   /** Reasoning is stored under its own transcript kind so it never round-trips into model context or renders as a chat message. */
   #appendReasoningTranscript(runId: string, text: string, fromSequence: number, eventSequence: number): void { const sessionId = this.store.getAgentRun(runId)?.sessionId; if (sessionId && text) this.store.appendTranscriptEntry({ id: `agent-event:${runId}:reasoning:${fromSequence}-${eventSequence}`, sessionId, kind: "reasoning", role: "assistant", content: { text, runId, eventSequence }, createdAt: new Date().toISOString() }); }
   #appendToolTranscript(runId: string, event: AgentEventEnvelope): void { const sessionId = this.store.getAgentRun(runId)?.sessionId; if (!sessionId || (event.type !== "tool.started" && event.type !== "tool.completed")) return; this.store.appendTranscriptEntry({ id: `agent-event:${runId}:${event.type}:${event.sequence}`, sessionId, kind: event.type === "tool.started" ? "tool-call" : "tool-result", role: "tool", content: { ...event.data, runId, eventSequence: event.sequence }, createdAt: event.timestamp }); }
+}
+
+function abortError(): Error {
+  return Object.assign(new Error("Subagent run cancelled"), { name: "AbortError" });
 }
 
 function normalizeRuntimeEvent(event: AgentRuntimeEvent | { text: string; finishReason?: string; promptTokens?: number; completionTokens?: number }): { type: AgentEventType; data: Record<string, unknown> } {
