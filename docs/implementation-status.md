@@ -14,7 +14,7 @@
   GPU queue. Waiting work rotates across owners while preserving FIFO within each
   owner, so one user's burst cannot monopolize the host. CPU/RAM-only preparation
   may remain concurrent because it cannot activate a model or consume model VRAM.
-- Lifecycle state machine with on-demand loading, recipe switching, leases, minimum residency, and idle TTL eviction.
+- Single-Default lifecycle policy with asynchronous host-start/desktop-open warm-up, pinned residency, safe recipe switching, local-media displacement/restoration, and force-unload plus dedicated-runtime termination when the hosting desktop closes.
 - Deterministic fake engine adapter.
 - Opt-in direct NInfer adapter with validated launch specs, generated per-instance credentials,
   readiness polling, authenticated streaming translation, bounded logs, and graceful/forced stop.
@@ -27,8 +27,8 @@
 - Structured HTTP logging with sensitive-header redaction, lifecycle/HTTP metrics, authenticated
   metrics and diagnostic endpoints, and recursive secret redaction for exported diagnostics.
 - Required-auth mode with HMAC-SHA-256 device bearer credentials, durable users and devices,
-  administrator/agent/consumer roles, per-user route grants and quotas, device revocation, audit
-  history, and bootstrap-administrator provisioning.
+  administrator/agent/consumer roles, owner-scoped Smart/Fast cloud connections, media-route grants,
+  quotas, device revocation, audit history, and bootstrap-administrator provisioning.
 - Versioned native Pi coding-agent runs with durable run state, sequenced text/tool events, project-rooted coding tools, and background execution
   across client disconnects, cancellation, owner isolation, JSON event replay, resumable SSE via
   `after` or `Last-Event-ID`, and interrupted-run recovery after host restart.

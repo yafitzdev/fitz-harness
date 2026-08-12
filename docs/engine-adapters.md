@@ -1,44 +1,63 @@
-# Engine adapters
+# Engine adapters and registry
 
-Fitz supports three engine modes through `FITZ_ENGINE_MODE`:
-
-- `fake` is the deterministic development default.
-- `ninfer` manages the locally installed NInfer server and the imported Fitz recipes.
-- `openai-compatible` connects to an already-running OpenAI-compatible HTTP server.
-
-Local engines, including llama.cpp, are registered through Playbooks and launched inside the managed
-Linux runtime. `FITZ_ENGINE_MODE` has no engine-specific local fallback.
+Fitz can host different inference engines without giving each engine its own product-level routing policy. Engines provide launch and transport mechanics; the host applies one common local residency contract.
 
 ## Canonical inference registry
 
-The Playbooks workspace discovers immediate child folders beneath `/opt/fitz/llm/engines` in the
-managed `Fitz-Inference` WSL distribution. Windows accesses the same directory through the WSL UNC
-share; there is no second host registry. Every child is an independent engine repository:
+All local engines, environments, registrations, and model payloads live in the managed `Fitz-Inference` WSL distribution beneath `/opt/fitz/llm`:
 
 ```text
-/opt/fitz/llm/engines/
-  engine-one\       # untouched Git checkout
-  engine-two\       # untouched Git checkout
-  private-fork\     # untouched Git checkout
+/opt/fitz/llm/
+  engines/         # independent engine repositories or builds
+  environments/    # engine-specific Python/runtime environments
+  models/          # small registration JSON plus model payload trees
+  config/          # shared engine configuration and extensions
+  logs/            # engine logs and generated runtime output
+  README.md        # machine-level onboarding and placement rules
 ```
 
-Fitz treats this directory as read-only. It does not clone repositories, create folders, write manifests or sidecars, add a `.fitz` directory, or put generated build files in an engine checkout. Repository installation and Git updates therefore remain independent of Fitz.
+Windows accesses the same tree at `\\wsl.localhost\Fitz-Inference\opt\fitz\llm`. There is no second Windows model or engine registry.
 
-Add or clone any engine into the root, refresh Playbooks, and its folder appears as **Needs setup**. Registration records only the folder path and OpenAI-compatible connection/launch settings in Fitz's SQLite database. No engine names, repository URLs, or launch commands are built into onboarding.
+Engine repositories under `engines/` are treated as read-only by Fitz. Installation and upstream Git updates remain independent of the app. Generated environments, model payloads, configuration, and mutable runtime output do not live inside an engine checkout.
 
-An engine can use either connection mode:
+## Engine registration
 
-- **Managed**: Fitz launches and stops a configured command in the named managed Linux runtime. Arguments can contain `{host}`, `{port}`, `{model}`, and `{context}` placeholders. Recipes use guest paths beneath `/opt/fitz/llm`, identify `runtimeId: "inference-linux"`, and never select a WSL distribution directly.
-- **External**: Fitz connects to an already-running OpenAI-compatible server URL.
+The Playbooks workspace discovers immediate children beneath `engines/`. A generic managed engine registration records its launch command, arguments, working directory, health endpoint, and runtime id in SQLite. Launch arguments can use `{host}`, `{port}`, `{model}`, and `{context}` placeholders.
 
-Recipes belong to their registered engine. Model artifacts live separately beneath `/opt/fitz/llm/models`. Fast, Default, Smart, and the internal Subagent execution route are assigned only from Connections. Subagent does not appear in the chat tier picker. Independent delegated calls are submitted together, while the assigned recipe's `maxConcurrentGenerations` controls actual execution: `1` serializes isolated workers and larger values admit that many concurrent generations. Cloud recipes and continuously batched local servers use the same contract.
+Specialized reconcilers may materialize recipes from registration JSON—for example vLLM registrations under `models/vllm/` and GGUF registrations beneath `models/gguf/`. A registration describes a runnable recipe; it does not assign a route. Missing payloads dematerialize the recipe instead of leaving an unusable route behind.
 
-## Generic OpenAI-compatible server
+## Common local policy
 
-Set `FITZ_ENGINE_MODE=openai-compatible`, `FITZ_OPENAI_BASE_URL`, and `FITZ_MODEL_ID`. If the endpoint requires a key, put the key in an environment variable and set `FITZ_OPENAI_API_KEY_ENV` to that variable's name. Keys are resolved at startup and are never stored in recipes. Remote plaintext HTTP is rejected unless `FITZ_OPENAI_ALLOW_INSECURE_REMOTE=true` is explicitly set.
+The host administrator assigns one local text recipe to **Default**. That recipe may use NInfer, llama.cpp, vLLM, or another conforming adapter. Fitz warms it at startup, keeps it resident, and force-stops it when the hosting desktop closes.
 
-## llama.cpp
+Local scheduling is deliberately engine-agnostic:
 
-The registered CUDA build is `/opt/fitz/llm/engines/llama.cpp/build-linux-cuda/bin/llama-server`; GGUF payloads live beneath `/opt/fitz/llm/models/gguf`. Fitz binds the managed server to its allocated interface and port, polls readiness, streams through the common OpenAI-compatible transport, and terminates the guest process during eviction.
+- one model-bearing local engine active at a time;
+- one local generation at a time;
+- no parked secondary engines or configurable preload set;
+- local media may temporarily displace Default and must restore it afterward;
+- changing the chat choice does not start or test an engine.
 
-`llama-server` enables continuous batching by default, but concurrency still requires multiple server slots via `--parallel N`. A recipe must declare the same capacity in `capabilities.maxConcurrentGenerations`; Fitz deliberately treats its current auto-discovered llama.cpp recipes as sequential because they launch with `--parallel 1`. Increasing slots also increases KV-cache pressure, so it is a per-recipe performance choice rather than a global default.
+Consequently, vLLM launches with `--max-num-seqs 1`, and llama.cpp recipes use one server slot. Engine-level continuous batching is not needed for the supported multi-user pattern: independent Pi state machines overlap, while their brief local inference phases wait in an owner-fair queue.
+
+## Cloud connections
+
+OpenAI-compatible connections belong to the authenticated consumer who created them. Their recipes are visible only to that owner and can be assigned to two roles:
+
+- **Smart**: an optional cloud model explicitly selected for the whole main-agent turn.
+- **Fast workers**: an optional cloud model used by delegated workers and researchers.
+
+Smart and Fast execute in the bounded cloud lane and may overlap. Fast is offered in the chat picker and to delegated workers only when the owner has configured it.
+
+Credentials are stored by the desktop using Electron safe storage and are registered on the host under owner-and-connection-scoped environment variable names. One user cannot bind another user's discovered recipe.
+
+## Built-in adapters
+
+- **NInfer**: managed local text engine optimized for its supported model set.
+- **llama.cpp**: managed local GGUF text/VLM server.
+- **vLLM**: managed local Linux text server materialized from strict registration JSON.
+- **OpenAI-compatible**: remote text endpoints used for consumer-owned Smart/Fast roles.
+- **ComfyUI and media providers**: local or remote media engines using the shared job pipeline.
+- **Fake**: deterministic development and test adapter.
+
+The exact residency and displacement algorithm is documented in [model-residency.md](./model-residency.md).

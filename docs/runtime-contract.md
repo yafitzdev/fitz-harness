@@ -19,7 +19,7 @@ Fitz has two bounded execution lanes:
 | Lane | Work | Concurrency | Waiting capacity |
 |---|---|---:|---:|
 | Local GPU | agent model calls, direct chat, local media, recipe tests, model warmup | **1** | 256 |
-| Remote cloud | media generation executed by remote providers | 4 | 64 |
+| Remote cloud | consumer-owned Smart/Fast text calls and remote media providers | 4 | 64 |
 
 The local GPU concurrency of one is a hard invariant, not a tuning default. A second local request
 cannot load or execute a model until the active request releases the lane. This protects a single-GPU
@@ -40,9 +40,22 @@ round-robin selection across owners prevents one user's burst from monopolizing 
 same policy applies to agent state-machine admission and to underlying inference work. When
 authentication is disabled, local submissions intentionally share one owner bucket.
 
-Remote media never acquires a local lifecycle lease and cannot evict a resident local model. It uses a
-separate bounded lane because provider requests consume network connections and paid-provider capacity,
-but not local VRAM.
+Remote text and media never acquire a local lifecycle lease and cannot evict the resident Default
+model. They use a separate bounded lane because provider requests consume network connections and
+paid-provider capacity, but not local VRAM. Smart and Fast are explicit user-selected cloud models;
+Fast also powers delegated workers and exists only when that consumer explicitly configures it.
+
+The host pins exactly one local Default recipe and warms it asynchronously at host startup and whenever
+the local desktop hosting plane opens. Local media may
+displace it temporarily, but Default is restored before the local lane admits later text work. The
+desktop's chat-route picker only changes request configuration and never triggers model activation.
+
+For vLLM, loader and startup-profile choices are explicit registration data. The tested consumer-
+Blackwell NVFP4 profile uses text-only mode, skips multimodal profiling, persists the KV startup plan,
+and uses InstantTensor's buffered backend. `VLLM_HOST_IP=127.0.0.1` is a managed-runtime invariant:
+all vLLM processes share one WSL host, and loopback avoids the reverse-DNS timeout caused by WSL's
+ephemeral private address. These settings reduce cold-start work; they do not pretend that vLLM's
+Python/API initialization or ModelOpt-to-Marlin materialization is instantaneous.
 
 ## Queue identity, visibility, and cancellation
 
@@ -58,6 +71,9 @@ but not local VRAM.
   cancels active media providers, awaits media event consumers and artifact finalizers, and only then
   stops the scheduler, lifecycle manager, subscriptions, and SQLite. `SIGINT` and `SIGTERM` invoke this
   same bounded close path.
+- Closing the local desktop force-stops the engine and terminates only Fitz's dedicated
+  `Fitz-Inference` distribution, releasing its Linux page cache and Windows VM commit. Reopening the
+  desktop immediately queues a new Default warm-up against the persistent runtime filesystem.
 
 ## Desktop host boundary
 

@@ -6,6 +6,8 @@ Current work is tracked in [TODO.html](./TODO.html).
 
 The exact desktop/host handshake, bounded work lanes, single-GPU invariant, recovery behavior, and
 long-session contract are documented in [docs/runtime-contract.md](./docs/runtime-contract.md).
+The single-Default residency, media displacement, owner-scoped cloud routing, and shutdown rules are documented in
+[docs/model-residency.md](./docs/model-residency.md).
 
 ## Development
 
@@ -21,8 +23,10 @@ pnpm dev
 ```
 
 The development host binds to `127.0.0.1`. `pnpm dev` (also available as `pnpm dev:ninfer`) starts
-the real NiNfer configuration and exposes the configured recipes through the Fast, Default, and
-Smart connection routes. On Windows, every local inference engine and model lives inside Fitz's shared
+the real NInfer configuration, warms the host-owned Default model, and exposes owner-configured cloud
+Smart routing when present. Fast is an optional cloud chat and worker role; without a Fast assignment,
+subagent delegation is unavailable.
+On Windows, every local inference engine and model lives inside Fitz's shared
 `inference-linux` runtime while the native desktop continues to connect to `127.0.0.1:8787`.
 
 Development keeps all mutable state in the repository under `data/` (`FITZ_DATA_ROOT`): sessions and

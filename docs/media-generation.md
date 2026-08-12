@@ -5,14 +5,16 @@
 | **Title** | Media generation (image / video / audio) for Fitz |
 | **Author** | Fitz architecture (placeholder) |
 | **Date** | 2026-08-08 |
-| **Status** | Draft |
+| **Status** | Historical design record — implementation landed |
 | **Related docs** | `docs/media-generation.md` (brainstorm draft), `docs/engine-adapters.md`, `docs/pi-adapter.md`, `docs/artifacts.md`, `DESIGN.md`, `docs/implementation-status.md` |
+
+> This file preserves the original media architecture and rollout rationale. For current text routing and residency behavior, `docs/model-residency.md` and `docs/engine-adapters.md` are normative.
 
 ---
 
 ## Overview
 
-Fitz today is a chat + coding-agent control plane: stable routes (`fast` / `default` / `smart`) resolve to recipes hosted by local engine playbooks (NInfer, llama.cpp, generic OpenAI-compatible) or cloud LLM connections, and artifacts (images, audio, video, PDF, code) are classified and rendered by the desktop Inspector. There is **no media generation**.
+Fitz is a chat + coding-agent control plane with embedded image/video/audio generation and editing. Text routing now has one host-owned local `default` plus optional consumer-owned cloud `fast` and `smart` selections; `fast` also powers delegated workers. Media keeps the well-known `image`, `video`, and `audio` routes and renders generated artifacts in chat and the Inspector.
 
 This design adds image, video, and audio generation by generalizing the existing playbook/recipe/routing/connection/artifact infrastructure rather than building a parallel system:
 
@@ -33,8 +35,8 @@ The single biggest hidden cost is that **cloud media APIs are not OpenAI-compati
 - `packages/protocol/src/domain.ts` defines `EngineCapabilities` (lines 16–26) with six chat-only booleans (`chatCompletions`, `streaming`, `toolCalls`, `responseFormat`, `minP`, `maxConcurrentGenerations`), `Recipe` (lines 32–42), and `Route { id, displayName, description?, recipeId, enabled, isDefault? }` (lines 62–71).
 - `packages/inference-core/src/adapter.ts` defines `EngineAdapter` — a chat-shaped contract (`prepare?`, `validateRecipe`, `estimateResources`, `buildLaunchSpec`, `start`, `waitUntilReady`, **`streamChat`**, `stop`, `inspect`) plus `EngineAdapterRegistry`.
 - `packages/inference-core/src/scheduler.ts` is the strict single-GPU owner-fair scheduler for chat, media, recipe tests, and VRAM-bearing warmup (`QueueJob`, leases, cancellation, `queue.updated` events). Owners rotate round-robin while each owner's work remains FIFO. `packages/inference-core/src/lifecycle-manager.ts` implements on-demand load, leases (active work blocks eviction), idle TTL, and the `ResourceGovernor` VRAM reserve (default 2048 MiB, `packages/inference-core/src/resources.ts`). CPU/RAM-only preparation may run concurrently, but model activation cannot bypass the queue.
-- `apps/host/src/create-app.ts` exposes `GET /v1/models`, `POST /v1/chat/completions`, the native agent-run API, management endpoints (`PUT /api/v1/management/routes/:id`, recipe test), and the consumer-connection flow: `PUT /api/v1/management/connections/:connectionId` → `OpenAICompatibleClient.listModels` → filter `supportsChatCompletions` → create recipes (`playbookId: consumer-<id>`, `adapter: "openai-compatible"`) → register routes `consumer--<connection>--<hash>`.
-- `apps/desktop/src/ui/connections/connection-workspace.ts` renders the Connections tab with `FIXED_ROUTES` (fast/default/smart) toggles that `PUT /api/v1/management/routes/:id`.
+- `apps/host/src/create-app.ts` exposes `GET /v1/models`, `POST /v1/chat/completions`, the native agent-run API, management endpoints (`PUT /api/v1/management/routes/:id`, recipe test), and the owner-scoped consumer-connection flow: `PUT /api/v1/connections/:connectionId` → discovery → private recipes. Text recipes bind through `/api/v1/cloud-routes/:role`; media recipes retain concrete media routes.
+- `apps/desktop/src/ui/connections/connection-workspace.ts` renders local Default assignment separately from consumer-owned Smart and Fast-worker cloud bindings, plus the media-route controls.
 - `packages/media/src/registry.ts` already classifies `image`/`audio`/`video`/`pdf`/`code`/`text`/`binary`; the Inspector renders artifacts via `data:<mime>;base64,<payload>` (`apps/desktop/src/ui/inspector/resource-inspector.ts:130–134`).
 - `ArtifactRepository` stores SHA-256, MIME classification, ownership, and an opaque object reference in SQLite while payloads live in the managed content-addressed directory. The 5 MB HTTP upload cap still applies to user uploads; generated media uses coordinator-enforced kind-aware caps (§5.11) and streams directly into the blob backend.
 - Security: administrator/agent/consumer roles, per-user route grants (`route.use:<id>`), `UserQuota` (`packages/protocol/src/security.ts`), tool approval gating (Full access / Ask first / Read only), secrets in credential env vars (never in recipes).
@@ -130,7 +132,7 @@ Capability matrix for the v1 lineup:
 
 | Recipe | input | output | limits | Assignable routes |
 | --- | --- | --- | --- | --- |
-| Chat models (local/cloud) | text | — (no `modalities`) | — | `fast` / `default` / `smart` |
+| Chat models (local/cloud) | text | — (no `modalities`) | — | local `default`; cloud `fast` or `smart` binding |
 | H3 FL2VA local (ComfyUI) | text (first/last-frame conditioning follows) | video with stereo audio | ≤ 15 s, ≤ 1344x768 local | `video` |
 | Dedicated image engine (e.g. SD-class local or provider) | text, image | image | — | `image` |
 | DALL·E-class provider model | text | image | — | `image` |
@@ -154,7 +156,7 @@ export interface Route {
 }
 ```
 
-- Chat keeps `fast` / `default` / `smart`. Media adds exactly three **well-known route ids**: `image`, `video`, `audio`.
+- Public chat keeps `default` plus optional `fast` and `smart`; subagents also use `fast`. Media adds exactly three **well-known route ids**: `image`, `video`, `audio`.
 - Media routes are created **disabled with an empty `recipeId: ""`** by an idempotent `ensureMediaRoutes()` at host startup and after any media-capable recipe upsert. It is **create-only**: existing media routes are never reset — their `recipeId`/`enabled` state is preserved on every boot. `RouteResolver.resolve()` only resolves *enabled* routes, so an unassigned media route is inert.
 - **Assignment** stays on the existing `PUT /api/v1/management/routes/:id` handler: it gains validation that the recipe's `modalities.output` includes the route's kind. The modality check applies **only when the request assigns a recipe** (`enabled: true` with a non-empty `recipeId`) — it must never block a de-assignment.
 - **De-assignment (explicit rollback path)**: for media routes, `PUT /api/v1/management/routes/:id` accepts an **empty `recipeId`**, which persists `enabled: false` (the route stays visible and disabled rather than being deleted). This requires two coordinated changes, not just `parseRoute`: (a) `parseRoute` (create-app.ts:1087–1089) is relaxed for `kind !== "chat"` — empty `recipeId` is legal for media routes and implies `enabled: false` (chat routes keep the current non-empty-`recipeId` requirement); and (b) the `PUT /routes/:routeId` handler's **independent recipe-exists guard** (create-app.ts:715–716: `routes.listRecipes().some((recipe) => recipe.id === route.recipeId)` → `RecipeNotFoundError`) **skips the check when `recipeId === ""`** — a de-assignment deliberately references no recipe, so without (b) the de-assignment `PUT { recipeId: "", enabled: false }` still returns 400. `enabled: false` with a non-empty `recipeId` remains valid (assign-but-disable).
@@ -421,10 +423,10 @@ export class MediaProviderRegistry {
 
 **Host wiring (reuses the consumer-connection flow):**
 
-- `PUT /api/v1/management/connections/:connectionId` switches on `body.template` (default `openai-compatible`). For media templates it calls `provider.discover(...)` instead of `listModels`, and for each `ProviderModel` creates a recipe with `adapter: <template id>`, `capabilities.modalities = { input, output, limits }`, `chatCompletions: false`, and `configuration: { baseUrl, apiKeyEnv, modelId }`.
+- `PUT /api/v1/connections/:connectionId` switches on `body.template` (default `openai-compatible`). For media templates it calls `provider.discover(...)` instead of `listModels`, and for each `ProviderModel` creates a recipe with `adapter: <template id>`, `capabilities.modalities = { input, output, limits }`, `chatCompletions: false`, and `configuration: { baseUrl, apiKeyEnv, modelId }`.
 - The host registers a thin `MediaProviderEngineAdapter` per template (id = template id) that implements `MediaEngineAdapter`: `start()` resolves the credential env (mirroring `OpenAICompatibleEngineAdapter.start`, which throws `Missing API key environment variable` when `apiKeyEnv` is set but empty), `waitUntilReady()` does a health probe, and `submit/poll/cancel` delegate to the `MediaProvider`. The recipe's `adapter` id therefore resolves in the **same** registry as local media engines — one code path in the scheduler/lifecycle, `isMediaEngineAdapter` narrows the interface.
 - One connection may expose several modalities (fal has everything): discovery returns one recipe per model, and each recipe's `output` decides which routes it can be assigned to.
-- **Mixed connections (media + chat over one connection)**: for media templates, the `PUT /api/v1/management/connections/:connectionId` handler runs **both** discovery paths and **unions the recipe sets** — the existing chat flow (`listModels` + `supportsChatCompletions`, creating `openai-compatible` chat recipes) *and* `provider.discover(...)` (creating `<template id>` media recipes). A model that is both chat- and media-capable (e.g. a provider serving chat plus DALL·E-class generation) therefore yields two recipes — one per adapter — assignable to chat and media routes respectively. `ProviderModel` deliberately carries only the *output media* modalities (that is its purpose: media discovery); chat capability is determined by the separate chat discovery path, which is exactly why the union is required. Chat models served through the same connection keep feeding `fast`/`default`/`smart` precisely as today, with zero change to the chat discovery code path.
+- **Mixed connections (media + chat over one connection)**: for media templates, the `PUT /api/v1/connections/:connectionId` handler runs **both** discovery paths and **unions the recipe sets** — the chat flow (`listModels` + `supportsChatCompletions`, creating `openai-compatible` text recipes) *and* `provider.discover(...)` (creating `<template id>` media recipes). A model that is both chat- and media-capable therefore yields two recipes — one per adapter. Text recipes can be bound to the owner's Smart or Fast role; media recipes can be assigned to compatible media routes.
 - **Connection tracking and cleanup**: media discovery results are recorded in the connection registration so connection re-save/delete can clean them up. `ConsumerConnectionRegistration` (create-app.ts:51) gains a parallel **`mediaModels: Array<{ modelId, recipeId, routeId, modality, template }>`** list, populated by the media save flow for every discovered `ProviderModel` — mirroring how chat models populate `models` (create-app.ts:503–507). `removeConsumerRegistration` (create-app.ts:936–949) is extended to iterate `mediaModels` as well: it deletes the media recipes and their `consumer--*` routes, and **de-assigns** (never deletes) any well-known media route (`image`/`video`/`audio`) whose `recipeId` referenced a removed media recipe — `enabled: false`, `recipeId: ""`, keeping the route visible per §5.2. The same re-validation runs on connection re-save: after re-discovery, any well-known media route whose `recipeId` no longer resolves in `routes.listRecipes()` is cleared the same way, so a stale assignment can never keep pointing at a deleted recipe. PR 4 carries this with a connection re-save/delete test.
 - Secrets stay in the existing credential env mechanism (`consumerCredentialEnvironment`); never in recipes. Provider result URLs are fetched **host-side** (§5.11) and never handed to the renderer.
 
@@ -491,7 +493,7 @@ export interface UserQuota {
 `apps/desktop/src/ui/connections/connection-workspace.ts`:
 
 - The connection editor (`CONNECTION_EDITOR_TEMPLATE`) gains a **provider template** dropdown: `openai-compatible` (default; current behavior), `openai-media` (same base-URL + bearer form), `fal`, `replicate` (key + optional model ids). Template-specific fields show/hide per selection (fal/replicate hide the base URL).
-- **Keep** the chat Fast/Default/Smart toggle row exactly as-is (`FIXED_ROUTES` + `assignRoute`, lines 268–283, 338–358).
+- **Keep** media assignment independent of text routing. Hosted text exposes only Default; a consumer's remote connection may expose Fast and Smart.
 - **Add** a visually distinct **Media routes** section per connection: Image / Video / Audio single-assignment toggles writing the same `PUT /api/v1/management/routes/:id`. A recipe is only assignable to routes matching its `modalities.output`; incompatible buttons are disabled with a tooltip (e.g. "This model does not generate video").
 - Model cards for media models show modality + limit badges ("Video · Audio · 2K · 15s") instead of the context-token label (lines 240–268).
 
@@ -557,7 +559,7 @@ flowchart LR
         T --> REP[replicate]
     end
     subgraph Host save flow
-        S[PUT /api/v1/management/connections/:id] --> D[template.discover]
+        S[PUT /api/v1/connections/:id] --> D[template.discover]
         D -->|modelId + modalities + limits| REC[recipes with capabilities.modalities]
         REC --> RT[register routes consumer--*]
     end
@@ -595,7 +597,7 @@ flowchart LR
 | New interface | `MediaEngineAdapter`, `MediaJobHandle`, `MediaJobPoll`, `isMediaEngineAdapter` | `packages/inference-core/src/adapter.ts` |
 | `InferenceScheduler` | `+ enqueueMedia(routeId, input, signal?): ScheduledMediaJob`; `QueueJob` becomes a chat|media union | `packages/inference-core/src/scheduler.ts` |
 | `LifecycleManager` | `+ runMedia(recipe, request, signal): AsyncIterable<MediaJobEvent>` | `packages/inference-core/src/lifecycle-manager.ts` |
-| Host API | `POST/GET /api/v1/media/jobs…`, `POST /v1/images/generations`, `POST /v1/videos/generations`, `POST /api/v1/management/recipes/:id/media-test`, provider-aware `PUT /api/v1/management/connections/:id` (+ `mediaModels` tracking in the connection registration), route-kind validation + media **de-assignment** (empty `recipeId`, handler skips its recipe-exists guard) on `PUT /api/v1/management/routes/:id`, `includeDisabled` media-route listing | `apps/host/src/create-app.ts`, `apps/host/src/media-jobs.ts` |
+| Host API | `POST/GET /api/v1/media/jobs…`, `POST /v1/images/generations`, `POST /v1/videos/generations`, `POST /api/v1/management/recipes/:id/media-test`, provider-aware `PUT /api/v1/connections/:id` (+ `mediaModels` tracking in the connection registration), route-kind validation + media **de-assignment** (empty `recipeId`, handler skips its recipe-exists guard) on `PUT /api/v1/management/routes/:id`, `includeDisabled` media-route listing | `apps/host/src/create-app.ts`, `apps/host/src/media-jobs.ts` |
 | `UserQuota` | `+ media?: MediaQuota`; `validateQuota` + quota endpoint accept the sub-object | `packages/protocol/src/security.ts`, `packages/security/src/security-service.ts`, `apps/host/src/create-app.ts` |
 | `SecurityService` | `+ principalForUser(userId): AuthenticatedPrincipal` (user + routeGrants + quota, **absent device**) | `packages/security/src/security-service.ts` |
 | Agent runtime | media tools via `customTools`; `MEDIA_TOOLS` Ask-first override in the legacy no-policy branches of `#evaluateTool` / `#approveTool` (**full mode only**; read-only mode keeps blocking); policy engine consults `resolveToolPolicy(userId, role, toolName)` via `PolicyContext` for `MEDIA_TOOLS` (allow / deny→`block` / ask) | `packages/agent-pi/src/pi-agent-runtime.ts`, `apps/host/src/agent-safety/policy.ts` |
@@ -658,7 +660,7 @@ Notes:
 
 - `media_jobs.route_id` is not a FK to `routes` (routes are deleted/recreated by connection resets; jobs stay as history, matching `inference_requests`).
 - `media_job_events` mirrors `agent_events` (PK `(job_id, sequence)`); `SqliteStore` gains `appendMediaJobEvent / mediaJobEventsAfter(jobId, after)` so the SSE replay endpoint reads rows in sequence order with After / Last-Event-ID semantics.
-- `sessions.route_id` CHECK stays `fast|default|smart` — sessions remain chat-only; media jobs carry their route id independently.
+- `sessions.route_id` accepts `default|fast|smart`; media jobs carry their own route ids independently.
 - `SqliteStore` gains `createMediaJob / getMediaJob / updateMediaJob / listMediaJobs / mediaJobsByOwner / recoverInterruptedMediaJobs / appendMediaCredit` mirroring the `agent_runs`/`inference_requests` methods.
 - Artifact payloads use the external content-addressed store (§5.11); SQLite is metadata-only and remains the durable owner of artifact UUIDs and access metadata.
 
@@ -710,7 +712,7 @@ Notes:
 - **Feature flag**: `FITZ_MEDIA_ENABLED` (default **true** once PR 2b lands). The feature is otherwise inert by construction: media routes exist but are disabled with empty `recipeId` until an admin connects a provider or saves a media recipe, so no separate kill switch is required for the data plane. `FITZ_MEDIA_ENABLED=false` additionally hides the media tools and the Connections media section during rollout.
 - **Staged rollout**: PRs 1–8 (§PR Plan; PR 2 is split into 2a/2b/2c) land independently. Each lands behind additive protocol changes; existing chat tests must stay green (the monorepo runs unit + integration + packaged smoke via `vitest` and CI).
 - **First real deployment**: fake engine end-to-end (PR 3) → OpenAI-compatible media provider (PR 4) → H3 local via ComfyUI (PR 7). H3 is registered when the complete official runtime is detected; 2K video is cloud-only.
-- **Rollback**: media routes are de-assigned explicitly via `PUT /api/v1/management/routes/:id` with an empty `recipeId` (media routes only → persists `enabled: false`; the route stays visible in the `includeDisabled` listing and can be re-assigned; the handler skips its recipe-exists guard for an empty `recipeId`, §5.2), media tools are unregistered by the flag, and jobs are cancellable mid-flight. A de-assignment is never lost to a restart: the ninfer boot reconcile exempts the well-known media route ids and `ensureMediaRoutes()` preserves assignment state (§5.2). Provider connection removal (`DELETE /api/v1/management/connections/:id`) cleans recipes + routes exactly as today (`removeConsumerRegistration`), now including media recipes via the connection's `mediaModels` registration, and de-assigns (never deletes) any well-known media route that referenced a removed media recipe (§5.7).
+- **Rollback**: media routes are de-assigned explicitly via `PUT /api/v1/management/routes/:id` with an empty `recipeId` (media routes only → persists `enabled: false`; the route stays visible in the `includeDisabled` listing and can be re-assigned; the handler skips its recipe-exists guard for an empty `recipeId`, §5.2), media tools are unregistered by the flag, and jobs are cancellable mid-flight. A de-assignment is never lost to a restart: the ninfer boot reconcile exempts the well-known media route ids and `ensureMediaRoutes()` preserves assignment state (§5.2). Provider connection removal (`DELETE /api/v1/connections/:id`) cleans recipes + routes exactly as today (`removeConsumerRegistration`), now including media recipes via the connection's `mediaModels` registration, and de-assigns (never deletes) any well-known media route that referenced a removed media recipe (§5.7).
 - **Migration**: v9 is additive (`ALTER TABLE ... ADD COLUMN`, new tables); downgrade = stop using media + optionally drop `media_jobs`/`media_quota_ledger` and the `kind` column (no data loss for chat).
 
 ## Risks
@@ -785,14 +787,14 @@ Each PR is independently reviewable and mergeable; the sequence reflects the mil
 - **Description**: the GPU-free deterministic loop proves the whole pipeline (route → queue → lease → submit/poll → artifact → Inspector-capable bytes) before any real engine or provider exists.
 
 ### PR 4 — Provider templates: `openai-media` → `fal` → `replicate`
-- **Files/components**: new `packages/media-providers/` (`MediaProvider`, `MediaProviderRegistry`, `openai-media` template with sync/async video handling, `fal`, `replicate`; per-template fixture servers), host provider wiring (`MediaProviderEngineAdapter` bridging `MediaEngineAdapter`; provider-aware `PUT /api/v1/management/connections/:connectionId` discovery switch; `costCentsPerJob` read; `ConsumerConnectionRegistration.mediaModels` tracking + `removeConsumerRegistration` extension for media recipe/route cleanup and well-known-route de-assignment, §5.7), startup cancel of orphaned provider jobs (follow-up to the restart risk).
+- **Files/components**: new `packages/media-providers/` (`MediaProvider`, `MediaProviderRegistry`, `openai-media` template with sync/async video handling, `fal`, `replicate`; per-template fixture servers), host provider wiring (`MediaProviderEngineAdapter` bridging `MediaEngineAdapter`; provider-aware `PUT /api/v1/connections/:connectionId` discovery switch; `costCentsPerJob` read; `ConsumerConnectionRegistration.mediaModels` tracking + `removeConsumerRegistration` extension for media recipe/route cleanup and well-known-route de-assignment, §5.7), startup cancel of orphaned provider jobs (follow-up to the restart risk).
 - **Dependencies**: PR 1, PR 2a (interface), PR 2b (host wiring: provider-aware connections endpoint, `MediaProviderEngineAdapter` registration). Independent of PR 3.
 - **Description**: the biggest hidden cost — normalizing cloud media APIs into Fitz DTOs. Ordered: generic OpenAI-media first (reuses bearer transport), then fal, then replicate (both host H3 → 2K cloud path). One connection may expose multiple modalities; mixed connections run both chat and media discovery (§5.7). Cloud media recipes declare `evictionPolicy: "immediate"` (§5.5). A connection re-save/delete test asserts well-known media routes are de-assigned, never left pointing at removed media recipes (§5.7).
 
 ### PR 5 — Connections & Playbooks UI: media routes and provider templates
 - **Files/components**: `apps/desktop/src/ui/connections/connection-workspace.ts` (provider-template dropdown + template fields, Media routes Image/Video/Audio single-assignment section reading the `includeDisabled` listing, modality/limit badges, disabled incompatible assignments), `apps/desktop/src/ui/playbooks/playbook-workspace.ts` (media recipe test button → `POST /api/v1/management/recipes/:id/media-test`), `apps/desktop/src/ui/connections/connection-workspace.css`. No preload/main bridge work: the Inspector consumes jobs by HTTP polling `GET /api/v1/media/jobs/:id` (§5.3) — a streaming IPC bridge is explicitly out of scope for v1.
 - **Dependencies**: PR 1, PR 4 (templates exist), PR 2b (media-test endpoint).
-- **Description**: administrators can connect media providers and assign the `image`/`video`/`audio` routes; chat fast/default/smart toggles remain untouched.
+- **Description**: consumers can store their provider credentials; administrators assign compatible `image`/`video`/`audio` routes. Text routing follows Default plus consumer-owned Smart/Fast roles.
 
 ### PR 6 — Agent tools, Ask-first gating, and media quotas
 - **Files/components**: `packages/agent-pi/src/pi-agent-runtime.ts` (`MEDIA_TOOLS` set; Ask-first override in the legacy no-policy branches of `#evaluateTool`/`#approveTool`, full mode only; optional `media_job_status` read-only tool), `apps/host/src/agent-safety/policy.ts` (media tools → `ask` by default; `resolveToolPolicy(userId, role, toolName)` consult via `PolicyContext` for `MEDIA_TOOLS` → allow / deny→`block` / ask with `ctx.log.record`, §5.9), `packages/security/src/security-service.ts` (uses `principalForUser` for in-process submits; `enforceMediaQuota` accepts device-less principals and fails closed when `quota.media` is unset), host `createMediaTools(mediaJobs)` factory composed into `server.ts` `customTools`, quota enforcement wiring (`enforceMediaQuota` at submit; approval card shows prompt + estimated cost), `apps/desktop` approval/activity rendering for media tool rows.
