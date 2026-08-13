@@ -228,7 +228,7 @@ export interface MediaJobRecord {
 
 /** Events yielded by the queue slot and persisted by the coordinator.
  *  Sequence numbers live in the `media_job_events` table (PK `(job_id, sequence)`),
- *  mirroring `agent_events` (sqlite-store.ts:439) — the event DTOs carry no sequence
+ *  mirroring `agent_events` (`sqlite-agent-run-store.ts`) — the event DTOs carry no sequence
  *  field. SSE replay (`GET /api/v1/media/jobs/:id/events` with After / Last-Event-ID)
  *  reads rows in sequence order, exactly like agent-run events. */
 export type MediaJobEvent =

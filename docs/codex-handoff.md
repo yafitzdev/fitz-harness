@@ -44,7 +44,7 @@ Layers, bottom-up, with the files that matter:
 | Engines | `packages/engine-media-fake`, `packages/engine-comfyui`, `packages/media-providers` | fake adapter + fixture server; ComfyUI adapter (managed/external modes); fal/Replicate/openai-media templates |
 | Recipes/routes seeding | `apps/host` | `apps/host/src/comfyui-playbook.ts` (`createComfyUIPlaybook`) |
 | Desktop UI | `apps/desktop` | Connections & Playbooks media sections (PR 5), `apps/desktop/src/resource-preview.ts` (MIME-aware preview caps) |
-| Storage | `packages/storage` | `migrations.ts` (media tables at **v9**), `sqlite-store.ts` facade, `sqlite-media-store.ts` |
+| Storage | `packages/storage` | `migrations.ts` (media tables at **v9**), `sqlite-store.ts` facade, `sqlite-agent-run-store.ts`, `sqlite-media-store.ts` |
 | Preview caps | `packages/media` | `registry.ts` → `maxPreviewBytes` (text 2 MiB / image 25 MiB / audio 200 MiB / video 250 MiB / binary 10 MiB) |
 
 Key behaviors baked in (from the design doc §5):

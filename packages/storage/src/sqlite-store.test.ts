@@ -116,62 +116,6 @@ describe("SqliteStore", () => {
     expect(store.listUserRouteGrants("user-1")).toEqual(["fast"]); expect(store.getUserQuota("user-1")).toEqual(quota); expect(store.listAuditEvents()).toHaveLength(1); store.close();
   });
 
-  it("persists resumable agent runs and marks active runs interrupted on recovery", () => {
-    const store = SqliteStore.memory(); const now = new Date(0).toISOString();
-    store.createProject({ id: "p", name: "P", createdAt: now, updatedAt: now }); store.createSession({ id: "s", projectId: "p", title: "S", status: "active", createdAt: now, updatedAt: now });
-    const request = { model: "fast", sessionId: "s", accessMode: "full" as const, messages: [{ role: "user" as const, content: "continue me" }] };
-    store.createAgentRun({ id: "run-1", routeId: "fast", sessionId: "s", status: "running", createdAt: now, updatedAt: now, lastSequence: 0 }, request);
-    store.appendAgentEvent({ protocolVersion: "1", runId: "run-1", sequence: 1, timestamp: now, type: "run.created", data: {} });
-    store.appendAgentEvent({ protocolVersion: "1", runId: "run-1", sequence: 2, timestamp: now, type: "reasoning.delta", data: { text: "durable thought" } });
-    store.appendAgentEvent({ protocolVersion: "1", runId: "run-1", sequence: 3, timestamp: now, type: "tool.started", data: { toolCallId: "call-1", toolName: "write", input: { path: "a.txt" } } });
-    expect(store.recoverInterruptedAgentRuns()).toBe(1);
-    expect(store.getAgentRun("run-1")).toEqual(expect.objectContaining({ status: "interrupted", resumable: true, checkpoint: expect.objectContaining({ resumeSafety: "review-required", sequence: 4 }) }));
-    expect(store.getAgentRunRequest("run-1")).toEqual(request);
-    expect(store.latestSessionAgentRun("s")?.id).toBe("run-1");
-    expect(store.agentEventsAfter("run-1", 0).at(-1)?.type).toBe("run.interrupted");
-    expect(store.transcriptAfter("s", 0)).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "reasoning", content: expect.objectContaining({ text: "durable thought", eventSequence: 2 }) }), expect.objectContaining({ kind: "tool-call", content: expect.objectContaining({ toolCallId: "call-1", eventSequence: 3 }) })]));
-    expect(store.claimAgentRunResume("run-1")).toBe(true); expect(store.claimAgentRunResume("run-1")).toBe(false);
-    store.createAgentRun({ id: "run-2", routeId: "fast", sessionId: "s", status: "queued", createdAt: now, updatedAt: now, lastSequence: 0 }, request, "run-1");
-    expect(store.agentRunResumedFrom("run-1")?.id).toBe("run-2"); store.close();
-  });
-
-  it("reopens an orphaned continuation claim after restart without reopening consumed sources", () => {
-    const store = SqliteStore.memory(); const now = new Date(0).toISOString();
-    const request = { model: "fast", accessMode: "full" as const, messages: [{ role: "user" as const, content: "continue" }] };
-    store.createAgentRun({ id: "source", routeId: "fast", status: "running", createdAt: now, updatedAt: now, lastSequence: 0 }, request);
-    store.appendAgentEvent({ protocolVersion: "1", runId: "source", sequence: 1, timestamp: now, type: "run.failed", data: { error: "lost" } });
-    expect(store.claimAgentRunResume("source")).toBe(true);
-    store.recoverInterruptedAgentRuns();
-    expect(store.getAgentRun("source")?.resumable).toBe(true);
-    expect(store.claimAgentRunResume("source")).toBe(true);
-    store.createAgentRun({ id: "child", routeId: "fast", status: "queued", createdAt: now, updatedAt: now, lastSequence: 0 }, request, "source");
-    store.recoverInterruptedAgentRuns();
-    expect(store.getAgentRun("source")?.resumable).toBe(false);
-    store.close();
-  });
-
-  it("maps one client request identity to one durable run", () => {
-    const store = SqliteStore.memory(); const now = new Date(0).toISOString();
-    const request = { model: "fast", clientRequestId: "desktop:request-1", accessMode: "full" as const, messages: [{ role: "user" as const, content: "once" }] };
-    store.createAgentRun({ id: "run-once", routeId: "fast", status: "queued", createdAt: now, updatedAt: now, lastSequence: 0 }, request);
-    expect(store.agentRunForClientRequest("desktop:request-1")?.id).toBe("run-once");
-    expect(() => store.createAgentRun({ id: "run-duplicate", routeId: "fast", status: "queued", createdAt: now, updatedAt: now, lastSequence: 0 }, request)).toThrow();
-    expect(store.getAgentRun("run-duplicate")).toBeUndefined();
-    store.close();
-  });
-
-  it("commits terminal run status and its replay event atomically", () => {
-    const store = SqliteStore.memory(); const now = new Date(0).toISOString();
-    const request = { model: "fast", messages: [{ role: "user" as const, content: "finish" }] };
-    store.createAgentRun({ id: "atomic-run", routeId: "fast", status: "queued", createdAt: now, updatedAt: now, lastSequence: 0 }, request);
-    store.appendAgentEvent({ protocolVersion: "1", runId: "atomic-run", sequence: 1, timestamp: now, type: "run.started", data: {} });
-    expect(store.getAgentRun("atomic-run")?.status).toBe("running");
-    store.appendAgentEvent({ protocolVersion: "1", runId: "atomic-run", sequence: 2, timestamp: now, type: "run.completed", data: {} });
-    expect(store.getAgentRun("atomic-run")).toEqual(expect.objectContaining({ status: "completed", lastSequence: 2, resumable: false, checkpoint: expect.objectContaining({ phase: "completed", sequence: 2 }) }));
-    expect(store.agentEventsAfter("atomic-run", 1).map((event) => event.type)).toEqual(["run.completed"]);
-    store.close();
-  });
-
   it("persists projects, sessions, canonical transcripts, tool policy, and approvals", () => {
     const store = SqliteStore.memory(); const now = new Date(0).toISOString(); store.createProject({ id: "project-1", name: "Fitz", createdAt: now, updatedAt: now }); store.createSession({ id: "session-1", projectId: "project-1", title: "Build", status: "active", connectionId: "cohere", routeId: "smart", createdAt: now, updatedAt: now });
     expect(store.getSession("session-1")).toEqual(expect.objectContaining({ connectionId: "cohere", routeId: "smart" }));

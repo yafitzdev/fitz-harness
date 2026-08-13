@@ -5,7 +5,6 @@ import type {
   ArtifactRecord,
   AgentRunRecord,
   AgentRunRequest,
-  AgentRunCheckpoint,
   ProjectRecord,
   PairingCodeRecord,
   SessionRecord,
@@ -35,6 +34,7 @@ import type {
   UsageReport,
 } from "@fitz/protocol";
 import { MIGRATIONS } from "./migrations.js";
+import { SqliteAgentRunStore } from "./sqlite-agent-run-store.js";
 import { SqliteMediaStore, type MediaJobEventEnvelope } from "./sqlite-media-store.js";
 
 export type { MediaJobEventEnvelope } from "./sqlite-media-store.js";
@@ -106,8 +106,6 @@ interface RequestUsageRow {
 interface UserRow { id: string; display_name: string; role: UserRecord["role"]; status: UserRecord["status"]; created_at: string; updated_at: string }
 interface DeviceRow { id: string; user_id: string; name: string; token_hash: string; created_at: string; last_used_at: string | null; revoked_at: string | null }
 interface AuditRow { id: string; timestamp: string; actor_user_id: string | null; action: string; target_type: string | null; target_id: string | null; detail_json: string }
-interface AgentRunRow { id: string; route_id: string; owner_user_id: string | null; session_id: string | null; status: AgentRunRecord["status"]; created_at: string; updated_at: string; last_sequence: number; error: string | null }
-interface AgentRunStateRow { request_json: string; resume_of_run_id: string | null; checkpoint_json: string; resumable: number; client_request_id?: string | null }
 interface ProjectRow { id: string; owner_user_id: string | null; name: string; root_path: string | null; created_at: string; updated_at: string }
 interface SessionRow { id: string; project_id: string | null; owner_user_id: string | null; title: string; status: SessionRecord["status"]; connection_id: string; route_id: "default" | "fast" | "smart"; created_at: string; updated_at: string }
 interface TranscriptRow { id: string; session_id: string; sequence: number; kind: TranscriptEntryRecord["kind"]; role: TranscriptEntryRecord["role"] | null; content_json: string; created_at: string }
@@ -123,12 +121,14 @@ export interface ArtifactStorageEntry { artifactId: string; backend: string; obj
 
 export class SqliteStore {
   readonly #database: DatabaseSync;
+  readonly #agentRuns: SqliteAgentRunStore;
   readonly #media: SqliteMediaStore;
 
   constructor(path: string) {
     this.#database = new DatabaseSync(path);
     this.#database.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
     this.migrate();
+    this.#agentRuns = new SqliteAgentRunStore(this.#database);
     this.#media = new SqliteMediaStore(this.#database);
   }
 
@@ -690,60 +690,25 @@ export class SqliteStore {
   consumePairingCode(codeHash: string, timestamp: string): UserRecord["role"] | undefined { const row = this.#database.prepare(`UPDATE pairing_codes SET consumed_at = ? WHERE code_hash = ? AND consumed_at IS NULL AND expires_at > ? RETURNING intended_role`).get(timestamp, codeHash, timestamp) as { intended_role: UserRecord["role"] } | undefined; return row?.intended_role; }
 
   createAgentRun(run: AgentRunRecord, request?: AgentRunRequest, resumeOfRunId?: string): void {
-    this.#database.exec("BEGIN IMMEDIATE");
-    try {
-      this.#database.prepare(`INSERT INTO agent_runs (id, route_id, owner_user_id, session_id, status, created_at, updated_at, last_sequence, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(run.id, run.routeId, run.ownerUserId ?? null, run.sessionId ?? null, run.status, run.createdAt, run.updatedAt, run.lastSequence, run.error ?? null);
-      if (request) this.#database.prepare(`INSERT INTO agent_run_state (run_id, request_json, resume_of_run_id, checkpoint_json, resumable, client_request_id) VALUES (?, ?, ?, ?, 0, ?)`).run(run.id, JSON.stringify(request), resumeOfRunId ?? null, JSON.stringify(initialAgentCheckpoint(run.createdAt)), request.clientRequestId ?? null);
-      this.#database.exec("COMMIT");
-    } catch (error) { this.#database.exec("ROLLBACK"); throw error; }
+    this.#agentRuns.createRun(run, request, resumeOfRunId);
   }
-  getAgentRun(id: string): AgentRunRecord | undefined { const row = this.#database.prepare(`SELECT id, route_id, owner_user_id, session_id, status, created_at, updated_at, last_sequence, error FROM agent_runs WHERE id = ?`).get(id) as AgentRunRow | undefined; return row ? this.#withAgentRunState(mapAgentRun(row)) : undefined; }
+  getAgentRun(id: string): AgentRunRecord | undefined { return this.#agentRuns.getRun(id); }
   listAgentRuns(ownerUserId?: string, limit = 100): AgentRunRecord[] {
-    const rows = (ownerUserId ? this.#database.prepare(`SELECT id, route_id, owner_user_id, session_id, status, created_at, updated_at, last_sequence, error FROM agent_runs WHERE owner_user_id = ? ORDER BY created_at DESC LIMIT ?`).all(ownerUserId, limit) : this.#database.prepare(`SELECT id, route_id, owner_user_id, session_id, status, created_at, updated_at, last_sequence, error FROM agent_runs ORDER BY created_at DESC LIMIT ?`).all(limit)) as unknown as AgentRunRow[]; return rows.map((row) => this.#withAgentRunState(mapAgentRun(row)));
+    return this.#agentRuns.listRuns(ownerUserId, limit);
   }
-  getAgentRunRequest(id: string): AgentRunRequest | undefined { const row = this.#database.prepare(`SELECT request_json FROM agent_run_state WHERE run_id = ?`).get(id) as Pick<AgentRunStateRow, "request_json"> | undefined; return row ? JSON.parse(row.request_json) as AgentRunRequest : undefined; }
-  latestSessionAgentRun(sessionId: string): AgentRunRecord | undefined {
-    const row = this.#database.prepare(`SELECT r.id, r.route_id, r.owner_user_id, r.session_id, r.status, r.created_at, r.updated_at, r.last_sequence, r.error FROM agent_runs r LEFT JOIN agent_run_state s ON s.run_id = r.id WHERE r.session_id = ? AND (r.status IN ('queued', 'running') OR s.resumable = 1) ORDER BY CASE WHEN r.status IN ('queued', 'running') THEN 0 ELSE 1 END, r.updated_at DESC LIMIT 1`).get(sessionId) as AgentRunRow | undefined;
-    return row ? this.#withAgentRunState(mapAgentRun(row)) : undefined;
-  }
-  agentRunResumedFrom(sourceRunId: string): AgentRunRecord | undefined {
-    const row = this.#database.prepare(`SELECT r.id, r.route_id, r.owner_user_id, r.session_id, r.status, r.created_at, r.updated_at, r.last_sequence, r.error FROM agent_runs r JOIN agent_run_state s ON s.run_id = r.id WHERE s.resume_of_run_id = ? ORDER BY r.created_at DESC LIMIT 1`).get(sourceRunId) as AgentRunRow | undefined;
-    return row ? this.#withAgentRunState(mapAgentRun(row)) : undefined;
-  }
-  agentRunForClientRequest(clientRequestId: string): AgentRunRecord | undefined {
-    const row = this.#database.prepare(`SELECT r.id, r.route_id, r.owner_user_id, r.session_id, r.status, r.created_at, r.updated_at, r.last_sequence, r.error FROM agent_runs r JOIN agent_run_state s ON s.run_id = r.id WHERE s.client_request_id = ? LIMIT 1`).get(clientRequestId) as AgentRunRow | undefined;
-    return row ? this.#withAgentRunState(mapAgentRun(row)) : undefined;
-  }
-  claimAgentRunResume(id: string): boolean { return Number(this.#database.prepare(`UPDATE agent_run_state SET resumable = 0 WHERE run_id = ? AND resumable = 1`).run(id).changes) > 0; }
-  setAgentRunResumable(id: string, resumable: boolean): void { this.#database.prepare(`UPDATE agent_run_state SET resumable = ? WHERE run_id = ?`).run(resumable ? 1 : 0, id); }
-  updateAgentRun(id: string, status: AgentRunRecord["status"], error?: string): void { this.#database.prepare(`UPDATE agent_runs SET status = ?, updated_at = ?, error = ? WHERE id = ?`).run(status, new Date().toISOString(), error ?? null, id); }
+  getAgentRunRequest(id: string): AgentRunRequest | undefined { return this.#agentRuns.getRunRequest(id); }
+  latestSessionAgentRun(sessionId: string): AgentRunRecord | undefined { return this.#agentRuns.latestSessionRun(sessionId); }
+  agentRunResumedFrom(sourceRunId: string): AgentRunRecord | undefined { return this.#agentRuns.runResumedFrom(sourceRunId); }
+  agentRunForClientRequest(clientRequestId: string): AgentRunRecord | undefined { return this.#agentRuns.runForClientRequest(clientRequestId); }
+  claimAgentRunResume(id: string): boolean { return this.#agentRuns.claimResume(id); }
+  setAgentRunResumable(id: string, resumable: boolean): void { this.#agentRuns.setResumable(id, resumable); }
+  updateAgentRun(id: string, status: AgentRunRecord["status"], error?: string): void { this.#agentRuns.updateRun(id, status, error); }
   appendAgentEvent(event: AgentEventEnvelope): void {
-    this.#database.exec("BEGIN IMMEDIATE");
-    try {
-      this.#database.prepare(`INSERT INTO agent_events (run_id, sequence, timestamp, type, event_json) VALUES (?, ?, ?, ?, ?)`).run(event.runId, event.sequence, event.timestamp, event.type, JSON.stringify(event));
-      const status = agentStatusForEvent(event.type);
-      const eventError = typeof event.data.error === "string" ? event.data.error : null;
-      this.#database.prepare(`UPDATE agent_runs SET last_sequence = ?, updated_at = ?, status = COALESCE(?, status), error = CASE WHEN ? IS NOT NULL THEN ? WHEN ? IN ('completed', 'cancelled', 'running') THEN NULL ELSE error END WHERE id = ?`).run(event.sequence, event.timestamp, status ?? null, eventError, eventError, status ?? null, event.runId);
-      this.#advanceAgentCheckpoint(event);
-      this.#database.exec("COMMIT");
-    } catch (error) { this.#database.exec("ROLLBACK"); throw error; }
+    this.#agentRuns.appendEvent(event);
   }
-  agentEventsAfter(runId: string, sequence: number, limit = 1000): AgentEventEnvelope[] { return (this.#database.prepare(`SELECT event_json FROM agent_events WHERE run_id = ? AND sequence > ? ORDER BY sequence LIMIT ?`).all(runId, sequence, limit) as unknown as { event_json: string }[]).map((row) => JSON.parse(row.event_json) as AgentEventEnvelope); }
+  agentEventsAfter(runId: string, sequence: number, limit = 1000): AgentEventEnvelope[] { return this.#agentRuns.eventsAfter(runId, sequence, limit); }
   recoverInterruptedAgentRuns(): number {
-    // If the process dies after claiming a continuation but before creating its
-    // successor, there is no child run to return on retry. Re-open that orphaned
-    // claim at startup; sources with a successor remain permanently consumed.
-    this.#database.prepare(`UPDATE agent_run_state SET resumable = 1 WHERE resumable = 0 AND run_id IN (SELECT id FROM agent_runs WHERE status IN ('failed', 'interrupted')) AND NOT EXISTS (SELECT 1 FROM agent_run_state child WHERE child.resume_of_run_id = agent_run_state.run_id)`).run();
-    const rows = this.#database.prepare(`SELECT id FROM agent_runs WHERE status IN ('queued', 'running')`).all() as unknown as { id: string }[];
-    for (const row of rows) {
-      const timestamp = new Date().toISOString();
-      this.#materializeUncommittedAgentEvents(row.id);
-      this.#database.prepare(`UPDATE agent_runs SET status = 'interrupted', updated_at = ?, error = 'host_restarted' WHERE id = ?`).run(timestamp, row.id);
-      this.setAgentRunResumable(row.id, true);
-      const run = this.getAgentRun(row.id);
-      if (run) this.appendAgentEvent({ protocolVersion: "1", runId: row.id, sequence: run.lastSequence + 1, timestamp, type: "run.interrupted", data: { error: "host_restarted", resumable: true } });
-    }
-    return rows.length;
+    return this.#agentRuns.recoverInterruptedRuns();
   }
   recoverInterruptedToolApprovals(): number { const now = new Date().toISOString(); return Number(this.#database.prepare(`UPDATE tool_approvals SET status = 'cancelled', resolved_at = ?, note = 'host_restarted' WHERE status = 'pending'`).run(now).changes); }
 
@@ -823,90 +788,6 @@ export class SqliteStore {
   deleteTrashEntry(id: string): boolean { return this.#database.prepare(`DELETE FROM trash_entries WHERE id = ?`).run(id).changes > 0; }
   deleteTrashEntriesBefore(before: string, workspaceRoot?: string): number { return Number((workspaceRoot ? this.#database.prepare(`DELETE FROM trash_entries WHERE created_at < ? AND workspace_root = ?`) : this.#database.prepare(`DELETE FROM trash_entries WHERE created_at < ?`)).run(before, ...(workspaceRoot ? [workspaceRoot] : [])).changes); }
 
-  #withAgentRunState(run: AgentRunRecord): AgentRunRecord {
-    const state = this.#database.prepare(`SELECT request_json, resume_of_run_id, checkpoint_json, resumable FROM agent_run_state WHERE run_id = ?`).get(run.id) as AgentRunStateRow | undefined;
-    if (!state) return run;
-    return { ...run, checkpoint: JSON.parse(state.checkpoint_json) as AgentRunCheckpoint, resumable: state.resumable === 1, ...(state.resume_of_run_id ? { resumeOfRunId: state.resume_of_run_id } : {}) };
-  }
-
-  #advanceAgentCheckpoint(event: AgentEventEnvelope): void {
-    const row = this.#database.prepare(`SELECT checkpoint_json FROM agent_run_state WHERE run_id = ?`).get(event.runId) as Pick<AgentRunStateRow, "checkpoint_json"> | undefined;
-    if (!row) return;
-    const checkpoint = JSON.parse(row.checkpoint_json) as AgentRunCheckpoint;
-    const completedTools = [...checkpoint.completedTools];
-    let inFlightTools = [...checkpoint.inFlightTools];
-    let pendingApprovalIds = [...checkpoint.pendingApprovalIds];
-    let phase = checkpoint.phase;
-    if (event.type === "run.started") phase = "running";
-    if (event.type === "tool.started") {
-      const toolCallId = String(event.data.toolCallId ?? "");
-      if (toolCallId && !inFlightTools.some((tool) => tool.toolCallId === toolCallId)) inFlightTools.push({ toolCallId, toolName: String(event.data.toolName ?? "tool"), ...(event.data.input !== undefined ? { input: event.data.input } : {}) });
-    }
-    if (event.type === "tool.completed") {
-      const toolCallId = String(event.data.toolCallId ?? "");
-      const running = inFlightTools.find((tool) => tool.toolCallId === toolCallId);
-      inFlightTools = inFlightTools.filter((tool) => tool.toolCallId !== toolCallId);
-      if (toolCallId) completedTools.push({ toolCallId, toolName: running?.toolName ?? String(event.data.toolName ?? "tool"), ...(running?.input !== undefined ? { input: running.input } : {}), ...(event.data.isError !== undefined ? { isError: Boolean(event.data.isError) } : {}) });
-    }
-    if (event.type === "tool.approval.requested") { const id = String(event.data.approvalId ?? ""); if (id && !pendingApprovalIds.includes(id)) pendingApprovalIds.push(id); phase = "waiting-approval"; }
-    if (event.type === "tool.approval.resolved") { const id = String(event.data.approvalId ?? ""); pendingApprovalIds = pendingApprovalIds.filter((item) => item !== id); phase = "running"; }
-    if (event.type === "run.completed") phase = "completed";
-    if (event.type === "run.failed") phase = "failed";
-    if (event.type === "run.cancelled") phase = "cancelled";
-    if (event.type === "run.interrupted") phase = "interrupted";
-    const resumeSafety = inFlightTools.length > 0 || pendingApprovalIds.length > 0 ? "review-required" : "safe";
-    const next: AgentRunCheckpoint = { sequence: event.sequence, phase, completedTools, inFlightTools, pendingApprovalIds, resumeSafety, updatedAt: event.timestamp };
-    const terminalResumable = event.type === "run.failed" || event.type === "run.interrupted";
-    const terminalFinal = event.type === "run.completed" || event.type === "run.cancelled";
-    this.#database.prepare(`UPDATE agent_run_state SET checkpoint_json = ?, resumable = CASE WHEN ? = 1 THEN 1 WHEN ? = 1 THEN 0 ELSE resumable END WHERE run_id = ?`).run(JSON.stringify(next), terminalResumable ? 1 : 0, terminalFinal ? 1 : 0, event.runId);
-  }
-
-  /** Recover event data that reached SQLite before its buffered transcript row.
-   * Event-derived ids make this replay idempotent across repeated host boots. */
-  #materializeUncommittedAgentEvents(runId: string): void {
-    const run = this.getAgentRun(runId);
-    if (!run?.sessionId) return;
-    const represented = new Set<number>();
-    let transcriptSequence = 0;
-    while (true) {
-      const page = this.transcriptAfter(run.sessionId, transcriptSequence, 1_000);
-      for (const entry of page) if (entry.content.runId === runId && Number.isFinite(Number(entry.content.eventSequence))) represented.add(Number(entry.content.eventSequence));
-      if (page.length < 1_000) break;
-      transcriptSequence = page.at(-1)!.sequence;
-    }
-    const events: AgentEventEnvelope[] = [];
-    let eventSequence = 0;
-    while (true) {
-      const page = this.agentEventsAfter(runId, eventSequence, 1_000);
-      events.push(...page);
-      if (page.length < 1_000) break;
-      eventSequence = page.at(-1)!.sequence;
-    }
-    let textType: "assistant.delta" | "reasoning.delta" | undefined;
-    let text = ""; let from = 0; let through = 0;
-    const flush = () => {
-      if (!textType || !text || represented.has(through)) { textType = undefined; text = ""; return; }
-      const kind = textType === "assistant.delta" ? "message" : "reasoning";
-      this.#appendTranscriptEntryOnce({ id: `agent-event:${runId}:${kind}:${from}-${through}`, sessionId: run.sessionId!, kind, role: "assistant", content: { text, runId, eventSequence: through, ...(kind === "message" ? { phase: "commentary" } : {}) }, createdAt: events.find((event) => event.sequence === through)?.timestamp ?? new Date().toISOString() });
-      textType = undefined; text = "";
-    };
-    for (const event of events) {
-      if (event.type === "assistant.delta" || event.type === "reasoning.delta") {
-        if (textType && textType !== event.type) flush();
-        if (!textType) { textType = event.type; from = event.sequence; }
-        text += String(event.data.text ?? ""); through = event.sequence; continue;
-      }
-      flush();
-      if ((event.type === "tool.started" || event.type === "tool.completed") && !represented.has(event.sequence)) this.#appendTranscriptEntryOnce({ id: `agent-event:${runId}:${event.type}:${event.sequence}`, sessionId: run.sessionId, kind: event.type === "tool.started" ? "tool-call" : "tool-result", role: "tool", content: { ...event.data, runId, eventSequence: event.sequence }, createdAt: event.timestamp });
-    }
-    flush();
-  }
-
-  #appendTranscriptEntryOnce(entry: Omit<TranscriptEntryRecord, "sequence">): void {
-    const exists = this.#database.prepare(`SELECT 1 AS found FROM transcript_entries WHERE id = ?`).get(entry.id) as { found: number } | undefined;
-    if (!exists) this.appendTranscriptEntry(entry);
-  }
-
   setSetting(key: string, value: unknown): void {
     this.#database
       .prepare(
@@ -938,20 +819,9 @@ export class SqliteStore {
   }
 }
 
-function initialAgentCheckpoint(timestamp: string): AgentRunCheckpoint { return { sequence: 0, phase: "queued", completedTools: [], inFlightTools: [], pendingApprovalIds: [], resumeSafety: "safe", updatedAt: timestamp }; }
-function agentStatusForEvent(type: AgentEventEnvelope["type"]): AgentRunRecord["status"] | undefined {
-  if (type === "run.started") return "running";
-  if (type === "run.completed") return "completed";
-  if (type === "run.failed") return "failed";
-  if (type === "run.cancelled") return "cancelled";
-  if (type === "run.interrupted") return "interrupted";
-  return undefined;
-}
-
 function mapUser(row: UserRow): UserRecord { return { id: row.id, displayName: row.display_name, role: row.role, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at }; }
 function mapPlaybook(row: PlaybookRow): EngineRegistration { const value = JSON.parse(row.configuration_json) as Omit<EngineRegistration, "id" | "displayName" | "createdAt" | "updatedAt">; return { id: row.id, displayName: row.name, ...value, createdAt: row.created_at, updatedAt: row.updated_at }; }
 function mapDevice(row: DeviceRow): DeviceRecord { return { id: row.id, userId: row.user_id, name: row.name, createdAt: row.created_at, ...(row.last_used_at ? { lastUsedAt: row.last_used_at } : {}), ...(row.revoked_at ? { revokedAt: row.revoked_at } : {}) }; }
-function mapAgentRun(row: AgentRunRow): AgentRunRecord { return { id: row.id, routeId: row.route_id, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at, lastSequence: row.last_sequence, ...(row.owner_user_id ? { ownerUserId: row.owner_user_id } : {}), ...(row.session_id ? { sessionId: row.session_id } : {}), ...(row.error ? { error: row.error } : {}) }; }
 function mapProject(row: ProjectRow): ProjectRecord { return { id: row.id, name: row.name, createdAt: row.created_at, updatedAt: row.updated_at, ...(row.owner_user_id ? { ownerUserId: row.owner_user_id } : {}), ...(row.root_path ? { rootPath: row.root_path } : {}) }; }
 function mapSession(row: SessionRow): SessionRecord { return { id: row.id, title: row.title, status: row.status, connectionId: row.connection_id, routeId: row.route_id, createdAt: row.created_at, updatedAt: row.updated_at, ...(row.project_id ? { projectId: row.project_id } : {}), ...(row.owner_user_id ? { ownerUserId: row.owner_user_id } : {}) }; }
 function mapTranscript(row: TranscriptRow): TranscriptEntryRecord { return { id: row.id, sessionId: row.session_id, sequence: row.sequence, kind: row.kind, content: JSON.parse(row.content_json) as Record<string, unknown>, createdAt: row.created_at, ...(row.role ? { role: row.role } : {}) }; }
