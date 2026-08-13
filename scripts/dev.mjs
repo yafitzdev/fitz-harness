@@ -1,16 +1,38 @@
 import { spawn } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  acquireDevSession,
+  stopLegacyDevSessions,
+  terminateProcessTree,
+  waitForPortAvailable,
+} from "./dev-session.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const mode = process.argv.includes("--fake") ? "fake" : "ninfer";
-const port = process.env.FITZ_PORT ?? "8787";
+const port = parsePort(process.env.FITZ_PORT ?? "8787");
+const dataRoot = resolve(process.env.FITZ_DATA_ROOT ?? join(root, "data"));
 
-await guardPort(port);
-await buildPackages();
-startHost(mode);
+const devSession = await acquireDevSession({ lockPath: join(dataRoot, "dev-session.lock"), workspaceRoot: root, port });
+try {
+  await stopLegacyDevSessions(root);
+  await waitForPortAvailable(port);
+  await buildPackages();
+  startHost(mode, devSession);
+} catch (error) {
+  devSession.release();
+  throw error;
+}
 
-function startHost(engineMode) {
+function parsePort(value) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65_535 || String(parsed) !== value) {
+    throw new Error(`Invalid FITZ_PORT: ${value}`);
+  }
+  return parsed;
+}
+
+function startHost(engineMode, session) {
   const child = spawn(
     process.execPath,
     [join(root, "node_modules", "tsx", "dist", "cli.mjs"), "watch", join(root, "apps", "host", "src", "server.ts")],
@@ -20,12 +42,30 @@ function startHost(engineMode) {
       env: {
         ...process.env,
         FITZ_ENGINE_MODE: engineMode,
+        FITZ_DEV_SESSION_TOKEN: session.token,
         // One repo-contained dev data root for everything: sessions, pi packages, logs, cache.
-        FITZ_DATA_ROOT: process.env.FITZ_DATA_ROOT ?? join(root, "data"),
+        FITZ_DATA_ROOT: dataRoot,
       },
     },
   );
+  let stopping = false;
+  const stop = () => {
+    if (stopping) return;
+    stopping = true;
+    if (child.pid) terminateProcessTree(child.pid);
+    session.release();
+  };
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  child.once("error", () => {
+    process.removeListener("SIGINT", stop);
+    process.removeListener("SIGTERM", stop);
+    session.release();
+  });
   child.once("exit", (code, signal) => {
+    process.removeListener("SIGINT", stop);
+    process.removeListener("SIGTERM", stop);
+    session.release();
     if (signal) process.kill(process.pid, signal);
     else process.exitCode = code ?? 1;
   });
@@ -46,35 +86,4 @@ async function buildPackages() {
       else reject(new Error(`tsc -b failed with exit code ${code}`));
     });
   });
-}
-
-// Two hosts on the same port fight over the database (SQLite locks) and sockets
-// (EADDRINUSE), so refuse to start when something is already answering.
-async function guardPort(port) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 500);
-  try {
-    const response = await fetch(`http://127.0.0.1:${port}/health`, { signal: controller.signal });
-    console.error(
-      `A Fitz host is already answering on http://127.0.0.1:${port}/health (HTTP ${response.status}). ` +
-        "Stop it before starting a dev host, or pick another port with FITZ_PORT.",
-    );
-    process.exit(1);
-  } catch (error) {
-    if (error?.name === "AbortError") {
-      console.error(
-        `Port ${port} is occupied but nothing answered /health within 500ms. ` +
-          "Stop whatever holds the port, or set FITZ_PORT to a free port.",
-      );
-      process.exit(1);
-    }
-    if (error?.cause?.code === "ECONNREFUSED") return;
-    console.error(
-      `Port ${port} is not usable (${error?.cause?.code ?? error?.name}). ` +
-        "Stop whatever holds it, or set FITZ_PORT to a free port.",
-    );
-    process.exit(1);
-  } finally {
-    clearTimeout(timer);
-  }
 }

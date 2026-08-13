@@ -882,6 +882,19 @@ describe("Fitz host", () => {
     expect(denied.statusCode).toBe(401); expect(completion.statusCode).toBe(200); expect(models.statusCode).toBe(401); await runtime.app.close();
   });
 
+  it("accepts only the ephemeral dev supervisor credential for shutdown", async () => {
+    const runtime = createHost({ authMode: "required", authPepper: "pepper", devSessionToken: "dev-session-secret" });
+    let markClosed = () => undefined;
+    const closed = new Promise<void>((resolve) => { markClosed = resolve; });
+    runtime.app.addHook("onClose", async () => { markClosed(); });
+    const denied = await runtime.app.inject({ method: "POST", url: "/__fitz/dev/shutdown", headers: { authorization: "Bearer wrong" } });
+    expect(denied.statusCode).toBe(401);
+    const accepted = await runtime.app.inject({ method: "POST", url: "/__fitz/dev/shutdown", headers: { authorization: "Bearer dev-session-secret" } });
+    expect(accepted.statusCode).toBe(202);
+    expect(accepted.json()).toEqual({ status: "shutting-down" });
+    await closed;
+  });
+
   it("allows administrators to provision and revoke devices with audit history", async () => {
     const store = SqliteStore.memory(); const security = new SecurityService(store, "pepper"); const admin = security.createUser("Admin", "administrator"); const { token } = security.issueDevice(admin.id, "Console"); const runtime = createHost({ store, security, authMode: "required" }); const headers = { authorization: `Bearer ${token}` };
     const created = await runtime.app.inject({ method: "POST", url: "/api/v1/management/users", headers, payload: { displayName: "Agent", role: "agent" } });

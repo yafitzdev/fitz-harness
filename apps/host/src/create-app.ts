@@ -26,10 +26,9 @@ import {
   PROTOCOL_VERSION,
   type Recipe,
   type Route,
-  type ToolPolicyRecord,
 } from "@fitz/protocol";
 import { MetricsRegistry, redactSecrets } from "@fitz/observability";
-import { DEFAULT_QUOTAS, SecurityPolicyError, SecurityService, type AuthenticatedPrincipal } from "@fitz/security";
+import { SecurityPolicyError, SecurityService, type AuthenticatedPrincipal } from "@fitz/security";
 import { ArtifactRepository, MemoryBlobStore, SqliteStore, type StorageDurabilityService } from "@fitz/storage";
 import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
 import type { ModelCatalogService } from "./model-catalog.js";
@@ -57,6 +56,8 @@ import { registerOpenAIRoutes } from "./openai-routes.js";
 import { registerCatalogRoutes } from "./catalog-routes.js";
 import { registerRuntimeAdministrationRoutes } from "./runtime-administration-routes.js";
 import { registerStorageRoutes } from "./storage-routes.js";
+import { registerSecurityAdministrationRoutes } from "./security-administration-routes.js";
+import { registerSafetyAdministrationRoutes } from "./safety-administration-routes.js";
 import { discardLegacyConsumerConnections, registerConsumerConnectionRoutes } from "./consumer-connection-routes.js";
 import {
   ensureMediaRoutes,
@@ -82,6 +83,8 @@ export interface CreateHostOptions {
   authMode?: "disabled" | "required";
   authPepper?: string;
   internalAgentToken?: string;
+  /** Ephemeral credential accepted only by the dev supervisor shutdown route. */
+  devSessionToken?: string;
   security?: SecurityService;
   agentRuntime?: AgentRuntime;
   /** Maximum number of whole agent turns admitted at once (running + queued). */
@@ -298,7 +301,8 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     requestStarts.set(request, performance.now());
     const publicPath = request.url.split("?")[0];
     const internalAgent = publicPath === "/v1/chat/completions" && validBearerToken(request.headers.authorization, options.internalAgentToken);
-    if (authMode === "required" && publicPath !== "/health" && publicPath !== "/api/v1/pairing/redeem" && publicPath !== "/api/v1/pairing/bootstrap") {
+    const devSupervisor = publicPath === "/__fitz/dev/shutdown" && validBearerToken(request.headers.authorization, options.devSessionToken);
+    if (authMode === "required" && !devSupervisor && publicPath !== "/health" && publicPath !== "/api/v1/pairing/redeem" && publicPath !== "/api/v1/pairing/bootstrap") {
       const principal = security?.authenticate(request.headers.authorization);
       if (!principal && !internalAgent) return reply.code(401).send({ error: "Valid device bearer token required" });
       if (principal) principals.set(request, principal);
@@ -334,6 +338,17 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       recovery: { interruptedGpuWork: recoveredGpuWork, interruptedRequests: recoveredInterruptedRequests, interruptedAgentRuns: recoveredAgentRuns, interruptedToolApprovals: recoveredToolApprovals, interruptedMediaJobs: recoveredMediaJobs },
     };
   });
+  if (options.devSessionToken) {
+    app.post("/__fitz/dev/shutdown", async (request, reply) => {
+      if (!validBearerToken(request.headers.authorization, options.devSessionToken)) {
+        return reply.code(401).send({ error: "Valid dev session credential required" });
+      }
+      reply.raw.once("finish", () => {
+        setImmediate(() => { void app.close().catch((error) => app.log.error({ error }, "Dev supervisor shutdown failed")); });
+      });
+      return reply.code(202).send({ status: "shutting-down" });
+    });
+  }
   app.get("/api/v1/me", async (request) => { const principal = principals.get(request); return { data: principal ? { authMode: "required", user: principal.user, device: principal.device, routeIds: principal.routeGrants, quota: principal.quota } : { authMode: "disabled" } }; });
   app.post("/api/v1/inference/warm", async (request, reply) => {
     try {
@@ -593,53 +608,9 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
 
   registerRuntimeAdministrationRoutes({ app, tailscale, tailscaleServe, authMode, localPort: options.localPort ?? 8787, principals, administratorGuard, ...(startup ? { startup } : {}), ...(ninferRuntime ? { ninferRuntime } : {}), ...(security ? { security } : {}) });
   registerCatalogRoutes({ app, principals, administratorGuard, reconcileLocalModels, ...(piPackages ? { piPackages } : {}), ...(modelCatalog ? { modelCatalog } : {}), ...(security ? { security } : {}) });
-  app.post("/api/v1/management/pairing-codes", { preHandler: administratorGuard }, async (request, reply) => { try { const body = requireRecord(request.body); const role = parseRole(body.intendedRole); const ttlSeconds = body.ttlSeconds === undefined ? 600 : requireInteger(body.ttlSeconds); const pairing = securityRequired(security).issuePairingCode(role, ttlSeconds); security?.audit("pairing-code.issued", principals.get(request)?.user.id, "pairing-code", pairing.id, { intendedRole: role, expiresAt: pairing.expiresAt }); return reply.code(201).send({ data: pairing }); } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
-  app.get("/api/v1/management/tool-policies", { preHandler: administratorGuard }, async () => ({ data: store.listToolPolicies() }));
-  app.put("/api/v1/management/tool-policies/:subjectType/:subjectId/:toolName", { preHandler: administratorGuard }, async (request, reply) => { try { const params = request.params as { subjectType: string; subjectId: string; toolName: string }; if (params.subjectType !== "role" && params.subjectType !== "user") throw new TypeError("subjectType must be role or user"); const body = requireRecord(request.body); if (body.decision !== "allow" && body.decision !== "deny" && body.decision !== "ask") throw new TypeError("decision must be allow, deny, or ask"); const policy: ToolPolicyRecord = { subjectType: params.subjectType, subjectId: params.subjectId, toolName: params.toolName, decision: body.decision, updatedAt: new Date().toISOString() }; store.upsertToolPolicy(policy); security?.audit("tool-policy.updated", principals.get(request)?.user.id, "tool-policy", `${params.subjectType}:${params.subjectId}:${params.toolName}`, { decision: body.decision }); return { data: policy }; } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); } });
-  app.get("/api/v1/management/users", { preHandler: administratorGuard }, async () => ({ data: store.listUsers() }));
-  app.get("/api/v1/management/users/:userId/access", { preHandler: administratorGuard }, async (request, reply) => { const userId = (request.params as { userId: string }).userId; const user = store.getUser(userId); if (!user) return reply.code(404).send({ error: "User not found" }); return { data: { user, devices: store.listDevices(userId), routeIds: store.listUserRouteGrants(userId), quota: store.getUserQuota(userId) ?? DEFAULT_QUOTAS[user.role], currentDeviceId: principals.get(request)?.device?.id } }; });
-  app.post("/api/v1/management/users", { preHandler: administratorGuard }, async (request, reply) => {
-    try {
-      const body = requireRecord(request.body); const user = securityRequired(security).createUser(requireString(body.displayName, "displayName"), parseRole(body.role));
-      security?.audit("user.created", principals.get(request)?.user.id, "user", user.id, { role: user.role }); return reply.code(201).send({ data: user });
-    } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
-  });
-  app.patch("/api/v1/management/users/:userId", { preHandler: administratorGuard }, async (request, reply) => {
-    try {
-      const userId = (request.params as { userId: string }).userId; const body = requireRecord(request.body);
-      const user = securityRequired(security).updateUser(userId, { ...(typeof body.displayName === "string" ? { displayName: body.displayName } : {}), ...(body.role !== undefined ? { role: parseRole(body.role) } : {}), ...(body.status === "active" || body.status === "disabled" ? { status: body.status } : {}) });
-      security?.audit("user.updated", principals.get(request)?.user.id, "user", userId); return { data: user };
-    } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
-  });
-  app.post("/api/v1/management/users/:userId/devices", { preHandler: administratorGuard }, async (request, reply) => {
-    try {
-      const userId = (request.params as { userId: string }).userId; const body = requireRecord(request.body); const issued = securityRequired(security).issueDevice(userId, requireString(body.name, "name"));
-      security?.audit("device.issued", principals.get(request)?.user.id, "device", issued.device.id, { userId }); return reply.code(201).send({ data: issued });
-    } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
-  });
-  app.delete("/api/v1/management/devices/:deviceId", { preHandler: administratorGuard }, async (request, reply) => {
-    const deviceId = (request.params as { deviceId: string }).deviceId; if (!store.revokeDevice(deviceId, new Date().toISOString())) return reply.code(404).send({ error: "Device not found or already revoked" });
-    security?.audit("device.revoked", principals.get(request)?.user.id, "device", deviceId); return reply.code(204).send();
-  });
-  app.put("/api/v1/management/users/:userId/routes", { preHandler: administratorGuard }, async (request, reply) => {
-    try { const userId = (request.params as { userId: string }).userId; const body = requireRecord(request.body); if (!Array.isArray(body.routeIds) || !body.routeIds.every((id) => typeof id === "string")) throw new TypeError("routeIds must be a string array");
-      securityRequired(security).setRouteGrants(userId, body.routeIds); security?.audit("route-grants.updated", principals.get(request)?.user.id, "user", userId, { routeIds: body.routeIds }); return { data: { userId, routeIds: store.listUserRouteGrants(userId) } };
-    } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
-  });
-  app.put("/api/v1/management/users/:userId/quota", { preHandler: administratorGuard }, async (request, reply) => {
-    try { const userId = (request.params as { userId: string }).userId; const body = requireRecord(request.body); const quota = { maxRequestsPerMinute: requireInteger(body.maxRequestsPerMinute), maxPromptChars: requireInteger(body.maxPromptChars), maxOutputTokens: requireInteger(body.maxOutputTokens), maxQueueDepth: requireInteger(body.maxQueueDepth) };
-      securityRequired(security).setQuota(userId, quota); security?.audit("quota.updated", principals.get(request)?.user.id, "user", userId); return { data: quota };
-    } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
-  });
-  app.get("/api/v1/management/audit-events", { preHandler: administratorGuard }, async (request) => { const query = request.query as { limit?: string }; return { data: store.listAuditEvents(Math.min(toNonNegativeInteger(query.limit, 100), 1000)) }; });
+  registerSecurityAdministrationRoutes({ app, store, principals, administratorGuard, ...(security ? { security } : {}) });
   registerStorageRoutes({ app, store, artifacts, principals, administratorGuard, ...(storageDurability ? { storageDurability } : {}), ...(security ? { security } : {}) });
-  app.get("/api/v1/management/snapshots", { preHandler: administratorGuard }, async (_request, reply) => { try { if (!safety) throw new Error("Safety layer is unavailable"); return { data: safety.listSnapshots() }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
-  app.post("/api/v1/management/snapshots/:runId/restore", { preHandler: administratorGuard }, async (request, reply) => { try { if (!safety) throw new Error("Safety layer is unavailable"); const runId = (request.params as { runId: string }).runId; const result = await safety.restoreSnapshot(runId); security?.audit("snapshot.restored", principals.get(request)?.user.id, "snapshot", runId); return { data: result }; } catch (error) { return reply.code(error instanceof Error && error.message === "Snapshot not found" ? 404 : 400).send({ error: errorMessage(error) }); } });
-  app.get("/api/v1/management/trash", { preHandler: administratorGuard }, async (_request, reply) => { try { if (!safety) throw new Error("Safety layer is unavailable"); return { data: safety.listTrash() }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
-  app.post("/api/v1/management/trash/:id/restore", { preHandler: administratorGuard }, async (request, reply) => { try { if (!safety) throw new Error("Safety layer is unavailable"); const id = (request.params as { id: string }).id; const entry = await safety.restoreTrash(id); security?.audit("trash.restored", principals.get(request)?.user.id, "trash", id); return { data: entry }; } catch (error) { return reply.code(error instanceof Error && error.message === "Trash entry not found" ? 404 : 400).send({ error: errorMessage(error) }); } });
-  app.delete("/api/v1/management/trash", { preHandler: administratorGuard }, async (request, reply) => { try { if (!safety) throw new Error("Safety layer is unavailable"); const query = request.query as { workspaceRoot?: string }; const result = await safety.emptyTrash(typeof query.workspaceRoot === "string" && query.workspaceRoot ? query.workspaceRoot : undefined); security?.audit("trash.emptied", principals.get(request)?.user.id, "trash", undefined, { removed: result.removed, ...(typeof query.workspaceRoot === "string" && query.workspaceRoot ? { workspaceRoot: query.workspaceRoot } : {}) }); return { data: result }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
-  app.post("/api/v1/management/trash/gc", { preHandler: administratorGuard }, async (request, reply) => { try { if (!safety) throw new Error("Safety layer is unavailable"); const body = isRecord(request.body) ? request.body : {}; const maxAgeDays = typeof body.maxAgeDays === "number" && Number.isFinite(body.maxAgeDays) && body.maxAgeDays > 0 ? body.maxAgeDays : 30; const result = await safety.collect(maxAgeDays * 24 * 60 * 60 * 1000); security?.audit("safety.gc", principals.get(request)?.user.id, "safety", undefined, { maxAgeDays, ...result }); return { data: result }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
-  app.get("/api/v1/management/tool-actions", { preHandler: administratorGuard }, async (request, reply) => { try { if (!safety) throw new Error("Safety layer is unavailable"); const query = request.query as { limit?: string }; return { data: safety.listToolActions(Math.min(toNonNegativeInteger(query.limit, 200), 1000)) }; } catch (error) { return reply.code(503).send({ error: errorMessage(error) }); } });
+  registerSafetyAdministrationRoutes({ app, principals, administratorGuard, ...(safety ? { safety } : {}), ...(security ? { security } : {}) });
 
   app.addHook("onClose", async () => {
     await agentRuns.shutdown();
@@ -789,8 +760,6 @@ function adminGuard(expectedToken: string | undefined, authMode: "disabled" | "r
 function securityRequired(value: SecurityService | undefined): SecurityService { if (!value) throw new SecurityPolicyError("Authentication is disabled"); return value; }
 function requireRecord(value: unknown): Record<string, unknown> { if (!isRecord(value)) throw new TypeError("Body must be an object"); return value; }
 function requireString(value: unknown, name: string): string { if (typeof value !== "string" || !value.trim()) throw new TypeError(`${name} must be a non-empty string`); return value.trim(); }
-function requireInteger(value: unknown): number { if (!Number.isInteger(value) || (value as number) < 1) throw new TypeError("Quota values must be positive integers"); return value as number; }
-function parseRole(value: unknown): "administrator" | "agent" | "consumer" { if (value === undefined) return "consumer"; if (value === "administrator" || value === "agent" || value === "consumer") return value; throw new TypeError("Invalid role"); }
 
 function toNonNegativeInteger(value: string | undefined, fallback: number): number {
   if (value === undefined) return fallback;

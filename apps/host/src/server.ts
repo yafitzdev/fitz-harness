@@ -114,6 +114,7 @@ const runtime = createHost({
   agentConcurrencyPerOwner,
   ...(security ? { security } : {}),
   ...(internalAgentToken ? { internalAgentToken } : {}),
+  ...(process.env.FITZ_DEV_SESSION_TOKEN ? { devSessionToken: process.env.FITZ_DEV_SESSION_TOKEN } : {}),
   localPort: port,
   startupManager: new WindowsStartupManager(resolve(moduleDirectory, "../start-host.ps1")),
   engineRoot: runtimePaths.engineRoot,
