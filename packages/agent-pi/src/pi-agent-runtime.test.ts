@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { broadFilesystemScanReason, buildFitzSystemInstructions, createSessionLookupTool, createTrashTool, formatSessionSnapshot, PiAgentRuntime, readEnabledExtensionDirs, SESSION_LOOKUP_TOOL, TRASH_TOOL, type PiSession, type PiSessionReader, type PiSessionSnapshot } from "./pi-agent-runtime.js";
+import { broadFilesystemScanReason, buildFitzSystemInstructions, createSessionLookupTool, createTrashTool, formatSessionSnapshot, PiAgentRuntime, readEnabledExtensionDirs, SESSION_LOOKUP_TOOL, TRASH_TOOL, type PiSession, type PiSessionFactory, type PiSessionReader, type PiSessionSnapshot } from "./pi-agent-runtime.js";
 
 describe("PiAgentRuntime", () => {
   it("passes Fitz runtime locations to the session factory", async () => {
@@ -646,23 +646,36 @@ describe("PiAgentRuntime", () => {
     expect(events).toContainEqual({ type: "assistant.delta", text: "report" });
   });
 
-  it("forces explicitly requested subagents to launch before parent research tools", async () => {
+  it("uses only Fast children for Smart familiarization and then releases parent tools", async () => {
     let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
     const runtime = new PiAgentRuntime({
       customTools: () => [{ ...createTrashTool(async () => ({ moved: 0, entries: [] })), name: "subagent" }],
+      subagentBudget: () => ({ smart: 1, fast: 3 }),
       toolPolicy: async () => ({ action: "allow" }),
       createSession: async (options) => ({
         subscribe: (next) => { listener = next; return () => undefined; },
         prompt: async (prompt) => {
-          expect(options.activeTools).toEqual(["subagent"]);
-          expect(prompt).toContain("Your first tool calls must launch all 4 subagents");
+          expect(options.activeTools).toBeUndefined();
+          expect(options.tools).toBeDefined();
+          expect(prompt).toContain("3 Fast subagents");
+          expect(prompt).not.toContain("1 Smart subagent");
+          expect(prompt).toContain("begin your own parent tool work in the same response");
+          expect(prompt).toContain("Do not announce that delegation is available");
           expect(await options.evaluateTool!({ toolCallId: "read-early", toolName: "read", input: { path: "README.md" } }))
-            .toMatchObject({ action: "block", reason: expect.stringContaining("remaining 4 subagents") });
-          for (let index = 1; index <= 4; index += 1) {
-            expect(await options.evaluateTool!({ toolCallId: `subagent-${index}`, toolName: "subagent", input: { task: index } }))
+            .toMatchObject({ action: "block", reason: expect.stringContaining("3 Fast subagents") });
+          for (let index = 0; index < 3; index += 1) {
+            expect(await options.evaluateTool!({ toolCallId: `subagent-${index}`, toolName: "subagent", input: { route: "fast", task: index } }))
               .toEqual({ action: "allow" });
           }
+          // Regression for ec1ead70: after initial fan-out, the initialization
+          // gate must not misreport later calls as missing required workers.
+          expect(await options.evaluateTool!({ toolCallId: "subagent-later", toolName: "subagent", input: { route: "fast", task: "verify" } }))
+            .toEqual({ action: "allow" });
+          expect(await options.evaluateTool!({ toolCallId: "smart-too-early", toolName: "subagent", input: { route: "smart", task: "peer" } }))
+            .toMatchObject({ action: "block", reason: expect.stringContaining("concurrent peer") });
           expect(await options.evaluateTool!({ toolCallId: "read-after", toolName: "read", input: { path: "README.md" } }))
+            .toEqual({ action: "allow" });
+          expect(await options.evaluateTool!({ toolCallId: "smart-concurrent", toolName: "subagent", input: { route: "smart", task: "peer" } }))
             .toEqual({ action: "allow" });
           listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "done" } });
         },
@@ -672,23 +685,25 @@ describe("PiAgentRuntime", () => {
     });
     const events = [];
     for await (const event of runtime.run({
-      model: "default",
-      messages: [{ role: "user", content: "Launch four researcher subagents in parallel, then synthesize their findings." }],
+      model: "smart",
+      messages: [{ role: "user", content: "Get familiar with my project. What do you think about it, and what is it missing?" }],
     })) events.push(event);
     expect(events).toContainEqual({ type: "assistant.delta", text: "done" });
   });
 
-  it("rejects explicit delegation before inference when Fast workers are not configured", async () => {
-    const createSession = vi.fn();
+  it("does not enable delegation in local Default mode even when the user asks", async () => {
+    const createSession = vi.fn(async (options: Parameters<PiSessionFactory>[0]) => ({
+      subscribe: (listener: Parameters<PiSession["subscribe"]>[0]) => { listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "local" } }); return () => undefined; },
+      prompt: async () => undefined,
+      abort: async () => undefined,
+      dispose: () => undefined,
+    }));
     const runtime = new PiAgentRuntime({ customTools: () => [], createSession });
-    const consume = async () => {
-      for await (const _event of runtime.run({
-        model: "default",
-        messages: [{ role: "user", content: "Use four subagents to inspect this project." }],
-      })) { /* consume */ }
-    };
-    await expect(consume()).rejects.toThrow("no Fast cloud route is selected");
-    expect(createSession).not.toHaveBeenCalled();
+    const events = [];
+    for await (const event of runtime.run({ model: "default", messages: [{ role: "user", content: "Use four subagents to inspect this project." }] })) events.push(event);
+
+    expect(createSession).toHaveBeenCalledWith(expect.objectContaining({ routeId: "default", tools: expect.not.arrayContaining(["subagent"]) }));
+    expect(events).toContainEqual({ type: "assistant.delta", text: "local" });
   });
 
   it("fails instead of accepting prose that merely claims subagents were launched", async () => {
@@ -699,6 +714,7 @@ describe("PiAgentRuntime", () => {
     });
     const runtime = new PiAgentRuntime({
       customTools: () => [{ ...createTrashTool(async () => ({ moved: 0, entries: [] })), name: "subagent" }],
+      subagentBudget: () => ({ smart: 0, fast: 2 }),
       createSession: async () => ({
         subscribe: (next) => { listener = next; return () => undefined; },
         prompt,
@@ -709,11 +725,11 @@ describe("PiAgentRuntime", () => {
     const events = [];
     const consume = async () => {
       for await (const event of runtime.run({
-        model: "default",
-        messages: [{ role: "user", content: "Launch four researcher subagents." }],
+        model: "fast",
+        messages: [{ role: "user", content: "Launch two researcher subagents." }],
       })) events.push(event);
     };
-    await expect(consume()).rejects.toThrow("did not launch the 4 requested subagents");
+    await expect(consume()).rejects.toThrow("did not launch the required 2 Fast subagents");
     expect(prompt).toHaveBeenCalledTimes(2);
     expect(events).toEqual([]);
   });

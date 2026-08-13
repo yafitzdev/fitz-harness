@@ -7,7 +7,7 @@ Fitz has one deterministic local-text policy: the host owns one **Default** reci
 | Role | Owner | Execution | Visibility |
 | --- | --- | --- | --- |
 | `default` | Host administrator | One local engine/model | Chat picker |
-| `smart` | Each consumer | That consumer's cloud API | Chat picker, only when configured |
+| `smart` | Each consumer | That consumer's cloud API | Chat picker and the optional concurrent Smart peer, only when configured |
 | `fast` | Each consumer | That consumer's cloud API | Chat picker and subagent workers, only when configured |
 
 Choosing Default, Fast, or Smart in the chat composer is an instant request setting. It does not probe, warm, or switch an engine. Changing the host's Default recipe is a separate administrator action: Fitz persists the new target immediately and queues its warm-up behind existing local GPU work.
@@ -20,7 +20,15 @@ Choosing Default, Fast, or Smart in the chat composer is an instant request sett
 4. Every local model call enters the local GPU lane. Its concurrency is always one, even if an engine supports continuous batching or a recipe advertises a larger generation limit.
 5. Up to four Pi agent state machines may make progress concurrently, with one active state machine per owner by default. Only their local model calls serialize.
 
-Cloud Smart and Fast calls use the independent cloud lane. They create no local lifecycle lease, consume no host VRAM, and cannot displace Default. When an owner has no Fast binding, Fitz does not expose the delegation tool and rejects an explicit subagent request before inference.
+Cloud Smart and Fast calls use the independent cloud lane. They create no local lifecycle lease, consume no host VRAM, and cannot displace Default. Default never receives the delegation tool. Effort selects a delegation ceiling independently from the request's `maxTokens` output allowance:
+
+| Effort | Fast parent | Smart parent |
+| --- | --- | --- |
+| Light | No children | No children |
+| Normal | Up to 2 Fast children | Up to 3 Fast children |
+| High | Up to 3 Fast children | Up to 3 Fast children plus 1 optional Smart peer |
+
+The Smart peer is reserved for an independent Smart-tier task that runs concurrently with substantive work by the Smart parent; it is not overflow capacity for Fast research. The runtime admits that peer only after the parent has started an allowed tool task, allowing both calls to execute in the same parallel batch. Broad repository familiarization proactively dispatches only the available Fast children, then the Smart parent performs the overarching analysis and synthesis itself.
 
 ## Local media displacement
 
@@ -47,7 +55,7 @@ Remote media uses the cloud lane and does not affect Default.
 - Exactly one local generation may execute.
 - Default is the only host-owned text route and must resolve to a local text recipe.
 - Smart and Fast bindings are scoped to the authenticated owner and can reference only recipes discovered from that owner's connection.
-- Fast is selectable in chat and also powers subagents; it cannot execute without an owner-scoped cloud binding.
+- Default and Light effort cannot spawn subagents. Fast can spawn only Fast children. Smart can use Fast children for delegated slices and, at High effort only, the Smart child as a concurrent peer for separate Smart-tier work, within the per-turn maximums above.
 - Route selection never starts a model.
 - Local media restores Default before later local text work starts.
 - Desktop shutdown ends with no Fitz-owned model in VRAM and no running Fitz inference distribution.

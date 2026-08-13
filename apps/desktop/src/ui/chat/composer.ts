@@ -104,7 +104,7 @@ const COMPOSER_TEMPLATE = `
             </div>
             <div id="settings-submenu" class="popover settings-submenu" hidden></div>
             <select id="model" aria-label="Model route" hidden disabled></select>
-            <select id="effort" aria-label="Effort" hidden><option value="4096">Light</option><option value="10240" selected>Normal</option><option value="24576">High</option></select>
+            <select id="effort" aria-label="Effort" hidden><option value="light" data-max-tokens="4096">Light</option><option value="normal" data-max-tokens="10240" selected>Normal</option><option value="high" data-max-tokens="24576">High</option></select>
           </div>
         </div>
         <span id="status" class="run-status visually-hidden" data-state="loading">Connecting</span>

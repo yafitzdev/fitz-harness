@@ -44,10 +44,10 @@ Consequently, vLLM launches with `--max-num-seqs 1`, and llama.cpp recipes use o
 
 OpenAI-compatible connections belong to the authenticated consumer who created them. Their recipes are visible only to that owner and can be assigned to two roles:
 
-- **Smart**: an optional cloud model explicitly selected for the whole main-agent turn.
-- **Fast workers**: an optional cloud model used by delegated workers and researchers.
+- **Smart**: an optional cloud model selected for a main-agent turn and for its single optional concurrent Smart peer.
+- **Fast workers**: an optional cloud model selected for a main-agent turn and used by its Fast children.
 
-Smart and Fast execute in the bounded cloud lane and may overlap. Fast is offered in the chat picker and to delegated workers only when the owner has configured it.
+Smart and Fast execute in the bounded cloud lane and may overlap. Delegation is effort-dependent and separate from output tokens. Light launches no children. At Normal, Fast can launch two Fast children and Smart can launch three Fast children. At High, Fast can launch three Fast children and Smart can launch three Fast children plus one optional Smart peer. That peer is reserved for a separate Smart-tier task that the main Smart agent wants to run concurrently with its own substantive work; the runtime requires the parent to start an allowed tool task before admitting it. It is never used as a Fast researcher or automatically spent on project familiarization. Local Default turns never receive the delegation tool.
 
 Credentials are stored by the desktop using Electron safe storage and are registered on the host under owner-and-connection-scoped environment variable names. One user cannot bind another user's discovered recipe.
 

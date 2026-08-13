@@ -51,7 +51,7 @@ export function hasCloudRouteBinding(store: SqliteStore, ownerUserId: string, ro
 
 /** Resolves the product's three user-facing text roles. Default is global host
  * state. Smart and Fast are private cloud choices owned by one consumer. Fast
- * is also the worker route used by delegated runs. */
+ * serves bounded child work; Smart children are optional concurrent peers. */
 export class UserRouteResolver {
   constructor(
     readonly store: SqliteStore,

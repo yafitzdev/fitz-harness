@@ -893,8 +893,9 @@ describe("Fitz host", () => {
 
   it("persists native agent events and resumes after a sequence", async () => {
     const runtime = createHost();
-    const created = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", messages: [{ role: "user", content: "native protocol" }], max_tokens: 64 } });
+    const created = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", messages: [{ role: "user", content: "native protocol" }], effort: "high", max_tokens: 64 } });
     expect(created.statusCode).toBe(202); const runId = created.json().data.id as string;
+    expect(runtime.store.getAgentRunRequest(runId)).toEqual(expect.objectContaining({ effort: "high", maxTokens: 64 }));
     let run = runtime.agentRuns.get(runId); for (let attempt = 0; attempt < 50 && run?.status !== "completed"; attempt += 1) { await new Promise((resolve) => setTimeout(resolve, 5)); run = runtime.agentRuns.get(runId); }
     expect(run?.status).toBe("completed");
     const all = await runtime.app.inject({ method: "GET", url: `/api/v1/agent/runs/${runId}/events?after=0` }); const events = all.json().events as { sequence: number; type: string }[];
@@ -904,6 +905,17 @@ describe("Fitz host", () => {
     expect(usage.statusCode, usage.body).toBe(200);
     expect(usage.json().data).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "chat", runId, ttftMs: expect.any(Number), completionTokens: expect.any(Number) })]));
     const sse = await runtime.app.inject({ method: "GET", url: `/api/v1/agent/runs/${runId}/events`, headers: { accept: "text/event-stream", "last-event-id": "2" } }); expect(sse.statusCode).toBe(200); expect(sse.body).toContain("event: run.completed"); expect(sse.body).not.toContain("id: 1\n"); await runtime.app.close();
+  });
+
+  it("defaults missing effort to Normal and rejects unknown effort independently of max_tokens", async () => {
+    const runtime = createHost();
+    const normal = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", messages: [{ role: "user", content: "normal" }], max_tokens: 77 } });
+    expect(normal.statusCode).toBe(202);
+    expect(runtime.store.getAgentRunRequest(normal.json().data.id)).toEqual(expect.objectContaining({ effort: "normal", maxTokens: 77 }));
+    const invalid = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", messages: [{ role: "user", content: "invalid" }], effort: "maximum", max_tokens: 77 } });
+    expect(invalid.statusCode).toBe(400);
+    expect(invalid.body).toContain("effort must be light, normal, or high");
+    await runtime.app.close();
   });
 
   it("returns the original run when creation is retried with the same client request identity", async () => {

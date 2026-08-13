@@ -168,6 +168,28 @@ describe("ActivityTimeline", () => {
     expect(row.querySelector(".agent-activity-label")?.textContent).toBe("Listed fitz-codex");
   });
 
+  it("uses project-relative paths in tool labels and expanded details", () => {
+    const messages = document.createElement("main");
+    const timeline = new ActivityTimeline({
+      messages,
+      projectRoot: () => "C:\\work\\fitz-codex",
+      inspectResource: vi.fn(),
+      decideApproval: vi.fn(async () => "approved" as const),
+      showStatus: vi.fn(),
+    });
+    const list = timeline.appendTool("ls", { path: "C:/work/fitz-codex/docs" }, "list-absolute", true);
+    timeline.completeTool(list, "ls", { path: "C:/work/fitz-codex/docs" }, [], false);
+    const shell = timeline.appendTool("bash", { command: "cd C:/work/fitz-codex && pnpm test" }, "shell-absolute", true);
+
+    expect(list.querySelector(".agent-activity-label")?.textContent).toBe("Listed docs");
+    expect(list.querySelector(".tool-activity-input")?.textContent).toContain("./docs");
+    expect(list.textContent).not.toContain("C:/work/fitz-codex");
+    expect(shell.querySelector(".shell-command")?.textContent).toBe("cd . && pnpm test");
+    timeline.completeTool(shell, "bash", { command: "cd C:/work/fitz-codex && pnpm test" }, { content: [{ type: "text", text: "C:/work/fitz-codex/apps" }] }, false);
+    expect(shell.querySelector(".shell-output")?.textContent).toBe("./apps");
+    expect(shell.textContent).not.toContain("C:/work/fitz-codex");
+  });
+
   it("uses running labels until every tool in a burst completes and one durable work summary", () => {
     const { messages, timeline } = setup();
     const command = timeline.appendTool("bash", { command: "pnpm test" }, "tool-1", true, "2026-08-03T08:00:00.000Z");

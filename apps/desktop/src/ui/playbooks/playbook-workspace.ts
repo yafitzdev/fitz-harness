@@ -47,13 +47,13 @@ export interface PlaybookWorkspaceOptions {
   reloadConfiguration: () => Promise<Json | undefined>;
   showStatus: ActionFeedback;
   errorMessage: (error: unknown) => string;
+  onRouteChange?: (path: string[] | undefined) => void;
 }
 
 export class PlaybookWorkspaceController {
   readonly elements: PlaybookWorkspaceElements;
   private readonly options: PlaybookWorkspaceOptions;
   private configuration: Json | undefined;
-  private readonly recipeTestStates = new Map<string, { state: "testing" | "passed" | "failed"; detail: string }>();
   private editingRecipe: Json | undefined;
   private readonly configurationEditor: RecipeConfigurationEditor;
 
@@ -82,7 +82,7 @@ export class PlaybookWorkspaceController {
     const configuration = this.configuration;
     this.elements.list.replaceChildren();
     this.elements.title.textContent = "Playbooks";
-    this.elements.description.textContent = "Configure and test recipes from your engine folders.";
+    this.elements.description.textContent = "Configure recipes from your engine folders.";
     this.elements.search.placeholder = "Search playbooks";
     if (!configuration) { this.elements.list.append(emptyState("Management data is unavailable")); return; }
     const recipes = configuration.recipes ?? [];
@@ -95,33 +95,6 @@ export class PlaybookWorkspaceController {
     });
     if (!visibleFolders.length) { this.elements.list.append(emptyState(`No engine folders found in ${configuration.engineRoot ?? "the configured root"}`)); return; }
     for (const folder of visibleFolders) this.elements.list.append(this.renderFolderCard(folder, recipes));
-  }
-
-  async testRecipe(recipe: Json, card: HTMLElement, button: HTMLButtonElement): Promise<void> {
-    const isMedia = recipe.capabilities?.chatCompletions === false && Array.isArray(recipe.capabilities?.modalities?.output) && recipe.capabilities.modalities.output.length > 0;
-    this.recipeTestStates.set(recipe.id, { state: "testing", detail: isMedia ? "Generating a test image…" : "Sending “Say hi.” to this recipe" });
-    this.renderRecipeTestState(recipe.id, card, button);
-    try {
-      const response = await this.options.api(isMedia ? `/api/v1/management/recipes/${encodeURIComponent(recipe.id)}/media-test` : `/api/v1/management/recipes/${encodeURIComponent(recipe.id)}/test`, "POST");
-      this.recipeTestStates.set(recipe.id, { state: "passed", detail: isMedia ? String(response.data?.artifactUrl ?? "Generated successfully") : String(response.data?.output ?? "Recipe returned a response") });
-    } catch (error) {
-      this.recipeTestStates.set(recipe.id, { state: "failed", detail: this.options.errorMessage(error) });
-    }
-    this.renderRecipeTestState(recipe.id, card, button);
-  }
-
-  renderRecipeTestState(recipeId: string, card: HTMLElement, button: HTMLButtonElement): void {
-    const result = this.recipeTestStates.get(recipeId);
-    const state = result?.state ?? "idle";
-    button.disabled = state === "testing";
-    button.classList.toggle("testing", state === "testing");
-    button.classList.toggle("passed", state === "passed");
-    button.classList.toggle("failed", state === "failed");
-    card.classList.toggle("recipe-test-passed", state === "passed");
-    card.classList.toggle("recipe-test-failed", state === "failed");
-    button.textContent = state === "testing" ? "Testing…" : state === "passed" ? "✓ Working" : state === "failed" ? "Retry" : "Test";
-    button.title = result?.detail ?? "Send a test prompt to this recipe";
-    button.setAttribute("aria-label", state === "passed" ? "Recipe test passed" : state === "failed" ? `Recipe test failed: ${result?.detail ?? "Unknown error"}. Retry` : state === "testing" ? "Testing recipe" : "Test recipe");
   }
 
   openEngineEditor(folder?: Json): void {
@@ -146,6 +119,7 @@ export class PlaybookWorkspaceController {
     }
     this.applyEngineFolderChoice();
     this.showEditor("engine");
+    this.options.onRouteChange?.(["engine", this.elements.engineFolder.value]);
     (preferred ? this.elements.engineDisplayName : this.elements.engineFolder).focus();
   }
 
@@ -166,14 +140,37 @@ export class PlaybookWorkspaceController {
       ? { enginePath: playbook.runtime === "linux-managed" ? `/opt/fitz/llm/engines/${playbook.folderName}` : playbook.rootPath, runtime: playbook.runtime, command: playbook.launchCommand, args: playbook.launchArguments, workingDirectory: playbook.workingDirectory ?? ".", healthPath: playbook.healthPath, readinessTimeoutMs: 120_000, ...(playbook.runtimeId ? { runtimeId: playbook.runtimeId } : {}) }
       : playbook ? { baseUrl: playbook.baseUrl, healthPath: playbook.healthPath, allowInsecureRemote: false } : {};
     this.configurationEditor.load(adapter, recipe?.configuration ?? defaultConfiguration);
-    this.showEditor("recipe"); this.elements.recipeId.focus();
+    this.showEditor("recipe");
+    this.options.onRouteChange?.(["recipe", playbookId, ...(recipe?.id ? [String(recipe.id)] : [])]);
+    this.elements.recipeId.focus();
   }
 
-  closeEditor(): void {
+  openRoute(path: readonly string[]): boolean {
+    const [kind, playbookId, recipeId] = path;
+    if (kind === "engine" && playbookId) {
+      const folder = (this.configuration?.engineFolders ?? []).find((candidate: Json) => candidate.folderName === playbookId);
+      if (!folder) return false;
+      this.openEngineEditor(folder);
+      return true;
+    }
+    if (kind !== "recipe" || !playbookId) return false;
+    const recipe = recipeId
+      ? (this.configuration?.recipes ?? []).find((candidate: Json) => candidate.id === recipeId)
+      : undefined;
+    if (recipeId && !recipe) return false;
+    const folder = (this.configuration?.engineFolders ?? []).find((candidate: Json) => samePlaybook(candidate.folderName, playbookId));
+    if (!recipe && !folder?.engine) return false;
+    this.openRecipeEditor(recipe, folder ? { ...folder.engine, folderName: folder.folderName, rootPath: folder.rootPath } : undefined);
+    return true;
+  }
+
+  closeEditor(remember = true): void {
+    const wasOpen = this.editorOpen;
     this.elements.editor.hidden = true;
     this.elements.browser.hidden = false;
     this.elements.engineForm.hidden = true;
     this.elements.recipeForm.hidden = true;
+    if (wasOpen && remember) this.options.onRouteChange?.(undefined);
   }
 
   private bind(): void {
@@ -240,16 +237,7 @@ export class PlaybookWorkspaceController {
       capabilities: recipe.capabilities,
     }));
     recipeDetails.append(name, labels);
-    const recipeActions = document.createElement("div");
-    recipeActions.className = "recipe-card-actions";
-    const testButton = document.createElement("button");
-    testButton.type = "button";
-    testButton.className = "recipe-test-button";
-    testButton.setAttribute("aria-live", "polite");
-    testButton.addEventListener("click", (event) => { event.stopPropagation(); void this.testRecipe(recipe, recipeCard, testButton); });
-    recipeActions.append(testButton);
-    this.renderRecipeTestState(recipe.id, recipeCard, testButton);
-    recipeCard.append(recipeDetails, recipeActions);
+    recipeCard.append(recipeDetails);
     return recipeCard;
   }
 

@@ -26,7 +26,7 @@ function activityMock() {
 }
 
 function request(): AgentRunRequest {
-  return { model: "default", max_tokens: 2048, temperature: 0.2, sessionId: "session-1", accessMode: "full", messages: [{ role: "user", content: "hello" }] };
+  return { model: "default", effort: "normal", max_tokens: 2048, temperature: 0.2, sessionId: "session-1", accessMode: "full", messages: [{ role: "user", content: "hello" }] };
 }
 
 function setup(api: AgentRunControllerOptions["api"]) {

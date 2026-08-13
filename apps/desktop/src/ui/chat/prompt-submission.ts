@@ -1,4 +1,4 @@
-import type { MediaModality } from "@fitz/protocol";
+import type { AgentEffort, MediaModality } from "@fitz/protocol";
 import type { ComposerSubmission, PastedAttachment } from "./composer.js";
 import type { MediaCreationParams } from "./media-creation-form.js";
 
@@ -6,6 +6,7 @@ export type PromptMessageContent = string | Array<{ type: "text"; text: string }
 
 export interface PromptRunSettings {
   routeId: string;
+  effort: AgentEffort;
   maxTokens: number;
   temperature: number;
   accessMode: string;
@@ -33,6 +34,7 @@ export interface PromptSubmissionOptions {
   runId: () => string | undefined;
   startRun: (request: {
     model: string;
+    effort: AgentEffort;
     max_tokens: number;
     temperature: number;
     sessionId: string;
@@ -179,6 +181,7 @@ export class PromptSubmissionController {
       : content;
     await this.#options.startRun({
       model: settings.routeId,
+      effort: settings.effort,
       max_tokens: settings.maxTokens,
       temperature: settings.temperature,
       sessionId,

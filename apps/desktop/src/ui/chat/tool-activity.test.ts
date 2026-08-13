@@ -6,6 +6,7 @@ import {
   displayName,
   iconPathFor,
   projectRelativePath,
+  projectRelativeText,
   registerToolMeta,
   summarizeBurst,
   toolPath,
@@ -50,6 +51,7 @@ describe("describeTool", () => {
   it("uses the built-in verb table and the input target for known tools", () => {
     expect(describeTool("bash", { command: "git status --short" }, true)).toBe("Running git status --short");
     expect(describeTool("bash", { command: "git status --short" }, false)).toBe("Ran git status --short");
+    expect(describeTool("bash", { command: "cd C:/work/fitz-codex && pnpm test" }, false, "C:\\work\\fitz-codex")).toBe("Ran cd . && pnpm test");
     expect(describeTool("edit", { path: "src/app.ts" }, true)).toBe("Editing src/app.ts");
     expect(describeTool("write", { file_path: "README.md" }, false)).toBe("Wrote README.md");
     expect(describeTool("grep", { pattern: "TODO" }, false)).toBe("Searched TODO");
@@ -57,6 +59,8 @@ describe("describeTool", () => {
     expect(describeTool("ls", { path: "." }, false, "C:\\work\\fitz-codex")).toBe("Listed fitz-codex");
     expect(describeTool("ls", { path: "." }, false)).toBe("Listed current directory");
     expect(describeTool("ls", { path: "src" }, false, "C:\\work\\fitz-codex")).toBe("Listed src");
+    expect(describeTool("ls", { path: "C:\\work\\fitz-codex\\docs" }, false, "C:\\work\\fitz-codex")).toBe("Listed docs");
+    expect(describeTool("read", { path: "C:/work/fitz-codex/src/app.ts" }, false, "C:\\work\\fitz-codex")).toBe("Read src/app.ts");
     expect(describeTool("subagent", { role: "researcher", task: "Inspect routing" }, true)).toBe("Delegating to researcher");
     expect(describeTool("subagent", { role: "researcher", task: "Inspect routing" }, false)).toBe("Delegated to researcher");
   });
@@ -157,15 +161,21 @@ describe("projectRelativePath", () => {
     expect(projectRelativePath("c:\\Work\\Fitz\\src\\app.ts", "C:\\work\\fitz")).toBe("src/app.ts");
   });
 
-  it("leaves already-relative and out-of-root paths unchanged", () => {
+  it("leaves relative paths unchanged and shortens absolute paths outside the project", () => {
     expect(projectRelativePath("src/app.ts", "/home/me/proj")).toBe("src/app.ts");
-    expect(projectRelativePath("/etc/hosts", "/home/me/proj")).toBe("/etc/hosts");
-    expect(projectRelativePath("/home/me/proj-other/app.ts", "/home/me/proj")).toBe("/home/me/proj-other/app.ts");
+    expect(projectRelativePath("/etc/hosts", "/home/me/proj")).toBe("hosts");
+    expect(projectRelativePath("/home/me/proj-other/app.ts", "/home/me/proj")).toBe("app.ts");
   });
 
-  it("returns the path unchanged when no root or path is provided", () => {
-    expect(projectRelativePath("/home/me/proj/src/app.ts", "")).toBe("/home/me/proj/src/app.ts");
+  it("never exposes an absolute path when no project root is available", () => {
+    expect(projectRelativePath("/home/me/proj/src/app.ts", "")).toBe("app.ts");
     expect(projectRelativePath("", "/home/me/proj")).toBe("");
+  });
+
+  it("replaces either separator form of the project root in display text", () => {
+    expect(projectRelativeText("cd C:/work/fitz && pnpm test", "C:\\work\\fitz")).toBe("cd . && pnpm test");
+    expect(projectRelativeText("read C:\\work\\fitz\\src\\app.ts", "C:\\work\\fitz")).toBe("read .\\src\\app.ts");
+    expect(projectRelativeText("read C:/work/fitz-other/app.ts", "C:\\work\\fitz")).toBe("read C:/work/fitz-other/app.ts");
   });
 });
 

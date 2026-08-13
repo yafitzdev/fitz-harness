@@ -61,11 +61,10 @@ function setup(overrides: Partial<ConnectionWorkspaceBridge> = {}) {
     updateCloudRouteConfiguration: vi.fn((role: "smart" | "fast", recipeId: string | undefined) => {
       configuration = { ...configuration, cloudRoutes: { ...configuration.cloudRoutes, [role]: recipeId } };
     }),
-    testRecipe: vi.fn(async () => undefined),
-    renderRecipeTestState: vi.fn(),
     closePopovers: vi.fn(),
     showStatus: vi.fn(),
     errorMessage: vi.fn((error: unknown) => error instanceof Error ? error.message : String(error)),
+    onRouteChange: vi.fn(),
   };
   const controller = new ConnectionWorkspaceController({ mount, bridge, ...calls });
   return { controller, elements: controller.elements, bridge, calls, remote };
@@ -142,6 +141,7 @@ describe("ConnectionWorkspaceController", () => {
     click(elements.newConnection);
     expect(controller.editorOpen).toBe(true);
     expect(elements.listView.hidden).toBe(true);
+    expect(calls.onRouteChange).toHaveBeenLastCalledWith(["new"]);
 
     elements.name.value = "Self hosted";
     elements.url.value = "http://127.0.0.1:8000/v1";
@@ -157,7 +157,25 @@ describe("ConnectionWorkspaceController", () => {
     await vi.waitFor(() => expect(calls.showStatus).toHaveBeenCalledWith("Connection added", "success"));
   });
 
-  it("assigns user-owned cloud roles from a remote connection and delegates admin recipe tests", async () => {
+  it("emits and restores generic nested routes without recording programmatic closes", async () => {
+    const { controller, elements, calls } = setup();
+    await controller.sync(false);
+
+    expect(controller.openRoute(["edit", "remote-1"])).toBe(true);
+    expect(elements.id.value).toBe("remote-1");
+    expect(calls.onRouteChange).toHaveBeenLastCalledWith(["edit", "remote-1"]);
+
+    calls.onRouteChange.mockClear();
+    controller.closeEditor(false);
+    expect(calls.onRouteChange).not.toHaveBeenCalled();
+    expect(controller.openRoute(["edit", "missing"])).toBe(false);
+
+    click(elements.newConnection);
+    controller.closeEditor();
+    expect(calls.onRouteChange).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it("assigns user-owned cloud roles without rendering recipe test actions", async () => {
     const { controller, elements, calls } = setup();
     await controller.sync(false);
     const cards = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card");
@@ -168,9 +186,8 @@ describe("ConnectionWorkspaceController", () => {
     await vi.waitFor(() => expect(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[1]?.querySelector(".route-fast")?.classList.contains("active")).toBe(true));
     expect(calls.showStatus).not.toHaveBeenCalledWith("Fast route updated", "success");
 
-    const test = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[1]!.querySelector<HTMLButtonElement>(".recipe-test-button")!;
-    click(test);
-    expect(calls.testRecipe).toHaveBeenCalledWith(expect.objectContaining({ id: "consumer-recipe--remote-model" }), expect.any(HTMLElement), test);
+    expect(elements.connections.querySelector(".recipe-test-button")).toBeNull();
+    expect(elements.connections.textContent).not.toContain("Test");
   });
 
   it("switches a route immediately without disabling it or waiting for persistence", async () => {

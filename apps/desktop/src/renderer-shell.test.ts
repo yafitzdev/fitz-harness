@@ -172,7 +172,10 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('window.fitz.onNavigationCommand((command) => void navigationHistory.navigate');
     expect(renderer).toContain('document.addEventListener("auxclick"');
     expect(renderer).toContain('event.button !== 3 && event.button !== 4');
-    expect(navigationHistory).toContain('| { view: "conversation";');
+    expect(navigationHistory).toContain('view: NavigableWorkspacePage;');
+    expect(navigationHistory).toContain('path?: string[];');
+    expect(renderer).toContain('onRouteChange: (path) => rememberPageRoute("playbooks", path)');
+    expect(renderer).toContain('onRouteChange: (path) => rememberPageRoute("connections", path)');
     expect(navigationHistory).toContain('this.#entries.splice(this.#index + 1)');
     expect(navigationHistory).toContain('async navigate(offset: -1 | 1)');
   });
@@ -254,7 +257,7 @@ describe("desktop renderer shell", () => {
     expect(renderer).not.toContain('connectionWorkspace.selectedConnectionId');
     expect(renderer).toContain('routeId: routeId as FixedRouteId');
     expect(renderer).not.toContain('candidate.routeId === card.id');
-    expect(connectionWorkspace).toContain('testRecipe({ id: model.recipeId');
+    expect(connectionWorkspace).not.toContain('recipe-test-button');
     expect(connectionWorkspace).toContain("private views(): ConnectionView[]");
     expect(connectionWorkspace).toContain('id: LOCAL_CONNECTION_ID');
     expect(connectionWorkspace).toContain('this.configuration?.hostName ?? "This PC"');
@@ -320,7 +323,7 @@ describe("desktop renderer shell", () => {
     expect(connectionWorkspace).toContain("TEXT_ROUTE_DEFINITIONS.map(withRouteIcon)");
     expect(renderer).toContain("textRouteOptions(managementConfiguration)");
     expect(renderer).not.toContain("assignFixedRoute(");
-    expect(playbookWorkspace).toContain('Configure and test recipes from your engine folders.');
+    expect(playbookWorkspace).toContain('Configure recipes from your engine folders.');
     expect(renderer).not.toContain("now uses ${recipe.displayName}");
     expect(playbookWorkspace).toContain("openEngineEditor(");
     expect(playbookWorkspace).toContain('/api/v1/management/engines/${encodeURIComponent(folderName)}');
@@ -339,17 +342,13 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("showConversationWorkspace()");
   });
 
-  it("tests each Playbooks recipe directly and reports the result on its row", () => {
-    expect(playbookWorkspace).toContain('testButton.className = "recipe-test-button"');
-    expect(playbookWorkspace).toContain('isMedia ? `/api/v1/management/recipes/${encodeURIComponent(recipe.id)}/media-test` : `/api/v1/management/recipes/${encodeURIComponent(recipe.id)}/test`');
-    expect(playbookWorkspace).toContain('state === "passed" ? "✓ Working"');
-    expect(playbookWorkspace).toContain('state === "failed" ? "Retry"');
-    expect(playbookWorkspace).toContain('isMedia ? "Generating a test image…" : "Sending “Say hi.” to this recipe"');
+  it("shows recipe metadata without test actions", () => {
+    expect(playbookWorkspace).not.toContain('recipe-test-button');
+    expect(connectionWorkspace).not.toContain('recipe-test-button');
     expect(playbookWorkspace).toContain("labels.append(...recipeMetadata({");
     expect(connectionWorkspace).toContain("labels.append(...recipeMetadata({");
     expect(playbookWorkspace).not.toContain('detail.textContent = `${recipe.adapter} · ${recipe.modelId}`');
-    expect(styles).toContain(".recipe-test-button");
-    expect(styles).toContain(".recipe-test-button.passed");
+    expect(styles).not.toContain(".recipe-test-button");
     expect(styles).toContain(".recipe-card-label {");
   });
 
@@ -579,7 +578,8 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".advanced-settings-panel");
     expect(styles).toContain(".model-menu { right: 0; bottom: 34px; width: 286px;");
     expect(styles).toContain(".settings-submenu.open-left");
-    expect(composer).toContain('<option value="4096">Light</option><option value="10240" selected>Normal</option><option value="24576">High</option>');
+    expect(composer).toContain('<option value="light" data-max-tokens="4096">Light</option><option value="normal" data-max-tokens="10240" selected>Normal</option><option value="high" data-max-tokens="24576">High</option>');
+    expect(promptSubmission).toContain("effort: settings.effort");
     expect(composer).not.toContain('data-setting="speed"');
     expect(composer).not.toContain("Extra High");
     expect(composer).not.toContain("Ultra");
@@ -704,7 +704,7 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("if (projects.currentProjectId) openNewChatForProject(projects.currentProjectId)");
     expect(conversationLanding).toContain('action.textContent = "Create project"');
     expect(renderer).not.toContain('textContent = projects.currentProjectId ? "New task"');
-    expect(projects).toContain('rememberLocation({ view: "conversation", projectId: id, newChat: true })');
+    expect(projects).toContain('rememberLocation({ view: "conversation", path: ["new"], context: { projectId: id } })');
   });
 
   it("keeps the project quick action and context menu actions", () => {

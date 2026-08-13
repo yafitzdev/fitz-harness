@@ -123,11 +123,10 @@ export interface ConnectionWorkspaceOptions {
   reloadConfiguration: () => Promise<Json | undefined>;
   updateRouteConfiguration: (routeId: string, route: Json | undefined) => void;
   updateCloudRouteConfiguration: (role: CloudRouteId, recipeId: string | undefined) => void;
-  testRecipe: (recipe: Json, card: HTMLElement, button: HTMLButtonElement) => Promise<void>;
-  renderRecipeTestState: (recipeId: string, card: HTMLElement, button: HTMLButtonElement) => void;
   closePopovers: () => void;
   showStatus: ActionFeedback;
   errorMessage: (error: unknown) => string;
+  onRouteChange?: (path: string[] | undefined) => void;
 }
 
 export class ConnectionWorkspaceController {
@@ -251,13 +250,29 @@ export class ConnectionWorkspaceController {
     }
     this.updateTemplateFields();
     this.updateAuthField();
+    this.options.onRouteChange?.(connection ? ["edit", connection.id] : ["new"]);
     this.elements.name.focus();
   }
 
-  closeEditor(): void {
+  openRoute(path: readonly string[]): boolean {
+    const [kind, connectionId] = path;
+    if (kind === "new") {
+      this.openEditor();
+      return true;
+    }
+    if (kind !== "edit" || !connectionId) return false;
+    const connection = this.records.find((candidate) => candidate.id === connectionId);
+    if (!connection) return false;
+    this.openEditor(connection);
+    return true;
+  }
+
+  closeEditor(remember = true): void {
+    const wasOpen = this.editorOpen;
     this.resetForm();
     this.elements.editor.hidden = true;
     this.elements.listView.hidden = false;
+    if (wasOpen && remember) this.options.onRouteChange?.(undefined);
   }
 
   private bind(): void {
@@ -336,12 +351,6 @@ export class ConnectionWorkspaceController {
     details.append(name, labels);
     const actions = document.createElement("div");
     actions.className = "recipe-card-actions";
-    const test = document.createElement("button");
-    test.type = "button";
-    test.className = "recipe-test-button";
-    test.hidden = this.configuration?.isAdministrator !== true;
-    test.setAttribute("aria-live", "polite");
-    test.addEventListener("click", () => void this.options.testRecipe({ id: model.recipeId, displayName: model.id }, card, test));
     const routeToggle = document.createElement("div");
     routeToggle.className = "recipe-route-toggle";
     routeToggle.setAttribute("role", "group");
@@ -367,8 +376,7 @@ export class ConnectionWorkspaceController {
         : this.assignCloudRoute(definition, model)));
       routeToggle.append(button);
     }
-    actions.append(routeToggle, test);
-    this.options.renderRecipeTestState(model.recipeId, card, test);
+    actions.append(routeToggle);
     card.append(details, actions);
     return card;
   }
@@ -391,16 +399,6 @@ export class ConnectionWorkspaceController {
     details.append(name, labels);
     const actions = document.createElement("div");
     actions.className = "recipe-card-actions";
-    const test = document.createElement("button");
-    test.type = "button";
-    test.className = "recipe-test-button";
-    test.hidden = this.configuration?.isAdministrator !== true;
-    test.setAttribute("aria-live", "polite");
-    test.addEventListener("click", () => void this.options.testRecipe({
-      id: model.recipeId,
-      displayName: model.modelId,
-      capabilities: { chatCompletions: false, modalities: { output: model.modalities } },
-    }, card, test));
     const routeToggle = document.createElement("div");
     routeToggle.className = "recipe-route-toggle media-route-toggle";
     routeToggle.setAttribute("role", "group");
@@ -423,8 +421,7 @@ export class ConnectionWorkspaceController {
       button.addEventListener("click", () => void this.assignMediaRoute(definition, model));
       routeToggle.append(button);
     }
-    actions.append(routeToggle, test);
-    this.options.renderRecipeTestState(model.recipeId, card, test);
+    actions.append(routeToggle);
     card.append(details, actions);
     return card;
   }

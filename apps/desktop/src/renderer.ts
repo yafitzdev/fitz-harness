@@ -99,7 +99,7 @@ playbookLayout.addContent({
   id: "management-browser",
   title: "Playbooks",
   titleId: "management-title",
-  description: "Configure and test recipes from your engine folders.",
+  description: "Configure recipes from your engine folders.",
   descriptionId: "management-description",
   search: { id: "playbook-search", placeholder: "Search playbooks" },
   body: [element("playbook-list")],
@@ -290,7 +290,11 @@ const projects = new ProjectsController({
     if (!isCurrent()) return;
     refreshComposerState();
     composer.focus();
-    navigationHistory.remember({ view: "conversation", ...(projects.currentProjectId ? { projectId: projects.currentProjectId } : {}), sessionId });
+    navigationHistory.remember({
+      view: "conversation",
+      path: ["session", sessionId],
+      ...(projects.currentProjectId ? { context: { projectId: projects.currentProjectId } } : {}),
+    });
   },
   onNoSession: async () => {
     mediaJobs.reset();
@@ -428,6 +432,7 @@ const promptSubmission = new PromptSubmissionController({
   sessionId: () => projects.currentSessionId,
   settings: () => ({
     routeId: composer.controls.routeId,
+    effort: composer.controls.effort,
     maxTokens: composer.controls.maxTokens,
     temperature: composer.controls.temperature,
     accessMode: composer.controls.accessMode,
@@ -526,6 +531,7 @@ const playbookWorkspace = new PlaybookWorkspaceController({
   reloadConfiguration: () => loadManagementConfiguration(true),
   showStatus,
   errorMessage,
+  onRouteChange: (path) => rememberPageRoute("playbooks", path),
 });
 const connectionWorkspace = new ConnectionWorkspaceController({
   mount: workspace,
@@ -534,11 +540,10 @@ const connectionWorkspace = new ConnectionWorkspaceController({
   reloadConfiguration: () => loadManagementConfiguration(false),
   updateRouteConfiguration: applyManagementRoute,
   updateCloudRouteConfiguration: applyCloudRoute,
-  testRecipe: (recipe, card, button) => playbookWorkspace.testRecipe(recipe, card, button),
-  renderRecipeTestState: (recipeId, card, button) => playbookWorkspace.renderRecipeTestState(recipeId, card, button),
   closePopovers,
   showStatus,
   errorMessage,
+  onRouteChange: (path) => rememberPageRoute("connections", path),
 });
 const workspacePages = new WorkspacePageController({
   pages: {
@@ -820,7 +825,11 @@ function beginNewChat(projectBound: boolean): void {
   updateContextMeter();
   refreshComposerState();
   composer.focus();
-  navigationHistory.remember({ view: "conversation", ...(projectBound && projects.currentProjectId ? { projectId: projects.currentProjectId } : {}), newChat: true });
+  navigationHistory.remember({
+    view: "conversation",
+    path: ["new"],
+    ...(projectBound && projects.currentProjectId ? { context: { projectId: projects.currentProjectId } } : {}),
+  });
 }
 
 function openNewChatForProject(id: string): void { projects.setCurrentProject(id); projectSidebar.ensureExpanded(id); openProjectNewChat(); }
@@ -840,35 +849,48 @@ async function openPlaybookPage(): Promise<void> {
   if (!canOpenManagementView("playbooks", administrator) || !pairingPage.hidden) { if (!pairingPage.hidden) pairingCode.focus(); return; }
   closePopovers();
   inspectorPanel.close();
-  playbookWorkspace.closeEditor();
+  playbookWorkspace.closeEditor(false);
+  connectionWorkspace.closeEditor(false);
   workspacePages.show("playbooks");
   playbookWorkspace.showLoading();
   await loadManagementConfiguration(true);
   navigationHistory.remember({ view: "playbooks" });
 }
 
-async function openConnectionsPage(): Promise<void> { if (!pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("connections"); await connectionWorkspace.sync(false); navigationHistory.remember({ view: "connections" }); }
-async function openPluginsPage(): Promise<void> { if (!canOpenManagementView("plugins", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("plugins"); pluginsPageController.showLoading(); await pluginsPageController.load(false); navigationHistory.remember({ view: "plugins" }); }
-async function openModelsPage(): Promise<void> { if (!canOpenManagementView("models", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("models"); modelsPageController.showLoading(); await modelsPageController.load(false); navigationHistory.remember({ view: "models" }); }
-async function openUsagePage(): Promise<void> { if (!canOpenManagementView("usage", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); connectionWorkspace.closeEditor(); workspacePages.show("usage"); await usagePageController.load(); navigationHistory.remember({ view: "usage" }); }
-async function openAdministrationPage(): Promise<void> { if (!canOpenManagementView("administration", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); workspacePages.show("administration"); administrationPageController.showLoading(); await administrationPageController.load(); navigationHistory.remember({ view: "administration" }); }
-function showPairingPage(message: string): void { closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(); workspacePages.show("pairing"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
-function showConversationWorkspace(): void { playbookWorkspace.closeEditor(); workspacePages.show("conversation"); }
+async function openConnectionsPage(): Promise<void> { if (!pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(false); connectionWorkspace.closeEditor(false); workspacePages.show("connections"); await connectionWorkspace.sync(false); navigationHistory.remember({ view: "connections" }); }
+async function openPluginsPage(): Promise<void> { if (!canOpenManagementView("plugins", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(false); connectionWorkspace.closeEditor(false); workspacePages.show("plugins"); pluginsPageController.showLoading(); await pluginsPageController.load(false); navigationHistory.remember({ view: "plugins" }); }
+async function openModelsPage(): Promise<void> { if (!canOpenManagementView("models", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(false); connectionWorkspace.closeEditor(false); workspacePages.show("models"); modelsPageController.showLoading(); await modelsPageController.load(false); navigationHistory.remember({ view: "models" }); }
+async function openUsagePage(): Promise<void> { if (!canOpenManagementView("usage", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(false); connectionWorkspace.closeEditor(false); workspacePages.show("usage"); await usagePageController.load(); navigationHistory.remember({ view: "usage" }); }
+async function openAdministrationPage(): Promise<void> { if (!canOpenManagementView("administration", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(false); connectionWorkspace.closeEditor(false); workspacePages.show("administration"); administrationPageController.showLoading(); await administrationPageController.load(); navigationHistory.remember({ view: "administration" }); }
+function showPairingPage(message: string): void { closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(false); connectionWorkspace.closeEditor(false); workspacePages.show("pairing"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
+function showConversationWorkspace(): void { playbookWorkspace.closeEditor(false); connectionWorkspace.closeEditor(false); workspacePages.show("conversation"); }
 function setConversationInert(inert: boolean): void { for (const area of [workspaceHeader, messages, composer.root]) { area.toggleAttribute("inert", inert); area.setAttribute("aria-hidden", String(inert)); } }
 
 async function replayLocation(location: AppLocation): Promise<void> {
-  if (location.view === "playbooks") await openPlaybookPage();
-  else if (location.view === "connections") await openConnectionsPage();
+  if (location.view === "playbooks") {
+    await openPlaybookPage();
+    if (location.path) playbookWorkspace.openRoute(location.path);
+  }
+  else if (location.view === "connections") {
+    await openConnectionsPage();
+    if (location.path) connectionWorkspace.openRoute(location.path);
+  }
   else if (location.view === "plugins") await openPluginsPage();
   else if (location.view === "models") await openModelsPage();
   else if (location.view === "usage") await openUsagePage();
   else if (location.view === "administration") await openAdministrationPage();
   else if (location.view === "conversation") {
-    if (location.newChat && location.projectId) openNewChatForProject(location.projectId);
-    else if (location.newChat) openNewChat();
-    else if (location.sessionId) await projects.selectSession(location.sessionId, true, location.projectId);
-    else if (location.projectId) await projects.selectProject(location.projectId);
+    const [kind, id] = location.path ?? [];
+    const projectId = typeof location.context?.projectId === "string" ? location.context.projectId : undefined;
+    if (kind === "new" && projectId) openNewChatForProject(projectId);
+    else if (kind === "new") openNewChat();
+    else if (kind === "session" && id) await projects.selectSession(id, true, projectId);
+    else if (kind === "project" && id) await projects.selectProject(id);
   }
+}
+
+function rememberPageRoute(view: AppLocation["view"], path: string[] | undefined): void {
+  navigationHistory.remember({ view, ...(path?.length ? { path } : {}) });
 }
 
 function applyNavigation(): void {

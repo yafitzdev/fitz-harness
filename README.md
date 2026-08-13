@@ -24,8 +24,11 @@ pnpm dev
 
 The development host binds to `127.0.0.1`. `pnpm dev` (also available as `pnpm dev:ninfer`) starts
 the real NInfer configuration, warms the host-owned Default model, and exposes owner-configured cloud
-Smart routing when present. Fast is an optional cloud chat and worker role; without a Fast assignment,
-subagent delegation is unavailable.
+Smart and Fast routing when present. Default is local and cannot delegate. Effort controls delegation
+independently from its output-token allowance: Light launches no children; Normal gives Fast up to two
+Fast children and Smart up to three Fast children; High gives Fast up to three Fast children and Smart
+up to three Fast children plus one optional concurrent Smart peer. The Smart peer remains reserved for
+an independent Smart-tier task running alongside the main Smart agent's own substantive work.
 On Windows, every local inference engine and model lives inside Fitz's shared
 `inference-linux` runtime while the native desktop continues to connect to `127.0.0.1:8787`.
 

@@ -67,7 +67,7 @@ export class RecipeConfigurationEditor {
     label.append(document.createTextNode(field.label));
     const control = field.type === "lines" ? document.createElement("textarea") : document.createElement("input");
     control.dataset.fieldType = field.type; control.dataset.label = field.label;
-    if (control instanceof HTMLInputElement) { control.type = field.type === "number" ? "number" : field.type === "boolean" ? "checkbox" : "text"; if (field.type === "boolean") control.checked = value === true; else control.value = value === undefined ? "" : String(value); }
+    if (control instanceof HTMLInputElement) { control.type = field.type === "number" ? "number" : field.type === "boolean" ? "checkbox" : "text"; if (field.type === "number") control.step = "any"; if (field.type === "boolean") control.checked = value === true; else control.value = value === undefined ? "" : String(value); }
     else { control.rows = 4; control.value = Array.isArray(value) ? value.join("\n") : ""; }
     if (field.placeholder) control.placeholder = field.placeholder;
     if (field.help) { const help = document.createElement("small"); help.textContent = field.help; label.append(control, help); } else label.append(control);

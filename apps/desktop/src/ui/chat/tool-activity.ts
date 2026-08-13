@@ -154,10 +154,13 @@ export function toolPath(input: unknown): string | undefined {
 
 function toolTarget(toolName: string, input: unknown, workspaceRoot: string): string {
   const path = toolPath(input);
-  if (path) return toolName === "ls" ? listTarget(path, workspaceRoot) : path;
+  if (path) {
+    const displayPath = projectRelativePath(path, workspaceRoot);
+    return toolName === "ls" ? listTarget(displayPath, workspaceRoot) : displayPath;
+  }
   if (!input || typeof input !== "object") return "";
   const value = input as Record<string, unknown>;
-  return String(value.command ?? value.cmd ?? value.pattern ?? value.query ?? "").trim();
+  return projectRelativeText(String(value.command ?? value.cmd ?? value.pattern ?? value.query ?? "").trim(), workspaceRoot);
 }
 
 /** A bare dot is meaningful to the shell but useless to a human. Name the
@@ -171,18 +174,35 @@ function listTarget(path: string, workspaceRoot: string): string {
 /**
  * Project-relative form of a tool path for display: strips the project root
  * prefix (either separator style) so summaries show `src/app.ts` instead of the
- * whole absolute path. Paths that are already relative, live outside the root,
- * or have no root to compare against are returned unchanged.
+ * whole absolute path. Paths that are already relative remain unchanged;
+ * absolute paths outside the root fall back to their final component so the UI
+ * never exposes a full local filesystem path.
  */
 export function projectRelativePath(path: string, root: string): string {
-  if (!path || !root) return path;
+  if (!path) return path;
   const normalize = (value: string) => value.replaceAll("\\", "/").replace(/\/+$/, "");
   const candidate = normalize(path);
+  const absolute = /^(?:[A-Za-z]:\/|\/|\\\\)/.test(candidate);
+  if (!root) return absolute ? candidate.split("/").filter(Boolean).at(-1) ?? path : path;
   const normalizedRoot = normalize(root);
-  if (candidate.toLowerCase() === normalizedRoot.toLowerCase()) return path;
+  if (candidate.toLowerCase() === normalizedRoot.toLowerCase()) return normalizedRoot.split("/").filter(Boolean).at(-1) ?? ".";
   if (candidate.toLowerCase().startsWith(`${normalizedRoot.toLowerCase()}/`)) return candidate.slice(normalizedRoot.length + 1);
-  return path;
+  return absolute ? candidate.split("/").filter(Boolean).at(-1) ?? path : path;
 }
+
+/** Replaces the active project root inside commands and serialized tool data.
+ * This is display-only; the original absolute value remains available to the
+ * tool and resource inspector. */
+export function projectRelativeText(text: string, root: string): string {
+  if (!text || !root) return text;
+  const normalized = root.replaceAll("\\", "/").replace(/\/+$/, "");
+  const variants = new Set([normalized, normalized.replaceAll("/", "\\")]);
+  let result = text;
+  for (const variant of variants) result = result.replace(new RegExp(`${escapeRegExp(variant)}(?=$|[\\\\/\\s"';&|])`, "gi"), ".");
+  return result;
+}
+
+function escapeRegExp(value: string): string { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
 function toolMeta(toolName: string): ToolMeta {
   return BUILT_IN_TOOLS[toolName] ?? DEFAULT_TOOL;

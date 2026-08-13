@@ -85,14 +85,16 @@ function setup(
   elements.engineRuntime.add(new Option("linux-managed", "linux-managed"));
   const showStatus = vi.fn();
   const reloadConfiguration = vi.fn(async () => configuration);
+  const onRouteChange = vi.fn();
   const controller = new PlaybookWorkspaceController(elements, {
     api,
     reloadConfiguration,
     showStatus,
     errorMessage: (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    onRouteChange,
   });
   controller.setConfiguration(configuration);
-  return { controller, elements, showStatus, reloadConfiguration, api };
+  return { controller, elements, showStatus, reloadConfiguration, onRouteChange, api };
 }
 
 function submit(form: HTMLFormElement): void { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); }
@@ -164,54 +166,17 @@ describe("PlaybookWorkspaceController", () => {
     expect(elements.list.textContent).toContain("network down");
   });
 
-  it("tests a recipe directly and reports pass and fail on its row", async () => {
-    const api = vi.fn(async (path: string) => path.endsWith("/ninfer-qwen36/test")
-      ? { data: { output: "Hello!" } }
-      : Promise.reject(new Error("engine crashed")));
-    const { controller, elements } = setup(sampleConfiguration(), api);
-    controller.render();
-
-    const passButton = elements.list.querySelector<HTMLButtonElement>(".recipe-test-button")!;
-    click(passButton);
-    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/recipes/ninfer-qwen36/test", "POST"));
-    await vi.waitFor(() => expect(passButton.textContent).toBe("✓ Working"));
-    expect(passButton.title).toBe("Hello!");
-
-    const { controller: failedController, elements: failedElements } = setup(sampleConfiguration(), vi.fn(async () => { throw new Error("engine crashed"); }));
-    failedController.render();
-    const failButton = failedElements.list.querySelector<HTMLButtonElement>(".recipe-test-button")!;
-    click(failButton);
-    await vi.waitFor(() => expect(failButton.textContent).toBe("Retry"));
-    expect(failButton.classList.contains("failed")).toBe(true);
-  });
-
-  it("tests a media recipe through the media-test endpoint", async () => {
+  it("does not render recipe test actions for chat or media recipes", () => {
     const configuration = sampleConfiguration();
-    configuration.recipes = [{
+    configuration.recipes.push({
       id: "h3-video", playbookId: "ninfer", displayName: "H3 Video", adapter: "openai-managed", modelId: "MiniMax-H3", contextTokens: 0,
       capabilities: { chatCompletions: false, modalities: { output: ["video", "audio"] } }, configuration: {},
-    }];
-    const api = vi.fn(async (path: string) => path.endsWith("/media-test")
-      ? { data: { artifactUrl: "http://127.0.0.1:8787/api/v1/artifacts/abc/content", status: "completed" } }
-      : { data: {} });
-    const { controller, elements } = setup(configuration, api);
+    });
+    const { controller, elements } = setup(configuration);
     controller.render();
-
-    const button = elements.list.querySelector<HTMLButtonElement>(".recipe-test-button")!;
-    click(button);
-    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/recipes/h3-video/media-test", "POST"));
-    await vi.waitFor(() => expect(button.textContent).toBe("✓ Working"));
-    expect(button.title).toBe("http://127.0.0.1:8787/api/v1/artifacts/abc/content");
-
-    // Chat recipes keep using the chat test endpoint.
-    const chatConfiguration = sampleConfiguration();
-    const chatApi = vi.fn(async (_path: string, _method?: string, _body?: unknown) => ({ data: { output: "hi" } }));
-    const { controller: chatController, elements: chatElements } = setup(chatConfiguration, chatApi);
-    chatController.render();
-    const chatButton = chatElements.list.querySelector<HTMLButtonElement>(".recipe-test-button")!;
-    click(chatButton);
-    await vi.waitFor(() => expect(chatApi).toHaveBeenCalledWith("/api/v1/management/recipes/ninfer-qwen36/test", "POST"));
-    await vi.waitFor(() => expect(chatButton.textContent).toBe("✓ Working"));
+    expect(elements.list.querySelectorAll(".recipe-card")).toHaveLength(2);
+    expect(elements.list.querySelector(".recipe-test-button")).toBeNull();
+    expect(elements.list.textContent).not.toContain("Test");
   });
 
   it("opens the engine editor with the folder applied and saves it", async () => {
@@ -295,22 +260,48 @@ describe("PlaybookWorkspaceController", () => {
     expect(() => editor.load("unknown-adapter", {})).toThrow("Unsupported recipe adapter: unknown-adapter");
   });
 
+  it("accepts decimal values in numeric recipe fields", () => {
+    const root = document.createElement("section");
+    const editor = new RecipeConfigurationEditor(root);
+    editor.load("ninfer", { temperature: 0.4 });
+    const temperature = root.querySelector<HTMLInputElement>('input[data-label="Default temperature"]')!;
+    expect(temperature.value).toBe("0.4");
+    expect(temperature.step).toBe("any");
+    expect(temperature.validity.valid).toBe(true);
+    expect(editor.value().temperature).toBe(0.4);
+  });
+
   it("refreshes from the page header and closes the editor with the back surface", () => {
-    const { controller, elements, reloadConfiguration } = setup();
+    const { controller, elements, reloadConfiguration, onRouteChange } = setup();
     controller.render();
     click(elements.refresh);
     expect(reloadConfiguration).toHaveBeenCalled();
 
     controller.openEngineEditor();
     expect(controller.editorOpen).toBe(true);
+    expect(onRouteChange).toHaveBeenLastCalledWith(["engine", "scratch"]);
     controller.closeEditor();
     expect(elements.editor.hidden).toBe(true);
     expect(elements.browser.hidden).toBe(false);
     expect(elements.engineForm.hidden).toBe(true);
     expect(elements.recipeForm.hidden).toBe(true);
+    expect(onRouteChange).toHaveBeenLastCalledWith(undefined);
 
     controller.openEngineEditor();
     click(elements.closeEditorButtons[0]!);
+    expect(controller.editorOpen).toBe(false);
+  });
+
+  it("reopens a recorded editor location for forward navigation", () => {
+    const { controller, elements, onRouteChange } = setup();
+
+    expect(controller.openRoute(["recipe", "ninfer", "ninfer-qwen36"])).toBe(true);
+    expect(elements.recipeForm.hidden).toBe(false);
+    expect(elements.recipeId.value).toBe("ninfer-qwen36");
+    expect(onRouteChange).toHaveBeenLastCalledWith(["recipe", "ninfer", "ninfer-qwen36"]);
+
+    controller.closeEditor();
+    expect(controller.openRoute(["engine", "missing"])).toBe(false);
     expect(controller.editorOpen).toBe(false);
   });
 

@@ -1,6 +1,15 @@
-export type AppLocation =
-  | { view: "conversation"; projectId?: string; sessionId?: string; newChat?: boolean }
-  | { view: "playbooks" | "connections" | "plugins" | "models" | "usage" | "administration" };
+import type { WorkspacePage } from "../layout/workspace-pages.js";
+
+export type NavigableWorkspacePage = Exclude<WorkspacePage, "pairing">;
+
+/** A page route recorded by the app-wide history. `path` is intentionally
+ * opaque to the history controller: every page can add nested views without
+ * teaching the history layer page-specific types. */
+export interface AppLocation {
+  view: NavigableWorkspacePage;
+  path?: string[];
+  context?: Record<string, string | boolean>;
+}
 
 export interface NavigationHistoryOptions {
   blocked: () => boolean;

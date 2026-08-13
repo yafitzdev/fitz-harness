@@ -1,4 +1,5 @@
 import { positionNestedPopover, togglePopover } from "../primitives/popover.js";
+import type { AgentEffort } from "@fitz/protocol";
 
 export type AccessMode = "full" | "ask" | "read-only";
 export type ComposerSetting = "model" | "effort";
@@ -77,7 +78,8 @@ export class ComposerControls {
 
   get routeId(): string { return this.elements.model.value; }
   get routeLabel(): string { return [...this.elements.model.options].find((option) => option.value === this.routeId)?.textContent ?? "—"; }
-  get maxTokens(): number { return Number(this.elements.effort.value); }
+  get effort(): AgentEffort { return this.elements.effort.value as AgentEffort; }
+  get maxTokens(): number { return Number(this.elements.effort.selectedOptions[0]?.dataset.maxTokens); }
   get temperature(): number { return Number(this.elements.temperature.value); }
   get accessMode(): AccessMode { return this.mode; }
   get hasRoutes(): boolean { return this.elements.model.options.length > 0; }

@@ -32,9 +32,9 @@ import { HostInstanceLock } from "./host-instance-lock.js";
 import { installGracefulShutdown } from "./graceful-shutdown.js";
 import { LlamaCppModelReconciler } from "./llama-cpp-reconcile.js";
 import { VllmModelReconciler } from "./vllm-reconcile.js";
-import { createSubagentTool, isDelegatedToolContext } from "./subagent-tools.js";
+import { createSubagentTool, isDelegatedToolContext, subagentRouteBudget } from "./subagent-tools.js";
 import type { AgentRunCoordinator } from "./agent-runs.js";
-import { hasCloudRouteBinding, LOCAL_OWNER_ID } from "./user-route-resolver.js";
+import { LOCAL_OWNER_ID } from "./user-route-resolver.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const runtimePaths = resolveRuntimePaths();
@@ -157,17 +157,20 @@ const runtime = createHost({
       toolPolicy: safety.createToolEvaluator(),
       toolLease: workspaceMutationLeases.acquire,
       redactToolResult: safety.createResultRedactor(),
+      subagentBudget: (request, context) => subagentRouteBudget(store, context?.ownerUserId ?? LOCAL_OWNER_ID, request.model, request.effort ?? "normal"),
       customTools: (context) => {
         const delegated = isDelegatedToolContext(store, context);
         const ownerUserId = (context.runId ? store.getAgentRun(context.runId)?.ownerUserId : undefined) ?? LOCAL_OWNER_ID;
-        const subagentsConfigured = hasCloudRouteBinding(store, ownerUserId, "fast");
+        const parentRequest = context.request ?? (context.runId ? store.getAgentRunRequest(context.runId) : undefined);
+        const parentRoute = parentRequest?.model ?? "default";
+        const subagentBudget = subagentRouteBudget(store, ownerUserId, parentRoute, parentRequest?.effort ?? "normal");
         return [
           ...safety.createCustomTools()(context),
           // Authenticated runs enforce the owner's media quota and route grants.
           // Explicit local auth-disabled mode has no user and follows the existing
           // administrator-diagnostic path used by the management media test.
           ...(!delegated && mediaJobs ? createMediaTools({ mediaJobs, store, ...(security ? { security } : {}) })(context) : []),
-          ...(!delegated && subagentsConfigured && agentRuns ? [createSubagentTool({ agentRuns, store }, context)] : []),
+          ...(!delegated && subagentBudget && agentRuns ? [createSubagentTool({ agentRuns, store }, context, subagentBudget)] : []),
         ];
       },
       agentDir: runtimePaths.piAgentDir,

@@ -7,7 +7,7 @@ function setup(overrides: Partial<PromptSubmissionOptions> = {}) {
   document.body.append(row);
   const options: PromptSubmissionOptions = {
     draft: () => ({ content: "build it" }), consumeAttachments: () => [], sessionId: () => "session-1",
-    settings: () => ({ routeId: "smart", maxTokens: 8192, temperature: 0.4, accessMode: "full" }),
+    settings: () => ({ routeId: "smart", effort: "high", maxTokens: 8192, temperature: 0.4, accessMode: "full" }),
     ensureSession: vi.fn(async () => "session-1"), openNewChat: vi.fn(), clearDraft: vi.fn(), setDraft: vi.fn(), resetWarmup: vi.fn(),
     uploadAttachment: vi.fn(async () => ({ id: "artifact-1" })), clearLanding: vi.fn(), appendUser: vi.fn(),
     persistUserMessage: vi.fn(async () => undefined), appendSteer: vi.fn(() => row),
@@ -36,6 +36,8 @@ describe("PromptSubmissionController", () => {
     expect(options.uploadAttachment).toHaveBeenCalledWith("session-1", attachment);
     expect(options.startRun).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: "session-1",
+      effort: "high",
+      max_tokens: 8192,
       messages: [{ role: "user", content: [{ type: "text", text: "Build a dashboard\nwith charts" }, { type: "image_url", image_url: { url: "/api/v1/artifacts/artifact-1" } }] }],
     }));
     expect(options.appendUser).toHaveBeenCalledWith("Build a dashboard\nwith charts");
@@ -101,7 +103,7 @@ describe("PromptSubmissionController", () => {
   it("creates and persists a media-only session without a text route", async () => {
     const { controller, options } = setup({
       sessionId: () => undefined,
-      settings: () => ({ routeId: "", maxTokens: 8192, temperature: 0.4, accessMode: "full" }),
+      settings: () => ({ routeId: "", effort: "normal", maxTokens: 8192, temperature: 0.4, accessMode: "full" }),
       draft: () => ({ content: "a quiet lake", mediaCommand: "image" }),
     });
     await controller.submit();
@@ -114,7 +116,7 @@ describe("PromptSubmissionController", () => {
   it("does not create an empty chat when a regular prompt has no text route", async () => {
     const { controller, options } = setup({
       sessionId: () => undefined,
-      settings: () => ({ routeId: "", maxTokens: 8192, temperature: 0.4, accessMode: "full" }),
+      settings: () => ({ routeId: "", effort: "normal", maxTokens: 8192, temperature: 0.4, accessMode: "full" }),
     });
     await controller.submit("hello");
     expect(options.ensureSession).not.toHaveBeenCalled();

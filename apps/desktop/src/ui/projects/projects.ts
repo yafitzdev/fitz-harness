@@ -1,5 +1,6 @@
 import type { ProjectSidebarProject, ProjectSidebarSession } from "../sidebar/project-sidebar.js";
 import type { ActionFeedback } from "../primitives/action-status.js";
+import type { AppLocation } from "../navigation/navigation-history.js";
 
 type Json = Record<string, any>;
 
@@ -19,14 +20,6 @@ export interface ProjectsSidebarView {
   removeProjectState(projectId: string): void;
 }
 
-/** A conversation-scoped navigation entry the controller can remember. */
-export interface ConversationLocation {
-  view: "conversation";
-  projectId?: string;
-  sessionId?: string;
-  newChat?: boolean;
-}
-
 export interface ProjectsOptions {
   api: ProjectsApi;
   bridge: ProjectsBridge;
@@ -38,7 +31,7 @@ export interface ProjectsOptions {
   leaveNewChat: () => void;
   renderTree: () => void;
   refreshComposerState: () => void;
-  rememberLocation: (location: ConversationLocation) => void;
+  rememberLocation: (location: AppLocation) => void;
   onSessionSelected: (sessionId: string) => Promise<void>;
   onNoSession: () => Promise<void>;
 }
@@ -139,7 +132,7 @@ export class ProjectsController {
     if (this.currentSessionIdValue) await this.selectSession(this.currentSessionIdValue, false);
     else {
       await this.options.onNoSession();
-      this.options.rememberLocation({ view: "conversation", projectId: id, newChat: true });
+      this.options.rememberLocation({ view: "conversation", path: ["new"], context: { projectId: id } });
     }
     this.options.refreshComposerState();
   }

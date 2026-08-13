@@ -253,6 +253,7 @@ function parseAgentRunRequest(value: unknown): AgentRunRequest {
   return {
     model: parsed.model,
     messages: parsed.messages,
+    effort: parseAgentEffort(source.effort),
     ...(parsed.max_tokens !== undefined ? { maxTokens: parsed.max_tokens } : {}),
     ...(parsed.temperature !== undefined ? { temperature: parsed.temperature } : {}),
     ...(typeof source.sessionId === "string" ? { sessionId: source.sessionId } : {}),
@@ -260,6 +261,12 @@ function parseAgentRunRequest(value: unknown): AgentRunRequest {
     ...(source.mediaCommand === "image" || source.mediaCommand === "video" || source.mediaCommand === "audio" ? { mediaCommand: source.mediaCommand } : {}),
     ...(typeof source.clientRequestId === "string" && source.clientRequestId.trim() ? { clientRequestId: validateClientRequestId(source.clientRequestId) } : {}),
   };
+}
+
+function parseAgentEffort(value: unknown): "light" | "normal" | "high" {
+  if (value === undefined) return "normal";
+  if (value === "light" || value === "normal" || value === "high") return value;
+  throw new TypeError("effort must be light, normal, or high");
 }
 
 function validateClientRequestId(value: string): string {

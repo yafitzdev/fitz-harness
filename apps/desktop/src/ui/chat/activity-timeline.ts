@@ -2,7 +2,7 @@ import { svgIcon } from "../primitives/dom.js";
 import type { ActionFeedback } from "../primitives/action-status.js";
 import { ReasoningView } from "./reasoning-view.js";
 import { mediaJobIdFromToolResult } from "./media-job-tracker.js";
-import { activityKind, burstIconPath, describeTool, iconPathFor, summarizeBurst, toolPath } from "./tool-activity.js";
+import { activityKind, burstIconPath, describeTool, iconPathFor, projectRelativeText, summarizeBurst, toolPath } from "./tool-activity.js";
 import { scrollToLatestIfFollowing } from "./conversation-scroll.js";
 
 type Json = Record<string, any>;
@@ -431,10 +431,10 @@ export class ActivityTimeline {
     while (this.#searchRoots.size > 32) this.#searchRoots.delete(this.#searchRoots.values().next().value!);
   }
 
-  #shellCommand(input: unknown): string { if (input && typeof input === "object") { const value = input as Json; const command = value.command ?? value.cmd; if (typeof command === "string") return command; } return this.#formatPayload(input, "Command unavailable"); }
-  #shellOutput(result: unknown): string { if (result && typeof result === "object") { const content = (result as Json).content; if (Array.isArray(content)) { const text = content.filter((item) => item && typeof item === "object" && typeof item.text === "string").map((item) => item.text).join(""); if (text) return text.trimEnd(); } } return this.#formatPayload(result, "No output"); }
-  #formatPayload(value: unknown, emptyLabel: string): string { if (value === undefined || value === null) return emptyLabel; const raw = typeof value === "string" ? value : this.#safeStringify(value); return raw.length > 50_000 ? `${raw.slice(0, 50_000)}\n… ${raw.length - 50_000} more characters` : raw; }
-  #safeStringify(value: unknown): string { try { return JSON.stringify(value, null, 2) ?? String(value); } catch { return String(value); } }
+  #shellCommand(input: unknown): string { if (input && typeof input === "object") { const value = input as Json; const command = value.command ?? value.cmd; if (typeof command === "string") return projectRelativeText(command, this.#options.projectRoot?.() ?? ""); } return this.#formatPayload(input, "Command unavailable"); }
+  #shellOutput(result: unknown): string { if (result && typeof result === "object") { const content = (result as Json).content; if (Array.isArray(content)) { const text = content.filter((item) => item && typeof item === "object" && typeof item.text === "string").map((item) => item.text).join(""); if (text) return projectRelativeText(text.trimEnd(), this.#options.projectRoot?.() ?? ""); } } return this.#formatPayload(result, "No output"); }
+  #formatPayload(value: unknown, emptyLabel: string): string { if (value === undefined || value === null) return emptyLabel; const root = this.#options.projectRoot?.() ?? ""; const raw = typeof value === "string" ? projectRelativeText(value, root) : this.#safeStringify(value, root); return raw.length > 50_000 ? `${raw.slice(0, 50_000)}\n… ${raw.length - 50_000} more characters` : raw; }
+  #safeStringify(value: unknown, root: string): string { try { return JSON.stringify(value, (_key, item) => typeof item === "string" ? projectRelativeText(item, root) : item, 2) ?? String(value); } catch { return projectRelativeText(String(value), root); } }
   #button(label: string, className?: string): HTMLButtonElement { const button = document.createElement("button"); button.type = "button"; if (className) button.className = className; button.textContent = label; return button; }
   #timestamp(value?: string): number { if (value) { const timestamp = Date.parse(value); if (Number.isFinite(timestamp)) return timestamp; } return Date.now(); }
   #formatElapsed(value: number): string {
