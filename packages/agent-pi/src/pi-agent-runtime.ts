@@ -7,6 +7,10 @@ import { Type } from "typebox";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import {
+  PiDelegationPolicy,
+  delegatedCompaction,
+} from "./pi-delegation-policy.js";
 import type { ToolLeaseAcquirer, ToolLeaseRelease } from "./workspace-mutation-leases.js";
 
 type PiEvent =
@@ -167,49 +171,8 @@ export class PiAgentRuntime implements AgentRuntime {
   run(request: AgentRunRequest, signal?: AbortSignal, options?: AgentRuntimeRunOptions): AgentRuntimeRun {
     const channel = new EventChannel(); let session: PiSession | undefined; const controller = new AbortController();
     let completedMediaHandoff = false;
-    let delegatedToolCalls = 0;
-    let budgetSteered = false;
-    let admittedParentWork = false;
     const parentSubagentBudget = request.delegation ? undefined : this.#subagentBudget?.(request, options);
-    const initialDelegationRoutes = requestedInitialSubagents(request, parentSubagentBudget);
-    const initialDelegationCount = initialDelegationRoutes.length;
-    const admittedInitialSubagents = new Map<string, SubagentRoute>();
-    const remainingInitialRoutes = (): SubagentRoute[] => {
-      const remaining = [...initialDelegationRoutes];
-      for (const route of admittedInitialSubagents.values()) {
-        const index = remaining.indexOf(route);
-        if (index >= 0) remaining.splice(index, 1);
-      }
-      return remaining;
-    };
-    const delegationGate = (toolCall: PiToolCall): string | undefined => {
-      if (initialDelegationCount === 0 || request.delegation) return undefined;
-      // The gate only establishes the initial fan-out. Once those children were
-      // admitted, later tool calls follow the normal tool/budget policy.
-      if (admittedInitialSubagents.size >= initialDelegationCount) return undefined;
-      if (toolCall.toolName === "subagent") {
-        if (admittedInitialSubagents.has(toolCall.toolCallId)) return undefined;
-        const route = subagentRouteFromInput(toolCall.input);
-        const remaining = remainingInitialRoutes();
-        if (!route || !remaining.includes(route)) {
-          return `This delegation does not match the required cloud budget. Launch ${formatSubagentRoutes(remaining)} before using parent tools.`;
-        }
-        admittedInitialSubagents.set(toolCall.toolCallId, route);
-        return undefined;
-      }
-      return `Delegation must happen first. Launch ${formatSubagentRoutes(remainingInitialRoutes())} before using parent tools; do not research the project in the parent first.`;
-    };
-    const smartPeerGate = (toolCall: PiToolCall): string | undefined => {
-      if (toolCall.toolName !== "subagent" || subagentRouteFromInput(toolCall.input) !== "smart" || admittedParentWork) return undefined;
-      return "A Smart child is a concurrent peer, not a delegated researcher. Start a substantive parent tool task first, then include the Smart subagent call in that same response so both run concurrently.";
-    };
-    const toolCallBudget = request.delegation?.toolCallBudget;
-    const consumeDelegatedToolCall = (): string | undefined => {
-      if (toolCallBudget === undefined) return undefined;
-      if (delegatedToolCalls >= toolCallBudget) return subagentBudgetReason(toolCallBudget);
-      delegatedToolCalls += 1;
-      return undefined;
-    };
+    const delegation = new PiDelegationPolicy(request, parentSubagentBudget);
     const cancel = () => { controller.abort(); void session?.abort(); }; if (signal) { if (signal.aborted) cancel(); else signal.addEventListener("abort", cancel, { once: true }); }
     const cwd = typeof this.#cwd === "function" ? this.#cwd(request) : this.#cwd;
     const contextWindow = typeof this.#contextWindow === "function" ? this.#contextWindow(request, options) : this.#contextWindow;
@@ -217,7 +180,7 @@ export class PiAgentRuntime implements AgentRuntime {
     const customTools = this.#customTools?.({ cwd, ...(options?.runId ? { runId: options.runId } : {}), request }) ?? [];
     const hasSubagentTool = customTools.some((tool) => tool.name === "subagent");
     const sessionTask = (async () => {
-      if (initialDelegationCount > 0 && !hasSubagentTool) {
+      if (delegation.requiresInitialFanout && !hasSubagentTool) {
         throw new Error("Subagents are unavailable for the selected route. Choose a configured Fast or Smart cloud route in Connections first.");
       }
       const created = await this.#createSession({
@@ -235,24 +198,20 @@ export class PiAgentRuntime implements AgentRuntime {
         thinkingLevel: this.#thinkingLevel,
         ...(request.delegation ? { compaction: delegatedCompaction(contextWindow, request.maxTokens ?? 16_384) } : {}),
         approveTool: (toolCall) => {
-          const admissionReason = delegationGate(toolCall) ?? smartPeerGate(toolCall);
+          const admissionReason = delegation.admissionReason(toolCall);
           if (admissionReason) return Promise.resolve({ allowed: false, reason: admissionReason });
-          const budgetReason = consumeDelegatedToolCall();
-          if (budgetReason) return Promise.resolve({ allowed: false, reason: budgetReason });
           return this.#approveTool(request.accessMode ?? "full", toolCall, controller.signal, channel).then((decision) => {
-            if (decision.allowed && toolCall.toolName !== "subagent") admittedParentWork = true;
+            if (decision.allowed) delegation.recordAllowedTool(toolCall);
             return decision;
           });
         },
         ...(this.#sessionReader ? { sessionReader: this.#sessionReader } : {}),
         ...(this.#toolPolicy || this.#requestToolApproval
           ? { evaluateTool: async (toolCall) => {
-              const admissionReason = delegationGate(toolCall) ?? smartPeerGate(toolCall);
+              const admissionReason = delegation.admissionReason(toolCall);
               if (admissionReason) return { action: "block" as const, reason: admissionReason };
-              const budgetReason = consumeDelegatedToolCall();
-              if (budgetReason) return { action: "block" as const, reason: budgetReason };
               const outcome = await this.#evaluateTool(cwd, request.accessMode ?? "full", request.sessionId, options?.runId, toolCall, controller.signal, channel);
-              if (toolCall.toolName !== "subagent" && (outcome.action === "allow" || outcome.action === "rewrite")) admittedParentWork = true;
+              if (outcome.action === "allow" || outcome.action === "rewrite") delegation.recordAllowedTool(toolCall);
               return outcome;
             } }
           : {}),
@@ -287,11 +246,11 @@ export class PiAgentRuntime implements AgentRuntime {
         if (translated) {
           if (translated.type === "assistant.delta") sawAssistant = true;
           const delegationOutput = translated.type === "assistant.delta" || translated.type === "reasoning.delta" || translated.type === "reasoning.completed";
-          if (!(initialDelegationCount > 0 && admittedInitialSubagents.size < initialDelegationCount && delegationOutput)) channel.push(translated);
+          if (!(delegation.shouldSuppressModelOutput && delegationOutput)) channel.push(translated);
         }
-        if (event.type === "tool_execution_end" && toolCallBudget !== undefined && delegatedToolCalls >= toolCallBudget && !budgetSteered) {
-          budgetSteered = true;
-          queueMicrotask(() => void activeSession.steer(subagentBudgetReason(toolCallBudget)).catch(() => undefined));
+        if (event.type === "tool_execution_end") {
+          const budgetSteer = delegation.claimBudgetSteer();
+          if (budgetSteer) queueMicrotask(() => void activeSession.steer(budgetSteer).catch(() => undefined));
         }
         if (isCompletedMediaHandoff(event)) {
           // Media generation is an asynchronous handoff. Letting Pi request one
@@ -303,17 +262,14 @@ export class PiAgentRuntime implements AgentRuntime {
           queueMicrotask(() => void activeSession.abort());
         }
       }); try {
-        await activeSession.prompt(formatPrompt(request, initialDelegationRoutes));
+        await activeSession.prompt(formatPrompt(request, delegation.initialPromptInstruction()));
         if (completedMediaHandoff) { channel.close(); return; }
         if (controller.signal.aborted) throw abortError();
-        if (initialDelegationCount > 0 && admittedInitialSubagents.size < initialDelegationCount) {
-          const remaining = remainingInitialRoutes();
+        if (delegation.requiresInitialFanout && !delegation.initialFanoutComplete) {
           internalDelegationRetry = true;
-          await activeSession.prompt(`SYSTEM: Your previous response was invalid because it did not launch the required cloud workers. Call the subagent tool now to launch ${formatSubagentRoutes(remaining)}. Do not answer in prose.`);
+          await activeSession.prompt(delegation.retryPrompt());
         }
-        if (initialDelegationCount > 0 && admittedInitialSubagents.size < initialDelegationCount) {
-          throw new Error(`The selected main model did not launch the required ${formatSubagentRoutes(remainingInitialRoutes())}.`);
-        }
+        if (delegation.requiresInitialFanout && !delegation.initialFanoutComplete) throw delegation.missingFanoutError();
         if (!sawAssistant) throw new Error("Pi agent completed without an assistant response");
         channel.close();
       } finally { unsubscribe(); activeSession.dispose(); }
@@ -657,16 +613,11 @@ function isCompletedMediaHandoff(event: PiEvent): boolean {
   return Boolean(details && typeof details === "object" && "mediaJobId" in details && typeof details.mediaJobId === "string" && details.mediaJobId);
 }
 function piFailure(event: PiEvent): Error | undefined { return event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason === "error" ? new Error(event.message.errorMessage ?? "Pi model request failed") : undefined; }
-function subagentBudgetReason(toolCallBudget: number): string { return `The subagent's ${toolCallBudget}-tool budget is exhausted. Stop using tools and return the concise final report now.`; }
-function formatPrompt(request: AgentRunRequest, initialDelegationRoutes: SubagentRoute[] = []): string {
+function formatPrompt(request: AgentRunRequest, initialDelegationInstruction?: string): string {
   const mediaCommand = request.mediaCommand;
   if (!mediaCommand) {
     const transcript = request.messages.map((message) => `${message.role.toUpperCase()}: ${extractTextFromContent(message.content)}`).join("\n\n");
-    if (initialDelegationRoutes.length === 0 || request.delegation) return transcript;
-    return [
-      `SYSTEM: DELEGATION ORDER: Your first tool calls must launch ${formatSubagentRoutes(initialDelegationRoutes)} with disjoint scopes. Do not announce that delegation is available or ask the user to request it. Put the subagent calls first, then begin your own parent tool work in the same response so it runs concurrently. The parent must independently handle the overarching analysis and final synthesis.`,
-      transcript,
-    ].join("\n\n");
+    return initialDelegationInstruction ? [initialDelegationInstruction, transcript].join("\n\n") : transcript;
   }
   // A media command run exposes exactly one tool (`generate_<modality>`, see the
   // activeTools allowlist above), and the host no longer forces tool_choice because
@@ -681,78 +632,6 @@ function formatPrompt(request: AgentRunRequest, initialDelegationRoutes: Subagen
     const prompt = stripMediaCommandPrefix(text) || DEFAULT_MEDIA_PROMPTS[mediaCommand];
     return `USER: The user issued the /${mediaCommand} media command. Call the ${toolName} tool immediately with the following prompt, and reply with nothing but the tool call:\n\n${prompt}`;
   }).join("\n\n");
-}
-
-function delegatedCompaction(contextWindow: number, maxTokens: number): { reserveTokens: number; keepRecentTokens: number } {
-  const outputHeadroom = Math.max(2_048, Math.min(maxTokens, Math.floor(contextWindow / 4)));
-  const estimatorSafety = Math.min(16_384, Math.floor(contextWindow / 2));
-  return {
-    // Delegated workers ingest unusually token-dense source and tool output. Pi's
-    // estimator can undercount that material versus the serving tokenizer, so leave
-    // half of smaller context windows available for compaction and the final report.
-    // This prevents a worker estimated below the threshold from reaching the engine
-    // as prompt + max output > the model's actual context limit.
-    reserveTokens: Math.min(Math.floor(contextWindow / 2), Math.max(8_192, outputHeadroom, estimatorSafety)),
-    keepRecentTokens: Math.max(2_048, Math.min(4_096, Math.floor(contextWindow / 8))),
-  };
-}
-
-function requestedInitialSubagents(request: AgentRunRequest, budget: SubagentRouteBudget | undefined): SubagentRoute[] {
-  if (request.delegation || !budget) return [];
-  const lastUserText = [...request.messages].reverse().find((message) => message.role === "user");
-  if (!lastUserText) return [];
-  const text = extractTextFromContent(lastUserText.content).toLowerCase();
-  const fastCapacity = Array.from({ length: Math.max(0, budget.fast) }, () => "fast" as const);
-  const smartCapacity = Array.from({ length: Math.max(0, budget.smart) }, () => "smart" as const);
-  if (fastCapacity.length + smartCapacity.length === 0) return [];
-  // Familiarization is bounded research: Fast children scan disjoint areas
-  // while the Smart parent performs its own architecture work. The optional
-  // Smart peer is never consumed as a more expensive Fast researcher.
-  if (broadRepositoryFamiliarization(text)) return fastCapacity;
-  const explicitCount = explicitlyRequestedSubagentCount(text);
-  if (explicitCount === 0) return [];
-  const explicitlyFast = /\bfast\s+(?:\w+\s+)?subagents?\b/.test(text);
-  const explicitlySmart = /\bsmart\s+(?:\w+\s+)?subagents?\b/.test(text);
-  // Smart peers are selected voluntarily by the Smart parent when it has a
-  // genuinely concurrent peer task; they are never an up-front quota.
-  if (explicitlySmart && !explicitlyFast) return [];
-  const eligible = fastCapacity;
-  return eligible.slice(0, explicitCount);
-}
-
-function explicitlyRequestedSubagentCount(text: string): number {
-  if (!/\b(?:launch|spawn|run|use|delegate(?:\s+to)?)\b/.test(text)) return 0;
-  if (!/\b(?:subagents?|researcher\s+subagents?|worker\s+subagents?|reviewer\s+subagents?)\b/.test(text)) return 0;
-  const words: Record<string, number> = {
-    one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
-    nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
-  };
-  const count = text.match(/\b(?:launch|spawn|run|use|delegate(?:\s+to)?)\s+(?:up\s+to\s+)?(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen)\b/)?.[1];
-  if (!count) return 1;
-  const parsed = /^\d+$/.test(count) ? Number(count) : words[count];
-  return Math.max(1, Math.min(16, parsed ?? 1));
-}
-
-function broadRepositoryFamiliarization(text: string): boolean {
-  return /\b(?:get|become|make\s+(?:yourself|you))\s+familiar\b/.test(text)
-    || /\b(?:understand|learn|explore|assess|analy[sz]e|review)\s+(?:this|the|my|our)?\s*(?:project|repo(?:sitory)?|codebase)\b/.test(text)
-    || /\b(?:project|repo(?:sitory)?|codebase)\s+(?:overview|orientation|familiarization)\b/.test(text);
-}
-
-function subagentRouteFromInput(input: unknown): SubagentRoute | undefined {
-  if (!input || typeof input !== "object") return undefined;
-  const route = (input as Record<string, unknown>).route;
-  return route === "fast" || route === "smart" ? route : undefined;
-}
-
-function formatSubagentRoutes(routes: SubagentRoute[]): string {
-  const fast = routes.filter((route) => route === "fast").length;
-  const smart = routes.filter((route) => route === "smart").length;
-  const parts = [
-    ...(smart ? [`${smart} Smart subagent${smart === 1 ? "" : "s"}`] : []),
-    ...(fast ? [`${fast} Fast subagent${fast === 1 ? "" : "s"}`] : []),
-  ];
-  return parts.join(" and ") || "the remaining subagents";
 }
 
 const DEFAULT_MEDIA_PROMPTS: Record<MediaModality, string> = {

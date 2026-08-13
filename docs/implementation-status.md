@@ -34,10 +34,10 @@
   `after` or `Last-Event-ID`, and interrupted-run recovery after host restart.
 - Fitz-owned agent runtime boundary and an opt-in Pi SDK 0.83.0 adapter using in-memory Pi sessions,
   restricted tool allowlists, event translation, cancellation, and native-run integration.
-- Consolidated Pi implementation: all Fitz-owned Pi code (runtime adapter, registry-backed
-  `PiPackageService`, pinned SDK version) lives in `packages/agent-pi` and exports from its index;
-  the host wires it with runtime paths, the approval gate, and the session reader and contains no Pi
-  logic of its own.
+- Consolidated Pi implementation: all Fitz-owned Pi code (runtime adapter, delegation policy,
+  registry-backed `PiPackageService`, pinned SDK version) lives in `packages/agent-pi`; its public
+  surface exports from the index, while the host only wires runtime paths, the approval gate, and the
+  session reader.
 - Cross-session conversation lookup for the agent: the host's `createSessionReader` serves canonical
   transcripts from the SQLite store to the read-only `fitz_session` tool, registered only when a
   reader is supplied, with truncation-safe formatting and reader-failure handling.

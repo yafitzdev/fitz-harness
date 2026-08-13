@@ -7,12 +7,15 @@ so model lifecycle and routing remain owned by Fitz while Pi owns the coding-age
 
 ## One place: `packages/agent-pi`
 
-All Fitz-owned Pi code lives in `packages/agent-pi` and is exported from its index:
+All Fitz-owned Pi code lives in `packages/agent-pi`. Its main components are:
 
 - `PiAgentRuntime` (`pi-agent-runtime.ts`) — the `@fitz/agent-core` runtime adapter. It builds the
   SDK session (restricted tool allowlist, Fitz system instructions, extension loading, tool approval
   gating, the `fitz_session` lookup tool), translates Pi events into the Fitz run protocol, forwards
   steering messages, and propagates cancellation and failures.
+- `PiDelegationPolicy` (`pi-delegation-policy.ts`) — internal per-run delegation state for required
+  Fast-worker fan-out, Smart concurrent-peer admission, delegated tool budgets, retry enforcement,
+  and pre-fan-out output suppression. The runtime's approval paths share this one policy instance.
 - `PiPackageService` (`pi-packages.ts`) — the registry-backed extension manager. Fitz owns the
   extension layout: `{agentDir}/extensions/registry.json` plus one directory per enabled package.
   Upstream Pi's `npm/` + `settings.json` layout and auto-discovery are disabled (`noExtensions`), so
