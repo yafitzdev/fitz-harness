@@ -8,6 +8,14 @@ describe("validateMediaGenerationParams", () => {
     })).toEqual({ prompt: "a fox", durationSeconds: 4, fps: 24, seed: -1, steps: 20, guidance: 0 });
   });
 
+  it("normalizes optional song lyrics without adding them to non-audio requests", () => {
+    expect(validateMediaGenerationParams({ prompt: "music", lyrics: "  [Verse]\nHello  " })).toEqual({
+      prompt: "music",
+      lyrics: "[Verse]\nHello",
+    });
+    expect(validateMediaGenerationParams({ prompt: "image" })).not.toHaveProperty("lyrics");
+  });
+
   it.each([
     [{ prompt: "x", durationSeconds: 0 }, "durationSeconds"],
     [{ prompt: "x", fps: -1 }, "fps"],

@@ -44,7 +44,9 @@ export function mediaExecutionSettings(job: MediaCardJob): Array<[string, string
   settings.push(["Operation", params.operation === "edit" ? "Edit" : params.operation === "animate" ? "Animate" : "Generate"]);
   const labels: Record<string, string> = {
     size: "Resolution", seed: "Seed", sampler: "Sampler", steps: "Steps", guidance: "Guidance",
-    negativePrompt: "Negative prompt", durationSeconds: "Duration (seconds)", fps: "Frame rate (fps)",
+    negativePrompt: "Negative prompt",
+    durationSeconds: job.modality === "audio" ? "Maximum duration (seconds)" : "Duration (seconds)",
+    fps: "Frame rate (fps)", lyrics: "Lyrics",
   };
   for (const [key, value] of Object.entries(params)) {
     if (["prompt", "operation", "refs"].includes(key) || value === undefined) continue;

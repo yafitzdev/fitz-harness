@@ -24,6 +24,9 @@ export interface MediaGenerationParams {
    * reference presence alone. */
   operation?: MediaGenerationOperation;
   negativePrompt?: string;
+  /** Optional song lyrics. Audio recipes that support structure-aware music
+   * generation consume section tags such as [Verse] and [Chorus]. */
+  lyrics?: string;
   /** image-to-video / reference editing. `url` may be a provider URL or a Fitz artifact download URL. */
   refs?: Array<{ artifactId: string } | { url: string }>;
   size?: string; // "1024x1024", "768x768", "1280x720", ...

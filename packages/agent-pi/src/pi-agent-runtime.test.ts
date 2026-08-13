@@ -189,11 +189,16 @@ describe("PiAgentRuntime", () => {
     });
     for await (const _ of runtime.run({ model: "smart", mediaCommand: "video", messages: [{ role: "user", content: "/video a cat playing piano" }] })) { /* consume */ }
     for await (const _ of runtime.run({ model: "smart", mediaCommand: "video", messages: [{ role: "user", content: "/video" }] })) { /* consume */ }
+    for await (const _ of runtime.run({ model: "smart", mediaCommand: "audio", messages: [{ role: "user", content: "/audio drum and bass song about BMW\n\nMaximum duration: 30 seconds." }] })) { /* consume */ }
     expect(prompts[0]).toContain("generate_video");
     expect(prompts[0]).toContain("a cat playing piano");
     expect(prompts[0]).not.toContain("USER: /video a cat playing piano");
     expect(prompts[1]).toContain("generate_video");
     expect(prompts[1]).toContain("a short video clip");
+    expect(prompts[2]).toContain("Rewrite a casual idea into a detailed production caption");
+    expect(prompts[2]).toContain("write concise original lyrics about that topic");
+    expect(prompts[2]).toContain("drum and bass song about BMW");
+    expect(prompts[2]).toContain("Maximum duration: 30 seconds");
   });
 
   it("forwards steering messages to the live session and emits user.steer at delivery", async () => {
@@ -307,6 +312,35 @@ describe("PiAgentRuntime", () => {
       { type: "tool.approval.resolved", approvalId: "media-approval", toolCallId: "vid-1", toolName: "generate_video", decision: "denied" },
       { type: "assistant.delta", text: "done" },
     ]);
+  });
+
+  it("treats a reviewed media-command card as approval for its single forced tool", async () => {
+    let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+    const requestToolApproval = vi.fn(() => ({ approvalId: "unexpected", decision: Promise.resolve("approved" as const) }));
+    const runtime = new PiAgentRuntime({
+      requestToolApproval,
+      createSession: async (options) => ({
+        subscribe: (next) => { listener = next; return () => undefined; },
+        prompt: async () => {
+          expect(await options.evaluateTool!({
+            toolCallId: "audio-1",
+            toolName: "generate_audio",
+            input: { prompt: "liquid drum and bass", lyrics: "[Chorus]\nBMW" },
+          })).toEqual({ action: "allow" });
+          listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "queued" } });
+        },
+        abort: async () => undefined,
+        dispose: () => undefined,
+      }),
+    });
+    for await (const _ of runtime.run({
+      model: "smart",
+      sessionId: "session-1",
+      accessMode: "full",
+      mediaCommand: "audio",
+      messages: [{ role: "user", content: "/audio song about BMW" }],
+    })) { /* consume */ }
+    expect(requestToolApproval).not.toHaveBeenCalled();
   });
 
   it("blocks media generation tools in full mode when no approval service exists", async () => {

@@ -183,6 +183,7 @@ function substitutePlaceholders(
   let result = value;
   result = result.replaceAll("{{prompt}}", params.prompt);
   result = result.replaceAll("{{negative_prompt}}", params.negativePrompt ?? "");
+  result = result.replaceAll("{{lyrics}}", params.lyrics ?? "");
   if (params.seed !== undefined) result = result.replaceAll("{{seed}}", String(params.seed));
   if (size !== undefined) {
     result = result.replaceAll("{{width}}", String(size.width));
@@ -204,6 +205,7 @@ function exactPlaceholderValue(
   switch (value) {
     case "{{prompt}}": return params.prompt;
     case "{{negative_prompt}}": return params.negativePrompt ?? "";
+    case "{{lyrics}}": return params.lyrics ?? "";
     case "{{seed}}": return params.seed;
     case "{{width}}": return size?.width;
     case "{{height}}": return size?.height;

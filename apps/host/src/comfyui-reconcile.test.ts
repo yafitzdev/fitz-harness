@@ -37,7 +37,7 @@ describe("local ComfyUI reconciliation", () => {
     store.close();
   });
 
-  it("discovers H3, Krea variants, and the unified Qwen generation/edit recipe", () => {
+  it("discovers H3, Music 3, Krea variants, and the unified Qwen generation/edit recipe", () => {
     const root = mkdtempSync(join(tmpdir(), "fitz-comfy-reconcile-all-")); roots.push(root);
     const paths: FitzRuntimePaths = {
       dataRoot: join(root, "data"), databasePath: join(root, "data", "fitz.db"), piAgentDir: join(root, "data", "pi"),
@@ -48,28 +48,33 @@ describe("local ComfyUI reconciliation", () => {
     for (const file of [
       join(local.hostEngineDir, "main.py"), local.hostEnvironmentMarker, local.hostModelConfigPath,
       join(paths.modelRoot, "comfyui", "diffusion_models", "minimax_h3_fl2va_pruned_int8_convrot.safetensors"),
+      join(paths.modelRoot, "comfyui", "diffusion_models", "minimax_music3_dit_fp16.safetensors"),
       join(paths.modelRoot, "comfyui", "diffusion_models", "krea2_turbo_nvfp4.safetensors"),
       join(paths.modelRoot, "comfyui", "diffusion_models", "qwen_image_2512_fp8_e4m3fn.safetensors"),
       join(paths.modelRoot, "comfyui", "diffusion_models", "qwen_image_edit_2511_int8_convrot.safetensors"),
       join(paths.modelRoot, "comfyui", "loras", "KNP_V2_copy_copy.safetensors"),
       join(paths.modelRoot, "comfyui", "text_encoders", "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"),
+      join(paths.modelRoot, "comfyui", "text_encoders", "minimax_music3_text_encoder_pruned_int8_convrot.safetensors"),
       join(paths.modelRoot, "comfyui", "text_encoders", "qwen3vl_4b_fp8_scaled.safetensors"),
       join(paths.modelRoot, "comfyui", "text_encoders", "qwen_2.5_vl_7b_fp8_scaled.safetensors"),
       join(paths.modelRoot, "comfyui", "vae", "minimax_h3_video_vae_fp16.safetensors"),
       join(paths.modelRoot, "comfyui", "vae", "minimax_h3_audio_vae_fp32.safetensors"),
+      join(paths.modelRoot, "comfyui", "vae", "minimax_music3_dav.safetensors"),
       join(paths.modelRoot, "comfyui", "vae", "qwen_image_vae.safetensors"),
     ]) { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, "fixture"); }
 
-    expect(localComfyUIRecipeIds(paths)).toEqual(["h3-video", "krea2-turbo-image", "krea2-nsfw-image", "qwen-image"]);
+    expect(localComfyUIRecipeIds(paths)).toEqual(["h3-video", "minimax-music3-audio", "krea2-turbo-image", "krea2-nsfw-image", "qwen-image"]);
     const store = SqliteStore.memory();
     expect(reconcileLocalComfyUIConfiguration(store, paths)).toBe(true);
     expect(store.listRecipes().filter((recipe) => recipe.playbookId === "comfyui").map((recipe) => recipe.id).sort()).toEqual([
       "h3-video",
       "krea2-nsfw-image",
       "krea2-turbo-image",
+      "minimax-music3-audio",
       "qwen-image",
     ]);
     expect(store.listRoutes()).toContainEqual(expect.objectContaining({ id: "video", recipeId: "h3-video" }));
+    expect(store.listRoutes()).toContainEqual(expect.objectContaining({ id: "audio", recipeId: "minimax-music3-audio" }));
     expect(store.listRoutes()).toContainEqual(expect.objectContaining({ id: "image", recipeId: "qwen-image" }));
     store.close();
   });
@@ -128,6 +133,38 @@ describe("local ComfyUI reconciliation", () => {
       displayName: "My H3 video model",
       configuration: expect.not.objectContaining({ stale: true }),
     });
+    store.close();
+  });
+
+  it("moves a legacy H3 audio route to Music 3 when the audio model is installed", () => {
+    const root = mkdtempSync(join(tmpdir(), "fitz-comfy-reconcile-h3-audio-")); roots.push(root);
+    const paths: FitzRuntimePaths = {
+      dataRoot: join(root, "data"), databasePath: join(root, "data", "fitz.db"), piAgentDir: join(root, "data", "pi"),
+      logsDir: join(root, "data", "logs"), cacheDir: join(root, "data", "cache"), llmRoot: join(root, "llm"),
+      engineRoot: join(root, "llm", "engines"), modelRoot: join(root, "llm", "models"), ggufModelRoot: join(root, "llm", "models", "gguf"), environmentRoot: join(root, "llm", "environments"), runtimeRoot: join(root, "data", "runtimes"), snapshotsDir: join(root, "data", "snapshots"), artifactsDir: join(root, "data", "artifacts"), backupsDir: join(root, "data", "backups"),
+    };
+    const local = localComfyUIPaths(paths);
+    for (const file of [
+      join(local.hostEngineDir, "main.py"), local.hostEnvironmentMarker, local.hostModelConfigPath,
+      join(paths.modelRoot, "comfyui", "diffusion_models", "minimax_h3_fl2va_pruned_int8_convrot.safetensors"),
+      join(paths.modelRoot, "comfyui", "diffusion_models", "minimax_music3_dit_fp16.safetensors"),
+      join(paths.modelRoot, "comfyui", "text_encoders", "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"),
+      join(paths.modelRoot, "comfyui", "text_encoders", "minimax_music3_text_encoder_pruned_int8_convrot.safetensors"),
+      join(paths.modelRoot, "comfyui", "vae", "minimax_h3_video_vae_fp16.safetensors"),
+      join(paths.modelRoot, "comfyui", "vae", "minimax_h3_audio_vae_fp32.safetensors"),
+      join(paths.modelRoot, "comfyui", "vae", "minimax_music3_dav.safetensors"),
+    ]) { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, "fixture"); }
+
+    const store = SqliteStore.memory();
+    const legacyH3 = createComfyUIPlaybook({ engineDir: local.engineDir }).recipes[0]!;
+    store.upsertRecipe({ ...legacyH3, capabilities: { ...legacyH3.capabilities, modalities: { ...legacyH3.capabilities.modalities!, output: ["video", "audio"] } } });
+    store.upsertRoute({ id: "audio", displayName: "Audio generation", recipeId: "h3-video", kind: "audio", enabled: true });
+
+    reconcileLocalComfyUIConfiguration(store, paths);
+
+    expect(store.listRecipes().find((recipe) => recipe.id === "h3-video")?.capabilities.modalities?.output).toEqual(["video"]);
+    expect(store.listRoutes()).toContainEqual(expect.objectContaining({ id: "audio", recipeId: "minimax-music3-audio", kind: "audio", enabled: true }));
+    expect(store.listRoutes()).toContainEqual(expect.objectContaining({ id: "video", recipeId: "h3-video", kind: "video", enabled: true }));
     store.close();
   });
 });

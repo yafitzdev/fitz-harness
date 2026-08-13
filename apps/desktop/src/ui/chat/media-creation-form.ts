@@ -9,6 +9,7 @@ export interface MediaCreationParams {
   size?: string;
   seed?: number;
   negativePrompt?: string;
+  lyrics?: string;
   durationSeconds?: number;
   fps?: number;
 }
@@ -65,7 +66,7 @@ export class MediaCreationForm {
 
     const form = document.createElement("form");
     form.className = "media-creation-form";
-    const promptField = this.#field("Prompt", "prompt", request.prompt, { multiline: true, required: true });
+    const promptField = this.#field(request.modality === "audio" ? "Music brief" : "Prompt", "prompt", request.prompt, { multiline: true, required: true });
     const promptControl = promptField.querySelector<HTMLTextAreaElement>("textarea")!;
     form.append(promptField);
 
@@ -85,8 +86,14 @@ export class MediaCreationForm {
       );
       form.append(parameters);
     } else {
-      parameters.append(this.#field("Duration", "durationSeconds", undefined, { type: "number", suffix: "seconds", min: "0.1", step: "0.1", placeholder: "Route default" }));
-      form.append(parameters);
+      parameters.append(this.#field("Maximum duration", "durationSeconds", undefined, { type: "number", suffix: "seconds", min: "0.1", step: "0.1", placeholder: "Route default" }));
+      form.append(
+        parameters,
+        this.#field("Lyrics", "lyrics", undefined, {
+          multiline: true,
+          placeholder: "Optional — use [Verse], [Chorus], [Bridge]… Leave blank to auto-write when the brief implies vocals",
+        }),
+      );
     }
 
     if (request.refs.length > 0) {

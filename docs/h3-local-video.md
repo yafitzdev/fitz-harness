@@ -29,8 +29,10 @@ model and is intentionally not part of the first install.
 ## Fitz integration
 
 At host startup, `reconcileLocalComfyUIConfiguration` checks for the complete
-runtime and all four files. When present it registers `h3-video` additively and
-assigns the well-known `video` route only when that route has no valid existing
+runtime and all four files. When present it registers `h3-video` additively as
+a video-only routing capability. The generated MP4 retains H3's synchronized
+stereo soundtrack, but H3 is never assignable to the standalone `audio` route.
+It assigns the well-known `video` route only when that route has no valid existing
 assignment. ComfyUI is registered alongside the active chat engine; it is not a
 mutually exclusive host mode.
 

@@ -57,11 +57,12 @@ describe("MediaCreationForm", () => {
     expect(card.querySelector("[data-creation-field='durationSeconds']")).toBeNull();
   });
 
-  it("shows only duration for audio commands", () => {
+  it("shows duration and optional structured lyrics for audio commands", () => {
     const { form, messages } = setup();
     show(form, { modality: "audio" });
     const card = cardOf(messages);
     expect(card.querySelector("[data-creation-field='durationSeconds']")).not.toBeNull();
+    expect(card.querySelector("[data-creation-field='lyrics']")).not.toBeNull();
     expect(card.querySelector("[data-creation-field='size']")).toBeNull();
     expect(card.querySelector("[data-creation-field='fps']")).toBeNull();
   });
@@ -82,6 +83,20 @@ describe("MediaCreationForm", () => {
     await vi.waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
     expect(onCreate).toHaveBeenCalledWith({ prompt: "dolly shot through a forest", durationSeconds: 6, fps: 24 });
     expect(messages.querySelector(".media-creation-card")).toBeNull();
+  });
+
+  it("collects structured lyrics for audio generation", async () => {
+    const { form, messages } = setup();
+    const { onCreate } = show(form, { modality: "audio", prompt: "dreamy synth-pop" });
+    formOf(messages).querySelector<HTMLInputElement>("[data-creation-field='durationSeconds']")!.value = "90";
+    formOf(messages).querySelector<HTMLTextAreaElement>("[data-creation-field='lyrics']")!.value = "[Verse]\nNeon rain\n[Chorus]\nCome alive";
+    submitForm(messages);
+    await vi.waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+    expect(onCreate).toHaveBeenCalledWith({
+      prompt: "dreamy synth-pop",
+      durationSeconds: 90,
+      lyrics: "[Verse]\nNeon rain\n[Chorus]\nCome alive",
+    });
   });
 
   it("does not create when the prompt is empty", async () => {

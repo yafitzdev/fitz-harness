@@ -342,6 +342,7 @@ function parseMediaParams(value: unknown): MediaGenerationParams {
     prompt,
     ...(operation ? { operation } : {}),
     ...(typeof body.negativePrompt === "string" ? { negativePrompt: body.negativePrompt } : {}),
+    ...(typeof body.lyrics === "string" ? { lyrics: body.lyrics } : {}),
     ...(Array.isArray(body.refs) ? {
       refs: body.refs.map((ref) => {
         if (!isRecord(ref)) throw new TypeError("params.refs entries must be objects");

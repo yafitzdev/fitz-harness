@@ -59,6 +59,11 @@ export function localComfyUIRecipeIds(paths: FitzRuntimePaths, local = localComf
     join(models, "diffusion_models", "minimax_h3_fl2va_pruned_int8_convrot.safetensors"),
     ...localH3SharedFiles(models),
   ].every((path) => existsSync(path))) installed.push("h3-video");
+  if ([
+    join(models, "diffusion_models", "minimax_music3_dit_fp16.safetensors"),
+    join(models, "text_encoders", "minimax_music3_text_encoder_pruned_int8_convrot.safetensors"),
+    join(models, "vae", "minimax_music3_dav.safetensors"),
+  ].every((path) => existsSync(path))) installed.push("minimax-music3-audio");
   const krea2BaseFiles = [
     join(models, "diffusion_models", "krea2_turbo_nvfp4.safetensors"),
     join(models, "text_encoders", "qwen3vl_4b_fp8_scaled.safetensors"),
@@ -135,6 +140,18 @@ export function reconcileLocalComfyUIConfiguration(store: SqliteStore, paths: Fi
   }
 
   const recipes = store.listRecipes();
+  const discoveredRecipes = new Map(playbook.recipes.map((recipe) => [recipe.id, recipe]));
+  // A recipe capability may become narrower as its routing contract is
+  // corrected. Never retain an assignment that discovery can no longer
+  // execute: H3's synchronized soundtrack belongs to its MP4 artifact and
+  // does not make H3 an audio-generation route.
+  for (const existingRoute of store.listRoutes()) {
+    const discoveredRecipe = discoveredRecipes.get(existingRoute.recipeId);
+    const routeKind = existingRoute.kind ?? "chat";
+    if (routeKind === "chat" || !discoveredRecipe || discoveredRecipe.capabilities.modalities?.output.includes(routeKind)) continue;
+    store.upsertRoute({ ...existingRoute, recipeId: "", enabled: false });
+    changed = true;
+  }
   for (const route of playbook.routes) {
     const existing = store.listRoutes().find((candidate) => candidate.id === route.id);
     const migrateBuiltInImageRoute = route.id === "image"

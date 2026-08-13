@@ -88,6 +88,30 @@ describe("agent media tools (§5.9)", () => {
     }
   });
 
+  it("forwards structured lyrics through the audio tool", async () => {
+    const harness = await makeHarness();
+    try {
+      await registerMediaRecipe(harness.runtime, "music3", ["audio"]);
+      await assignRoute(harness.runtime, "audio", "music3", "audio");
+      harness.security.setRouteGrants(harness.user.id, ["audio"]);
+      harness.security.setQuota(harness.user.id, MEDIA_QUOTA);
+      createRun(harness.store, harness.user.id);
+      const result = await mediaTools(harness).generateAudio.execute("call-audio", {
+        prompt: "dreamy synth-pop, 110 BPM",
+        lyrics: "[Verse]\nNeon rain\n[Chorus]\nCome alive",
+        duration_seconds: 90,
+      });
+      const job = harness.store.getMediaJob((result.details as { mediaJobId: string }).mediaJobId);
+      expect(job?.params).toMatchObject({
+        prompt: "dreamy synth-pop, 110 BPM",
+        lyrics: "[Verse]\nNeon rain\n[Chorus]\nCome alive",
+        durationSeconds: 90,
+      });
+    } finally {
+      await harness.runtime.app.close();
+    }
+  });
+
   it("fails closed when the run owner has no media quota, even with a route grant", async () => {
     const harness = await makeHarness();
     try {

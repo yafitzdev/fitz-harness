@@ -52,6 +52,7 @@ export interface PromptSubmissionOptions {
     size?: string;
     seed?: number;
     negativePrompt?: string;
+    lyrics?: string;
     durationSeconds?: number;
     fps?: number;
     refs?: Array<{ artifactId: string }>;
@@ -143,6 +144,25 @@ export class PromptSubmissionController {
         refs,
         submit: async (params) => {
           try {
+            // Music 3 has separate caption and lyrics conditioning. Route casual
+            // /audio requests through the selected chat model so a one-line idea
+            // becomes a production-ready caption and, when vocal intent is
+            // implied, original structured lyrics. The mediaCommand allowlist
+            // exposes only generate_audio, so this cannot turn into prose or an
+            // unrelated agent task. Explicit lyrics ride in the brief verbatim.
+            if (mediaCommand === "audio" && settings.routeId) {
+              await this.#options.startRun({
+                model: settings.routeId,
+                effort: settings.effort,
+                max_tokens: settings.maxTokens,
+                temperature: settings.temperature,
+                sessionId,
+                accessMode: settings.accessMode,
+                mediaCommand: "audio",
+                messages: [{ role: "user", content: audioGenerationBrief(params) }],
+              });
+              return;
+            }
             const job = await this.#options.submitMedia({
               routeId: mediaCommand,
               modality: mediaCommand,
@@ -153,6 +173,7 @@ export class PromptSubmissionController {
               ...(params.size ? { size: params.size } : {}),
               ...(params.seed !== undefined ? { seed: params.seed } : {}),
               ...(params.negativePrompt ? { negativePrompt: params.negativePrompt } : {}),
+              ...(params.lyrics ? { lyrics: params.lyrics } : {}),
               ...(params.durationSeconds !== undefined ? { durationSeconds: params.durationSeconds } : {}),
               ...(params.fps !== undefined ? { fps: params.fps } : {}),
               ...(refs.length > 0 && mediaCommand !== "audio" ? { refs } : {}),
@@ -207,6 +228,13 @@ export class PromptSubmissionController {
       this.#options.setDraft(content);
     }
   }
+}
+
+function audioGenerationBrief(params: MediaCreationParams): string {
+  const lines = [`/audio ${params.prompt}`];
+  if (params.durationSeconds !== undefined) lines.push(`Maximum duration: ${params.durationSeconds} seconds. Aim for a complete arrangement that fills most of this window.`);
+  if (params.lyrics) lines.push(`Use these lyrics verbatim:\n${params.lyrics}`);
+  return lines.join("\n\n");
 }
 
 function titleFrom(content: string): string {

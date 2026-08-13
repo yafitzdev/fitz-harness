@@ -494,6 +494,7 @@ function parseMediaApprovalRequest(
     optionalNumber("fps", { integer: true, minimum: 1 });
   } else if (toolName === "generate_audio") {
     optionalNumber("duration_seconds", { minimum: 0.1 });
+    optionalString("lyrics");
   }
   if (Array.isArray(value.refs)) {
     if (!value.refs.every((item) => typeof item === "string")) throw new TypeError("refs must contain strings");

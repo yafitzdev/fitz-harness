@@ -8,6 +8,7 @@ import type { MediaGenerationParams } from "@fitz/protocol";
 export function validateMediaGenerationParams(params: MediaGenerationParams): MediaGenerationParams {
   const prompt = params.prompt.trim();
   if (!prompt) throw new TypeError("prompt must not be empty");
+  const lyrics = params.lyrics?.trim();
   if ((params.operation === "edit" || params.operation === "animate") && !params.refs?.length) {
     throw new TypeError(`${params.operation} operation requires a source image reference`);
   }
@@ -21,7 +22,7 @@ export function validateMediaGenerationParams(params: MediaGenerationParams): Me
   nonNegativeFinite(params.guidance, "guidance");
   finiteInteger(params.seed, "seed");
 
-  return { ...params, prompt };
+  return { ...params, prompt, ...(params.lyrics !== undefined ? { lyrics: lyrics ?? "" } : {}) };
 }
 
 function positiveFinite(value: number | undefined, name: string): void {

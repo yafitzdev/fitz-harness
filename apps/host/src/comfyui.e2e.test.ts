@@ -27,7 +27,7 @@ describe("MiniMax H3 via ComfyUI (PR 7)", () => {
     const h3Video = playbook.recipes.find((recipe) => recipe.id === "h3-video");
     expect(h3Video).toMatchObject({
       adapter: "comfyui",
-      capabilities: { modalities: { input: ["text", "image"], output: ["video", "audio"], limits: { maxDurationSeconds: 6, maxFps: 30, maxResolution: "1344x768", maxRefs: 1 } } },
+      capabilities: { modalities: { input: ["text", "image"], output: ["video"], limits: { maxDurationSeconds: 6, maxFps: 30, maxResolution: "1344x768", maxRefs: 1 } } },
       configuration: { executable: "python", cwd: "/engines/comfyui", expectedVramMiB: 24_576 },
     });
     expect(playbook.recipes.map((recipe) => recipe.id)).toEqual(["h3-video"]);
@@ -35,6 +35,7 @@ describe("MiniMax H3 via ComfyUI (PR 7)", () => {
       await expect(adapter.validateRecipe(recipe)).resolves.toEqual({ valid: true, issues: [] });
     }
     expect(playbook.routes).toContainEqual(expect.objectContaining({ id: "video", recipeId: "h3-video", kind: "video", enabled: true }));
+    expect(playbook.routes).not.toContainEqual(expect.objectContaining({ id: "audio" }));
     // H3 is a video model; no fake text-to-image route is exposed.
     expect(playbook.routes).not.toContainEqual(expect.objectContaining({ id: "image" }));
     const animation = h3Video!.configuration.comfyuiAnimateWorkflow as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
@@ -81,6 +82,47 @@ describe("MiniMax H3 via ComfyUI (PR 7)", () => {
       inputs: { model: ["1", 0], lora_name: "KNP_V2_copy_copy.safetensors", strength_model: 1 },
     });
     expect(workflow["7"].inputs.model).toEqual(["10", 0]);
+  });
+
+  it("onboards MiniMax Music 3 as the only audio route and compiles caption, lyrics, and duration", async () => {
+    const playbook = createComfyUIPlaybook({
+      engineDir: "/engines/comfyui",
+      executable: "python",
+      recipeIds: ["h3-video", "minimax-music3-audio"],
+    });
+    const adapter = new ComfyUIEngineAdapter({ validatePaths: false });
+    const music = playbook.recipes.find((recipe) => recipe.id === "minimax-music3-audio")!;
+
+    expect(music).toMatchObject({
+      capabilities: { modalities: { input: ["text"], output: ["audio"], limits: { maxDurationSeconds: 300 } } },
+      configuration: {
+        expectedVramMiB: 22_528,
+        outputFormats: ["mp3"],
+        defaults: { durationSeconds: 60, sampler: "euler", steps: 30, guidance: 1.7 },
+      },
+    });
+    await expect(adapter.validateRecipe(music)).resolves.toEqual({ valid: true, issues: [] });
+    expect(playbook.routes).toContainEqual(expect.objectContaining({ id: "audio", recipeId: "minimax-music3-audio", kind: "audio", enabled: true }));
+    expect(playbook.routes).toContainEqual(expect.objectContaining({ id: "video", recipeId: "h3-video", kind: "video", enabled: true }));
+
+    const workflow = music.configuration.comfyuiWorkflow as Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+    const compiled = substituteWorkflow(workflow, {
+      prompt: "Dreamy synth-pop, 110 BPM, female vocal",
+      lyrics: "[Verse]\nNeon rain\n[Chorus]\nCome alive",
+      durationSeconds: 90,
+      seed: 42,
+      sampler: "euler",
+      steps: 30,
+      guidance: 1.7,
+    });
+    expect(compiled["4"].inputs).toMatchObject({
+      caption: "Dreamy synth-pop, 110 BPM, female vocal",
+      lyrics: "[Verse]\nNeon rain\n[Chorus]\nCome alive",
+      max_duration: 90,
+      seed: 42,
+    });
+    expect(compiled["8"]).toMatchObject({ class_type: "VAEDecodeAudioTiled", inputs: { tile_size: 1536, overlap: 64 } });
+    expect(compiled["9"].inputs).toMatchObject({ format: "mp3", "format.quality": "V0" });
   });
 
   it("computes the H3 frame count from the requested fps, not a hardcoded 24", () => {

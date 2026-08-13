@@ -69,7 +69,7 @@ async function waitForDecision(store: SqliteStore, approvalId: string, signal: A
 function applyApprovedMediaRequest(toolCall: PiToolCall, approved: Readonly<Record<string, unknown>>): void {
   if (!MEDIA_TOOLS.has(toolCall.toolName) || !toolCall.input || typeof toolCall.input !== "object" || Array.isArray(toolCall.input)) return;
   const input = toolCall.input as Record<string, unknown>;
-  for (const field of ["prompt", "size", "seed", "negative_prompt", "duration_seconds", "resolution", "fps", "refs"]) delete input[field];
+  for (const field of ["prompt", "size", "seed", "negative_prompt", "lyrics", "duration_seconds", "resolution", "fps", "refs"]) delete input[field];
   for (const [field, value] of Object.entries(approved)) {
     if (field !== "estimated_credit_cost_cents") input[field] = value;
   }

@@ -210,6 +210,14 @@ export class PiAgentRuntime implements AgentRuntime {
           ? { evaluateTool: async (toolCall) => {
               const admissionReason = delegation.admissionReason(toolCall);
               if (admissionReason) return { action: "block" as const, reason: admissionReason };
+              // A reviewed /image, /video, or /audio creation card is itself
+              // explicit user approval. The run exposes exactly this one tool,
+              // so asking again after the planner expands the brief would be a
+              // redundant second confirmation.
+              if (forcedToolName && toolCall.toolName === forcedToolName) {
+                delegation.recordAllowedTool(toolCall);
+                return { action: "allow" as const };
+              }
               const outcome = await this.#evaluateTool(cwd, request.accessMode ?? "full", request.sessionId, options?.runId, toolCall, controller.signal, channel);
               if (outcome.action === "allow" || outcome.action === "rewrite") delegation.recordAllowedTool(toolCall);
               return outcome;
@@ -630,6 +638,20 @@ function formatPrompt(request: AgentRunRequest, initialDelegationInstruction?: s
     const text = extractTextFromContent(message.content);
     if (index !== request.messages.length - 1) return `${message.role.toUpperCase()}: ${text}`;
     const prompt = stripMediaCommandPrefix(text) || DEFAULT_MEDIA_PROMPTS[mediaCommand];
+    if (mediaCommand === "audio") {
+      return `USER: The user issued the /audio music command. Call generate_audio immediately and reply with nothing but the tool call.
+
+Before constructing its arguments:
+- Rewrite a casual idea into a detailed production caption covering genre, tempo/BPM, mood, vocals, instrumentation, arrangement, and production style. Do not merely copy a vague request.
+- If the request says "song about", implies singing/vocals, or otherwise names a lyrical topic, write concise original lyrics about that topic using [Intro], [Verse], [Chorus], [Bridge], and [Outro] where useful.
+- If the request is clearly instrumental, omit lyrics. Never invent vocals for an instrumental request.
+- If the user supplied lyrics, preserve them verbatim.
+- Preserve an explicit maximum duration in duration_seconds. Music 3 may end naturally before that ceiling, so create enough arrangement and lyrics to fill most of the requested window.
+
+User's music brief:
+
+${prompt}`;
+    }
     return `USER: The user issued the /${mediaCommand} media command. Call the ${toolName} tool immediately with the following prompt, and reply with nothing but the tool call:\n\n${prompt}`;
   }).join("\n\n");
 }

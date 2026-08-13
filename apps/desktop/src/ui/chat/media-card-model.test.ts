@@ -58,4 +58,15 @@ describe("media card model", () => {
       { jobId: "animation", label: "Animation 1", prompt: "slow underwater tracking shot" },
     ]);
   });
+
+  it("presents Music 3 duration as a ceiling and shows its lyrics", () => {
+    const audio: MediaCardJob = {
+      id: "song", modality: "audio", status: "completed",
+      params: { prompt: "liquid drum and bass", durationSeconds: 30, lyrics: "[Chorus]\nBMW" },
+    };
+    expect(mediaExecutionSettings(audio)).toEqual(expect.arrayContaining([
+      ["Maximum duration (seconds)", "30"],
+      ["Lyrics", "[Chorus]\nBMW"],
+    ]));
+  });
 });

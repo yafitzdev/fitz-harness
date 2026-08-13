@@ -52,7 +52,8 @@ const generateVideoParameters = Type.Object({
 });
 
 const generateAudioParameters = Type.Object({
-  prompt: Type.String({ description: "The audio to generate, described as sound over time" }),
+  prompt: Type.String({ description: "The music to generate: genre, mood, tempo, vocals, instruments, arrangement, and production style" }),
+  lyrics: Type.Optional(Type.String({ description: "Song lyrics with optional structure tags such as [Verse], [Chorus], [Bridge], and [Outro]. Omit for instrumental music." })),
   duration_seconds: Type.Optional(Type.Number({ description: "Target duration in seconds, if the route supports it" })),
   route_id: Type.Optional(Type.String({ description: "A specific granted media route id; defaults to the well-known audio route" })),
 });
@@ -124,10 +125,11 @@ export function createMediaTools(options: MediaToolsOptions): (context: { cwd: s
       name: "generate_audio",
       label: "Generate audio",
       description:
-        "Generate audio with the configured audio route. The audio completes asynchronously: this tool returns immediately with a media job id, and the finished artifact appears in the session's artifact list. Registered now, but errors until an audio route exists (no route is assigned by default).",
+        "Generate music with the configured audio route. The audio completes asynchronously: this tool returns immediately with a media job id, and the finished artifact appears in the session's artifact list. Use route_id only when the user explicitly asks for a specific granted media route.",
       promptSnippet: "Generate audio",
       promptGuidelines: [
-        "Describe the sound over time (content, mood, duration) rather than intent.",
+        "Describe genre, mood, tempo, vocals, instruments, arrangement, and production style in the prompt.",
+        "Put sung words in lyrics with structure tags; omit lyrics for instrumental music.",
         "The job is queued asynchronously; do not claim the audio exists until the artifact appears in the session.",
       ],
       parameters: generateAudioParameters,
@@ -135,6 +137,7 @@ export function createMediaTools(options: MediaToolsOptions): (context: { cwd: s
         try {
           const job = await submitMedia(options, context, "audio", {
             prompt: params.prompt,
+            ...(params.lyrics !== undefined ? { lyrics: params.lyrics } : {}),
             ...(params.duration_seconds !== undefined ? { durationSeconds: params.duration_seconds } : {}),
           }, params.route_id);
           return mediaJobResult(job, "audio");

@@ -370,18 +370,26 @@ async function startFixture(name: string, extraArgs: string[] = []): Promise<Fix
   });
   const baseUrl = await new Promise<string>((resolve, reject) => {
     let output = "";
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const fail = (reason: string): void => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
       child.kill("SIGTERM");
       reject(new Error(reason));
     };
     child.stdout?.on("data", (chunk: Buffer) => {
       output += String(chunk);
       const match = ready.exec(output);
-      if (match) resolve(`http://${match[1]}:${match[2]}`);
+      if (!match || settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(`http://${match[1]}:${match[2]}`);
     });
     child.stderr?.on("data", (chunk: Buffer) => process.stderr.write(chunk));
     child.once("exit", (code) => fail(`${name} exited early (code ${code})`));
-    const timer = setTimeout(() => fail(`${name} did not become ready`), 5_000);
+    timer = setTimeout(() => fail(`${name} did not become ready`), 5_000);
     timer.unref();
   });
   return {
@@ -392,8 +400,10 @@ async function startFixture(name: string, extraArgs: string[] = []): Promise<Fix
       return payload.requests;
     },
     stop: async () => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
       child.kill("SIGTERM");
-      await new Promise<void>((resolve) => child.once("exit", () => resolve()));
+      await exited;
     },
   };
 }

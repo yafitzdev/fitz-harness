@@ -1,7 +1,7 @@
 import type { Recipe, Route } from "@fitz/protocol";
 
 export const COMFYUI_PLAYBOOK_ID = "comfyui";
-export const COMFYUI_RECIPE_IDS = ["h3-video", "krea2-turbo-image", "krea2-nsfw-image", "qwen-image"] as const;
+export const COMFYUI_RECIPE_IDS = ["h3-video", "minimax-music3-audio", "krea2-turbo-image", "krea2-nsfw-image", "qwen-image"] as const;
 export type ComfyUIRecipeId = (typeof COMFYUI_RECIPE_IDS)[number];
 export const RETIRED_COMFYUI_RECIPE_IDS = ["pinkcherry-h3-video"] as const;
 
@@ -35,6 +35,9 @@ export interface ComfyUIPlaybookOptions {
 }
 
 const OFFICIAL_H3_MODEL = "minimax_h3_fl2va_pruned_int8_convrot.safetensors";
+const MINIMAX_MUSIC3_MODEL = "minimax_music3_dit_fp16.safetensors";
+const MINIMAX_MUSIC3_ENCODER = "minimax_music3_text_encoder_pruned_int8_convrot.safetensors";
+const MINIMAX_MUSIC3_VAE = "minimax_music3_dav.safetensors";
 const KREA2_NSFW_LORA = "KNP_V2_copy_copy.safetensors";
 const QWEN_IMAGE_MODEL = "qwen_image_2512_fp8_e4m3fn.safetensors";
 const QWEN_IMAGE_EDIT_MODEL = "qwen_image_edit_2511_int8_convrot.safetensors";
@@ -96,6 +99,55 @@ function h3VideoWorkflow(unetName: string, firstFrame?: string) {
     "92": {
       class_type: "SaveVideo",
       inputs: { video: ["91", 0], filename_prefix: "fitz-h3", format: "auto", codec: "auto" },
+    },
+  };
+}
+
+/** API-form translation of Comfy-Org's official MiniMax Music 3 workflow.
+ * The text encoder decides the actual song length up to max_duration and feeds
+ * that duration into the latent. Tiled VAE decoding keeps long songs within a
+ * predictable VRAM envelope on the local 32 GB GPU. */
+function minimaxMusic3Workflow() {
+  return {
+    "1": { class_type: "UNETLoader", inputs: { unet_name: MINIMAX_MUSIC3_MODEL, weight_dtype: "default" } },
+    "2": { class_type: "CLIPLoader", inputs: { clip_name: MINIMAX_MUSIC3_ENCODER, type: "minimax", device: "default" } },
+    "3": { class_type: "VAELoader", inputs: { vae_name: MINIMAX_MUSIC3_VAE } },
+    "4": {
+      class_type: "MiniMaxMusic3TextEncode",
+      inputs: {
+        clip: ["2", 0],
+        caption: "{{prompt}}",
+        lyrics: "{{lyrics}}",
+        seed: "{{seed}}",
+        max_duration: "{{duration_seconds}}",
+        cfg_scale: "{{guidance}}",
+        top_k: 50,
+      },
+    },
+    "5": { class_type: "ConditioningZeroOut", inputs: { conditioning: ["4", 0] } },
+    "6": { class_type: "EmptyMiniMaxMusic3LatentAudio", inputs: { seconds: ["4", 1], batch_size: 1 } },
+    "7": {
+      class_type: "KSampler",
+      inputs: {
+        model: ["1", 0], positive: ["4", 0], negative: ["5", 0], latent_image: ["6", 0],
+        seed: "{{seed}}", steps: "{{steps}}", cfg: "{{guidance}}", sampler_name: "{{sampler}}",
+        scheduler: "simple", denoise: 1,
+      },
+    },
+    "8": {
+      class_type: "VAEDecodeAudioTiled",
+      inputs: { samples: ["7", 0], vae: ["3", 0], tile_size: 1536, overlap: 64 },
+    },
+    "9": {
+      class_type: "SaveAudioAdvanced",
+      inputs: {
+        audio: ["8", 0],
+        filename_prefix: "fitz-minimax-music3",
+        // DynamicCombo inputs are flattened on ComfyUI's API wire. The
+        // executor rebuilds these as { format: "mp3", quality: "V0" }.
+        format: "mp3",
+        "format.quality": "V0",
+      },
     },
   };
 }
@@ -203,7 +255,8 @@ function qwenImageEditWorkflow() {
 }
 
 /** Local ComfyUI media playbook. H3 owns the official 1344×768 text/image-to-video
- * plus stereo-audio graphs; Krea 2 Turbo and its optional LoRA own text-to-image.
+ * graph; synchronized audio is part of its video artifact, not an audio-route
+ * capability. Music 3 exclusively owns text-to-audio. Krea 2 Turbo and its optional LoRA own text-to-image.
  * Every independently downloaded weight remains in Fitz's external registry. */
 export function createComfyUIPlaybook(options: ComfyUIPlaybookOptions): ComfyUIPlaybook {
   const { engineDir, executable, entrypoint, baseUrl, expectedVramMiB, launchArgs, runtime, runtimeId } = options;
@@ -221,9 +274,9 @@ export function createComfyUIPlaybook(options: ComfyUIPlaybookOptions): ComfyUIP
   if (recipeIds.has("h3-video")) {
     recipes.push(recipe({
       id: "h3-video",
-      displayName: "MiniMax H3 · Text/Image to Video + Audio",
+      displayName: "MiniMax H3 · Text/Image to Video",
       modelId: "minimax-h3-fl2va-int8",
-      modalities: { input: ["text", "image"], output: ["video", "audio"] },
+      modalities: { input: ["text", "image"], output: ["video"] },
       limits: { maxDurationSeconds: 6, maxFps: 30, maxResolution: "1344x768", maxRefs: 1 },
       configuration: {
         ...launch,
@@ -237,6 +290,23 @@ export function createComfyUIPlaybook(options: ComfyUIPlaybookOptions): ComfyUIP
         // patchification, so every requested size is snapped before execution.
         sizeGrid: 32,
         defaults: { resolution: "1344x768", fps: 24, durationSeconds: 2, sampler: "res_multistep", steps: 20 },
+      },
+    }));
+  }
+  if (recipeIds.has("minimax-music3-audio")) {
+    recipes.push(recipe({
+      id: "minimax-music3-audio",
+      displayName: "MiniMax Music 3 · Text to Music",
+      modelId: "minimax-music3-fp16",
+      modalities: { input: ["text"], output: ["audio"] },
+      limits: { maxDurationSeconds: 300 },
+      configuration: {
+        ...launch,
+        expectedVramMiB: 22_528,
+        readinessTimeoutMs: 300_000,
+        comfyuiWorkflow: minimaxMusic3Workflow(),
+        outputFormats: ["mp3"],
+        defaults: { durationSeconds: 60, sampler: "euler", steps: 30, guidance: 1.7 },
       },
     }));
   }
@@ -304,6 +374,16 @@ export function createComfyUIPlaybook(options: ComfyUIPlaybookOptions): ComfyUIP
       description: "Local video generation via ComfyUI",
       recipeId: defaultVideoRecipeId,
       kind: "video",
+      enabled: true,
+    });
+  }
+  if (recipeIds.has("minimax-music3-audio")) {
+    routes.push({
+      id: "audio",
+      displayName: "Audio generation",
+      description: "MiniMax Music 3 via local ComfyUI",
+      recipeId: "minimax-music3-audio",
+      kind: "audio",
       enabled: true,
     });
   }
