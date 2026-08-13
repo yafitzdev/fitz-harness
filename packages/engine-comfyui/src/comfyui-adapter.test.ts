@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { MediaGenerationRequest, Recipe } from "@fitz/protocol";
+import { ComfyUIEngineAdapter } from "./comfyui-adapter.js";
 import {
-  ComfyUIEngineAdapter,
   readComfyUIConfiguration,
   substituteWorkflow,
   validateComfyUIConfiguration,
-} from "./comfyui-adapter.js";
+} from "./comfyui-workflow.js";
 import { ComfyUIProgressListener, type ComfyUIWebSocket } from "./comfyui-client.js";
 
 const VIDEO_WORKFLOW = {

@@ -41,7 +41,7 @@ Layers, bottom-up, with the files that matter:
 | Media engine adapter interface | `packages/inference-core` | `MediaEngineAdapter`, `runMedia`, `LifecycleManager.runMedia`, media scheduler queue |
 | Durable job service | `apps/host` | `apps/host/src/media-jobs.ts` (`MediaJobCoordinator`, `DEFAULT_ARTIFACT_LIMITS`) |
 | HTTP surface | `apps/host` | `apps/host/src/create-app.ts` (~1830 lines; media routes, gateway, job endpoints, artifact content endpoint with Range support) |
-| Engines | `packages/engine-media-fake`, `packages/engine-comfyui`, `packages/media-providers` | fake adapter + fixture server; ComfyUI adapter (managed/external modes); fal/Replicate/openai-media templates |
+| Engines | `packages/engine-media-fake`, `packages/engine-comfyui`, `packages/media-providers` | fake adapter + fixture server; ComfyUI lifecycle adapter plus pure workflow compiler; fal/Replicate/openai-media templates |
 | Recipes/routes seeding | `apps/host` | `apps/host/src/comfyui-playbook.ts` (`createComfyUIPlaybook`) |
 | Desktop UI | `apps/desktop` | Connections & Playbooks media sections (PR 5), `apps/desktop/src/resource-preview.ts` (MIME-aware preview caps) |
 | Storage | `packages/storage` | `migrations.ts` (media tables at **v9**), `sqlite-store.ts` facade, `sqlite-agent-run-store.ts`, `sqlite-media-store.ts` |

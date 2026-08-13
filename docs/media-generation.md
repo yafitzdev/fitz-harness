@@ -802,7 +802,7 @@ Each PR is independently reviewable and mergeable; the sequence reflects the mil
 - **Description**: `generate_image` / `generate_video` / `generate_audio` resolve configured media routes and submit non-blocking jobs (KD-12 — no agent-turn deadlock); gating and per-user job-count/credit quotas enforce cost control.
 
 ### PR 7 — `engine-comfyui` for H3 (local media engine)
-- **Files/components**: `packages/engine-comfyui/` (managed/external ComfyUI lifecycle like `engine-llama-cpp`; `/prompt` → `/history/{id}` submit/poll with `/progress`; cancel; pinned official workflow; validation), the official H3 video/audio recipe (768p/1K, VRAM estimate), startup reconciliation, and external weight placement per KD-13.
+- **Files/components**: `packages/engine-comfyui/` (`comfyui-adapter.ts` for managed/external lifecycle and transport; `comfyui-workflow.ts` for recipe validation, defaults, and pinned graph compilation), the official H3 video/audio recipe (768p/1K, VRAM estimate), startup reconciliation, and external weight placement per KD-13.
 - **Dependencies**: PR 2a (interface), PR 2b (service), PR 3 (test pattern).
 - **Description**: first real local media engine — on-demand load, leases across multi-minute generations, governor refusal on VRAM shortfall, and no fabricated H3 image capability.
 
