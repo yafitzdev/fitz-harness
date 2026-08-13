@@ -1,5 +1,5 @@
 .connection-form-status { margin: 0; color: var(--muted); font-size: 11px; }
-.connection-form-status.error { color: var(--danger-soft); }
+.connection-form-status.error { color: var(--status-danger-soft); }
 .connections-empty { margin: 18px 0; color: var(--subtle); font-size: 12px; text-align: center; }
 .recipe-route-toggle { display: flex; align-items: center; gap: 1px; padding: 2px; border: 0; border-radius: 11px; background: var(--grey-100); }
 .route-symbol { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--grey-550); cursor: pointer; transition: background-color 100ms ease, color 100ms ease; }
@@ -19,9 +19,9 @@
 .media-section-heading { margin: 14px 0 6px; color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
 .media-recipe-card { border-left: 2px solid transparent; }
 .media-modality-badge { background: var(--grey-200); }
-.media-modality-badge.media-image { color: var(--accent-purple); }
-.media-modality-badge.media-video { color: var(--green); }
-.media-modality-badge.media-audio { color: var(--orange); }
+.media-modality-badge.media-image { color: var(--media-image); }
+.media-modality-badge.media-video { color: var(--media-video); }
+.media-modality-badge.media-audio { color: var(--media-audio); }
 .media-limit-badge { color: var(--subtle); border: 1px dashed var(--grey-400); }
 .route-symbol.route-media.active { background: var(--grey-300); color: var(--grey-900); }
 .route-symbol:disabled { opacity: 0.38; cursor: default; }

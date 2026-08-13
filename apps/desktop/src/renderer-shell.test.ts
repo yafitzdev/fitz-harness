@@ -197,9 +197,11 @@ describe("desktop renderer shell", () => {
     expect(styles).not.toContain(".management-page-content { width: min(820px");
   });
 
-  it("matches the compact Codex sidebar and new-chat project rail", () => {
+  it("matches the branded JEON lab sidebar and new-chat project rail", () => {
     expect(html).not.toContain('class="runtime-mode-toggle"');
-    expect(html).toContain('<span>Codex</span>');
+    expect(html).toContain('class="sidebar-brand-logo"');
+    expect(html).toContain('id="jeon-ripple-clip"');
+    expect(html).toContain('<span>JEON lab</span>');
     expect(renderer).toContain("new ProjectSidebarController");
     expect(projectSidebar).toContain('this.#treeItem(session.title, "task-row", undefined');
     expect(renderer).not.toContain("function chatIcon()");
@@ -216,7 +218,7 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".project-tree { display: grid; gap: 1px; }");
     expect(styles).toContain(".section-heading, .project-row, .task-row, .chat-row { font-size: 13.5px; }");
     expect(styles).toContain(".task-row { padding: 4px 9px 4px 30px; }");
-    expect(styles).toContain("mask-image: linear-gradient(to right, black 0, black calc(100% - 6px), transparent 100%)");
+    expect(styles).toContain("mask-image: linear-gradient(to right, var(--grey-0) 0, var(--grey-0) calc(100% - 6px), transparent 100%)");
     expect(styles).not.toContain(".project-row span, .task-row span, .chat-row span { overflow: hidden; text-overflow: ellipsis;");
     expect(styles).toContain(".tree-item:hover .tree-menu-toggle, .tree-item:hover .tree-quick-action, .tree-item:hover .tree-pin-action");
     expect(styles).toContain(".tree-pin-action.pinned svg { fill: currentColor; }");
@@ -634,8 +636,8 @@ describe("desktop renderer shell", () => {
   it("uses the measured desktop design tokens", () => {
     expect(styles).toContain("--bg: var(--grey-100)");
     expect(styles).toContain("--text: var(--grey-950)");
-    expect(styles).toContain("--floating-surface: rgba(51,51,51,.96)");
-    expect(styles).toContain("--sidebar: #1a2225");
+    expect(styles).toContain("--floating-surface: rgba(33,33,33,.96)");
+    expect(styles).toContain("--sidebar: var(--brand-black)");
     expect(styles).toContain("--radius-3xl: 25px");
     expect(styles).toContain("--control-size: 28px");
     expect(styles).toContain("--sidebar-width: 275px");
@@ -649,17 +651,25 @@ describe("desktop renderer shell", () => {
   });
 
   it("centralizes every color in the token file and uses tokens everywhere", () => {
-    // The warm grey ramp and the white-overlay tint scale live in tokens.css.
+    // Brand inputs, the neutral ramp, and overlay tints live in tokens.css.
+    expect(styles).toContain("--brand-black: #0d0d0d");
+    expect(styles).toContain("--brand-white: #ffffff");
+    expect(styles).toContain("--brand-coral: #d74d3d");
+    expect(styles).toContain("--brand-plum: #843378");
     expect(styles).toContain("--grey-950: #f2f3ef");
     expect(styles).toContain("--grey-800: #c8cbc5");
     expect(styles).toContain("--grey-100: #181818");
     expect(styles).toContain("--tint-3: rgba(255,255,255,.06)");
-    expect(styles).toContain("--tint-7: rgba(255,255,255,.12)");
+    expect(styles).toContain("--tint-5: rgba(255,255,255,.10)");
+    expect(styles).toContain("--tint-7: rgba(255,255,255,.14)");
+    expect(styles).toContain(".recipe-card:hover, .recipe-card:focus-within { background: var(--grey-350); }");
+    expect(styles).toContain(".collapsible-toggle:hover, .collapsible-toggle:focus-visible { background: var(--tint-5); }");
+    expect(composerCss).toContain(".send-button .send-icon { width: 17px; height: 17px; stroke-width: 1.85; }");
     // The artifact bubble sits on the raised-surface ramp step; its hover
     // stays the shared strong-hover tint.
     expect(styles).toContain(".workspace-header .inspector-tab { position: relative; height: 26px; max-width: 180px; padding: 0 8px 0 12px; border-radius: 8px; border: 0; background: var(--grey-200); color: var(--subtle); font-size: 12px; }");
     expect(styles).toContain(".workspace-header .inspector-tab:hover { background: var(--tint-7);");
-    expect(styles).toContain(".workspace-header .inspector-tab.active { background: var(--grey-250); color: var(--grey-950); }");
+    expect(styles).toContain(".workspace-header .inspector-tab.active { background: var(--selection); color: var(--grey-950); }");
     // The legacy codex-* namespace and its duplicate surface/red tokens are
     // gone: the ramp and the semantic roles above are the only source of truth.
     expect(styles).not.toContain("--codex-");
@@ -670,6 +680,10 @@ describe("desktop renderer shell", () => {
     // single source of truth.
     const componentStyles = styles.replace(tokensCss, "");
     expect(componentStyles.match(/#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)/g)).toBeNull();
+    expect(main).toContain('readThemeColor(join(directory, "ui", "theme", "tokens.css"), "--window-background")');
+    expect(main.match(/#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)/g)).toBeNull();
+    expect(resourceInspector).toContain('getPropertyValue("--scrollbar-thumb")');
+    expect(resourceInspector.match(/#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)/g)).toBeNull();
   });
 
   it("drops the hover cards in favor of the centered create-project dialog", () => {

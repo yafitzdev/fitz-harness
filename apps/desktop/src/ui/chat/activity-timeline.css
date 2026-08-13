@@ -26,9 +26,9 @@
 .shell-command::before { content: "$ "; color: var(--subtle); }
 .shell-output { min-height: 32px; padding-top: 0; color: var(--subtle); }
 .shell-status { position: sticky; right: 0; bottom: 0; justify-self: end; padding: 5px 10px 7px; background: var(--grey-300); color: var(--muted); font-size: 12px; }
-.shell-status.failed { color: var(--danger-soft); }
+.shell-status.failed { color: var(--status-danger-soft); }
 .agent-activity.running .agent-activity-icon, .activity-burst.running .agent-activity-icon { animation: activity-pulse 1.25s ease-in-out infinite; }
-.agent-activity.failed, .agent-activity.failed .agent-activity-icon { color: var(--danger-soft); }
+.agent-activity.failed, .agent-activity.failed .agent-activity-icon { color: var(--status-danger-soft); }
 @keyframes activity-pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
 
 .activity-burst { width: 100%; min-width: 0; margin: 0 0 8px; color: var(--muted); }
@@ -58,7 +58,7 @@
 .tool-approval-actions { display: flex; justify-content: flex-end; gap: 7px; }
 .tool-approval-actions button { min-height: 29px; padding: 5px 10px; border-radius: var(--radius-md); background: var(--tint-4); color: var(--text); cursor: pointer; font-size: 12px; }
 .tool-approval-actions button:hover { background: var(--tint-7); }
-.tool-approval-actions .approve-tool { background: var(--grey-900); color: var(--grey-200); }
+.tool-approval-actions .approve-tool { background: var(--accent); color: var(--accent-text); }
 .tool-approval-actions .approve-tool:hover { background: var(--text); }
 .tool-approval.resolved { grid-template-columns: 1fr auto; align-items: center; padding-block: 8px; color: var(--muted); }
 .tool-approval.resolved .tool-approval-request, .tool-approval.resolved .tool-approval-actions { display: none; }

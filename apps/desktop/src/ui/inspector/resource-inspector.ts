@@ -291,7 +291,7 @@ export class ResourceInspector {
   }
 
   #withScrollbar(source: string): string {
-    const style = `<style id="fitz-preview-scrollbar">${PREVIEW_SCROLLBAR_CSS}</style>`;
+    const style = `<style id="fitz-preview-scrollbar">${previewScrollbarCss()}</style>`;
     return /<\/body\s*>/i.test(source) ? source.replace(/<\/body\s*>/i, `${style}</body>`) : `${source}${style}`;
   }
 
@@ -301,7 +301,7 @@ export class ResourceInspector {
     frameDocument.getElementById("fitz-preview-scrollbar-runtime")?.remove();
     const style = frameDocument.createElement("style");
     style.id = "fitz-preview-scrollbar-runtime";
-    style.textContent = PREVIEW_SCROLLBAR_CSS;
+    style.textContent = previewScrollbarCss();
     (frameDocument.head ?? frameDocument.documentElement).append(style);
   }
 
@@ -350,4 +350,9 @@ export class ResourceInspector {
   }
 }
 
-const PREVIEW_SCROLLBAR_CSS = 'html{color-scheme:dark!important}html,body,*{scrollbar-width:thin!important;scrollbar-color:rgba(255,255,255,.22) transparent!important}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-webkit-scrollbar{width:10px!important;height:10px!important}html::-webkit-scrollbar-track,body::-webkit-scrollbar-track,*::-webkit-scrollbar-track,html::-webkit-scrollbar-corner,body::-webkit-scrollbar-corner,*::-webkit-scrollbar-corner{background:transparent!important}html::-webkit-scrollbar-thumb,body::-webkit-scrollbar-thumb,*::-webkit-scrollbar-thumb{min-height:30px!important;border:2px solid transparent!important;border-radius:999px!important;background:rgba(255,255,255,.22)!important;background-clip:content-box!important}html::-webkit-scrollbar-thumb:hover,body::-webkit-scrollbar-thumb:hover,*::-webkit-scrollbar-thumb:hover{background-color:rgba(255,255,255,.34)!important}';
+function previewScrollbarCss(): string {
+  const theme = getComputedStyle(document.documentElement);
+  const thumb = theme.getPropertyValue("--scrollbar-thumb").trim();
+  const thumbHover = theme.getPropertyValue("--scrollbar-thumb-hover").trim();
+  return `html{color-scheme:dark!important}html,body,*{scrollbar-width:thin!important;scrollbar-color:${thumb} transparent!important}html::-webkit-scrollbar,body::-webkit-scrollbar,*::-webkit-scrollbar{width:10px!important;height:10px!important}html::-webkit-scrollbar-track,body::-webkit-scrollbar-track,*::-webkit-scrollbar-track,html::-webkit-scrollbar-corner,body::-webkit-scrollbar-corner,*::-webkit-scrollbar-corner{background:transparent!important}html::-webkit-scrollbar-thumb,body::-webkit-scrollbar-thumb,*::-webkit-scrollbar-thumb{min-height:30px!important;border:2px solid transparent!important;border-radius:999px!important;background:${thumb}!important;background-clip:content-box!important}html::-webkit-scrollbar-thumb:hover,body::-webkit-scrollbar-thumb:hover,*::-webkit-scrollbar-thumb:hover{background-color:${thumbHover}!important}`;
+}

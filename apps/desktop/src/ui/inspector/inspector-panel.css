@@ -28,7 +28,7 @@
 .workspace-header .inspector-tab:has(.inspector-tab-close:hover) span { opacity: .4; }
 .workspace-header .inspector-tab + .inspector-tab { margin-left: 6px; }
 .workspace-header .inspector-tab:hover { background: var(--tint-7); color: var(--muted); }
-.workspace-header .inspector-tab.active { background: var(--grey-250); color: var(--grey-950); }
+.workspace-header .inspector-tab.active { background: var(--selection); color: var(--grey-950); }
 
 /* The artifact repository list (the base tab). */
 .inspector-repository { display: grid; gap: 4px; padding: 10px; }
@@ -38,7 +38,7 @@
 .inspector-repository-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inspector-repository-item small { color: var(--subtle); }
 .inspector-empty, .inspector-error { min-height: 220px; display: grid; place-items: center; padding: 24px; color: var(--subtle); text-align: center; font-size: 12px; }
-.inspector-error { color: var(--danger-soft); }
+.inspector-error { color: var(--status-danger-soft); }
 .inspector-source { min-height: 100%; margin: 0; padding: 18px 20px 36px; overflow: auto; background: transparent; color: var(--grey-850); tab-size: 2; white-space: pre-wrap; word-break: break-word; font: 12px/1.6 "Cascadia Mono", Consolas, monospace; }
 .inspector-source code { font: inherit; }
 .inspector-markdown { padding: 20px 24px 42px; color: var(--grey-900); font-size: 13px; }

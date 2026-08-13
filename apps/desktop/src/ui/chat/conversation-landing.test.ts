@@ -2,23 +2,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationLanding } from "./conversation-landing.js";
 
-function setup(project?: { id?: string; name?: string }) {
+function setup() {
   const messages = document.createElement("main");
-  const calls = { clearActivity: vi.fn(), setDraft: vi.fn(), focusComposer: vi.fn(), createProject: vi.fn(), retryConnection: vi.fn(), updateTitles: vi.fn() };
-  const landing = new ConversationLanding({ messages, project: () => project, projectDetached: () => false, ...calls });
+  const calls = { clearActivity: vi.fn(), createProject: vi.fn(), retryConnection: vi.fn(), updateTitles: vi.fn() };
+  const landing = new ConversationLanding({ messages, ...calls });
   return { landing, messages, calls };
 }
 
 beforeEach(() => document.body.replaceChildren());
 
 describe("ConversationLanding", () => {
-  it("renders the project-aware new-chat view and wires starter prompts", () => {
-    const { landing, messages, calls } = setup({ id: "project-1", name: "Fitz" });
+  it("renders only the JEON lab Ripple mark for a new chat", () => {
+    const { landing, messages, calls } = setup();
     landing.showNewChat();
-    expect(messages.textContent).toContain("What should we build in Fitz?");
-    messages.querySelector<HTMLButtonElement>(".starter-card")!.click();
-    expect(calls.setDraft).toHaveBeenCalledWith("Explore and understand code");
-    expect(calls.focusComposer).toHaveBeenCalledOnce();
+    const mark = messages.querySelector<HTMLElement>('.new-chat-ripple[aria-label="JEON lab"]');
+    expect(mark).toBeTruthy();
+    expect(mark!.querySelectorAll("path")).toHaveLength(8);
+    expect(messages.querySelector("h1, .starter-card")).toBeNull();
+    expect(messages.textContent.trim()).toBe("");
     expect(calls.clearActivity).toHaveBeenCalledOnce();
   });
 

@@ -1,7 +1,7 @@
 .playbook-list { display: grid; gap: 12px; }
 .recipe-card { width: 100%; min-height: 66px; display: grid; grid-template-columns: minmax(0,1fr) auto; overflow: hidden; border-radius: 10px; background: var(--grey-250); color: var(--text); transition: background-color 120ms ease; }
 .recipe-card + .recipe-card { margin-top: 7px; }
-.recipe-card:hover, .recipe-card:focus-within { background: var(--grey-250); }
+.recipe-card:hover, .recipe-card:focus-within { background: var(--grey-350); }
 .recipe-card-details { min-width: 0; display: grid; align-content: center; gap: 7px; padding: 10px 12px; background: transparent; color: var(--text); cursor: pointer; text-align: left; }
 .recipe-display-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recipe-card-labels { min-width: 0; display: flex; align-items: center; gap: 6px; overflow: hidden; }
@@ -12,7 +12,7 @@
 .recipe-test-button:hover:not(:disabled), .recipe-test-button:focus-visible { background: var(--grey-300); color: var(--text); }
 .recipe-test-button.testing { color: var(--subtle); cursor: wait; }
 .recipe-test-button.passed { background: var(--grey-300); color: var(--text); }
-.recipe-test-button.failed { color: var(--danger-soft); }
+.recipe-test-button.failed { color: var(--status-danger-soft); }
 .management-editor { width: min(820px, calc(100% - 48px)); margin: 28px auto 80px; }
 .management-back { display: inline-flex; align-items: center; gap: 5px; margin: 0 0 24px -8px; padding: 7px 8px; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
 .management-back:hover { background: var(--tint-2); color: var(--text); }

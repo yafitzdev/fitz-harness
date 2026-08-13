@@ -19,8 +19,8 @@
 .tree-item:hover .task-row, .tree-item:focus-within .task-row, .tree-item:hover .chat-row, .tree-item:focus-within .chat-row { padding-right: 55px; }
 .tree-item:hover .project-row, .tree-item:focus-within .project-row { padding-right: 82px; }
 .project-row:hover, .task-row:hover, .chat-row:hover { background: var(--tint-5); color: var(--text); }
-.project-row.active, .task-row.active, .chat-row.active { background: var(--tint-6); color: var(--text); }
-.project-row span, .task-row span, .chat-row span { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; -webkit-mask-image: linear-gradient(to right, black 0, black calc(100% - 6px), transparent 100%); mask-image: linear-gradient(to right, black 0, black calc(100% - 6px), transparent 100%); }
+.project-row.active, .task-row.active, .chat-row.active { background: var(--selection); color: var(--text); }
+.project-row span, .task-row span, .chat-row span { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; -webkit-mask-image: linear-gradient(to right, var(--grey-0) 0, var(--grey-0) calc(100% - 6px), transparent 100%); mask-image: linear-gradient(to right, var(--grey-0) 0, var(--grey-0) calc(100% - 6px), transparent 100%); }
 .project-row svg, .task-row svg, .chat-row svg { flex: 0 0 auto; width: 14px; height: 14px; }
 .tree-menu-toggle, .tree-quick-action, .tree-pin-action { position: absolute; z-index: 2; top: 50%; width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border-radius: 7px; transform: translateY(-50%); background: transparent; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease; }
 .tree-menu-toggle { right: 4px; }
@@ -40,7 +40,7 @@
 .tree-form-cancel { background: transparent; color: var(--muted); }
 .tree-form-cancel:hover { background: var(--tint-3); color: var(--text); }
 .tree-form-submit { background: var(--accent); color: var(--accent-text); font-weight: 600; }
-.tree-form-danger { background: var(--danger-strong); color: var(--text); font-weight: 600; }
+.tree-form-danger { background: var(--status-danger-strong); color: var(--text); font-weight: 600; }
 .tree-confirm-row { display: grid; gap: 6px; padding: 8px; border-radius: var(--radius-lg); background: var(--tint-2); }
 .tree-confirm-copy { color: var(--text); font-size: 12.5px; line-height: 1.4; }
 .sidebar-context-menu { position: fixed; z-index: 40; width: 242px; }

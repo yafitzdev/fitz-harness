@@ -1,6 +1,6 @@
 .composer-tools, .composer-controls { display: flex; align-items: center; gap: 5px; min-width: 0; }
 .access-mode-wrap { position: relative; }
-.access-label { min-height: 30px; display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; border-radius: var(--radius-md); background: transparent; color: var(--orange); cursor: pointer; font-size: 12px; }
+.access-label { min-height: 30px; display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; border-radius: var(--radius-md); background: transparent; color: var(--status-warning); cursor: pointer; font-size: 12px; }
 .access-label:hover, .access-label[aria-expanded="true"] { background: var(--grey-250); }
 .access-label:disabled { opacity: .55; cursor: default; }
 .access-label svg { width: 15px; height: 15px; }
@@ -30,7 +30,8 @@
 .model-menu { right: 0; bottom: 34px; width: 286px; }
 .settings-submenu-heading { display: block; padding: 5px 8px 3px; color: var(--subtle); font-size: 9px; font-weight: 500; }
 .setting-row, .advanced-row { width: 100%; min-height: 36px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 8px; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; font-size: 13px; }
-.setting-row:hover, .setting-row.active, .advanced-row:hover { background: var(--tint-5); }
+.setting-row:hover, .advanced-row:hover { background: var(--tint-5); }
+.setting-row.active { background: var(--selection); }
 .setting-row > span:last-child { min-width: 0; display: flex; align-items: center; gap: 6px; color: var(--grey-700); }
 .setting-row > span:last-child span { max-width: 158px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .setting-row svg, .advanced-row svg { width: 14px; height: 14px; }

@@ -331,10 +331,6 @@ const conversationTranscript = new ConversationTranscript({
 const conversationLanding = new ConversationLanding({
   messages,
   clearActivity: () => activityTimeline.clear(),
-  project: () => projects.projects.find((item) => item.id === projects.currentProjectId),
-  projectDetached: () => newChatProjectDetached,
-  setDraft: (value) => composer.setDraft(value),
-  focusComposer: () => composer.focus(),
   createProject: () => projectSidebar.beginCreateProject(),
   retryConnection: () => initialize(),
   updateTitles,

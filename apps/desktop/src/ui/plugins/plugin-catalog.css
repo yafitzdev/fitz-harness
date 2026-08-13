@@ -14,7 +14,7 @@
 .plugin-actions { display: flex; align-items: center; gap: 5px; }
 .plugin-action { height: 28px; padding: 0 9px; border: 1px solid var(--border-soft); border-radius: 9px; background: var(--tint-1); color: var(--text); font-size: 11px; cursor: pointer; }
 .plugin-action:hover { background: var(--tint-5); }
-.plugin-action.danger { color: var(--danger); }
+.plugin-action.danger { color: var(--status-danger); }
 .plugin-installed-mark { color: var(--muted); font-size: 11px; white-space: nowrap; }
 #load-more-plugins { margin-top: 16px; }
 @media (max-width: 900px) { .plugin-grid { grid-template-columns: 1fr; } }

@@ -1,6 +1,20 @@
 :root {
   color-scheme: dark;
-  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font: 14px/1.5 var(--font-ui);
+
+  /* ---- JEON lab brand palette ---------------------------------------------
+     These are the only brand-color inputs. Components consume the semantic
+     roles below, so future palette changes stay inside this file. */
+  --brand-black: #0d0d0d;
+  --brand-white: #ffffff;
+  --brand-coral: #d74d3d;
+  --brand-coral-hover: #e15f4f;
+  --brand-coral-soft: #ef8a7e;
+  --brand-coral-tint: rgba(215,77,61,.16);
+  --brand-plum: #843378;
+  --brand-plum-light: #c47ab9;
+  --brand-plum-tint: rgba(132,51,120,.22);
 
   /* ---- The app's warm grey ramp -------------------------------------------
      One scale for every neutral grey: text, borders, and dark surfaces.
@@ -17,12 +31,13 @@
   --grey-500: #6b6e69;   /* focus rings, strong borders */
   --grey-450: #5a5e58;   /* input borders, scrollbar rails */
   --grey-400: #4a4d49;   /* dividers, chip borders, spinner tracks */
+  --grey-350: #393939;   /* controls between the divider and input tones */
   --grey-300: #303030;   /* control surfaces: menus, search bars, code blocks */
   --grey-250: #303030;   /* composer and matching active surfaces intentionally share the code-block tone */
   --grey-200: #212121;   /* raised surfaces: inputs, artifact bubbles */
   --grey-100: #181818;   /* inputs and the app background */
   --grey-50: #0d0d0d;    /* deepest background, dark button text */
-  --grey-0: #000;        /* pure black (masks and masks only) */
+  --grey-0: #000000;     /* pure black (masks and masks only) */
 
   /* ---- White overlay tints ------------------------------------------------
      The translucent "grey tone" used for chips, bubbles, hovers, and active
@@ -31,25 +46,31 @@
   --tint-2: rgba(255,255,255,.05);      /* resting chips, user messages, cards */
   --tint-3: rgba(255,255,255,.06);      /* quiet toggles, choose buttons */
   --tint-4: rgba(255,255,255,.07);      /* inline code chips, hovers on subtle rows */
-  --tint-5: rgba(255,255,255,.08);      /* default hover / active rows, buttons */
-  --tint-6: rgba(255,255,255,.10);      /* selected items */
-  --tint-7: rgba(255,255,255,.12);      /* strong hover: buttons, bubble hover */
+  --tint-5: rgba(255,255,255,.10);      /* default hover / active rows, buttons */
+  --tint-6: rgba(255,255,255,.12);      /* selected items */
+  --tint-7: rgba(255,255,255,.14);      /* strong hover: buttons, bubble hover */
   --tint-border: rgba(255,255,255,.22); /* bright hover borders */
   --tint-accent: rgba(211,214,207,.45); /* divider accent (inspector resizer) */
 
   /* ---- Semantic roles ------------------------------------------------------
      What each color IS, mapped onto the scales above so a single knob moves
      every place that uses a role. */
+  --window-background: var(--brand-black); /* Electron window before first paint */
   --bg: var(--grey-100);                /* app + workspace background */
-  --sidebar: #1a2225;                   /* teal-tinted rail, no ramp equivalent */
-  --floating-surface: rgba(51,51,51,.96); /* popovers + dialogs (frosted) */
+  --sidebar: var(--brand-black);        /* titlebar + navigation rail */
+  --surface: var(--grey-200);           /* inputs and bounded controls */
+  --floating-surface: rgba(33,33,33,.96); /* popovers + dialogs (frosted) */
   --border: rgba(255,255,255,.16);      /* strong hairline (cards, code blocks) */
   --border-soft: rgba(255,255,255,.08); /* faint hairline (lists, dividers) */
   --text: var(--grey-950);              /* brightest text */
   --muted: rgba(255,255,255,.70);       /* secondary text */
   --subtle: rgba(255,255,255,.50);      /* tertiary text, labels */
-  --accent: var(--grey-950);            /* primary button face */
-  --accent-text: var(--grey-50);        /* primary button label */
+  --accent: var(--brand-coral);         /* primary button face */
+  --accent-hover: var(--brand-coral-hover);
+  --accent-text: var(--brand-white);    /* primary button label */
+  --focus: var(--brand-coral);          /* keyboard and jump-target focus */
+  --selection: var(--brand-plum-tint);  /* selected navigation and tabs */
+  --selection-strong: var(--brand-plum);/* compact selected indicators */
 
   /* ---- Radii, sizing, elevation, scrollbar -------------------------------- */
   --radius-sm: 7.5px;
@@ -68,20 +89,23 @@
   --scrollbar-thumb-hover: rgba(255,255,255,.34);
 
   /* ---- Link and status colors --------------------------------------------- */
-  --link: #8ab4e5;
-  --link-hover: #acd0f6;
-  --link-underline: rgba(138,180,229,.45);
-  --link-tint: rgba(138,180,229,.15);
-  --accent-blue: #4da3ff;
-  --accent-purple: #b277e8;
-  --danger: #ff6b63;                    /* errors: dots, system messages */
-  --danger-soft: #e3a4a1;
-  --danger-strong: #c42b1c;
-  --danger-tint: rgba(232,124,120,.06);
-  --green: #40c977;                     /* online, success */
-  --green-tint: rgba(104,203,168,.15);
-  --green-glow: rgba(99,197,146,.11);
-  --orange: #ff8549;                    /* active, progress */
+  --link: var(--brand-coral-soft);
+  --link-hover: var(--brand-white);
+  --link-underline: rgba(215,77,61,.45);
+  --link-tint: rgba(215,77,61,.15);
+  --data-primary: var(--brand-coral);
+  --data-primary-tint: rgba(215,77,61,.10);
+  --media-image: var(--brand-plum-light);
+  --media-video: #65c98a;
+  --media-audio: #e99a61;
+  --status-danger: #ff6b63;             /* errors: dots, system messages */
+  --status-danger-soft: #e3a4a1;
+  --status-danger-strong: #c42b1c;
+  --status-danger-tint: rgba(232,124,120,.06);
+  --status-success: #65c98a;            /* online, success */
+  --status-success-tint: rgba(101,201,138,.15);
+  --status-success-glow: rgba(101,201,138,.11);
+  --status-warning: #e99a61;            /* connecting, active, progress */
 
   /* ---- Syntax highlighting (One Dark) -------------------------------------- */
   --syntax-comment: #7f848e;

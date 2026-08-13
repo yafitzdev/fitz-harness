@@ -12,10 +12,10 @@
 .model-card:not(:hover):not(:focus-within) .model-actions > .action-menu:not([open]) { opacity: 0; }
 .model-action { height: 28px; padding: 0 9px; border: 1px solid var(--border-soft); border-radius: 9px; background: var(--tint-1); color: var(--text); font-size: 11px; cursor: pointer; }
 .model-action:hover { background: var(--tint-5); }
-.model-action.danger { color: var(--danger); }
+.model-action.danger { color: var(--status-danger); }
 .model-progress { min-width: 150px; display: grid; gap: 5px; }
 .model-progress-track { height: 4px; border-radius: 2px; background: var(--tint-5); overflow: hidden; }
-.model-progress-fill { display: block; height: 100%; background: var(--orange); width: 0; transition: width .2s ease; }
+.model-progress-fill { display: block; height: 100%; background: var(--status-warning); width: 0; transition: width .2s ease; }
 .model-progress-copy { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: var(--muted); font-size: 10px; white-space: nowrap; }
 .model-progress-cancel { border: none; background: none; padding: 0; color: var(--muted); font-size: 10px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .model-progress-cancel:hover { color: var(--text); }

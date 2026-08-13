@@ -5,7 +5,7 @@
 .management-page-header { height: var(--workspace-header-height); display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid var(--border-soft); }
 .management-page-tabs { display: flex; gap: 4px; }
 .management-page-tabs button { height: 30px; padding: 0 11px; border: 0; border-radius: 9px; color: var(--muted); background: transparent; cursor: pointer; }
-.management-page-tabs button.active { color: var(--text); background: var(--tint-5); }
+.management-page-tabs button.active { color: var(--text); background: var(--selection); }
 .management-actions { display: flex; align-items: center; gap: 7px; }
 .compact-button { padding: 7px 14px; border-radius: 9px; }
 /* The content column starts with clear air below the tab bar so the

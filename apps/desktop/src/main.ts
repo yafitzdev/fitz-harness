@@ -11,11 +11,13 @@ import electronUpdater from "electron-updater";
 import { HostStartupError, HostSupervisor } from "./host-supervisor.js";
 import { HostClient, hostRequestDeadline } from "./host-client.js";
 import { createModelUnloadOnQuitHandler } from "./model-unload-on-quit.js";
+import { readThemeColor } from "./theme-token.js";
 
 const { autoUpdater } = electronUpdater;
 const execFileAsync = promisify(execFile);
 
 const directory = dirname(fileURLToPath(import.meta.url));
+const windowBackground = readThemeColor(join(directory, "ui", "theme", "tokens.css"), "--window-background");
 const localHostPort = commandLineValue("host-port");
 const hostUrl = validateHostUrl(commandLineValue("host-url") ?? (localHostPort ? `http://127.0.0.1:${localHostPort}` : undefined) ?? process.env.FITZ_HOST_URL ?? "http://127.0.0.1:8787");
 let deviceToken = process.env.FITZ_DEVICE_TOKEN;
@@ -135,7 +137,7 @@ ipcMain.handle("fitz:update-status", () => latestUpdateStatus);
 ipcMain.handle("fitz:update-check", async () => { if (app.isPackaged) await autoUpdater.checkForUpdates(); else publishUpdateStatus({ state: "development" }); });
 ipcMain.handle("fitz:update-install", () => { if (app.isPackaged) autoUpdater.quitAndInstall(false, true); });
 
-function createWindow(): void { const window = new BrowserWindow({ width: 1280, height: 800, minWidth: 860, minHeight: 560, frame: false, autoHideMenuBar: true, show: false, backgroundColor: "#111317", webPreferences: { preload: join(directory, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, plugins: true /* enable Chromium's PDF viewer for PDFs embedded in the Inspector */ } }); window.webContents.setWindowOpenHandler(({ url }) => { if (isAllowedExternalUrl(url)) void shell.openExternal(url).catch(() => undefined); return { action: "deny" }; }); window.webContents.on("will-navigate", (event, url) => { if (url !== window.webContents.getURL()) event.preventDefault(); }); window.on("app-command", (_event, command) => { if (command === "browser-backward") window.webContents.send("fitz:navigation-command", "back"); else if (command === "browser-forward") window.webContents.send("fitz:navigation-command", "forward"); }); window.once("ready-to-show", () => window.show()); void window.loadFile(join(directory, "renderer", "index.html")); }
+function createWindow(): void { const window = new BrowserWindow({ width: 1280, height: 800, minWidth: 860, minHeight: 560, frame: false, autoHideMenuBar: true, show: false, backgroundColor: windowBackground, webPreferences: { preload: join(directory, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, plugins: true /* enable Chromium's PDF viewer for PDFs embedded in the Inspector */ } }); window.webContents.setWindowOpenHandler(({ url }) => { if (isAllowedExternalUrl(url)) void shell.openExternal(url).catch(() => undefined); return { action: "deny" }; }); window.webContents.on("will-navigate", (event, url) => { if (url !== window.webContents.getURL()) event.preventDefault(); }); window.on("app-command", (_event, command) => { if (command === "browser-backward") window.webContents.send("fitz:navigation-command", "back"); else if (command === "browser-forward") window.webContents.send("fitz:navigation-command", "forward"); }); window.once("ready-to-show", () => window.show()); void window.loadFile(join(directory, "renderer", "index.html")); }
 function focusPrimaryWindow(): void { const window = BrowserWindow.getAllWindows()[0]; if (!window) return; if (window.isMinimized()) window.restore(); if (!window.isVisible()) window.show(); window.focus(); }
 function publishUpdateStatus(status: DesktopUpdateStatus): void { latestUpdateStatus = status; for (const window of BrowserWindow.getAllWindows()) window.webContents.send("fitz:update-status", status); }
 autoUpdater.autoDownload = true;

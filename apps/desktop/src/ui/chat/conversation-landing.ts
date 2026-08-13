@@ -3,21 +3,10 @@ import { svgIcon } from "../primitives/dom.js";
 export interface ConversationLandingOptions {
   messages: HTMLElement;
   clearActivity: () => void;
-  project: () => { id?: string; name?: string } | undefined;
-  projectDetached: () => boolean;
-  setDraft: (value: string) => void;
-  focusComposer: () => void;
   createProject: () => void;
   retryConnection: () => void | Promise<void>;
   updateTitles: () => void;
 }
-
-const suggestions = [
-  ["Explore and understand code", '<path d="m4.2 7.4 8.7-4.1 2 4.1-8.8 4.2z"></path><path d="m11.1 4.2 2 4.1M8 10.7l2.5 5.8M6.2 11.6l-1.7 4.1M7.2 14h4.5"></path>'],
-  ["Build a new feature, app, or tool", '<path d="m12.8 3.2 4 4-2.5 2.5-4-4z"></path><path d="m11.4 8.6-6.8 6.8M3.6 16.4l2.6-.7-1.9-1.9z"></path>'],
-  ["Review code and suggest changes", '<path d="M15.7 7.2A6 6 0 0 0 5 5.4L3.6 7"></path><path d="M3.6 3.8V7h3.2M4.3 12.8A6 6 0 0 0 15 14.6l1.4-1.6"></path><path d="M16.4 16.2V13h-3.2"></path>'],
-  ["Fix issues and failures", '<path d="M7 7.2 5.2 4.5M13 7.2l1.8-2.7M6.1 9.1h7.8v6.2H6.1z"></path><path d="M3.5 10.5h2.6M13.9 10.5h2.6M3.8 14.7l2.3-1M16.2 14.7l-2.3-1M8.2 6V4.8h3.6V6M10 9.1v6.2"></path>'],
-] as const;
 
 /** Owns the empty, new-chat, and disconnected conversation states. */
 export class ConversationLanding {
@@ -53,37 +42,14 @@ export class ConversationLanding {
 
   showNewChat(): void {
     this.#reset(true);
-    const project = this.#options.project();
     const landing = document.createElement("div");
     landing.className = "new-chat-landing";
     const mark = document.createElement("div");
-    mark.className = "landing-mark";
-    mark.append(terminalCloudIcon());
-    const heading = document.createElement("h1");
-    if (this.#options.projectDetached() || !project?.id) heading.textContent = "What should we build?";
-    else {
-      heading.append("What should we build in ");
-      const projectName = document.createElement("span");
-      projectName.className = "landing-project-name";
-      projectName.textContent = project.name ?? "this project";
-      heading.append(projectName, "?");
-    }
-    const grid = document.createElement("div");
-    grid.className = "starter-grid";
-    for (const [label, icon] of suggestions) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "starter-card";
-      const text = document.createElement("span");
-      text.textContent = label;
-      button.append(svgIcon(icon), text);
-      button.addEventListener("click", () => {
-        this.#options.setDraft(label);
-        this.#options.focusComposer();
-      });
-      grid.append(button);
-    }
-    landing.append(mark, heading, grid);
+    mark.className = "new-chat-ripple";
+    mark.setAttribute("role", "img");
+    mark.setAttribute("aria-label", "JEON lab");
+    mark.append(rippleLogo());
+    landing.append(mark);
     this.#options.messages.append(landing);
     this.#options.updateTitles();
   }
@@ -115,6 +81,18 @@ function sparkIcon(): SVGElement {
   return svgIcon('<path d="M10 2.8c.5 3.7 2.4 5.8 6.2 7.2-3.8 1.4-5.7 3.5-6.2 7.2-.5-3.7-2.4-5.8-6.2-7.2C7.6 8.6 9.5 6.5 10 2.8Z"></path>');
 }
 
-function terminalCloudIcon(): SVGElement {
-  return svgIcon('<path d="M6.2 16.4c-2 0-3.7-1.6-3.7-3.6 0-1.2.6-2.3 1.5-3-.4-1.8.5-3.6 2.1-4.4.7-1.7 2.4-2.8 4.2-2.8 1.5 0 2.9.7 3.8 1.9 1.8-.1 3.3 1.3 3.4 3.1 1 .7 1.7 1.9 1.7 3.2 0 1.5-.8 2.8-2.1 3.5-.5 1.8-2.1 3-4 3-.8 0-1.6-.2-2.2-.7-.7.6-1.6.9-2.5.9-.8 0-1.6-.3-2.2-.7z"></path><path d="m6.8 8 1.8 2-1.8 2M10.7 12.3h2.7"></path>');
+function rippleLogo(): SVGElement {
+  return svgIcon(`
+    <defs><clipPath id="jeon-new-chat-ripple-clip"><circle class="ripple-clip-shape" cx="24" cy="24" r="19"></circle></clipPath></defs>
+    <g clip-path="url(#jeon-new-chat-ripple-clip)">
+      <path d="M-12 7C-6 1 0 1 6 7S18 13 24 7S36 1 42 7S54 13 60 7"></path>
+      <path d="M-12 12C-6 6 0 6 6 12S18 18 24 12S36 6 42 12S54 18 60 12"></path>
+      <path d="M-12 17C-6 11 0 11 6 17S18 23 24 17S36 11 42 17S54 23 60 17"></path>
+      <path d="M-12 22C-6 16 0 16 6 22S18 28 24 22S36 16 42 22S54 28 60 22"></path>
+      <path d="M-12 27C-6 21 0 21 6 27S18 33 24 27S36 21 42 27S54 33 60 27"></path>
+      <path d="M-12 32C-6 26 0 26 6 32S18 38 24 32S36 26 42 32S54 38 60 32"></path>
+      <path d="M-12 37C-6 31 0 31 6 37S18 43 24 37S36 31 42 37S54 43 60 37"></path>
+      <path d="M-12 42C-6 36 0 36 6 42S18 48 24 42S36 36 42 42S54 48 60 42"></path>
+    </g>
+  `, "0 0 48 48");
 }

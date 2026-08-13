@@ -3,7 +3,7 @@
 .usage-range { width: max-content; display: flex; gap: 2px; padding: 3px; border-radius: var(--radius-md); background: var(--grey-200); }
 .usage-range button { min-height: 28px; padding: 4px 10px; border-radius: var(--radius-sm); background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; }
 .usage-range button:hover { color: var(--text); }
-.usage-range button.active { background: var(--grey-300); color: var(--text); }
+.usage-range button.active { background: var(--selection); color: var(--text); }
 .usage-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
 .usage-kpi { min-width: 0; display: grid; gap: 3px; padding: 14px; border: 1px solid var(--border-soft); border-radius: var(--radius-lg); background: var(--tint-1); }
 .usage-kpi > span { color: var(--muted); font-size: 12px; }
@@ -14,9 +14,9 @@
 .usage-panel h2 { margin: 0; font-size: 14px; font-weight: 600; }
 .usage-panel header p { margin: 2px 0 0; color: var(--subtle); font-size: 11px; }
 .usage-line-chart { display: block; width: 100%; height: 190px; overflow: visible; }
-.usage-chart-area { fill: rgba(77,163,255,.08); }
-.usage-chart-line { fill: none; stroke: var(--accent-blue); stroke-width: 2; vector-effect: non-scaling-stroke; }
-.usage-line-chart circle { fill: var(--bg); stroke: var(--accent-blue); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.usage-chart-area { fill: var(--data-primary-tint); }
+.usage-chart-line { fill: none; stroke: var(--data-primary); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.usage-line-chart circle { fill: var(--bg); stroke: var(--data-primary); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .usage-breakdowns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .usage-bars { display: grid; gap: 12px; }
 .usage-bar-row { min-width: 0; display: grid; gap: 5px; }
@@ -25,7 +25,7 @@
 .usage-bar-row strong { font-size: 12px; font-weight: 500; }
 .usage-bar-row small { color: var(--subtle); font-size: 10px; }
 .usage-bar-track { height: 4px; overflow: hidden; border-radius: 999px; background: var(--grey-300); }
-.usage-bar-track span { display: block; height: 100%; border-radius: inherit; background: var(--grey-700); }
+.usage-bar-track span { display: block; height: 100%; border-radius: inherit; background: var(--data-primary); }
 .usage-table { display: grid; }
 .usage-table > div { min-width: 0; display: grid; grid-template-columns: minmax(140px, 1.6fr) repeat(3, minmax(70px, .6fr)); gap: 12px; align-items: center; min-height: 36px; border-bottom: 1px solid var(--border-soft); }
 .usage-table > div:last-child { border-bottom: 0; }

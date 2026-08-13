@@ -32,6 +32,6 @@
   font-size: 12px;
 }
 .media-creation-actions button:hover { background: var(--tint-7); }
-.media-creation-submit { background: var(--grey-900); color: var(--grey-200); }
+.media-creation-submit { background: var(--accent); color: var(--accent-text); }
 .media-creation-submit:hover { background: var(--text); }
 .media-creation-actions button:disabled { opacity: 0.55; cursor: default; }
