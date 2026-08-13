@@ -12,12 +12,14 @@ import { HostStartupError, HostSupervisor } from "./host-supervisor.js";
 import { HostClient, hostRequestDeadline } from "./host-client.js";
 import { createModelUnloadOnQuitHandler } from "./model-unload-on-quit.js";
 import { readThemeColor } from "./theme-token.js";
+import { InAppBrowserController } from "./in-app-browser-main.js";
 
 const { autoUpdater } = electronUpdater;
 const execFileAsync = promisify(execFile);
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const windowBackground = readThemeColor(join(directory, "ui", "theme", "tokens.css"), "--window-background");
+const browserBackground = readThemeColor(join(directory, "ui", "theme", "tokens.css"), "--browser-surface");
 const localHostPort = commandLineValue("host-port");
 const hostUrl = validateHostUrl(commandLineValue("host-url") ?? (localHostPort ? `http://127.0.0.1:${localHostPort}` : undefined) ?? process.env.FITZ_HOST_URL ?? "http://127.0.0.1:8787");
 let deviceToken = process.env.FITZ_DEVICE_TOKEN;
@@ -25,6 +27,7 @@ const hostClient = new HostClient({ origin: hostUrl, getToken: () => deviceToken
 interface DesktopUpdateStatus { state: "idle" | "checking" | "available" | "downloading" | "current" | "downloaded" | "error" | "development"; percent?: number; version?: string }
 let latestUpdateStatus: DesktopUpdateStatus = { state: app.isPackaged ? "idle" : "development" };
 interface StoredConsumerConnection { id: string; displayName: string; baseUrl: string; authType: "none" | "bearer"; apiKey?: string; template: string; models: Array<{ id: string; recipeId: string }>; mediaModels: Array<{ id: string; routeId: string; recipeId: string; modality: string; template: string }>; updatedAt: string }
+const inAppBrowsers = new WeakMap<BrowserWindow, InAppBrowserController>();
 
 ipcMain.handle("fitz:request", async (event, input: unknown) => {
   if (!isRecord(input)) throw new TypeError("Request must be an object");
@@ -118,6 +121,9 @@ ipcMain.handle("fitz:bootstrap-local-device", async () => {
 });
 ipcMain.handle("fitz:pair-device", async (_event, input: unknown) => { if (!isRecord(input)) throw new TypeError("Pairing details must be an object"); const code = requireBoundedText(input.code, "Pairing code", 128); const displayName = requireBoundedText(input.displayName, "Display name", 100); const deviceName = requireBoundedText(input.deviceName, "Device name", 100); if (!safeStorage.isEncryptionAvailable()) return { status: 503, body: JSON.stringify({ error: "Secure credential storage is unavailable" }) }; const response = await hostClient.fetch("/api/v1/pairing/redeem", { method: "POST", authenticated: false, timeoutMs: 15_000, body: { code, displayName, deviceName } }); const body = await response.text(); if (!response.ok) return { status: response.status, body }; const parsed = JSON.parse(body) as Record<string, unknown>; const data = isRecord(parsed.data) ? parsed.data : {}; const token = typeof data.token === "string" ? data.token : undefined; if (!token) return { status: 502, body: JSON.stringify({ error: "The host did not return a device credential" }) }; persistDeviceToken(token); deviceToken = token; const { token: _token, ...safeData } = data; return { status: response.status, body: JSON.stringify({ ...parsed, data: safeData }) }; });
 ipcMain.handle("fitz:open-external", async (_event, url: unknown) => { if (typeof url !== "string" || !isAllowedExternalUrl(url)) throw new Error("External URL is not allowed"); await shell.openExternal(url); });
+ipcMain.handle("fitz:browser-open", async (event, url: unknown) => inAppBrowserFor(event.sender)?.open(url));
+ipcMain.handle("fitz:browser-bounds", (event, bounds: unknown) => inAppBrowserFor(event.sender)?.setBounds(bounds));
+ipcMain.handle("fitz:browser-action", (event, action: unknown) => inAppBrowserFor(event.sender)?.action(action));
 ipcMain.handle("fitz:choose-folder", async () => { const result = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] }); return result.canceled ? undefined : result.filePaths[0]; });
 ipcMain.handle("fitz:open-path", async (_event, path: unknown) => { if (typeof path !== "string" || !isAbsolute(path)) throw new Error("A valid absolute path is required"); const error = await shell.openPath(path); if (error) throw new Error(error); });
 ipcMain.handle("fitz:preview-resource", async (_event, input: unknown) => {
@@ -137,7 +143,21 @@ ipcMain.handle("fitz:update-status", () => latestUpdateStatus);
 ipcMain.handle("fitz:update-check", async () => { if (app.isPackaged) await autoUpdater.checkForUpdates(); else publishUpdateStatus({ state: "development" }); });
 ipcMain.handle("fitz:update-install", () => { if (app.isPackaged) autoUpdater.quitAndInstall(false, true); });
 
-function createWindow(): void { const window = new BrowserWindow({ width: 1280, height: 800, minWidth: 860, minHeight: 560, frame: false, autoHideMenuBar: true, show: false, backgroundColor: windowBackground, webPreferences: { preload: join(directory, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, plugins: true /* enable Chromium's PDF viewer for PDFs embedded in the Inspector */ } }); window.webContents.setWindowOpenHandler(({ url }) => { if (isAllowedExternalUrl(url)) void shell.openExternal(url).catch(() => undefined); return { action: "deny" }; }); window.webContents.on("will-navigate", (event, url) => { if (url !== window.webContents.getURL()) event.preventDefault(); }); window.on("app-command", (_event, command) => { if (command === "browser-backward") window.webContents.send("fitz:navigation-command", "back"); else if (command === "browser-forward") window.webContents.send("fitz:navigation-command", "forward"); }); window.once("ready-to-show", () => window.show()); void window.loadFile(join(directory, "renderer", "index.html")); }
+function createWindow(): void {
+  const window = new BrowserWindow({ width: 1280, height: 800, minWidth: 860, minHeight: 560, frame: false, autoHideMenuBar: true, show: false, backgroundColor: windowBackground, webPreferences: { preload: join(directory, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, plugins: true /* enable Chromium's PDF viewer for PDFs embedded in the Inspector */ } });
+  const browser = new InAppBrowserController(window, browserBackground);
+  inAppBrowsers.set(window, browser);
+  window.webContents.setWindowOpenHandler(({ url }) => { if (isAllowedExternalUrl(url)) void shell.openExternal(url).catch(() => undefined); return { action: "deny" }; });
+  window.webContents.on("will-navigate", (event, url) => { if (url !== window.webContents.getURL()) event.preventDefault(); });
+  window.on("app-command", (_event, command) => {
+    const direction = command === "browser-backward" ? "back" : command === "browser-forward" ? "forward" : undefined;
+    if (direction && !browser.handleMouseNavigation(direction)) window.webContents.send("fitz:navigation-command", direction);
+  });
+  window.on("closed", () => browser.close());
+  window.once("ready-to-show", () => window.show());
+  void window.loadFile(join(directory, "renderer", "index.html"));
+}
+function inAppBrowserFor(contents: Electron.WebContents): InAppBrowserController | undefined { const window = BrowserWindow.fromWebContents(contents); return window ? inAppBrowsers.get(window) : undefined; }
 function focusPrimaryWindow(): void { const window = BrowserWindow.getAllWindows()[0]; if (!window) return; if (window.isMinimized()) window.restore(); if (!window.isVisible()) window.show(); window.focus(); }
 function publishUpdateStatus(status: DesktopUpdateStatus): void { latestUpdateStatus = status; for (const window of BrowserWindow.getAllWindows()) window.webContents.send("fitz:update-status", status); }
 autoUpdater.autoDownload = true;

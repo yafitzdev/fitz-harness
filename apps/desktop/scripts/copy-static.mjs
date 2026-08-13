@@ -15,6 +15,7 @@ mkdirSync(new URL("../dist/ui/usage/", import.meta.url), { recursive: true });
 mkdirSync(new URL("../dist/ui/playbooks/", import.meta.url), { recursive: true });
 mkdirSync(new URL("../dist/ui/sidebar/", import.meta.url), { recursive: true });
 mkdirSync(new URL("../dist/ui/inspector/", import.meta.url), { recursive: true });
+mkdirSync(new URL("../dist/ui/browser/", import.meta.url), { recursive: true });
 mkdirSync(new URL("../dist/ui/layout/", import.meta.url), { recursive: true });
 mkdirSync(new URL("../dist/ui/catalog/", import.meta.url), { recursive: true });
 cpSync(new URL("../src/renderer/index.html", import.meta.url), new URL("../dist/renderer/index.html", import.meta.url));
@@ -36,6 +37,7 @@ cpSync(new URL("../src/ui/usage/usage-page.css", import.meta.url), new URL("../d
 cpSync(new URL("../src/ui/playbooks/playbook-workspace.css", import.meta.url), new URL("../dist/ui/playbooks/playbook-workspace.css", import.meta.url));
 cpSync(new URL("../src/ui/sidebar/project-sidebar.css", import.meta.url), new URL("../dist/ui/sidebar/project-sidebar.css", import.meta.url));
 cpSync(new URL("../src/ui/inspector/inspector-panel.css", import.meta.url), new URL("../dist/ui/inspector/inspector-panel.css", import.meta.url));
+cpSync(new URL("../src/ui/browser/in-app-browser.css", import.meta.url), new URL("../dist/ui/browser/in-app-browser.css", import.meta.url));
 cpSync(new URL("../src/ui/layout/management-page.css", import.meta.url), new URL("../dist/ui/layout/management-page.css", import.meta.url));
 cpSync(new URL("../src/ui/layout/collapsible-section.css", import.meta.url), new URL("../dist/ui/layout/collapsible-section.css", import.meta.url));
 cpSync(new URL("../src/ui/catalog/catalog-filter-bar.css", import.meta.url), new URL("../dist/ui/catalog/catalog-filter-bar.css", import.meta.url));

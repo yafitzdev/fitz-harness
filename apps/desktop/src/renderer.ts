@@ -1,4 +1,3 @@
-import { isActiveMediaJobStatus } from "@fitz/protocol";
 import { appendMarkdown } from "./markdown.js";
 import { estimateTokens } from "./context-estimate.js";
 import { MessageActions } from "./ui/chat/message-actions.js";
@@ -12,21 +11,24 @@ import { Composer, type ComposerSubmission } from "./ui/chat/composer.js";
 import { ConversationLanding } from "./ui/chat/conversation-landing.js";
 import { ConversationMessageFeed } from "./ui/chat/conversation-message-feed.js";
 import { ConversationTranscript } from "./ui/chat/conversation-transcript.js";
+import { ConversationContextController } from "./ui/chat/conversation-context.js";
+import { ConversationSessionController } from "./ui/chat/conversation-session.js";
 import { PromptSubmissionController } from "./ui/chat/prompt-submission.js";
 import { MediaCreationForm } from "./ui/chat/media-creation-form.js";
 import { ConnectionWorkspaceController, type FixedRouteId } from "./ui/connections/connection-workspace.js";
 import { textRouteOptions, textRouteRecipe } from "./ui/routes/text-route-presentation.js";
 import { InspectorPanel } from "./ui/inspector/inspector-panel.js";
+import { InAppBrowser } from "./ui/browser/in-app-browser.js";
 import { AdaptiveWorkspace } from "./ui/layout/adaptive-workspace.js";
 import { ConversationLayout } from "./ui/layout/conversation-layout.js";
 import { ManagementPageLayout, managementRefreshIcon } from "./ui/layout/management-page.js";
 import { WorkspacePageController } from "./ui/layout/workspace-pages.js";
-import { canOpenManagementView, managementNavigationVisibility } from "./ui/navigation/navigation-policy.js";
-import { NavigationHistoryController, type AppLocation } from "./ui/navigation/navigation-history.js";
+import { AppNavigationController } from "./ui/navigation/app-navigation.js";
 import { ApplicationMenuController } from "./ui/navigation/application-menu.js";
 import { CustomSelectController } from "./ui/primitives/custom-select.js";
 import type { ActionStatusTone } from "./ui/primitives/action-status.js";
 import { requiredElement as element, requiredQuery as query, svgIcon as svg, textBlock } from "./ui/primitives/dom.js";
+import { suppressNativeTooltips } from "./ui/primitives/native-tooltip-policy.js";
 import { ResizablePane } from "./ui/primitives/resizable-pane.js";
 import { PluginsPageController } from "./ui/plugins/plugins-page.js";
 import { ModelsPageController } from "./ui/models/models-page.js";
@@ -41,20 +43,13 @@ import { assertHostContract, HostRequestError, parseHostError } from "./client-e
 
 type Json = Record<string, any>;
 
+suppressNativeTooltips();
+
 let queueRefreshTimer: ReturnType<typeof setTimeout> | undefined;
-let sessionTokenEstimate = 0;
-let contextTokenLimit = 131_072;
 let configuredHostOrigin = "Fitz host";
 let administrator = false;
 let currentUserId: string | undefined;
 let managementConfiguration: Json | undefined;
-let newChatMode = false;
-let newChatProjectDetached = false;
-// The Inspector is contained to the chat it was opened in: switching chats
-// (or projects, or starting a new chat) closes it and drops its tabs, and
-// the artifact repository re-scopes to the session, so a chat never inherits
-// another chat's files or previews.
-let inspectorChatId: string | undefined;
 
 const shell = query(".app-shell");
 const workspaceHeader = query(".workspace-header");
@@ -155,6 +150,8 @@ usageLayout.addContent({
 
 let conversationLayout: ConversationLayout | undefined;
 let adaptiveWorkspace: AdaptiveWorkspace | undefined;
+let closeBrowserPreview = (): void => {};
+let syncBrowserPreview = (): void => {};
 const sidebarPane = new ResizablePane({
   divider: sidebarResizer, storageKey: "fitz-sidebar-width", defaultValue: 254, minimum: 240, maximum: 520,
   pointerValue: (event) => event.clientX,
@@ -167,15 +164,20 @@ const inspectorPanel = new InspectorPanel({
   getSearchRoots: () => activityTimeline.searchRoots(),
   showStatus,
   renderToggle: inspectorRenderToggle,
-  onLayoutChange: () => { adaptiveWorkspace?.sync(); conversationLayout?.sync(); },
+  onLayoutChange: () => { adaptiveWorkspace?.sync(); conversationLayout?.sync(); syncBrowserPreview(); },
+  onOpenChange: (open) => { if (!open) closeBrowserPreview(); },
+  onContentViewChange: () => closeBrowserPreview(),
 });
+const inAppBrowser = new InAppBrowser({ mount: inspectorPanel.element, bridge: window.fitz, showStatus });
+closeBrowserPreview = () => inAppBrowser.close();
+syncBrowserPreview = () => inAppBrowser.syncBounds();
 const composer = new Composer({
   mount: workspace,
   getProjectRoot: () => String(projects?.activeProject()?.rootPath ?? "") || undefined,
   bridge: window.fitz,
   closeAllPopovers: closePopovers,
   onRouteChange: () => handleRouteChange(),
-  onCompact: compactCurrentSession,
+  onCompact: () => conversationContext.compact(),
   onSubmit: (submission) => {
     // Media commands submit straight to the media-job pipeline, which runs on
     // its own queue, so they are allowed while the agent is busy. Everything
@@ -189,13 +191,13 @@ const composer = new Composer({
     } else void sendPrompt(submission);
   },
   onInput: (text) => {
-    updateContextMeter();
+    conversationContext.refresh();
     refreshComposerState();
     agentRuns.scheduleWarmup(text, composer.controls.routeId);
   },
-  onValueChange: () => { updateContextMeter(); refreshComposerState(); },
+  onValueChange: () => { conversationContext.refresh(); refreshComposerState(); },
   onAttach: () => artifactController.choose(),
-  onDismissProject: () => { newChatProjectDetached = true; showNewChatLanding(); },
+  onDismissProject: showNewChatLanding,
   onPreviewPasted: (kind, dataUrl, mimeType, name) => {
     if (kind === "pdf") inspectorPanel.previewPdf(dataUrl, mimeType, name);
     else inspectorPanel.previewImage(dataUrl, mimeType, name);
@@ -208,6 +210,24 @@ const composer = new Composer({
   },
   onError: (message) => showStatus(message, "error"),
   isRunning: () => agentRuns.active,
+});
+const conversationContext = new ConversationContextController({
+  draft: () => composer.value,
+  estimateTokens,
+  configuredLimit: () => {
+    const recipe = textRouteRecipe(managementConfiguration, composer.controls.routeId as FixedRouteId);
+    const value = Number(recipe?.contextTokens);
+    return Number.isFinite(value) && value > 0 ? value : undefined;
+  },
+  updateMeter: (tokens, limit) => composer.controls.updateContext(tokens, limit),
+  currentSessionId: () => projects.currentSessionId,
+  routeId: () => composer.controls.routeId,
+  runActive: () => agentRuns.active,
+  compact: async (sessionId, routeId) => (await api(`/api/v1/sessions/${sessionId}/compact`, "POST", { model: routeId })).data,
+  setStatus: (message, loading) => composer.controls.setContextStatus(message, loading),
+  appendContext: (message) => activityTimeline.appendContext(message),
+  refreshControls: refreshComposerState,
+  errorMessage,
 });
 conversationLayout = new ConversationLayout({ workspace, messages, composer: composer.root, scrollButton: composer.scrollButton, inspectorWidth: () => inspectorPanel.width() });
 adaptiveWorkspace = new AdaptiveWorkspace({ shell, workspace, onLayoutChange: () => conversationLayout?.sync() });
@@ -246,68 +266,13 @@ const projects = new ProjectsController({
   showStatus,
   errorMessage,
   closePopovers,
-  showConversationWorkspace,
-  leaveNewChat: () => { newChatMode = false; workspace.classList.remove("new-chat-open"); composer.exitNewChat(); },
+  showConversationWorkspace: () => appNavigation.showConversation(),
+  leaveNewChat: () => conversationSessions.leaveNewChat(),
   renderTree,
   refreshComposerState,
-  rememberLocation: (location) => navigationHistory.remember(location),
-  onSessionSelected: async (sessionId) => {
-    const isCurrent = () => projects.currentSessionId === sessionId;
-    agentRuns.detach();
-    assistantPerformance.reset();
-    runRecovery.clear();
-    mediaJobs.reset();
-    mediaJobFeed.reset();
-    if (sessionId !== inspectorChatId) { inspectorPanel.reset(); inspectorPanel.setChat(sessionId); inspectorChatId = sessionId; }
-    composer.controls.resetContextStatus();
-    const selectedSession = projects.currentSessionRecord();
-    if (selectedSession?.routeId) composer.controls.setRoute(selectedSession.routeId);
-    syncComposerContext();
-    messages.replaceChildren(loadingMessage("Loading conversation…"));
-    try {
-      const transcript = await api(`/api/v1/sessions/${sessionId}/transcript`);
-      if (!isCurrent()) return;
-      sessionTokenEstimate = conversationTranscript.restore(transcript.data ?? [], transcript.page ?? {});
-      const pendingApprovals = await api(`/api/v1/sessions/${sessionId}/tool-approvals?status=pending`);
-      if (!isCurrent()) return;
-      for (const approval of pendingApprovals.data ?? []) activityTimeline.appendApproval(approval);
-      const runState = await api(`/api/v1/sessions/${sessionId}/agent-run-state`);
-      if (!isCurrent()) return;
-      if (runState.data?.status === "queued" || runState.data?.status === "running") {
-        void agentRuns.attach(runState.data, conversationTranscript.eventSequenceForRun(String(runState.data.id)));
-      } else if (runState.data?.resumable) runRecovery.show(runState.data);
-      updateContextMeter();
-      if (!messages.childElementCount) showLanding(true);
-      messages.scrollTop = messages.scrollHeight;
-      const sessionArtifacts = await artifactController.load();
-      if (!isCurrent()) return;
-      await loadMediaJobs(sessionId, sessionArtifacts, isCurrent);
-    } catch (error) {
-      if (!isCurrent()) return;
-      messages.replaceChildren();
-      appendMessage("system", errorMessage(error));
-    }
-    if (!isCurrent()) return;
-    refreshComposerState();
-    composer.focus();
-    navigationHistory.remember({
-      view: "conversation",
-      path: ["session", sessionId],
-      ...(projects.currentProjectId ? { context: { projectId: projects.currentProjectId } } : {}),
-    });
-  },
-  onNoSession: async () => {
-    mediaJobs.reset();
-    mediaJobFeed.reset();
-    inspectorPanel.reset();
-    inspectorPanel.setChat(undefined);
-    inspectorChatId = undefined;
-    sessionTokenEstimate = 0;
-    updateContextMeter();
-    if (projects.currentProjectId) openNewChatForProject(projects.currentProjectId);
-    else showLanding();
-    await artifactController.load();
-  },
+  rememberLocation: (location) => appNavigation.remember(location),
+  onSessionSelected: (sessionId) => conversationSessions.selectSession(sessionId),
+  onNoSession: () => conversationSessions.showNoSession(),
 });
 const activityTimeline = new ActivityTimeline({
   messages,
@@ -351,7 +316,7 @@ const artifactController = new ArtifactController({
   fileInput: element("artifact-file") as HTMLInputElement,
   pickButton: element("add-artifact") as HTMLButtonElement,
   getSessionId: () => projects.currentSessionId,
-  isNewChat: () => newChatMode,
+  isNewChat: () => conversationSessions.newChat,
   api,
   setSessionArtifacts: (items) => inspectorPanel.setSessionArtifacts(items),
   previewArtifact: (artifact, source, list) => inspectorPanel.previewArtifact(artifact, source, list),
@@ -405,8 +370,8 @@ const agentRuns = new AgentRunController({
   appendAssistantDelta: (target, delta) => appendMarkdown(target, delta),
   appendSystem: (message) => { appendMessage("system", message); },
   appendChangeSummary: (files) => appendChangeSummary(files),
-  addTokenEstimate: (text) => { sessionTokenEstimate += estimateTokens(text); updateContextMeter(); },
-  recalibrateEstimate: (tokens) => { sessionTokenEstimate = tokens; updateContextMeter(); },
+  addTokenEstimate: (text) => { conversationContext.add(text); conversationContext.refresh(); },
+  recalibrateEstimate: (tokens) => conversationContext.recalibrate(tokens),
   setStatus,
   setEngineState: (state) => { engineState.textContent = state; },
   refreshControls: refreshComposerState,
@@ -437,7 +402,7 @@ const promptSubmission = new PromptSubmissionController({
     temperature: composer.controls.temperature,
     accessMode: composer.controls.accessMode,
   }),
-  ensureSession: ensurePromptSession,
+  ensureSession: (title, routeId) => conversationSessions.ensurePromptSession(title, routeId),
   openNewChat,
   clearDraft: () => composer.clearDraft(),
   setDraft: (value) => composer.setDraft(value),
@@ -457,11 +422,11 @@ const promptSubmission = new PromptSubmissionController({
   },
   appendSteer: (content) => activityTimeline.appendSteer(content),
   pushHistory: (content) => composer.pushHistory(content),
-  addTokenEstimate: (content) => { sessionTokenEstimate += estimateTokens(content); },
-  refreshContext: updateContextMeter,
+  addTokenEstimate: (content) => conversationContext.add(content),
+  refreshContext: () => conversationContext.refresh(),
   refreshControls: refreshComposerState,
   runId: () => agentRuns.runId,
-  submitMedia: async ({ routeId, modality, operation, prompt, sessionId, size, seed, negativePrompt, durationSeconds, fps, refs }) => {
+  submitMedia: async ({ routeId, modality, operation, prompt, sessionId, size, seed, negativePrompt, lyrics, durationSeconds, fps, refs }) => {
     const response = await api("/api/v1/media/jobs", "POST", {
       routeId,
       modality,
@@ -471,6 +436,7 @@ const promptSubmission = new PromptSubmissionController({
         ...(size !== undefined ? { size } : {}),
         ...(seed !== undefined ? { seed } : {}),
         ...(negativePrompt !== undefined ? { negativePrompt } : {}),
+        ...(lyrics !== undefined ? { lyrics } : {}),
         ...(durationSeconds !== undefined ? { durationSeconds } : {}),
         ...(fps !== undefined ? { fps } : {}),
         ...(refs && refs.length > 0 ? { refs } : {}),
@@ -531,7 +497,7 @@ const playbookWorkspace = new PlaybookWorkspaceController({
   reloadConfiguration: () => loadManagementConfiguration(true),
   showStatus,
   errorMessage,
-  onRouteChange: (path) => rememberPageRoute("playbooks", path),
+  onRouteChange: (path) => appNavigation.rememberRoute("playbooks", path),
 });
 const connectionWorkspace = new ConnectionWorkspaceController({
   mount: workspace,
@@ -543,7 +509,7 @@ const connectionWorkspace = new ConnectionWorkspaceController({
   closePopovers,
   showStatus,
   errorMessage,
-  onRouteChange: (path) => rememberPageRoute("connections", path),
+  onRouteChange: (path) => appNavigation.rememberRoute("connections", path),
 });
 const workspacePages = new WorkspacePageController({
   pages: {
@@ -681,9 +647,130 @@ const usagePageController = new UsagePageController({
   api,
   errorMessage,
 });
-const navigationHistory = new NavigationHistoryController({
+const conversationSessions = new ConversationSessionController({
+  api,
+  projects: {
+    get currentSessionId() { return projects.currentSessionId; },
+    get currentProjectId() { return projects.currentProjectId; },
+    get projects() { return projects.projects; },
+    activeProject: () => projects.activeProject(),
+    currentSessionRecord: () => {
+      const session = projects.currentSessionRecord();
+      return session && typeof session.routeId === "string" ? { routeId: session.routeId } : undefined;
+    },
+    setCurrentProject: (id) => projects.setCurrentProject(id),
+    beginNewChat: () => projects.beginNewChat(),
+    startSessionInProject: (projectId, session) => projects.startSessionInProject(projectId, session as Parameters<typeof projects.startSessionInProject>[1]),
+    startChat: (session) => projects.startChat(session as Parameters<typeof projects.startChat>[0]),
+  },
+  sidebar: {
+    ensureExpanded: (projectId) => projectSidebar.ensureExpanded(projectId),
+    beginCreateProject: () => projectSidebar.beginCreateProject(),
+  },
+  workspace,
+  messages,
+  composer: {
+    resetContextStatus: () => composer.controls.resetContextStatus(),
+    setRoute: (routeId) => composer.controls.setRoute(routeId),
+    enterNewChat: (projectName) => composer.enterNewChat(projectName),
+    exitNewChat: () => composer.exitNewChat(),
+    refreshBranches: () => composer.refreshBranches(),
+    focus: () => composer.focus(),
+  },
+  inspector: { reset: () => inspectorPanel.reset(), setChat: (id) => inspectorPanel.setChat(id) },
+  context: {
+    reset: () => conversationContext.reset(),
+    restore: (tokens) => conversationContext.restore(tokens),
+    refresh: () => conversationContext.refresh(),
+  },
+  transcript: {
+    restore: (entries, page) => conversationTranscript.restore(entries, page),
+    eventSequenceForRun: (runId) => conversationTranscript.eventSequenceForRun(runId),
+  },
+  runs: {
+    active: () => agentRuns.active,
+    detach: () => agentRuns.detach(),
+    attach: (state, afterSequence) => { void agentRuns.attach(state as Parameters<typeof agentRuns.attach>[0], afterSequence); },
+  },
+  recovery: { clear: () => runRecovery.clear(), show: (state) => runRecovery.show(state as Parameters<typeof runRecovery.show>[0]) },
+  assistantPerformance: { reset: () => assistantPerformance.reset() },
+  mediaJobs: {
+    reset: () => mediaJobs.reset(),
+    watch: (jobId) => mediaJobs.watch(jobId),
+    failureMessage: (jobId, fallback) => mediaJobs.failureMessage(jobId, fallback),
+  },
+  mediaFeed: { reset: () => mediaJobFeed.reset(), render: (job, failure, artifact) => mediaJobFeed.render(job, failure, artifact) },
+  activity: {
+    appendApproval: (approval) => activityTimeline.appendApproval(approval),
+    finishWork: (completedAt, placement) => activityTimeline.finishWork(completedAt, placement),
+  },
+  artifacts: { load: () => artifactController.load() },
+  showConversation: () => appNavigation.showConversation(),
+  showStatus: (message, tone) => showStatus(message, tone),
+  errorMessage,
+  renderTree,
+  showNewChatLanding,
+  showLanding,
+  prepareNewChat: () => connectionWorkspace.setConfiguration(managementConfiguration),
+  refreshControls: refreshComposerState,
+  resetWarmup: () => agentRuns.resetWarmup(),
+  remember: (location) => appNavigation.remember(location),
+  loadingMessage,
+  appendSystem: (message) => { appendMessage("system", message); },
+});
+const appNavigation = new AppNavigationController({
+  administrator: () => administrator,
   blocked: () => agentRuns.active,
-  replay: replayLocation,
+  pairingActive: () => !pairingPage.hidden,
+  focusPairing: () => pairingCode.focus(),
+  closePopovers,
+  closeInspector: () => { inAppBrowser.close(); inspectorPanel.close(); },
+  closeEditors: () => {
+    playbookWorkspace.closeEditor(false);
+    connectionWorkspace.closeEditor(false);
+  },
+  pages: workspacePages,
+  navigation: {
+    playbooks: element("manage-playbooks"),
+    connections: connectionsButton,
+    plugins: pluginsButton,
+    models: modelsButton,
+    usage: usageButton,
+    administration: administrationButton,
+  },
+  management: {
+    playbooks: {
+      load: async () => { playbookWorkspace.showLoading(); await loadManagementConfiguration(true); },
+      openRoute: (path) => playbookWorkspace.openRoute(path),
+    },
+    connections: {
+      load: () => connectionWorkspace.sync(false),
+      openRoute: (path) => connectionWorkspace.openRoute(path),
+    },
+    plugins: {
+      load: async () => { pluginsPageController.showLoading(); await pluginsPageController.load(false); },
+    },
+    models: {
+      load: async () => { modelsPageController.showLoading(); await modelsPageController.load(false); },
+    },
+    usage: { load: () => usagePageController.load() },
+    administration: {
+      load: async () => { administrationPageController.showLoading(); await administrationPageController.load(); },
+    },
+  },
+  replayConversation: async (location) => {
+    const [kind, id] = location.path ?? [];
+    const projectId = typeof location.context?.projectId === "string" ? location.context.projectId : undefined;
+    if (kind === "new" && projectId) openNewChatForProject(projectId);
+    else if (kind === "new") openNewChat();
+    else if (kind === "session" && id) await projects.selectSession(id, true, projectId);
+    else if (kind === "project" && id) await projects.selectProject(id);
+  },
+  renderPairing: (message) => {
+    pairingDescription.textContent = message || "Enter a one-time code from your Fitz host.";
+    pairingError.hidden = true;
+    pairingError.textContent = "";
+  },
 });
 const appMenus = new ApplicationMenuController({
   popover: element("app-menu-popover"),
@@ -705,29 +792,30 @@ const appMenus = new ApplicationMenuController({
 });
 void initialize();
 
-window.fitz.onNavigationCommand((command) => void navigationHistory.navigate(command === "back" ? -1 : 1));
+window.fitz.onNavigationCommand((command) => void appNavigation.navigate(command === "back" ? -1 : 1));
 document.addEventListener("auxclick", (event) => {
   if (event.button !== 3 && event.button !== 4) return;
   event.preventDefault();
-  void navigationHistory.navigate(event.button === 3 ? -1 : 1);
+  if (inAppBrowser.visible) void window.fitz.browserAction(event.button === 3 ? "back" : "forward");
+  else void appNavigation.navigate(event.button === 3 ? -1 : 1);
 });
 document.addEventListener("keydown", (event) => {
   if (event.ctrlKey && event.key.toLowerCase() === "n") { event.preventDefault(); openNewChat(); }
   if (event.ctrlKey && event.key.toLowerCase() === "b") { event.preventDefault(); toggleSidebar(); }
   if (event.ctrlKey && event.altKey && event.key.toLowerCase() === "r") { event.preventDefault(); if (shell.classList.contains("sidebar-collapsed")) toggleSidebar(); projectSidebar.beginRenameCurrentSession(); }
   if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "a") { event.preventDefault(); void projects.archiveCurrentTask(); }
-  if (event.key === "Escape") { if (playbookWorkspace.editorOpen) playbookWorkspace.closeEditor(); else if (connectionWorkspace.editorOpen) connectionWorkspace.closeEditor(); else closePopovers(); }
+  if (event.key === "Escape") { if (inAppBrowser.visible) inAppBrowser.close(); else if (playbookWorkspace.editorOpen) playbookWorkspace.closeEditor(); else if (connectionWorkspace.editorOpen) connectionWorkspace.closeEditor(); else closePopovers(); }
 });
 
 element("new-project").addEventListener("click", () => projectSidebar.beginCreateProject());
 element("new-session").addEventListener("click", openNewChat);
 element("new-standalone-chat").addEventListener("click", openNewChat);
-element("manage-playbooks").addEventListener("click", () => void openPlaybookPage());
-connectionsButton.addEventListener("click", () => void openConnectionsPage());
-pluginsButton.addEventListener("click", () => void openPluginsPage());
-modelsButton.addEventListener("click", () => void openModelsPage());
-usageButton.addEventListener("click", () => void openUsagePage());
-administrationButton.addEventListener("click", () => void openAdministrationPage());
+element("manage-playbooks").addEventListener("click", () => void appNavigation.openManagement("playbooks"));
+connectionsButton.addEventListener("click", () => void appNavigation.openManagement("connections"));
+pluginsButton.addEventListener("click", () => void appNavigation.openManagement("plugins"));
+modelsButton.addEventListener("click", () => void appNavigation.openManagement("models"));
+usageButton.addEventListener("click", () => void appNavigation.openManagement("usage"));
+administrationButton.addEventListener("click", () => void appNavigation.openManagement("administration"));
 element("sidebar-menu").addEventListener("click", toggleSidebar);
 for (const windowButton of document.querySelectorAll<HTMLButtonElement>("[data-window-action]")) {
   windowButton.addEventListener("click", () => {
@@ -739,7 +827,9 @@ connectionStatus.addEventListener("click", () => void initialize());
 inspectorArtifacts.addEventListener("click", () => inspectorPanel.toggle());
 window.addEventListener("fitz:open-resource", (event) => {
   const reference = (event as CustomEvent<{ reference?: string }>).detail?.reference;
-  if (reference) void inspectorPanel.inspect(reference);
+  if (!reference) return;
+  if (/^https?:\/\//i.test(reference)) { inspectorPanel.open(); void inAppBrowser.open(reference); }
+  else void inspectorPanel.inspect(reference);
 });
 window.addEventListener("fitz:resource-appeared", (event) => {
   const reference = (event as CustomEvent<{ reference?: string }>).detail?.reference;
@@ -757,19 +847,19 @@ async function initialize(): Promise<void> {
     const [health, connection, identity] = await Promise.all([api("/health"), window.fitz.connectionInfo(), api("/api/v1/me")]);
     assertHostContract(health);
     configuredHostOrigin = connection.origin; currentUserId = identity.data?.user?.id; administrator = identity.data?.authMode === "disabled" || identity.data?.user?.role === "administrator";
-    applyNavigation();
+    appNavigation.applyAvailability();
     engineState.textContent = health.engine?.state ?? "UNLOADED";
     routeState.textContent = composer.controls.routeLabel;
     setConnection(configuredHostOrigin.replace(/^https?:\/\//, ""), "active");
     setStatus(health.engine?.state ?? "Ready", "idle");
-    showConversationWorkspace();
+    appNavigation.showConversation();
     await projects.load();
     void loadManagementConfiguration(false);
   } catch (error) {
     if (error instanceof HostRequestError && error.status === 401) {
       const bootstrapped = await window.fitz.bootstrapLocalDevice().catch(() => false);
       if (bootstrapped) { await initialize(); return; }
-      currentUserId = undefined; administrator = false; administrationButton.hidden = true; configuredHostOrigin = (await window.fitz.connectionInfo()).origin; setConnection("Pair device", "error"); setStatus("Pairing required", "error"); showPairingPage(`Enter a one-time code to connect to ${configuredHostOrigin}.`);
+      currentUserId = undefined; administrator = false; administrationButton.hidden = true; configuredHostOrigin = (await window.fitz.connectionInfo()).origin; setConnection("Pair device", "error"); setStatus("Pairing required", "error"); appNavigation.showPairing(`Enter a one-time code to connect to ${configuredHostOrigin}.`);
     }
     else { setConnection("Click to retry", "error"); setStatus("Offline", "error"); showConnectionFailure(errorMessage(error)); }
   } finally {
@@ -784,55 +874,18 @@ function rebuildRouteLabels(preferredRoute?: string): void {
   if (!options.length) return;
   composer.controls.setRoutes(options, preferredRoute);
   routeState.textContent = composer.controls.routeLabel;
-  syncComposerContext();
+  conversationContext.refresh();
 }
 
 function renderTree(): void {
-  projectSidebar.render({ projects: projects.projects, sessionsByProject: projects.sessionsByProject, chats: projects.chats, currentProjectId: projects.currentProjectId, currentSessionId: projects.currentSessionId, newChat: newChatMode });
+  projectSidebar.render({ projects: projects.projects, sessionsByProject: projects.sessionsByProject, chats: projects.chats, currentProjectId: projects.currentProjectId, currentSessionId: projects.currentSessionId, newChat: conversationSessions.newChat });
   updateTitles();
 }
 
 /** Starts a standalone chat with no project attached (top "new chat" icon, Ctrl+N, File > New chat). */
-function openNewChat(): void { beginNewChat(false); }
+function openNewChat(): void { conversationSessions.beginNewChat(false); }
 
-/** Starts a new chat bound to the current project (per-project "+" quick action, project flows). */
-function openProjectNewChat(): void { beginNewChat(true); }
-
-function beginNewChat(projectBound: boolean): void {
-  if (agentRuns.active) { showStatus("Stop the current response before starting a new chat", "error"); return; }
-  showConversationWorkspace();
-  inspectorPanel.reset();
-  inspectorPanel.setChat(undefined);
-  inspectorChatId = undefined;
-  if (projectBound) {
-    if (projects.projects.length === 0) { projectSidebar.beginCreateProject(); return; }
-    projects.setCurrentProject(projects.currentProjectId ?? projects.projects[0]!.id);
-    if (!projects.currentProjectId) return;
-    projectSidebar.ensureExpanded(projects.currentProjectId);
-  } else projects.setCurrentProject(undefined);
-  projects.beginNewChat();
-  newChatMode = true;
-  newChatProjectDetached = false;
-  sessionTokenEstimate = 0;
-  composer.controls.resetContextStatus();
-  workspace.classList.add("new-chat-open");
-  connectionWorkspace.setConfiguration(managementConfiguration);
-  composer.enterNewChat(projectBound ? projects.activeProject()?.name ?? "Project" : undefined);
-  agentRuns.resetWarmup();
-  renderTree();
-  showNewChatLanding();
-  void composer.refreshBranches();
-  updateContextMeter();
-  refreshComposerState();
-  composer.focus();
-  navigationHistory.remember({
-    view: "conversation",
-    path: ["new"],
-    ...(projectBound && projects.currentProjectId ? { context: { projectId: projects.currentProjectId } } : {}),
-  });
-}
-
-function openNewChatForProject(id: string): void { projects.setCurrentProject(id); projectSidebar.ensureExpanded(id); openProjectNewChat(); }
+function openNewChatForProject(id: string): void { conversationSessions.openNewChatForProject(id); }
 
 function showNewChatLanding(): void {
   conversationLanding.showNewChat();
@@ -845,63 +898,7 @@ async function copyValue(value: string, message: string): Promise<void> {
   catch (error) { showStatus(errorMessage(error), "error"); }
 }
 
-async function openPlaybookPage(): Promise<void> {
-  if (!canOpenManagementView("playbooks", administrator) || !pairingPage.hidden) { if (!pairingPage.hidden) pairingCode.focus(); return; }
-  closePopovers();
-  inspectorPanel.close();
-  playbookWorkspace.closeEditor(false);
-  connectionWorkspace.closeEditor(false);
-  workspacePages.show("playbooks");
-  playbookWorkspace.showLoading();
-  await loadManagementConfiguration(true);
-  navigationHistory.remember({ view: "playbooks" });
-}
-
-async function openConnectionsPage(): Promise<void> { if (!pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(false); connectionWorkspace.closeEditor(false); workspacePages.show("connections"); await connectionWorkspace.sync(false); navigationHistory.remember({ view: "connections" }); }
-async function openPluginsPage(): Promise<void> { if (!canOpenManagementView("plugins", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(false); connectionWorkspace.closeEditor(false); workspacePages.show("plugins"); pluginsPageController.showLoading(); await pluginsPageController.load(false); navigationHistory.remember({ view: "plugins" }); }
-async function openModelsPage(): Promise<void> { if (!canOpenManagementView("models", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(false); connectionWorkspace.closeEditor(false); workspacePages.show("models"); modelsPageController.showLoading(); await modelsPageController.load(false); navigationHistory.remember({ view: "models" }); }
-async function openUsagePage(): Promise<void> { if (!canOpenManagementView("usage", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(false); connectionWorkspace.closeEditor(false); workspacePages.show("usage"); await usagePageController.load(); navigationHistory.remember({ view: "usage" }); }
-async function openAdministrationPage(): Promise<void> { if (!canOpenManagementView("administration", administrator) || !pairingPage.hidden) return; closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(false); connectionWorkspace.closeEditor(false); workspacePages.show("administration"); administrationPageController.showLoading(); await administrationPageController.load(); navigationHistory.remember({ view: "administration" }); }
-function showPairingPage(message: string): void { closePopovers(); inspectorPanel.close(); playbookWorkspace.closeEditor(false); connectionWorkspace.closeEditor(false); workspacePages.show("pairing"); pairingDescription.textContent = message || "Enter a one-time code from your Fitz host."; pairingError.hidden = true; pairingError.textContent = ""; pairingCode.focus(); }
-function showConversationWorkspace(): void { playbookWorkspace.closeEditor(false); connectionWorkspace.closeEditor(false); workspacePages.show("conversation"); }
 function setConversationInert(inert: boolean): void { for (const area of [workspaceHeader, messages, composer.root]) { area.toggleAttribute("inert", inert); area.setAttribute("aria-hidden", String(inert)); } }
-
-async function replayLocation(location: AppLocation): Promise<void> {
-  if (location.view === "playbooks") {
-    await openPlaybookPage();
-    if (location.path) playbookWorkspace.openRoute(location.path);
-  }
-  else if (location.view === "connections") {
-    await openConnectionsPage();
-    if (location.path) connectionWorkspace.openRoute(location.path);
-  }
-  else if (location.view === "plugins") await openPluginsPage();
-  else if (location.view === "models") await openModelsPage();
-  else if (location.view === "usage") await openUsagePage();
-  else if (location.view === "administration") await openAdministrationPage();
-  else if (location.view === "conversation") {
-    const [kind, id] = location.path ?? [];
-    const projectId = typeof location.context?.projectId === "string" ? location.context.projectId : undefined;
-    if (kind === "new" && projectId) openNewChatForProject(projectId);
-    else if (kind === "new") openNewChat();
-    else if (kind === "session" && id) await projects.selectSession(id, true, projectId);
-    else if (kind === "project" && id) await projects.selectProject(id);
-  }
-}
-
-function rememberPageRoute(view: AppLocation["view"], path: string[] | undefined): void {
-  navigationHistory.remember({ view, ...(path?.length ? { path } : {}) });
-}
-
-function applyNavigation(): void {
-  const visibility = managementNavigationVisibility(administrator);
-  element("manage-playbooks").hidden = !visibility.playbooks;
-  connectionsButton.hidden = !visibility.connections;
-  pluginsButton.hidden = !visibility.plugins;
-  modelsButton.hidden = !visibility.models;
-  usageButton.hidden = !visibility.usage;
-  administrationButton.hidden = !visibility.administration;
-}
 
 async function pairDevice(): Promise<void> {
   setFormBusy(pairingForm, true); pairingError.hidden = true; pairingError.textContent = "";
@@ -917,8 +914,7 @@ async function pairDevice(): Promise<void> {
 async function loadManagementConfiguration(renderPage: boolean): Promise<Json | undefined> {
   try {
     managementConfiguration = await api(administrator ? "/api/v1/management/status" : "/api/v1/configuration");
-    syncContextLimit();
-    updateContextMeter();
+    conversationContext.refresh();
     connectionWorkspace.setConfiguration(managementConfiguration);
     rebuildRouteLabels();
     playbookWorkspace.setConfiguration(managementConfiguration);
@@ -934,8 +930,7 @@ function applyManagementRoute(routeId: string, route: Json | undefined): void {
   const routes = (managementConfiguration.routes ?? []).filter((item: Json) => item.id !== routeId);
   if (route) routes.push(route);
   managementConfiguration = { ...managementConfiguration, routes };
-  syncContextLimit();
-  updateContextMeter();
+  conversationContext.refresh();
   rebuildRouteLabels();
   playbookWorkspace.setConfiguration(managementConfiguration);
 }
@@ -948,12 +943,6 @@ function applyCloudRoute(role: "smart" | "fast", recipeId: string | undefined): 
   };
   rebuildRouteLabels();
   connectionWorkspace.setConfiguration(managementConfiguration);
-}
-
-function syncContextLimit(): void {
-  const recipe = textRouteRecipe(managementConfiguration, composer.controls.routeId as FixedRouteId);
-  const contextTokens = Number(recipe?.contextTokens);
-  if (Number.isFinite(contextTokens) && contextTokens > 0) contextTokenLimit = contextTokens;
 }
 
 async function updateSessionBinding(): Promise<void> {
@@ -969,12 +958,7 @@ function handleRouteChange(): void {
   routeState.textContent = composer.controls.routeLabel;
   agentRuns.resetWarmup();
   if (projects.currentSessionId) void updateSessionBinding();
-  syncComposerContext();
-}
-
-function syncComposerContext(): void {
-  syncContextLimit();
-  updateContextMeter();
+  conversationContext.refresh();
 }
 
 function closePopovers(): void { appMenus.close(); }
@@ -990,51 +974,6 @@ async function sendPrompt(submittedContent?: string | ComposerSubmission, existi
 // tool calls and reasoning, so the user gets immediate feedback.
 async function steerPrompt(content: string): Promise<void> {
   await promptSubmission.steer(content);
-}
-
-async function ensurePromptSession(title: string, routeId?: string): Promise<string | undefined> {
-  if (projects.currentSessionId) return projects.currentSessionId;
-  if (!newChatMode) return undefined;
-  const payload = { title, ...(routeId ? { routeId: routeId as FixedRouteId } : {}) };
-  const response = projects.currentProjectId
-    ? await api(`/api/v1/projects/${projects.currentProjectId}/sessions`, "POST", payload)
-    : await api("/api/v1/chats", "POST", payload);
-  newChatMode = false;
-  workspace.classList.remove("new-chat-open");
-  composer.exitNewChat();
-  if (projects.currentProjectId) projects.startSessionInProject(projects.currentProjectId, response.data);
-  else projects.startChat(response.data);
-  // Scope artifacts before the first run can stream files into the conversation.
-  inspectorPanel.setChat(response.data.id);
-  inspectorChatId = response.data.id;
-  return response.data.id as string;
-}
-
-async function loadMediaJobs(sessionId: string, sessionArtifacts: Json[], isCurrent: () => boolean = () => true): Promise<void> {
-  const response = await api(`/api/v1/media/jobs?sessionId=${encodeURIComponent(sessionId)}&limit=100&includeLineage=true`);
-  if (!isCurrent()) return;
-  const jobs = Array.isArray(response.data) ? [...response.data].reverse() as MediaJobSummary[] : [];
-  let hasActiveJob = false;
-  for (const job of jobs) {
-    if (!isCurrent()) return;
-    const artifact = job.artifactId ? sessionArtifacts.find((item) => item.id === job.artifactId) : undefined;
-    if (isActiveMediaJobStatus(job.status)) {
-      hasActiveJob = true;
-      mediaJobFeed.render(job, undefined, artifact);
-      mediaJobs.watch(job.id);
-      continue;
-    }
-    const failure = job.status === "completed"
-      ? undefined
-      : await mediaJobs.failureMessage(job.id, job.errorCode ?? `Media generation ${job.status}`);
-    if (!isCurrent()) return;
-    mediaJobFeed.render(job, failure, artifact);
-  }
-  if (!isCurrent()) return;
-  // Transcript replay owns the single reasoning summary. Terminal media jobs
-  // render as detached peer results and must not manufacture one summary each.
-  if (!hasActiveJob) activityTimeline.finishWork(undefined, "next-message");
-  messages.scrollTop = messages.scrollHeight;
 }
 
 function scheduleQueueRefresh(): void {
@@ -1066,10 +1005,10 @@ function appendChangeSummary(files: Array<{ path: string; action: "edited" | "cr
 }
 
 function refreshComposerState(): void {
-  const ready = Boolean((projects.currentSessionId || newChatMode) && composer.controls.routeId);
+  const ready = Boolean((projects.currentSessionId || conversationSessions.newChat) && composer.controls.routeId);
   artifactController.setEnabled(Boolean(projects.currentSessionId));
   // The attach button also unlocks in a new chat so files can be staged for the first message.
-  composer.setState({ ready, running: agentRuns.active, generating: mediaJobs.active, hasSession: Boolean(projects.currentSessionId || newChatMode) });
+  composer.setState({ ready, running: agentRuns.active, generating: mediaJobs.active, hasSession: Boolean(projects.currentSessionId || conversationSessions.newChat) });
 }
 
 function updateTitles(): void {
@@ -1078,21 +1017,7 @@ function updateTitles(): void {
   taskTitle.textContent = "";
 }
 
-function toggleSidebar(): void { adaptiveWorkspace?.toggleSidebar(); closePopovers(); }
-function updateContextMeter(): void { composer.controls.updateContext(sessionTokenEstimate + estimateTokens(composer.value), contextTokenLimit); }
-
-async function compactCurrentSession(): Promise<void> {
-  if (!projects.currentSessionId || agentRuns.active) return;
-  composer.controls.setContextStatus("Compacting…", true);
-  try {
-    const response = await api(`/api/v1/sessions/${projects.currentSessionId}/compact`, "POST", { model: composer.controls.routeId || "default" });
-    sessionTokenEstimate = Number(response.data?.estimatedContextTokens ?? sessionTokenEstimate);
-    updateContextMeter();
-    activityTimeline.appendContext("Context compacted");
-    composer.controls.setContextStatus(`Reduced ${formatTokenCount(Number(response.data?.estimatedInputTokens ?? 0))} to ${formatTokenCount(sessionTokenEstimate)} tokens`);
-  } catch (error) { composer.controls.setContextStatus(errorMessage(error)); }
-  finally { refreshComposerState(); }
-}
+function toggleSidebar(): void { adaptiveWorkspace?.toggleSidebar(); inAppBrowser.syncBounds(); closePopovers(); }
 
 function setStatus(text: string, state: string): void { composer.setStatus(text, state); }
 function setConnection(text: string, state: string): void { connectionDetail.textContent = text; connectionStatus.dataset.state = state; }
@@ -1110,5 +1035,3 @@ async function api(path: string, method = "GET", body?: unknown): Promise<Json> 
 }
 
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
-
-function formatTokenCount(value: number): string { return value >= 1000 ? `${Math.round(value / 1000)}k` : String(Math.round(value)); }

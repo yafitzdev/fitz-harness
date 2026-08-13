@@ -25,6 +25,10 @@ export interface InspectorPanelOptions {
   renderToggle?: HTMLButtonElement;
   /** Reflows the conversation whenever the panel opens, closes, or is resized. */
   onLayoutChange: () => void;
+  /** Lets native surfaces track whether the Inspector itself is visible. */
+  onOpenChange?: (open: boolean) => void;
+  /** Fires when a regular Inspector tab or the artifact repository takes focus. */
+  onContentViewChange?: () => void;
 }
 
 /** One tab in the Inspector: a closable file, upload, URL, or pasted preview. */
@@ -181,6 +185,7 @@ export class InspectorPanel {
     // The app shell keeps the sidebar column when the Inspector is docked.
     this.#options.mount.parentElement?.classList.add("context-open");
     this.#options.onLayoutChange();
+    this.#options.onOpenChange?.(true);
   }
 
   close(): void {
@@ -194,6 +199,7 @@ export class InspectorPanel {
     this.#options.mount.parentElement?.classList.remove("context-open");
     // Tabs survive closing the panel, so reopening returns to the same view.
     this.#options.onLayoutChange();
+    this.#options.onOpenChange?.(false);
   }
 
   /** The header's sidebar button: toggles the panel open and closed. Tabs and
@@ -378,6 +384,7 @@ export class InspectorPanel {
   }
 
   #activateTab(id: string): void {
+    this.#options.onContentViewChange?.();
     const tab = this.#tabs.find((candidate) => candidate.id === id);
     if (!tab || this.#activeTabId === id) return;
     this.#tabs.find((candidate) => candidate.id === this.#activeTabId)?.inspector?.setActive(false);
@@ -395,6 +402,7 @@ export class InspectorPanel {
 
   /** Switches to the repository view: no tab selected, the repo list shown. */
   #showRepository(): void {
+    this.#options.onContentViewChange?.();
     this.#tabs.find((candidate) => candidate.id === this.#activeTabId)?.inspector?.setActive(false);
     this.#activeTabId = undefined;
     for (const candidate of this.#tabs) {

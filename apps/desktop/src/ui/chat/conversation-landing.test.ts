@@ -12,13 +12,11 @@ function setup() {
 beforeEach(() => document.body.replaceChildren());
 
 describe("ConversationLanding", () => {
-  it("renders only the JEON lab Ripple mark for a new chat", () => {
+  it("renders an empty new-chat sentinel without a logo or animation", () => {
     const { landing, messages, calls } = setup();
     landing.showNewChat();
-    const mark = messages.querySelector<HTMLElement>('.new-chat-ripple[aria-label="JEON lab"]');
-    expect(mark).toBeTruthy();
-    expect(mark!.querySelectorAll("path")).toHaveLength(8);
-    expect(messages.querySelector("h1, .starter-card")).toBeNull();
+    expect(messages.querySelector(".new-chat-landing")).toBeTruthy();
+    expect(messages.querySelector("svg, .new-chat-ripple, h1, .starter-card")).toBeNull();
     expect(messages.textContent.trim()).toBe("");
     expect(calls.clearActivity).toHaveBeenCalledOnce();
   });
