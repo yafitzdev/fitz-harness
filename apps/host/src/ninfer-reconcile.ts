@@ -2,7 +2,7 @@ import type { SqliteStore } from "@fitz/storage";
 import { createNInferPlaybook } from "./ninfer-playbook.js";
 import type { NInferRuntimeLayout } from "./ninfer-runtime.js";
 
-/** Well-known media route ids created by `ensureMediaRoutes` (create-app.ts).
+/** Well-known media route ids created by `ensureMediaRoutes` (model-management-routes.ts).
  *  The ninfer boot reconcile deletes every route that is not a consumer route or
  *  a ninfer template; without this exemption the image/video/audio routes would
  *  be wiped at every boot and assignments lost (§5.2). */
