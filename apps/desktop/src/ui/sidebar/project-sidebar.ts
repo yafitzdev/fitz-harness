@@ -107,20 +107,22 @@ export class ProjectSidebarController {
     this.#renderPinned();
     const chatsTree = this.#elements.chatsTree;
     chatsTree.replaceChildren();
-    if (state.chats.length === 0) {
-      chatsTree.append(this.#empty("No chats yet"));
+    const unpinnedChats = state.chats.filter((chat) => !this.#pinnedSessions.has(chat.id));
+    if (unpinnedChats.length === 0) {
+      chatsTree.append(this.#empty(state.chats.length ? "All chats pinned" : "No chats yet"));
     } else {
-      for (const chat of state.chats) chatsTree.append(this.#chatItem(chat));
+      for (const chat of unpinnedChats) chatsTree.append(this.#chatItem(chat));
     }
 
     const tree = this.#elements.tree;
     tree.replaceChildren();
-    if (state.projects.length === 0) {
-      tree.append(this.#empty("No projects yet"));
+    const unpinnedProjects = state.projects.filter((project) => !this.#pinnedProjects.has(project.id));
+    if (unpinnedProjects.length === 0) {
+      tree.append(this.#empty(state.projects.length ? "All projects pinned" : "No projects yet"));
       return;
     }
 
-    for (const project of state.projects) {
+    for (const project of unpinnedProjects) {
       if (this.#confirmingRemoval?.projectId === project.id) tree.append(this.#confirmRemoveRow(project));
       else tree.append(this.#projectGroup(project));
     }
@@ -181,7 +183,7 @@ export class ProjectSidebarController {
       const project = this.#project(projectId);
       if (!project) continue;
       for (const session of this.#state.sessionsByProject.get(project.id) ?? []) sessionsCoveredByProjects.add(session.id);
-      pinnedTree.append(this.#pinnedProjectGroup(project));
+      pinnedTree.append(this.#confirmingRemoval?.projectId === project.id ? this.#confirmRemoveRow(project) : this.#pinnedProjectGroup(project));
     }
     for (const sessionId of this.#pinnedSessions) {
       if (sessionsCoveredByProjects.has(sessionId)) continue;
@@ -256,8 +258,9 @@ export class ProjectSidebarController {
     childrenInner.className = "project-children-inner";
     children.append(childrenInner);
     group.append(children);
-    const sessions = this.#state.sessionsByProject.get(project.id) ?? [];
-    if (sessions.length === 0) childrenInner.append(this.#empty("No chats"));
+    const allSessions = this.#state.sessionsByProject.get(project.id) ?? [];
+    const sessions = allSessions.filter((session) => !this.#pinnedSessions.has(session.id));
+    if (sessions.length === 0) childrenInner.append(this.#empty(allSessions.length ? "All chats pinned" : "No chats"));
     for (const session of sessions) childrenInner.append(this.#sessionItem(session, project));
     return group;
   }
@@ -405,7 +408,7 @@ export class ProjectSidebarController {
     this.#confirmingRemoval = { projectId, name: project.name };
     this.#options.closePopovers();
     this.render(this.#state);
-    this.#elements.tree.querySelector<HTMLButtonElement>(".tree-confirm-cancel")?.focus();
+    (this.#elements.pinnedTree.querySelector<HTMLButtonElement>(".tree-confirm-cancel") ?? this.#elements.tree.querySelector<HTMLButtonElement>(".tree-confirm-cancel"))?.focus();
   }
 
   #cancelTransient(): void {

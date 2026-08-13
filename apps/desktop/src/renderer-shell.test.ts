@@ -728,7 +728,8 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("chatsMount: element(\"chats\")");
     expect(projectSidebar).toContain("chatsMount: HTMLElement");
     expect(projectSidebar).toContain("chats: readonly ProjectSidebarSession[]");
-    expect(projectSidebar).toContain('chatsTree.append(this.#empty("No chats yet"))');
+    expect(projectSidebar).toContain("const unpinnedChats = state.chats.filter((chat) => !this.#pinnedSessions.has(chat.id))");
+    expect(projectSidebar).toContain('state.chats.length ? "All chats pinned" : "No chats yet"');
     expect(projectSidebar).toContain('#chatItem(chat: ProjectSidebarSession): HTMLElement');
     expect(projectSidebar).toContain('"chat-row"');
     expect(renderer).toContain("chats: projects.chats");

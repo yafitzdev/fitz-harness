@@ -129,13 +129,16 @@ describe("ProjectSidebarController", () => {
     expect(pinnedTree.textContent).toContain("Second chat");
     expect(pinnedTree.querySelectorAll(".pinned-project-group .task-row")).toHaveLength(2);
     expect(pinnedTree.querySelector(".tree-pin-action")?.getAttribute("aria-pressed")).toBe("true");
+    expect(tree.textContent).not.toContain("Alpha");
+    expect(tree.textContent).toContain("Beta");
 
     click(pinnedTree.querySelector(".tree-menu-toggle")!);
     click(menuButton(menuElement, "Unpin project"));
     expect(pinnedSection.hidden).toBe(true);
+    expect(tree.textContent).toContain("Alpha");
   });
 
-  it("shows pinned project chats in the shared Pinned section without reordering their project", () => {
+  it("moves pinned project chats out of their project and into the Pinned section", () => {
     const { controller, tree, pinnedTree, pinnedSection, menuElement } = setup();
     controller.ensureExpanded("alpha");
     controller.render(state());
@@ -145,15 +148,12 @@ describe("ProjectSidebarController", () => {
     click(pin);
 
     const rows = tree.querySelectorAll<HTMLElement>(".task-row");
-    expect(rows).toHaveLength(3);
+    expect(rows).toHaveLength(2);
     expect(rows[0]!.textContent).toContain("First chat");
-    expect(rows[1]!.textContent).toContain("Second chat");
-    const pinnedAction = rows[1]!.closest(".tree-item")!.querySelector(".tree-pin-action");
-    expect(pinnedAction).not.toBeNull();
-    expect(pinnedAction!.getAttribute("aria-pressed")).toBe("true");
-    expect(rows[0]!.closest(".tree-item")!.querySelector(".tree-pin-action")?.getAttribute("aria-pressed")).toBe("false");
+    expect([...rows].some((row) => row.textContent?.includes("Second chat"))).toBe(false);
     expect(pinnedSection.hidden).toBe(false);
     expect(pinnedTree.textContent).toContain("Second chat");
+    expect(pinnedTree.querySelector(".tree-pin-action")?.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("deduplicates an individually pinned chat beneath its pinned project", () => {
@@ -163,15 +163,18 @@ describe("ProjectSidebarController", () => {
     const alphaGroup = tree.querySelector<HTMLElement>('.project-group[data-project-id="alpha"]')!;
     const secondChat = alphaGroup.querySelectorAll<HTMLElement>(".tree-item")[2]!;
     click(secondChat.querySelector('.tree-pin-action[aria-label="Pin chat"]')!);
-    click(alphaGroup.querySelector('.tree-pin-action[aria-label="Pin project"]')!);
+    click(tree.querySelector('.project-group[data-project-id="alpha"] .tree-pin-action[aria-label="Pin project"]')!);
 
     expect(pinnedTree.querySelectorAll(".pinned-project-group")).toHaveLength(1);
     expect(pinnedTree.querySelectorAll(".pinned-project-group .task-row")).toHaveLength(2);
     expect([...pinnedTree.querySelectorAll(".task-row")].filter((row) => row.textContent?.includes("Second chat"))).toHaveLength(1);
+    expect(tree.querySelector('.project-group[data-project-id="alpha"]')).toBeNull();
 
     click(pinnedTree.querySelector('.tree-pin-action[aria-label="Unpin project"]')!);
     expect(pinnedTree.querySelectorAll(".pinned-project-group")).toHaveLength(0);
     expect(pinnedTree.textContent).toContain("Second chat");
+    expect(tree.querySelector('.project-group[data-project-id="alpha"]')).not.toBeNull();
+    expect(tree.textContent).not.toContain("Second chat");
   });
 
   it("opens a centered create-project dialog with name and folder controls", () => {
@@ -446,12 +449,12 @@ describe("ProjectSidebarController", () => {
     click(menuButton(menuElement, "Pin chat"));
 
     const rows = chatsTree.querySelectorAll<HTMLElement>(".chat-row");
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(1);
     expect(rows[0]!.textContent).toContain("Standalone chat");
-    expect(rows[1]!.textContent).toContain("Another chat");
-    expect(rows[1]!.closest(".tree-item")!.querySelector(".tree-pin-action")?.getAttribute("aria-pressed")).toBe("true");
+    expect(chatsTree.textContent).not.toContain("Another chat");
     expect(pinnedSection.hidden).toBe(false);
     expect(pinnedTree.textContent).toContain("Another chat");
+    expect(pinnedTree.querySelector(".tree-pin-action")?.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("renames a standalone chat inline, committing with an undefined project", async () => {
