@@ -54,8 +54,12 @@
   summarization, deterministic initial compaction, recent-message preservation, and durable
   compaction transcript records.
 - Electron 43 shell with sandboxing, context isolation, Node-disabled renderer, restrictive CSP,
-  navigation controls, path-limited IPC fetch proxy, main-process device credentials, and a bundled
+  an application navigation controller for access-gated page transitions and generalized nested
+  back/forward history, path-limited IPC fetch proxy, main-process device credentials, and a bundled
   CommonJS preload.
+- Desktop conversation state is separated from renderer composition: dedicated controllers own
+  new-chat/session materialization, transcript/run/media restoration, inspector scoping, context
+  estimation, and compaction.
 - Initial desktop UI with project/task sidebar, transcript view, composer, route selector, lifecycle
   feedback, native run polling/replay, and project/session creation.
 - Tailscale state detection and opt-in private HTTPS Serve management, one-time hashed pairing codes,
@@ -69,6 +73,9 @@
   Administration exposes integrity scans, race-free orphan collection, optional global storage quota,
   backup creation, and rollback-preserving restore. Active delivery leases prevent garbage collection
   from deleting an object while HTTP is streaming it.
+- SQLite remains a compatibility façade while configuration, inference telemetry, identity/access,
+  workspace/transcript/artifact metadata, agent runs, media, safety recovery, and settings each own
+  their domain SQL. Host identity/access and safety administration routes are separately registered.
 - Generalized image, video, and audio generation pipeline with capability-aware recipes and routes,
   durable submit/poll/cancel jobs, sequenced replayable events, queue/lifecycle leases, crash recovery,
   cancellation, progress, and per-kind artifact size limits.
@@ -78,7 +85,8 @@
   Provider URLs are downloaded into Fitz-owned artifacts, and orphaned paid jobs are cancelled
   best-effort on restart.
 - Local media engines include a deterministic GPU-free fake adapter and a ComfyUI adapter/playbook for
-  manually provisioned MiniMax H3 video generation (with experimental image generation). Agent media
+  manually provisioned MiniMax H3 video and MiniMax Music 3 audio generation. H3 is video-only at the
+  routing layer while retaining synchronized audio in its MP4; Music 3 exclusively owns local audio. Agent media
   tools enforce route grants, Ask-first approval, and job/credit quotas without waiting inside the
   serialized agent slot.
 - Large media artifacts support MIME-safe Inspector previews and RFC 7233 single-byte-range delivery
