@@ -27,17 +27,17 @@ import type {
   ToolActionRecord,
   TrashEntryRecord,
   MediaCreditRecord,
-  MediaExecutionMetadata,
-  MediaGenerationParams,
   MediaJobEvent,
   MediaJobRecord,
   MediaJobStatus,
-  MediaModality,
   GpuWorkRecord,
   RequestUsageRecord,
   UsageReport,
 } from "@fitz/protocol";
 import { MIGRATIONS } from "./migrations.js";
+import { SqliteMediaStore, type MediaJobEventEnvelope } from "./sqlite-media-store.js";
+
+export type { MediaJobEventEnvelope } from "./sqlite-media-store.js";
 
 interface RecipeRow {
   recipe_json: string;
@@ -60,36 +60,6 @@ interface RouteRow {
   kind: string;
   enabled: number;
   is_default: number;
-}
-
-/** Media job row with the sequence envelope returned by event append/replay.
- *  Sequence numbers live only in the `media_job_events` table, mirroring agent_events. */
-export interface MediaJobEventEnvelope {
-  jobId: string;
-  sequence: number;
-  timestamp: string;
-  event: MediaJobEvent;
-}
-
-interface MediaJobRow {
-  id: string;
-  source_job_id: string | null;
-  session_id: string | null;
-  route_id: string;
-  modality: MediaModality;
-  status: MediaJobStatus;
-  params_json: string;
-  execution_json: string | null;
-  progress: number | null;
-  artifact_id: string | null;
-  provider_job_id: string | null;
-  error_code: string | null;
-  enqueued_at: string;
-  started_at: string | null;
-  completed_at: string | null;
-  cancelled_at: string | null;
-  created_by_user_id: string | null;
-  credit_cost_cents: number | null;
 }
 
 interface EventRow {
@@ -153,11 +123,13 @@ export interface ArtifactStorageEntry { artifactId: string; backend: string; obj
 
 export class SqliteStore {
   readonly #database: DatabaseSync;
+  readonly #media: SqliteMediaStore;
 
   constructor(path: string) {
     this.#database = new DatabaseSync(path);
     this.#database.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
     this.migrate();
+    this.#media = new SqliteMediaStore(this.#database);
   }
 
   static memory(): SqliteStore {
@@ -608,152 +580,43 @@ export class SqliteStore {
   }
 
   createMediaJob(job: MediaJobRecord): void {
-    this.#database
-      .prepare(
-        `INSERT INTO media_jobs (
-          id, source_job_id, session_id, route_id, modality, status, params_json, execution_json, progress,
-          artifact_id, provider_job_id, error_code, enqueued_at, started_at,
-          completed_at, cancelled_at, created_by_user_id, credit_cost_cents
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        job.id,
-        job.sourceJobId ?? null,
-        job.sessionId ?? null,
-        job.routeId,
-        job.modality,
-        job.status,
-        JSON.stringify(job.params),
-        job.execution ? JSON.stringify(job.execution) : null,
-        job.progress ?? null,
-        job.artifactId ?? null,
-        job.providerJobId ?? null,
-        job.errorCode ?? null,
-        job.enqueuedAt,
-        job.startedAt ?? null,
-        job.completedAt ?? null,
-        job.cancelledAt ?? null,
-        job.createdByUserId ?? null,
-        job.creditCostCents ?? null,
-      );
+    this.#media.createJob(job);
   }
 
   getMediaJob(id: string): MediaJobRecord | undefined {
-    const row = this.#database
-      .prepare(
-        `SELECT id, source_job_id, session_id, route_id, modality, status, params_json, execution_json, progress,
-                artifact_id, provider_job_id, error_code, enqueued_at, started_at,
-                completed_at, cancelled_at, created_by_user_id, credit_cost_cents
-         FROM media_jobs WHERE id = ?`,
-      )
-      .get(id) as MediaJobRow | undefined;
-    return row ? mapMediaJob(row) : undefined;
+    return this.#media.getJob(id);
   }
 
-  /** Partial update: only present patch fields are written; undefined is skipped. */
   updateMediaJob(id: string, patch: Partial<Omit<MediaJobRecord, "id" | "enqueuedAt">>): void {
-    const assignments: string[] = [];
-    const values: SQLInputValue[] = [];
-    const set = (column: string, value: SQLInputValue | undefined): void => {
-      if (value !== undefined) { assignments.push(`${column} = ?`); values.push(value); }
-    };
-    set("source_job_id", patch.sourceJobId);
-    set("session_id", patch.sessionId);
-    set("route_id", patch.routeId);
-    set("modality", patch.modality);
-    set("status", patch.status);
-    set("params_json", patch.params === undefined ? undefined : JSON.stringify(patch.params));
-    set("execution_json", patch.execution === undefined ? undefined : JSON.stringify(patch.execution));
-    set("progress", patch.progress);
-    set("artifact_id", patch.artifactId);
-    set("provider_job_id", patch.providerJobId);
-    set("error_code", patch.errorCode);
-    set("started_at", patch.startedAt);
-    set("completed_at", patch.completedAt);
-    set("cancelled_at", patch.cancelledAt);
-    set("created_by_user_id", patch.createdByUserId);
-    set("credit_cost_cents", patch.creditCostCents);
-    if (assignments.length === 0) return;
-    this.#database.prepare(`UPDATE media_jobs SET ${assignments.join(", ")} WHERE id = ?`).run(...values, id);
+    this.#media.updateJob(id, patch);
   }
 
   listMediaJobs(options: { ownerUserId?: string; sessionId?: string; status?: MediaJobStatus; limit?: number } = {}): MediaJobRecord[] {
-    const conditions: string[] = [];
-    const values: SQLInputValue[] = [];
-    if (options.ownerUserId !== undefined) { conditions.push("created_by_user_id = ?"); values.push(options.ownerUserId); }
-    if (options.sessionId !== undefined) { conditions.push("session_id = ?"); values.push(options.sessionId); }
-    if (options.status !== undefined) { conditions.push("status = ?"); values.push(options.status); }
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-    const limit = options.limit ?? 100;
-    const rows = this.#database
-      .prepare(
-        `SELECT id, source_job_id, session_id, route_id, modality, status, params_json, execution_json, progress,
-                artifact_id, provider_job_id, error_code, enqueued_at, started_at,
-                completed_at, cancelled_at, created_by_user_id, credit_cost_cents
-         FROM media_jobs ${where} ORDER BY enqueued_at DESC LIMIT ?`,
-      )
-      .all(...values, limit) as unknown as MediaJobRow[];
-    return rows.map(mapMediaJob);
+    return this.#media.listJobs(options);
   }
 
-  /** Non-terminal (queued/started/progressing) jobs created since `since` — the
-   *  rolling-window count backing `MediaQuota.maxJobsPerWindow` / `maxConcurrentJobs`. */
   countNonTerminalMediaJobs(userId: string, since: string): number {
-    const row = this.#database
-      .prepare(
-        `SELECT COUNT(*) AS count FROM media_jobs
-         WHERE created_by_user_id = ? AND enqueued_at >= ? AND status IN ('queued', 'started', 'progressing')`,
-      )
-      .get(userId, since) as { count: number };
-    return Number(row.count);
+    return this.#media.countNonTerminalJobs(userId, since);
   }
 
-  /** Host-boot recovery: queued|started|progressing → interrupted (host_restarted),
-   *  matching recoverInterruptedRequests / recoverInterruptedAgentRuns. */
   recoverInterruptedMediaJobs(): number {
-    const now = new Date().toISOString();
-    const result = this.#database
-      .prepare(
-        `UPDATE media_jobs
-         SET status = 'interrupted', completed_at = ?, error_code = 'host_restarted'
-         WHERE status IN ('queued', 'started', 'progressing')`,
-      )
-      .run(now);
-    return Number(result.changes);
+    return this.#media.recoverInterruptedJobs();
   }
 
   appendMediaJobEvent(jobId: string, event: MediaJobEvent, timestamp: string): MediaJobEventEnvelope {
-    this.#database.exec("BEGIN IMMEDIATE");
-    try {
-      const row = this.#database.prepare(`SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM media_job_events WHERE job_id = ?`).get(jobId) as { sequence: number };
-      this.#database.prepare(`INSERT INTO media_job_events (job_id, sequence, timestamp, type, event_json) VALUES (?, ?, ?, ?, ?)`).run(jobId, row.sequence, timestamp, event.type, JSON.stringify(event));
-      this.#database.exec("COMMIT");
-      return { jobId, sequence: row.sequence, timestamp, event };
-    } catch (error) { this.#database.exec("ROLLBACK"); throw error; }
+    return this.#media.appendJobEvent(jobId, event, timestamp);
   }
 
   mediaJobEventsAfter(jobId: string, sequence: number, limit = 1000): MediaJobEventEnvelope[] {
-    const rows = this.#database
-      .prepare(
-        `SELECT job_id, sequence, timestamp, event_json FROM media_job_events
-         WHERE job_id = ? AND sequence > ? ORDER BY sequence LIMIT ?`,
-      )
-      .all(jobId, sequence, limit) as unknown as { job_id: string; sequence: number; timestamp: string; event_json: string }[];
-    return rows.map((row) => ({ jobId: row.job_id, sequence: row.sequence, timestamp: row.timestamp, event: JSON.parse(row.event_json) as MediaJobEvent }));
+    return this.#media.eventsAfter(jobId, sequence, limit);
   }
 
   appendMediaCredit(record: MediaCreditRecord): void {
-    this.#database
-      .prepare(`INSERT INTO media_quota_ledger (id, user_id, job_id, modality, cost_cents, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
-      .run(record.id, record.userId, record.jobId, record.modality, record.costCents, record.createdAt);
+    this.#media.appendCredit(record);
   }
 
-  /** Sum of credited costs for the user since `since` — the `creditBudgetCents` basis. */
   sumMediaLedgerForUser(userId: string, since: string): number {
-    const row = this.#database
-      .prepare(`SELECT COALESCE(SUM(cost_cents), 0) AS total FROM media_quota_ledger WHERE user_id = ? AND created_at >= ?`)
-      .get(userId, since) as { total: number };
-    return Number(row.total);
+    return this.#media.sumLedgerForUser(userId, since);
   }
 
   createUser(user: UserRecord): void {
@@ -1086,28 +949,6 @@ function agentStatusForEvent(type: AgentEventEnvelope["type"]): AgentRunRecord["
 }
 
 function mapUser(row: UserRow): UserRecord { return { id: row.id, displayName: row.display_name, role: row.role, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at }; }
-function mapMediaJob(row: MediaJobRow): MediaJobRecord {
-  return {
-    id: row.id,
-    ...(row.source_job_id ? { sourceJobId: row.source_job_id } : {}),
-    routeId: row.route_id,
-    modality: row.modality,
-    status: row.status,
-    params: JSON.parse(row.params_json) as MediaGenerationParams,
-    ...(row.execution_json ? { execution: JSON.parse(row.execution_json) as MediaExecutionMetadata } : {}),
-    enqueuedAt: row.enqueued_at,
-    ...(row.session_id ? { sessionId: row.session_id } : {}),
-    ...(row.progress !== null ? { progress: row.progress } : {}),
-    ...(row.artifact_id ? { artifactId: row.artifact_id } : {}),
-    ...(row.provider_job_id ? { providerJobId: row.provider_job_id } : {}),
-    ...(row.error_code ? { errorCode: row.error_code } : {}),
-    ...(row.started_at ? { startedAt: row.started_at } : {}),
-    ...(row.completed_at ? { completedAt: row.completed_at } : {}),
-    ...(row.cancelled_at ? { cancelledAt: row.cancelled_at } : {}),
-    ...(row.created_by_user_id ? { createdByUserId: row.created_by_user_id } : {}),
-    ...(row.credit_cost_cents !== null ? { creditCostCents: row.credit_cost_cents } : {}),
-  };
-}
 function mapPlaybook(row: PlaybookRow): EngineRegistration { const value = JSON.parse(row.configuration_json) as Omit<EngineRegistration, "id" | "displayName" | "createdAt" | "updatedAt">; return { id: row.id, displayName: row.name, ...value, createdAt: row.created_at, updatedAt: row.updated_at }; }
 function mapDevice(row: DeviceRow): DeviceRecord { return { id: row.id, userId: row.user_id, name: row.name, createdAt: row.created_at, ...(row.last_used_at ? { lastUsedAt: row.last_used_at } : {}), ...(row.revoked_at ? { revokedAt: row.revoked_at } : {}) }; }
 function mapAgentRun(row: AgentRunRow): AgentRunRecord { return { id: row.id, routeId: row.route_id, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at, lastSequence: row.last_sequence, ...(row.owner_user_id ? { ownerUserId: row.owner_user_id } : {}), ...(row.session_id ? { sessionId: row.session_id } : {}), ...(row.error ? { error: row.error } : {}) }; }

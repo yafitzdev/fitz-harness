@@ -762,7 +762,7 @@ Notes:
 Each PR is independently reviewable and mergeable; the sequence reflects the milestones in `docs/media-generation.md` §12. Every PR keeps existing chat tests green (all changes are additive).
 
 ### PR 1 — Protocol & domain types for media
-- **Files/components**: `packages/protocol/src/domain.ts`, new `packages/protocol/src/media.ts` (+ `index.ts` export), `packages/protocol/src/security.ts` (`MediaQuota`), `packages/security/src/security-service.ts` (`validateQuota` + `enforceMediaQuota` + `principalForUser`), `packages/storage/src/migrations.ts` (v9), `packages/storage/src/sqlite-store.ts` (media job + `media_job_events` + ledger CRUD, `recoverInterruptedMediaJobs`).
+- **Files/components**: `packages/protocol/src/domain.ts`, new `packages/protocol/src/media.ts` (+ `index.ts` export), `packages/protocol/src/security.ts` (`MediaQuota`), `packages/security/src/security-service.ts` (`validateQuota` + `enforceMediaQuota` + `principalForUser`), `packages/storage/src/migrations.ts` (v9), `packages/storage/src/sqlite-media-store.ts` (media job + `media_job_events` + ledger CRUD, `recoverInterruptedMediaJobs`), and the stable `packages/storage/src/sqlite-store.ts` facade.
 - **Dependencies**: none.
 - **Description**: `EngineCapabilities.modalities`, `Route.kind` (default `chat`), `MediaGenerationParams/Request/Result`, `MediaJobRecord`, `MediaJobEvent`, `MediaQuota`; migration v9 (routes `kind` column, `media_jobs`, `media_job_events` with `(job_id, sequence)` PK for SSE replay, `media_quota_ledger`); store methods; quota validator fix for the nested `media` object; `principalForUser` (device-less principal factory, §5.9). Pure additive types + schema + store — no behavior changes.
 
