@@ -1,4 +1,14 @@
 .composer-tools, .composer-controls { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.composer-add-wrap { position: relative; display: flex; }
+.composer-add-menu { left: 0; bottom: 36px; width: 250px; padding: 7px; }
+.composer-add-menu > small { display: block; padding: 4px 8px 5px; color: var(--subtle); font-size: 10px; }
+.composer-add-menu > button { width: 100%; min-height: 42px; display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; text-align: left; }
+.composer-add-menu > button:hover { background: var(--tint-5); }
+.composer-add-menu > button > svg { width: 17px; height: 17px; flex: 0 0 auto; color: var(--muted); }
+.composer-add-menu > button > span { min-width: 0; display: grid; }
+.composer-add-menu strong { font-size: 12px; font-weight: 550; }
+.composer-add-menu button small { color: var(--subtle); font-size: 10px; }
+.composer-add-menu hr { height: 1px; margin: 4px 5px; border: 0; background: var(--border-soft); }
 .access-mode-wrap { position: relative; }
 .access-label { min-height: 30px; display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; border-radius: var(--radius-md); background: transparent; color: var(--status-warning); cursor: pointer; font-size: 12px; }
 .access-label:hover, .access-label[aria-expanded="true"] { background: var(--grey-250); }
@@ -22,8 +32,10 @@
 .context-usage-popover button:hover:not(:disabled) { background: var(--tint-7); }
 .context-usage-popover button:disabled { opacity: .45; cursor: default; }
 .context-usage-popover small { color: var(--subtle); font-size: 10px; }
-.model-picker { position: relative; min-width: 0; }
-.model-toggle { min-width: 142px; display: flex; align-items: center; justify-content: flex-end; gap: 7px; padding: 6px 9px; border-radius: 9px; background: transparent; color: var(--grey-850); cursor: pointer; font-size: 12px; }
+.model-picker { position: relative; min-width: 0; display: flex; }
+.model-toggle { min-width: 0; width: max-content; display: flex; align-items: center; justify-content: flex-end; gap: 7px; padding: 6px 9px; border-radius: 9px; background: transparent; color: var(--grey-850); cursor: pointer; font-size: 12px; }
+#model-route { color: var(--text); }
+#model-effort { color: var(--text); opacity: .58; }
 .model-toggle svg { width: 14px; height: 14px; color: var(--muted); }
 .model-toggle:hover:not(:disabled) { background: var(--grey-250); }
 .model-toggle:disabled { opacity: .4; }
@@ -44,8 +56,7 @@
 .advanced-settings-panel output { color: var(--muted); font-variant-numeric: tabular-nums; }
 .advanced-settings-panel input { width: 100%; accent-color: var(--grey-850); cursor: pointer; }
 .advanced-settings-panel small { color: var(--subtle); font-size: 10px; }
-.settings-submenu { left: calc(100% + 6px); top: 0; width: 244px; max-height: min(440px, calc(100vh - 32px)); overflow-y: auto; overscroll-behavior: contain; scrollbar-color: var(--grey-450) transparent; scrollbar-width: thin; }
-.settings-submenu.open-left { right: calc(100% + 6px); left: auto; }
+.settings-submenu { width: 100%; max-height: min(440px, calc(100vh - 32px)); overflow-y: auto; overscroll-behavior: contain; scrollbar-color: var(--grey-450) transparent; scrollbar-width: thin; }
 .settings-submenu button { width: 100%; min-height: 35px; display: flex; align-items: center; justify-content: space-between; padding: 5px 8px; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; text-align: left; font-size: 13px; }
 .settings-submenu button:hover { background: var(--tint-5); }
 .settings-submenu .selected::after { content: "✓"; color: var(--grey-850); font-size: 14px; }

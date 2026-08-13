@@ -95,6 +95,8 @@ describe("ProjectSidebarController", () => {
     expect(groups).toHaveLength(2);
     expect([...groups].every((group) => group.classList.contains("expanded"))).toBe(true);
     expect(tree.querySelectorAll(".task-row")).toHaveLength(3);
+    expect(groups[0]!.querySelector(".project-folder-open")).not.toBeNull();
+    expect(groups[0]!.querySelector(".project-folder-closed")).not.toBeNull();
 
     click(groups[0]!.querySelector(".project-row")!);
     expect(groups[0]!.classList.contains("expanded")).toBe(false);

@@ -21,9 +21,12 @@ const mediaJobFeed = readFileSync(new URL("./ui/chat/media-job-feed.ts", import.
 const conversationMessageFeed = readFileSync(new URL("./ui/chat/conversation-message-feed.ts", import.meta.url), "utf8");
 const conversationLanding = readFileSync(new URL("./ui/chat/conversation-landing.ts", import.meta.url), "utf8");
 const conversationTranscript = readFileSync(new URL("./ui/chat/conversation-transcript.ts", import.meta.url), "utf8");
+const conversationContext = readFileSync(new URL("./ui/chat/conversation-context.ts", import.meta.url), "utf8");
+const conversationSession = readFileSync(new URL("./ui/chat/conversation-session.ts", import.meta.url), "utf8");
 const promptSubmission = readFileSync(new URL("./ui/chat/prompt-submission.ts", import.meta.url), "utf8");
 const agentQueue = readFileSync(new URL("./ui/queue/work-queue.ts", import.meta.url), "utf8");
 const artifactController = readFileSync(new URL("./ui/artifacts/artifact-controller.ts", import.meta.url), "utf8");
+const appNavigation = readFileSync(new URL("./ui/navigation/app-navigation.ts", import.meta.url), "utf8");
 const navigationHistory = readFileSync(new URL("./ui/navigation/navigation-history.ts", import.meta.url), "utf8");
 const applicationMenu = readFileSync(new URL("./ui/navigation/application-menu.ts", import.meta.url), "utf8");
 const composerControls = readFileSync(new URL("./ui/chat/composer-controls.ts", import.meta.url), "utf8");
@@ -39,11 +42,13 @@ const safetyRecoveryController = readFileSync(new URL("./ui/administration/safet
 const playbookWorkspace = readFileSync(new URL("./ui/playbooks/playbook-workspace.ts", import.meta.url), "utf8");
 const resourceInspector = readFileSync(new URL("./ui/inspector/resource-inspector.ts", import.meta.url), "utf8");
 const inspectorPanel = readFileSync(new URL("./ui/inspector/inspector-panel.ts", import.meta.url), "utf8");
+const inAppBrowser = readFileSync(new URL("./ui/browser/in-app-browser.ts", import.meta.url), "utf8");
 const artifactRepository = readFileSync(new URL("./ui/inspector/artifact-repository.ts", import.meta.url), "utf8");
 const resourcePreview = readFileSync(new URL("./resource-preview.ts", import.meta.url), "utf8");
 const projectSidebar = readFileSync(new URL("./ui/sidebar/project-sidebar.ts", import.meta.url), "utf8");
 const projects = readFileSync(new URL("./ui/projects/projects.ts", import.meta.url), "utf8");
 const composerCss = readFileSync(new URL("./ui/chat/composer.css", import.meta.url), "utf8");
+const composerControlsCss = readFileSync(new URL("./ui/chat/composer-controls.css", import.meta.url), "utf8");
 const tokensCss = readFileSync(new URL("./ui/theme/tokens.css", import.meta.url), "utf8");
 const styles = [
   readFileSync(new URL("./renderer/styles.css", import.meta.url), "utf8"),
@@ -53,7 +58,7 @@ const styles = [
   readFileSync(new URL("./ui/chat/activity-timeline.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/media-creation-form.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/reasoning-view.css", import.meta.url), "utf8"),
-  readFileSync(new URL("./ui/chat/composer-controls.css", import.meta.url), "utf8"),
+  composerControlsCss,
   composerCss,
   readFileSync(new URL("./ui/connections/connection-workspace.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/plugins/plugin-catalog.css", import.meta.url), "utf8"),
@@ -61,6 +66,7 @@ const styles = [
   readFileSync(new URL("./ui/playbooks/playbook-workspace.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/sidebar/project-sidebar.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/inspector/inspector-panel.css", import.meta.url), "utf8"),
+  readFileSync(new URL("./ui/browser/in-app-browser.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/layout/management-page.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/layout/collapsible-section.css", import.meta.url), "utf8"),
 ].join("\n");
@@ -166,16 +172,19 @@ describe("desktop renderer shell", () => {
     expect(main).toContain('window.on("app-command"');
     expect(main).toContain('command === "browser-backward"');
     expect(main).toContain('command === "browser-forward"');
-    expect(main).toContain('window.webContents.send("fitz:navigation-command", "back")');
+    expect(main).toContain('browser.handleMouseNavigation(direction)');
+    expect(main).toContain('window.webContents.send("fitz:navigation-command", direction)');
     expect(preload).toContain('onNavigationCommand(listener: (command: "back" | "forward")');
     expect(preload).toContain('ipcRenderer.on("fitz:navigation-command", handler)');
-    expect(renderer).toContain('window.fitz.onNavigationCommand((command) => void navigationHistory.navigate');
+    expect(renderer).toContain('window.fitz.onNavigationCommand((command) => void appNavigation.navigate');
     expect(renderer).toContain('document.addEventListener("auxclick"');
     expect(renderer).toContain('event.button !== 3 && event.button !== 4');
     expect(navigationHistory).toContain('view: NavigableWorkspacePage;');
     expect(navigationHistory).toContain('path?: string[];');
-    expect(renderer).toContain('onRouteChange: (path) => rememberPageRoute("playbooks", path)');
-    expect(renderer).toContain('onRouteChange: (path) => rememberPageRoute("connections", path)');
+    expect(renderer).toContain('onRouteChange: (path) => appNavigation.rememberRoute("playbooks", path)');
+    expect(renderer).toContain('onRouteChange: (path) => appNavigation.rememberRoute("connections", path)');
+    expect(appNavigation).toContain('async openManagement(view: ManagementView)');
+    expect(appNavigation).toContain('if (location.path) this.#options.management[location.view].openRoute?.(location.path)');
     expect(navigationHistory).toContain('this.#entries.splice(this.#index + 1)');
     expect(navigationHistory).toContain('async navigate(offset: -1 | 1)');
   });
@@ -255,7 +264,7 @@ describe("desktop renderer shell", () => {
     expect(renderer).not.toContain('/api/v1/runtime-mode');
     expect(connectionWorkspace).toContain('const LOCAL_CONNECTION_ID = "hosted--local"');
     expect(renderer).not.toContain('connectionWorkspace.selectedConnectionId');
-    expect(renderer).toContain('routeId: routeId as FixedRouteId');
+    expect(conversationSession).toContain('const payload = { title, ...(routeId ? { routeId } : {}) }');
     expect(renderer).not.toContain('candidate.routeId === card.id');
     expect(connectionWorkspace).not.toContain('recipe-test-button');
     expect(connectionWorkspace).toContain("private views(): ConnectionView[]");
@@ -318,7 +327,7 @@ describe("desktop renderer shell", () => {
     expect(html).not.toContain('data-management-view=');
     expect(renderer).toContain('search: { id: "playbook-search"');
     expect(renderer).toContain('id: "management-browser"');
-    expect(renderer).toContain("openPlaybookPage()");
+    expect(renderer).toContain('appNavigation.openManagement("playbooks")');
     expect(playbookWorkspace).toContain("render(): void");
     expect(connectionWorkspace).toContain("TEXT_ROUTE_DEFINITIONS.map(withRouteIcon)");
     expect(renderer).toContain("textRouteOptions(managementConfiguration)");
@@ -339,7 +348,7 @@ describe("desktop renderer shell", () => {
     expect(html).not.toContain("NiNfer");
     expect(html).not.toContain("llama.cpp");
     expect(html).not.toContain("vLLM");
-    expect(renderer).toContain("showConversationWorkspace()");
+    expect(renderer).toContain("appNavigation.showConversation()");
   });
 
   it("shows recipe metadata without test actions", () => {
@@ -369,7 +378,7 @@ describe("desktop renderer shell", () => {
     expect(composerControls).toContain('this.openSettingsSubmenu(row.dataset.setting as ComposerSetting, row)');
     expect(renderer).toContain('administrator ? "/api/v1/management/status" : "/api/v1/configuration"');
     expect(playbookWorkspace).toContain('/api/v1/management/recipes/${encodeURIComponent(id)}');
-    expect(renderer).toContain("sessionTokenEstimate += estimateTokens");
+    expect(renderer).toContain("conversationContext.add(text)");
     expect(projects).toContain('this.options.api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" })');
     expect(promptSubmission).toContain("max_tokens: settings.maxTokens");
     expect(renderer).toContain("if (submission.content.trim().length > 0) void steerPrompt(submission.content)");
@@ -394,7 +403,7 @@ describe("desktop renderer shell", () => {
       "create-worktree-form",
     ]) expect(composer).toContain(`id="${id}"`);
 
-    expect(renderer).toContain('newChatProjectDetached = true');
+    expect(renderer).toContain("onDismissProject: showNewChatLanding");
     expect(composer).toContain("this.options.bridge.gitBranches(rootPath)");
     expect(composer).toContain("this.options.bridge.checkoutBranch(rootPath, branch)");
     expect(composer).toContain("this.options.bridge.createBranch(rootPath, branch)");
@@ -403,7 +412,7 @@ describe("desktop renderer shell", () => {
     expect(main).toContain('ipcMain.handle("fitz:git-checkout-branch"');
     expect(main).toContain('ipcMain.handle("fitz:git-create-branch"');
     expect(main).toContain('ipcMain.handle("fitz:git-create-worktree"');
-    expect(composerCss).toContain("bottom: 100%");
+    expect(composerCss).toContain("bottom: calc(100% + 6px)");
     expect(composerCss).not.toContain("bottom: calc(100% - 12px)");
   });
 
@@ -561,8 +570,8 @@ describe("desktop renderer shell", () => {
     expect(conversationLayout).toContain('options.messages.addEventListener("scroll", this.updateScrollButton');
     expect(conversationLayout).toContain('messages.scrollTo({ top: this.#options.messages.scrollHeight, behavior: "smooth" })');
     expect(styles).not.toContain("scroll-behavior: smooth");
-    expect(renderer).toContain("if (!messages.childElementCount) showLanding(true)");
-    expect(renderer).toContain("messages.scrollTop = messages.scrollHeight");
+    expect(conversationSession).toContain("if (!messages.childElementCount) this.#options.showLanding(true)");
+    expect(conversationSession).toContain("messages.scrollTop = messages.scrollHeight");
     expect(conversationLayout).toContain("distanceFromBottom < 48");
     expect(composerCss).toContain(".scroll-to-bottom");
     expect(composerCss).toContain("bottom: calc(100% + 12px)");
@@ -577,7 +586,11 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain('.advanced-row[aria-expanded="true"] svg');
     expect(styles).toContain(".advanced-settings-panel");
     expect(styles).toContain(".model-menu { right: 0; bottom: 34px; width: 286px;");
-    expect(styles).toContain(".settings-submenu.open-left");
+    expect(composer).toContain('id="model-menu-root"');
+    expect(composerControls).toContain("this.elements.modelMenuRoot.hidden = true");
+    expect(composerControls).toContain("this.showSettingsRoot()");
+    expect(composerControls).not.toContain("positionNestedPopover");
+    expect(composerControls).not.toContain("settings-page-back");
     expect(composer).toContain('<option value="light" data-max-tokens="4096">Light</option><option value="normal" data-max-tokens="10240" selected>Normal</option><option value="high" data-max-tokens="24576">High</option>');
     expect(promptSubmission).toContain("effort: settings.effort");
     expect(composer).not.toContain('data-setting="speed"');
@@ -613,7 +626,7 @@ describe("desktop renderer shell", () => {
     expect(composer).toContain("rebuildHistory(texts: string[])");
     expect(conversationTranscript).toContain('entry.kind === "message" && entry.role === "user"');
     expect(composer).toContain("this.promptHistory.push(text)");
-    expect(renderer).toContain("conversationTranscript.restore(transcript.data ?? [], transcript.page ?? {})");
+    expect(conversationSession).toContain("this.#options.transcript.restore(transcript.data ?? [], transcript.page ?? {})");
   });
 
   it("keeps every dropdown and overflow surface at the compact Codex menu density", () => {
@@ -622,14 +635,23 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".app-menu-popover { position: fixed; z-index: 60; width: 204px;");
     expect(styles).toContain(".sidebar-context-menu { position: fixed; z-index: 40; width: 242px;");
     expect(styles).toContain(".access-mode-menu { left: 0; bottom: 34px; width: 250px;");
-    expect(styles).toContain(".settings-submenu { left: calc(100% + 6px); top: 0; width: 244px;");
+    expect(styles).toContain(".settings-submenu { width: 100%;");
+    expect(styles).toContain(".composer-add-menu { left: 0; bottom: 36px; width: 250px;");
+  });
+
+  it("uses a larger new-chat composer and quickly settles it into the canonical dock", () => {
+    expect(composerCss).toContain("calc(var(--conversation-width) * 1.2)");
+    expect(composerCss).toContain(".workspace.new-chat-open #prompt { min-height: 65px;");
+    expect(composerCss).toContain("bottom 200ms cubic-bezier(.23,1,.32,1)");
+    expect(composerCss).not.toContain("bottom: auto");
+    expect(conversationSession).toContain('workspace.classList.remove("new-chat-open")');
   });
 
   it("manually compacts context from the inline usage popover", () => {
     expect(composer).toContain('id="context-compact"');
-    expect(renderer).toContain('api(`/api/v1/sessions/${projects.currentSessionId}/compact`, "POST"');
+    expect(renderer).toContain('api(`/api/v1/sessions/${sessionId}/compact`, "POST"');
     expect(conversationTranscript).toContain("estimateTranscriptContext(entries)");
-    expect(renderer).toContain('activityTimeline.appendContext("Context compacted")');
+    expect(conversationContext).toContain('this.#options.appendContext("Context compacted")');
     expect(styles).toContain(".context-usage-popover button");
   });
 
@@ -645,6 +667,10 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("max-width: 100%");
     expect(styles).toContain("backdrop-filter: blur(16px)");
     expect(styles).toContain("--elevation-prominent:");
+    expect(styles).toContain("--shadow-new-chat:");
+    expect(composerCss).toContain(".workspace.new-chat-open .composer-card");
+    expect(projectSidebar).toContain('class="project-folder-open"');
+    expect(styles).toContain(".project-group.expanded > .tree-item > .project-row .project-folder-open { display: initial; }");
     expect(renderer).toContain('storageKey: "fitz-sidebar-width"');
     expect(renderer).toContain("minimum: 240, maximum: 520");
     expect(html).toContain('d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"');
@@ -664,7 +690,10 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("--tint-7: rgba(255,255,255,.14)");
     expect(styles).toContain(".recipe-card:hover, .recipe-card:focus-within { background: var(--grey-350); }");
     expect(styles).toContain(".collapsible-toggle:hover, .collapsible-toggle:focus-visible { background: var(--tint-5); }");
-    expect(composerCss).toContain(".send-button .send-icon { width: 17px; height: 17px; stroke-width: 1.85; }");
+    expect(composerControlsCss).toContain("#model-route { color: var(--text); }");
+    expect(composerControlsCss).toContain("#model-effort { color: var(--text); opacity: .58; }");
+    expect(composerControlsCss).toContain(".model-toggle { min-width: 0; width: max-content;");
+    expect(composerCss).toContain(".send-button .send-icon { width: 19px; height: 19px; stroke-width: 1.85; }");
     // The artifact bubble sits on the raised-surface ramp step; its hover
     // stays the shared strong-hover tint.
     expect(styles).toContain(".workspace-header .inspector-tab { position: relative; height: 26px; max-width: 180px; padding: 0 8px 0 12px; border-radius: 8px; border: 0; background: var(--grey-200); color: var(--subtle); font-size: 12px; }");
@@ -701,7 +730,7 @@ describe("desktop renderer shell", () => {
   it("lands every empty project on the same new-chat page the sidebar quick action opens", () => {
     expect(renderer).not.toContain("createProjectThenNewChat");
     expect(renderer).toContain("if (created && projects.currentProjectId) openNewChatForProject(projects.currentProjectId)");
-    expect(renderer).toContain("if (projects.currentProjectId) openNewChatForProject(projects.currentProjectId)");
+    expect(conversationSession).toContain("if (this.#options.projects.currentProjectId) this.openNewChatForProject(this.#options.projects.currentProjectId)");
     expect(conversationLanding).toContain('action.textContent = "Create project"');
     expect(renderer).not.toContain('textContent = projects.currentProjectId ? "New task"');
     expect(projects).toContain('rememberLocation({ view: "conversation", path: ["new"], context: { projectId: id } })');
@@ -785,6 +814,10 @@ describe("desktop renderer shell", () => {
     expect(renderer).not.toContain('item("Toggle environment"');
     expect(renderer).toContain('window.addEventListener("fitz:open-resource"');
     expect(renderer).toContain("inspectorPanel.inspect(reference)");
+    expect(renderer).toContain("new InAppBrowser({ mount: inspectorPanel.element");
+    expect(renderer).toContain("inspectorPanel.open(); void inAppBrowser.open(reference)");
+    expect(inAppBrowser).toContain('className = "in-app-browser-viewport"');
+    expect(styles).toContain(".in-app-browser { position: absolute; z-index: 4; inset: 0;");
     expect(renderer).toContain("inspectorPanel.toggle()");
     expect(renderer).not.toContain("inspectorPanel.toggleRepository()");
     // The header's raw↔rendered toggle is handed to the panel, which wires it
@@ -904,12 +937,12 @@ describe("desktop renderer shell", () => {
     // chats or projects closes it and drops its tabs, and the artifact
     // repository re-scopes to the new session (per-chat storage key) without
     // forcing the panel open.
-    expect(renderer).toContain("let inspectorChatId: string | undefined;");
-    expect(renderer).toContain("if (sessionId !== inspectorChatId) { inspectorPanel.reset(); inspectorPanel.setChat(sessionId); inspectorChatId = sessionId; }");
+    expect(conversationSession).toContain("#inspectorChatId: string | undefined;");
+    expect(conversationSession).toContain("if (sessionId !== this.#inspectorChatId) this.#scopeInspector(sessionId, true)");
     expect(inspectorPanel).toContain("fitz-inspector-repository:${sessionId}");
     // A brand-new chat's first message points the repository at its session
     // before any files stream in, so the first files land in the right chat.
-    expect(renderer).toContain("inspectorPanel.setChat(response.data.id)");
+    expect(conversationSession).toContain("this.#scopeInspector(response.data.id, false)");
     expect(renderer).not.toContain("inspectorPanel.resetPreview()");
     // Every opened artifact gets its own closable tab.
     expect(inspectorPanel).toContain("onFileInspected: (path, name, reference) => this.#onFileInspected(tab.id, path, name, reference)");
@@ -949,7 +982,7 @@ describe("desktop renderer shell", () => {
 
   it("stages picker files as chips in a new chat and uploads them with the first message", () => {
     // The attach button unlocks in new chat mode so "+" works before a session exists.
-    expect(renderer).toContain('hasSession: Boolean(projects.currentSessionId || newChatMode)');
+    expect(renderer).toContain('hasSession: Boolean(projects.currentSessionId || conversationSessions.newChat)');
     expect(artifactController).toContain('this.#options.showStatus("Create or select a task before attaching a file", "error")');
     expect(artifactController).toContain("this.#options.stageFile(file)");
     expect(composer).toContain("attachFile(file: File): void");
@@ -987,7 +1020,7 @@ describe("desktop renderer shell", () => {
 
   it("pairs a desktop without exposing its durable bearer credential to the renderer", () => {
     for (const id of ["pairing-page", "pairing-form", "pairing-code", "pairing-display-name", "pairing-device-name", "pairing-error"]) expect(html).toContain(`id="${id}"`);
-    expect(renderer).toContain("showPairingPage(`Enter a one-time code to connect to ${configuredHostOrigin}.`)");
+    expect(renderer).toContain("appNavigation.showPairing(`Enter a one-time code to connect to ${configuredHostOrigin}.`)");
     expect(renderer).toContain("window.fitz.pairDevice");
     expect(renderer).toContain("window.fitz.bootstrapLocalDevice()");
     expect(preload).toContain('ipcRenderer.invoke("fitz:bootstrap-local-device"');
@@ -1064,6 +1097,7 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('import { ResizablePane } from "./ui/primitives/resizable-pane.js"');
     expect(renderer).toContain('import { ConversationLayout } from "./ui/layout/conversation-layout.js"');
     expect(renderer).toContain('import { WorkspacePageController } from "./ui/layout/workspace-pages.js"');
+    expect(renderer).toContain('import { AppNavigationController } from "./ui/navigation/app-navigation.js"');
     expect(renderer).toContain('import { CustomSelectController } from "./ui/primitives/custom-select.js"');
     expect(projectSidebar).toContain('import { ContextMenu } from "../primitives/context-menu.js"');
     expect(renderer).toContain('import { AdministrationPageController } from "./ui/administration/administration-page.js"');

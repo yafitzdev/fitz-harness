@@ -56,6 +56,7 @@
      What each color IS, mapped onto the scales above so a single knob moves
      every place that uses a role. */
   --window-background: var(--brand-black); /* Electron window before first paint */
+  --browser-surface: #151515;            /* isolated web preview before a page paints */
   --bg: var(--grey-100);                /* app + workspace background */
   --sidebar: var(--brand-black);        /* titlebar + navigation rail */
   --surface: var(--grey-200);           /* inputs and bounded controls */
@@ -124,4 +125,7 @@
   --shadow-float: 0 5px 16px rgba(0,0,0,.22);
   --shadow-panel: -12px 0 30px rgba(0,0,0,.12);
   --shadow-popover: 0 8px 16px -4px rgba(0,0,0,.12);
+  --shadow-new-chat: 0 -2px 34px rgba(215,77,61,.08), 0 6px 82px rgba(215,77,61,.11), 0 16px 150px rgba(215,77,61,.07);
+  --shadow-new-chat-rest: 0 -4px 32px rgba(215,77,61,.07), 0 4px 76px rgba(215,77,61,.10), 0 14px 142px rgba(215,77,61,.06);
+  --shadow-new-chat-bloom: 0 2px 40px rgba(215,77,61,.10), 0 12px 96px rgba(215,77,61,.14), 0 22px 170px rgba(215,77,61,.09);
 }

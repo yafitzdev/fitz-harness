@@ -28,6 +28,7 @@ export interface ComposerOptions {
 type PastedFile = PastedAttachment & { chip: HTMLElement };
 
 const COMPOSER_TEMPLATE = `
+  <h1 class="new-chat-heading">What should we build?</h1>
   <button id="scroll-to-bottom" class="scroll-to-bottom" type="button" aria-label="Go to latest message" title="Go to latest message" hidden>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v15M5.5 12.5 12 19l6.5-6.5"></path></svg>
   </button>
@@ -68,9 +69,19 @@ const COMPOSER_TEMPLATE = `
     </div>
     <div class="composer-toolbar">
       <div class="composer-tools">
-        <button id="attach" class="icon-button" type="button" title="Attach a file" aria-label="Attach a file" disabled>
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"></path></svg>
-        </button>
+        <div class="composer-add-wrap">
+          <button id="attach" class="icon-button" type="button" title="Add to message" aria-label="Add to message" aria-expanded="false" disabled>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"></path></svg>
+          </button>
+          <div id="composer-add-menu" class="popover composer-add-menu" hidden>
+            <small>Commands</small>
+            <button type="button" data-composer-command="image"><svg viewBox="0 0 20 20"><rect x="3" y="4" width="14" height="12" rx="2"></rect><circle cx="7" cy="8" r="1.2"></circle><path d="m4.5 14 3.8-3.7 2.6 2.4 1.8-1.7 2.8 3"></path></svg><span><strong>/image</strong><small>Create an image</small></span></button>
+            <button type="button" data-composer-command="video"><svg viewBox="0 0 20 20"><rect x="3" y="5" width="10" height="10" rx="2"></rect><path d="m13 8 4-2v8l-4-2"></path></svg><span><strong>/video</strong><small>Create a video</small></span></button>
+            <button type="button" data-composer-command="audio"><svg viewBox="0 0 20 20"><path d="M5 13V7l9-2v6"></path><circle cx="4" cy="14" r="2"></circle><circle cx="13" cy="12" r="2"></circle></svg><span><strong>/audio</strong><small>Create music or audio</small></span></button>
+            <hr>
+            <button id="upload-file" type="button"><svg viewBox="0 0 20 20"><path d="M10 13V3M6 7l4-4 4 4"></path><path d="M4 11v5h12v-5"></path></svg><span><strong>Upload file</strong><small>Add a file to this message</small></span></button>
+          </div>
+        </div>
         <div class="access-mode-wrap">
           <button id="access-mode-toggle" class="access-label" type="button" aria-label="Tool access mode" aria-expanded="false">
             <svg id="access-mode-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.8 16 5v4.4c0 3.8-2.4 6.3-6 7.8-3.6-1.5-6-4-6-7.8V5z"></path><path d="M10 7v3.2M10 13h.01"></path></svg><span id="access-mode-label">Full access</span>
@@ -93,16 +104,18 @@ const COMPOSER_TEMPLATE = `
         <div class="model-picker">
           <button id="model-toggle" class="model-toggle" type="button" aria-label="Model settings" aria-expanded="false" disabled><span id="model-summary"><span id="model-route">Model</span><span id="model-effort"> · Normal</span></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"></path></svg></button>
           <div id="model-menu" class="popover model-menu" hidden>
-            <button class="setting-row" type="button" data-setting="model"><span>Model</span><span><span id="model-value">Model</span><svg viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"></path></svg></span></button>
-            <button class="setting-row" type="button" data-setting="effort"><span>Effort</span><span><span id="effort-value">Normal</span><svg viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"></path></svg></span></button>
-            <div class="settings-divider"></div>
-            <button id="advanced-settings" class="advanced-row" type="button" aria-expanded="false"><span>Advanced</span><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></button>
-            <div id="advanced-settings-panel" class="advanced-settings-panel" hidden>
-              <label for="temperature"><span>Temperature</span><output id="temperature-value" for="temperature">0.4</output></label>
-              <input id="temperature" type="range" min="0" max="2" step="0.1" value="0.4">
-              <small>Lower is focused; higher is more varied.</small>
+            <div id="model-menu-root">
+              <button class="setting-row" type="button" data-setting="model"><span>Model</span><span><span id="model-value">Model</span><svg viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"></path></svg></span></button>
+              <button class="setting-row" type="button" data-setting="effort"><span>Effort</span><span><span id="effort-value">Normal</span><svg viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"></path></svg></span></button>
+              <div class="settings-divider"></div>
+              <button id="advanced-settings" class="advanced-row" type="button" aria-expanded="false"><span>Advanced</span><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></button>
+              <div id="advanced-settings-panel" class="advanced-settings-panel" hidden>
+                <label for="temperature"><span>Temperature</span><output id="temperature-value" for="temperature">0.4</output></label>
+                <input id="temperature" type="range" min="0" max="2" step="0.1" value="0.4">
+                <small>Lower is focused; higher is more varied.</small>
+              </div>
             </div>
-            <div id="settings-submenu" class="popover settings-submenu" hidden></div>
+            <div id="settings-submenu" class="settings-submenu" hidden></div>
             <select id="model" aria-label="Model route" hidden disabled></select>
             <select id="effort" aria-label="Effort" hidden><option value="light" data-max-tokens="4096">Light</option><option value="normal" data-max-tokens="10240" selected>Normal</option><option value="high" data-max-tokens="24576">High</option></select>
           </div>
@@ -144,6 +157,7 @@ export class Composer {
   private readonly status: HTMLElement;
   private readonly sendButton: HTMLButtonElement;
   private readonly attachButton: HTMLButtonElement;
+  private readonly addMenu: HTMLElement;
   private readonly pastedFiles: PastedFile[] = [];
   private promptHistory: string[] = [];
   private promptHistoryIndex = -1;
@@ -179,6 +193,7 @@ export class Composer {
     this.status = this.el<HTMLElement>("#status");
     this.sendButton = this.el<HTMLButtonElement>("#send");
     this.attachButton = this.el<HTMLButtonElement>("#attach");
+    this.addMenu = this.el<HTMLElement>("#composer-add-menu");
     this.prompt = this.el<HTMLTextAreaElement>("#prompt");
     this.mediaCommandTag = this.el<HTMLButtonElement>("#media-command-tag");
     this.controls = new ComposerControls(this.controlsElements(), {
@@ -343,6 +358,8 @@ export class Composer {
 
   closePopovers(): void {
     this.controls.closePopovers();
+    this.addMenu.hidden = true;
+    this.attachButton.setAttribute("aria-expanded", "false");
     this.newChatEnvironmentMenu.hidden = true;
     this.newChatBranchMenu.hidden = true;
     this.newChatEnvironmentControl.setAttribute("aria-expanded", "false");
@@ -361,6 +378,7 @@ export class Composer {
       effort: this.el<HTMLSelectElement>("#effort"),
       modelToggle: this.el<HTMLButtonElement>("#model-toggle"),
       modelMenu: this.el<HTMLElement>("#model-menu"),
+      modelMenuRoot: this.el<HTMLElement>("#model-menu-root"),
       modelSummary: this.el<HTMLElement>("#model-summary"),
       modelRoute: this.el<HTMLElement>("#model-route"),
       modelEffort: this.el<HTMLElement>("#model-effort"),
@@ -418,7 +436,21 @@ export class Composer {
         }
       }
     });
-    this.attachButton.addEventListener("click", () => this.options.onAttach());
+    this.attachButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      togglePopover(this.addMenu, this.attachButton, this.options.closeAllPopovers);
+    });
+    this.addMenu.addEventListener("click", (event) => event.stopPropagation());
+    for (const command of this.root.querySelectorAll<HTMLButtonElement>("[data-composer-command]")) command.addEventListener("click", () => {
+      this.setMediaCommand(command.dataset.composerCommand as MediaModality);
+      this.closePopovers();
+      this.options.onValueChange(this.value);
+      this.prompt.focus();
+    });
+    this.el<HTMLButtonElement>("#upload-file").addEventListener("click", () => {
+      this.closePopovers();
+      this.options.onAttach();
+    });
     this.mediaCommandTag.addEventListener("click", () => {
       this.setMediaCommand(undefined);
       this.options.onValueChange(this.value);

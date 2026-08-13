@@ -70,6 +70,7 @@ describe("Composer", () => {
     expect(composer.controls).toBeInstanceOf(ComposerControls);
     expect(promptOf(composer)).toBeTruthy();
     expect(composer.root.querySelector<HTMLFormElement>("#composer")).toBeTruthy();
+    expect(composer.root.querySelector<HTMLElement>(".new-chat-heading")!.textContent).toBe("What should we build?");
     expect(composer.root.querySelector<HTMLElement>("#new-chat-context")!.hidden).toBe(true);
   });
 
@@ -244,11 +245,25 @@ describe("Composer", () => {
     expect(status.dataset.state).toBe("running");
   });
 
-  it("routes the attach button to the renderer file picker", () => {
+  it("opens the add menu and routes Upload file to the renderer picker", () => {
     const { composer, calls } = setup();
     composer.setState({ ready: true, running: false, hasSession: true });
     click(composer.root.querySelector<HTMLButtonElement>("#attach")!);
+    expect(composer.root.querySelector<HTMLElement>("#composer-add-menu")!.hidden).toBe(false);
+    expect(calls.onAttach).not.toHaveBeenCalled();
+    click(composer.root.querySelector<HTMLButtonElement>("#upload-file")!);
     expect(calls.onAttach).toHaveBeenCalled();
+  });
+
+  it("offers every supported slash command in the add menu", () => {
+    const { composer, calls } = setup();
+    composer.setState({ ready: true, running: false, hasSession: true });
+    click(composer.root.querySelector<HTMLButtonElement>("#attach")!);
+    expect([...composer.root.querySelectorAll<HTMLElement>("[data-composer-command]")].map((item) => item.dataset.composerCommand)).toEqual(["image", "video", "audio"]);
+    click(composer.root.querySelector<HTMLButtonElement>('[data-composer-command="audio"]')!);
+    expect(composer.submission).toEqual({ content: "", mediaCommand: "audio" });
+    expect(composer.root.querySelector<HTMLElement>("#media-command-tag")!.textContent).toBe("audio");
+    expect(calls.onValueChange).toHaveBeenCalledWith("");
   });
 
   it("turns pasted images into previewable chips and consumes them on submit", async () => {

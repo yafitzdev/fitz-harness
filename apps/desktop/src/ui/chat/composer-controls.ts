@@ -1,4 +1,4 @@
-import { positionNestedPopover, togglePopover } from "../primitives/popover.js";
+import { togglePopover } from "../primitives/popover.js";
 import type { AgentEffort } from "@fitz/protocol";
 
 export type AccessMode = "full" | "ask" | "read-only";
@@ -17,6 +17,7 @@ export interface ComposerControlsElements {
   effort: HTMLSelectElement;
   modelToggle: HTMLButtonElement;
   modelMenu: HTMLElement;
+  modelMenuRoot: HTMLElement;
   modelSummary: HTMLElement;
   modelRoute: HTMLElement;
   modelEffort: HTMLElement;
@@ -159,6 +160,7 @@ export class ComposerControls {
   closePopovers(): void {
     this.elements.modelMenu.hidden = true;
     this.elements.settingsSubmenu.hidden = true;
+    this.elements.modelMenuRoot.hidden = false;
     this.elements.advancedSettingsPanel.hidden = true;
     this.elements.contextUsagePopover.hidden = true;
     this.elements.accessModeMenu.hidden = true;
@@ -175,6 +177,7 @@ export class ComposerControls {
     elements.effort.addEventListener("change", () => this.refreshLabels());
     elements.modelToggle.addEventListener("click", (event) => {
       event.stopPropagation();
+      this.showSettingsRoot();
       togglePopover(elements.modelMenu, elements.modelToggle, this.options.closeAllPopovers);
     });
     elements.modelMenu.addEventListener("click", (event) => event.stopPropagation());
@@ -222,11 +225,11 @@ export class ComposerControls {
     let currentGroup = "";
     for (const option of [...select.options]) {
       const group = kind === "model" ? option.dataset.group ?? "" : "";
-      if (group && group !== currentGroup) {
-        const heading = document.createElement("small");
-        heading.className = "settings-submenu-heading";
-        heading.textContent = group;
-        this.elements.settingsSubmenu.append(heading);
+      if (group && group !== "Routes" && group !== currentGroup) {
+        const groupHeading = document.createElement("small");
+        groupHeading.className = "settings-submenu-heading";
+        groupHeading.textContent = group;
+        this.elements.settingsSubmenu.append(groupHeading);
         currentGroup = group;
       }
       const button = document.createElement("button");
@@ -245,8 +248,14 @@ export class ComposerControls {
       this.elements.settingsSubmenu.append(button);
     }
     for (const item of this.elements.settingRows) item.classList.toggle("active", item === row);
+    this.elements.modelMenuRoot.hidden = true;
     this.elements.settingsSubmenu.hidden = false;
-    positionNestedPopover(this.elements.settingsSubmenu, row);
+  }
+
+  private showSettingsRoot(): void {
+    this.elements.settingsSubmenu.hidden = true;
+    this.elements.modelMenuRoot.hidden = false;
+    for (const row of this.elements.settingRows) row.classList.remove("active");
   }
 
   private restoreTemperature(): void {

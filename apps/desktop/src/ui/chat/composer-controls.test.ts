@@ -40,7 +40,7 @@ function setup(storage = memoryStorage()) {
   modelSummary.append(modelRoute, modelEffort);
   const elements: ComposerControlsElements = {
     model: node("select"), effort,
-    modelToggle: node("button"), modelMenu: node("div"), modelSummary, modelRoute, modelEffort, modelValue: node("span"), effortValue: node("span"),
+    modelToggle: node("button"), modelMenu: node("div"), modelMenuRoot: node("div"), modelSummary, modelRoute, modelEffort, modelValue: node("span"), effortValue: node("span"),
     settingsSubmenu: node("div"), settingRows: [modelRow, effortRow], advancedSettings: node("button"), advancedSettingsPanel: node("div"),
     temperature: node("input"), temperatureValue: node("output"), contextMeter: node("button"), contextUsagePopover: node("div"),
     contextPercent: node("strong"), contextTokens: node("b"), contextCompactButton: node("button"), contextCompactStatus: node("small"),
@@ -77,7 +77,9 @@ describe("ComposerControls", () => {
 
     click(elements.settingRows[0]!);
     expect(elements.settingsSubmenu.hidden).toBe(false);
-    expect(elements.settingsSubmenu.querySelector(".settings-submenu-heading")?.textContent).toBe("Routes");
+    expect(elements.modelMenuRoot.hidden).toBe(true);
+    expect(elements.settingsSubmenu.querySelector(".settings-submenu-heading")).toBeNull();
+    expect(elements.settingsSubmenu.querySelector(".settings-page-back")).toBeNull();
     click([...elements.settingsSubmenu.querySelectorAll("button")][0]!);
 
     expect(controls.routeId).toBe("default");

@@ -592,7 +592,9 @@ export class ProjectSidebarController {
 
   #project(id: string | undefined): ProjectSidebarProject | undefined { return id ? this.#state.projects.find((project) => project.id === id) : undefined; }
   #empty(text: string): HTMLElement { const value = document.createElement("div"); value.className = "tree-empty"; value.textContent = text; return value; }
-  #folderIcon(): SVGElement { return svgIcon('<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>', "0 0 24 24"); }
+  #folderIcon(): SVGElement {
+    return svgIcon('<path class="project-folder-closed" d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path><path class="project-folder-open" d="M3.7 20h14.6a2 2 0 0 0 1.9-1.4l1.5-5A2 2 0 0 0 19.8 11H7.5a2 2 0 0 0-1.9 1.4L3.7 20Z"></path><path class="project-folder-open" d="M3.7 20A2 2 0 0 1 2 18V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.7.9l.8 1.2A2 2 0 0 0 12.1 6H20a2 2 0 0 1 2 2v3"></path>', "0 0 24 24");
+  }
   #storedSet(key: string): Set<string> { try { const value = JSON.parse(localStorage.getItem(key) ?? "[]"); return new Set(Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []); } catch { return new Set(); } }
   #saveSet(key: string, values: Set<string>): void { localStorage.setItem(key, JSON.stringify([...values])); }
 }
