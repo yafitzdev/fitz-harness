@@ -107,6 +107,12 @@ export class ComposerControls {
     return true;
   }
 
+  resetForNewChat(): void {
+    this.setRoute("default");
+    this.elements.effort.value = "normal";
+    this.refreshLabels();
+  }
+
   refreshLabels(): void {
     const option = [...this.elements.model.options].find((candidate) => candidate.value === this.routeId);
     const fullLabel = option?.textContent ?? "Model";

@@ -37,7 +37,7 @@ export function createNInferPlaybook(runtime: NInferRuntimeLayout): NInferPlaybo
   const routes: Route[] = [
     {
       id: "default",
-      displayName: "Default",
+      displayName: "Local",
       description: "Primary route",
       recipeId: recipes[0]!.id,
       enabled: true,

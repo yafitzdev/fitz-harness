@@ -99,6 +99,17 @@ describe("desktop renderer shell", () => {
     }
   });
 
+  it("always starts the desktop on a fresh Local · Normal chat", () => {
+    expect(renderer).toContain("let initialNavigationPending = true");
+    expect(renderer).toContain("await projects.load(undefined, undefined, !initialNavigationPending)");
+    expect(renderer).toContain("initialNavigationPending = false");
+    expect(renderer).toContain("openNewChat()");
+    expect(conversationSession).toContain("this.#options.composer.resetForNewChat()");
+    expect(composerControls).toContain('this.setRoute("default")');
+    expect(composerControls).toContain('this.elements.effort.value = "normal"');
+    expect(textRoutePresentation).toContain('{ id: "default", label: "Local", ownership: "host" }');
+  });
+
   it("sheds composer text when the chat window is squeezed instead of mangling", () => {
     // The composer docks into the conversation column, so its width tracks the
     // chat window (and the Inspector stealing space). Width container queries
@@ -691,6 +702,8 @@ describe("desktop renderer shell", () => {
     expect(composerCss).toContain("animation: chat-halo-breathe 7.2s ease-in-out infinite");
     expect(projectSidebar).toContain('class="project-folder-open"');
     expect(styles).toContain(".project-group.expanded > .tree-item > .project-row .project-folder-open { display: initial; }");
+    expect(styles).toContain(".tree-item:has(.project-row) .tree-quick-action { right: 58px; }");
+    expect(styles).not.toContain(".tree-item:has(.project-row) .tree-pin-action { right: 58px; }");
     expect(renderer).toContain('storageKey: "fitz-sidebar-width"');
     expect(renderer).toContain("minimum: 240, maximum: 520");
     expect(html).toContain('d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"');

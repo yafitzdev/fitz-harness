@@ -29,7 +29,7 @@
 .tree-menu-toggle { right: 4px; }
 .tree-quick-action { right: 31px; }
 .tree-pin-action { right: 31px; }
-.tree-item:has(.project-row) .tree-pin-action { right: 58px; }
+.tree-item:has(.project-row) .tree-quick-action { right: 58px; }
 .tree-item:hover .tree-menu-toggle, .tree-item:hover .tree-quick-action, .tree-item:hover .tree-pin-action, .tree-item:focus-within .tree-menu-toggle, .tree-item:focus-within .tree-quick-action, .tree-item:focus-within .tree-pin-action, .tree-menu-toggle[aria-expanded="true"] { opacity: 1; }
 .tree-menu-toggle:hover, .tree-quick-action:hover, .tree-pin-action:hover { background: var(--tint-5); color: var(--text); }
 .tree-menu-toggle svg, .tree-quick-action svg, .tree-pin-action svg { width: 15px; height: 15px; }

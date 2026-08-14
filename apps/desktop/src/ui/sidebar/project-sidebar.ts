@@ -202,12 +202,14 @@ export class ProjectSidebarController {
       return this.#editingRow("project-row pinned-row", project.name, 80, (value) => this.#commitEdit(value));
     }
     const group = document.createElement("div");
-    group.className = "project-group pinned-project-group expanded";
+    const expanded = this.#expandedProjects.has(project.id);
+    group.className = "project-group pinned-project-group";
+    group.classList.toggle("expanded", expanded);
     group.dataset.projectId = project.id;
-    const item = this.#treeItem(project.name, "project-row pinned-row", this.#folderIcon(), () => this.#options.selectProject(project.id), (toggle, event) => this.#openMenu("project", project.id, undefined, toggle, event), () => this.#options.newChat(project.id));
+    const item = this.#treeItem(project.name, "project-row pinned-row", this.#folderIcon(), () => this.#toggleExpansion(project.id, group), (toggle, event) => this.#openMenu("project", project.id, undefined, toggle, event), () => this.#options.newChat(project.id));
     const button = item.querySelector<HTMLButtonElement>(".project-row")!;
     button.classList.toggle("active", project.id === this.#state.currentProjectId && !this.#state.currentSessionId && !this.#state.newChat);
-    button.setAttribute("aria-expanded", "true");
+    button.setAttribute("aria-expanded", String(expanded));
     this.#appendPinAction(item, "project", project.id);
     group.append(item);
     const children = document.createElement("div");
@@ -242,10 +244,7 @@ export class ProjectSidebarController {
     group.className = "project-group";
     group.classList.toggle("expanded", expanded);
     group.dataset.projectId = project.id;
-    const projectItem = this.#treeItem(project.name, "project-row", this.#folderIcon(), () => {
-      if (project.id === this.#state.currentProjectId) this.#toggleExpansion(project.id, group);
-      else this.#options.selectProject(project.id);
-    }, (toggle, event) => this.#openMenu("project", project.id, undefined, toggle, event), () => this.#options.newChat(project.id));
+    const projectItem = this.#treeItem(project.name, "project-row", this.#folderIcon(), () => this.#toggleExpansion(project.id, group), (toggle, event) => this.#openMenu("project", project.id, undefined, toggle, event), () => this.#options.newChat(project.id));
     const projectButton = projectItem.querySelector<HTMLButtonElement>(".project-row")!;
     projectButton.classList.toggle("active", project.id === this.#state.currentProjectId && !this.#state.currentSessionId && !this.#state.newChat);
     projectButton.setAttribute("aria-expanded", String(expanded));

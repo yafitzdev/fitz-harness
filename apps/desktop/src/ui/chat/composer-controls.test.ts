@@ -66,7 +66,7 @@ describe("ComposerControls", () => {
   it("owns route and effort options, labels, and user selection callbacks", () => {
     const { controls, elements, calls } = setup();
     controls.setRoutes([
-      { id: "default", label: "Default", group: "Routes" },
+      { id: "default", label: "Local", group: "Routes" },
       { id: "smart", label: "Smart", group: "Routes" },
     ], "smart");
 
@@ -83,7 +83,7 @@ describe("ComposerControls", () => {
     click([...elements.settingsSubmenu.querySelectorAll("button")][0]!);
 
     expect(controls.routeId).toBe("default");
-    expect(elements.modelSummary.textContent).toBe("Default · Normal");
+    expect(elements.modelSummary.textContent).toBe("Local · Normal");
     expect(calls.onRouteChange).toHaveBeenCalledWith("default");
     expect(calls.closeAllPopovers).toHaveBeenCalled();
   });
@@ -101,9 +101,24 @@ describe("ComposerControls", () => {
     expect(elements.modelValue.textContent).toBe("Smart · ninfer-1.5b");
 
     // A route without a model name collapses the name span entirely.
-    controls.setRoutes([{ id: "default", label: "Default", displayName: "Default" }], "default");
-    expect(elements.modelSummary.textContent).toBe("Default · Normal");
-    expect(elements.modelRoute.textContent).toBe("Default");
+    controls.setRoutes([{ id: "default", label: "Local", displayName: "Local" }], "default");
+    expect(elements.modelSummary.textContent).toBe("Local · Normal");
+    expect(elements.modelRoute.textContent).toBe("Local");
+  });
+
+  it("resets every new chat to Local with normal effort", () => {
+    const { controls, elements } = setup();
+    controls.setRoutes([
+      { id: "default", label: "Local", displayName: "Local" },
+      { id: "smart", label: "Smart", displayName: "Smart" },
+    ], "smart");
+    elements.effort.value = "high";
+
+    controls.resetForNewChat();
+
+    expect(controls.routeId).toBe("default");
+    expect(controls.effort).toBe("normal");
+    expect(elements.modelSummary.textContent).toBe("Local · Normal");
   });
 
   it("restores and persists temperature and access mode", () => {

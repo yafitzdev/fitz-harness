@@ -49,6 +49,7 @@ let configuredHostOrigin = "Fitz host";
 let administrator = false;
 let currentUserId: string | undefined;
 let managementConfiguration: Json | undefined;
+let initialNavigationPending = true;
 
 const shell = query(".app-shell");
 const workspaceHeader = query(".workspace-header");
@@ -670,6 +671,7 @@ const conversationSessions = new ConversationSessionController({
   messages,
   composer: {
     resetContextStatus: () => composer.controls.resetContextStatus(),
+    resetForNewChat: () => composer.controls.resetForNewChat(),
     setRoute: (routeId) => composer.controls.setRoute(routeId),
     enterNewChat: (projectName) => composer.enterNewChat(projectName),
     exitNewChat: () => composer.exitNewChat(),
@@ -836,7 +838,11 @@ async function initialize(): Promise<void> {
     setConnection(configuredHostOrigin.replace(/^https?:\/\//, ""), "active");
     setStatus(health.engine?.state ?? "Ready", "idle");
     appNavigation.showConversation();
-    await projects.load();
+    await projects.load(undefined, undefined, !initialNavigationPending);
+    if (initialNavigationPending) {
+      initialNavigationPending = false;
+      openNewChat();
+    }
     void loadManagementConfiguration(false);
   } catch (error) {
     if (error instanceof HostRequestError && error.status === 401) {

@@ -44,6 +44,7 @@ describe("Fitz host", () => {
     const runtime = createHost({ store });
     try {
       expect(runtime.routes.resolve("default").recipe).toMatchObject({ id: "fake-best", adapter: "fake" });
+      expect(runtime.routes.resolve("default").route.displayName).toBe("Local");
       expect(runtime.lifecycle.pinnedRecipe()).toMatchObject({ id: "fake-best" });
     } finally { await runtime.app.close(); }
   });

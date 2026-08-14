@@ -47,8 +47,8 @@ export const DEFAULT_RECIPES: Recipe[] = [
 export const DEFAULT_ROUTES: Route[] = [
   {
     id: "default",
-    displayName: "Default",
-    description: "Balanced default route",
+    displayName: "Local",
+    description: "Local model route",
     recipeId: "fake-best",
     enabled: true,
     isDefault: true,

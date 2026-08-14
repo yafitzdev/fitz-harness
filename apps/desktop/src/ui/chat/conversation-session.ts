@@ -22,6 +22,7 @@ export interface ConversationSessionOptions {
   messages: HTMLElement;
   composer: {
     resetContextStatus(): void;
+    resetForNewChat(): void;
     setRoute(routeId: string): void;
     enterNewChat(projectName?: string): void;
     exitNewChat(): void;
@@ -90,6 +91,7 @@ export class ConversationSessionController {
     this.#newChat = true;
     this.#options.context.reset();
     this.#options.composer.resetContextStatus();
+    this.#options.composer.resetForNewChat();
     this.#options.workspace.classList.add("new-chat-open");
     this.#options.prepareNewChat();
     this.#options.composer.enterNewChat(projectBound ? projects.activeProject()?.name ?? "Project" : undefined);

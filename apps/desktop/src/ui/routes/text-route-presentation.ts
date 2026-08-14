@@ -14,7 +14,7 @@ export interface TextRouteDefinition<T extends TextRouteId = TextRouteId> {
  * composer consume this same ordered list so labels and ordering cannot drift.
  */
 export const TEXT_ROUTE_DEFINITIONS: readonly TextRouteDefinition[] = [
-  { id: "default", label: "Default", ownership: "host" },
+  { id: "default", label: "Local", ownership: "host" },
   { id: "fast", label: "Fast", ownership: "consumer" },
   { id: "smart", label: "Smart", ownership: "consumer" },
 ];
@@ -30,7 +30,7 @@ export interface TextRouteOption {
   group: "Routes";
 }
 
-/** Resolves a role through its real owner: Default through host routes, cloud
+/** Resolves a role through its real owner: Local through host routes, cloud
  * roles through the consumer-owned binding map. The routes fallback supports
  * the public configuration response, which also materializes resolved roles. */
 export function textRouteRecipeId(configuration: Json | undefined, routeId: TextRouteId): string | undefined {

@@ -85,7 +85,7 @@ beforeEach(() => {
 });
 
 describe("ProjectSidebarController", () => {
-  it("renders projects and sessions while expanding each project independently", () => {
+  it("uses project rows only to expand folders and chat rows to open sessions", () => {
     const { controller, tree, calls } = setup();
     controller.ensureExpanded("alpha");
     controller.ensureExpanded("beta");
@@ -104,7 +104,11 @@ describe("ProjectSidebarController", () => {
     expect(calls.selectProject).not.toHaveBeenCalled();
 
     click(groups[1]!.querySelector(".project-row")!);
-    expect(calls.selectProject).toHaveBeenCalledWith("beta");
+    expect(groups[1]!.classList.contains("expanded")).toBe(false);
+    expect(calls.selectProject).not.toHaveBeenCalled();
+
+    click(groups[0]!.querySelector(".task-row")!);
+    expect(calls.selectSession).toHaveBeenCalledWith("a1", "alpha");
   });
 
   it("routes project quick actions and session selection through callbacks", () => {
@@ -119,7 +123,7 @@ describe("ProjectSidebarController", () => {
   });
 
   it("collects pinned projects in the Pinned section and hides the section after unpinning", () => {
-    const { controller, tree, pinnedTree, pinnedSection, menuElement } = setup();
+    const { controller, tree, pinnedTree, pinnedSection, menuElement, calls } = setup();
     controller.render(state());
     expect(pinnedSection.hidden).toBe(true);
 
@@ -133,6 +137,12 @@ describe("ProjectSidebarController", () => {
     expect(pinnedTree.querySelector(".tree-pin-action")?.getAttribute("aria-pressed")).toBe("true");
     expect(tree.textContent).not.toContain("Alpha");
     expect(tree.textContent).toContain("Beta");
+
+    const pinnedGroup = pinnedTree.querySelector<HTMLElement>(".pinned-project-group")!;
+    expect(pinnedGroup.classList.contains("expanded")).toBe(false);
+    click(pinnedGroup.querySelector(".project-row")!);
+    expect(pinnedGroup.classList.contains("expanded")).toBe(true);
+    expect(calls.selectProject).not.toHaveBeenCalled();
 
     click(pinnedTree.querySelector(".tree-menu-toggle")!);
     click(menuButton(menuElement, "Unpin project"));

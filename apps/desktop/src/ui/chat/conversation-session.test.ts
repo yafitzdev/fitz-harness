@@ -27,7 +27,7 @@ function harness() {
     workspace: document.createElement("main"),
     messages: document.createElement("section"),
     composer: {
-      resetContextStatus: vi.fn(), setRoute: vi.fn(), enterNewChat: vi.fn(), exitNewChat: vi.fn(),
+      resetContextStatus: vi.fn(), resetForNewChat: vi.fn(), setRoute: vi.fn(), enterNewChat: vi.fn(), exitNewChat: vi.fn(),
       refreshBranches: vi.fn(async () => {}), focus: vi.fn(),
     },
     inspector: { reset: vi.fn(), setChat: vi.fn() },
@@ -57,6 +57,7 @@ describe("ConversationSessionController", () => {
     expect(projects.setCurrentProject).toHaveBeenCalledWith(undefined);
     expect(options.workspace.classList.contains("new-chat-open")).toBe(true);
     expect(options.composer.focus).not.toHaveBeenCalled();
+    expect(options.composer.resetForNewChat).toHaveBeenCalledOnce();
     expect(options.remember).toHaveBeenCalledWith({ view: "conversation", path: ["new"] });
 
     const sessionId = await controller.ensurePromptSession("Hello", "fast");

@@ -654,7 +654,10 @@ function seedDefaults(store: SqliteStore, recipes: Recipe[], routes: Route[]): v
 function ensureDefaultRoute(store: SqliteStore, recipes: Recipe[], routes: Route[]): void {
   const existing = store.listRoutes().find((route) => route.id === "default");
   const existingRecipe = existing ? store.listRecipes().find((recipe) => recipe.id === existing.recipeId) : undefined;
-  if (existing && existingRecipe && isLocalTextRecipe(existingRecipe)) return;
+  if (existing && existingRecipe && isLocalTextRecipe(existingRecipe)) {
+    if (existing.displayName !== "Local") store.upsertRoute({ ...existing, displayName: "Local" });
+    return;
+  }
   if (existing) store.deleteRoute(existing.id);
   const route = routes.find((candidate) => candidate.id === "default");
   if (!route) throw new Error("Host configuration must define a Default route");

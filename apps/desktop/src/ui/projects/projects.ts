@@ -75,7 +75,7 @@ export class ProjectsController {
   beginNewChat(): void { this.currentSessionIdValue = undefined; }
 
   /** Fetches projects and their sessions, resolves the active selection, and renders. */
-  async load(preferredProject?: string, preferredSession?: string): Promise<void> {
+  async load(preferredProject?: string, preferredSession?: string, openInitialSession = true): Promise<void> {
     const generation = ++this.loadGeneration;
     let records: ProjectRecord[];
     let sessions: Map<string, SessionRecord[]>;
@@ -111,6 +111,11 @@ export class ProjectsController {
     }
     if (this.currentProjectIdValue && !this.options.sidebar.hasExpandedProjects()) this.options.sidebar.ensureExpanded(this.currentProjectIdValue);
 
+    if (!openInitialSession) {
+      this.currentSessionIdValue = undefined;
+      this.options.renderTree();
+      return;
+    }
     if (preferredSession) this.currentSessionIdValue = preferredSession;
     const selectedSessions = this.currentProjectIdValue ? (this.sessions.get(this.currentProjectIdValue) ?? []) : this.chatRecords;
     if (!this.currentSessionIdValue || !selectedSessions.some((session) => session.id === this.currentSessionIdValue)) this.currentSessionIdValue = selectedSessions[0]?.id;

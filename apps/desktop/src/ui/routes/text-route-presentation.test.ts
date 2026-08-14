@@ -12,7 +12,7 @@ describe("text route presentation", () => {
     ],
   };
 
-  it("owns the canonical Default, Fast, Smart order", () => {
+  it("owns the canonical Local, Fast, Smart order", () => {
     expect(TEXT_ROUTE_DEFINITIONS.map((route) => route.id)).toEqual(["default", "fast", "smart"]);
     expect(CLOUD_TEXT_ROUTE_DEFINITIONS.map((route) => route.id)).toEqual(["fast", "smart"]);
   });
@@ -20,7 +20,7 @@ describe("text route presentation", () => {
   it("resolves cloud roles from cloudRoutes and labels every role identically", () => {
     expect(textRouteRecipeId(configuration, "smart")).toBe("planner");
     expect(textRouteOptions(configuration)).toEqual([
-      { id: "default", label: "Default · Muse Glimmer Q5", displayName: "Default", group: "Routes" },
+      { id: "default", label: "Local · Muse Glimmer Q5", displayName: "Local", group: "Routes" },
       { id: "fast", label: "Fast · deepseek-chat", displayName: "Fast", group: "Routes" },
       { id: "smart", label: "Smart · Command A", displayName: "Smart", group: "Routes" },
     ]);
@@ -28,7 +28,7 @@ describe("text route presentation", () => {
 
   it("omits unconfigured cloud roles", () => {
     expect(textRouteOptions({ routes: configuration.routes, recipes: configuration.recipes })).toEqual([
-      { id: "default", label: "Default · Muse Glimmer Q5", displayName: "Default", group: "Routes" },
+      { id: "default", label: "Local · Muse Glimmer Q5", displayName: "Local", group: "Routes" },
     ]);
   });
 });

@@ -116,6 +116,21 @@ describe("ProjectsController", () => {
     expect(calls.onSessionSelected).toHaveBeenCalledWith("session-a1");
   });
 
+  it("loads the sidebar without restoring a session for startup new chat", async () => {
+    const { controller, calls } = setup({
+      projects: [{ id: "project-a", name: "Alpha" }],
+      sessions: { "project-a": [{ id: "session-a1", title: "First" }] },
+    });
+
+    await controller.load(undefined, undefined, false);
+
+    expect(controller.projects).toHaveLength(1);
+    expect(controller.currentSessionId).toBeUndefined();
+    expect(calls.renderTree).toHaveBeenCalledOnce();
+    expect(calls.onSessionSelected).not.toHaveBeenCalled();
+    expect(calls.onNoSession).not.toHaveBeenCalled();
+  });
+
   it("commits only the newest overlapping project-tree load", async () => {
     let resolveOld: ((value: Json) => void) | undefined;
     const oldProjects = new Promise<Json>((resolve) => { resolveOld = resolve; });
