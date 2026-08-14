@@ -13,9 +13,12 @@
         <button id="sidebar-menu" class="titlebar-icon" type="button" title="Collapse sidebar" aria-label="Collapse sidebar">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M9 3v18"></path></svg>
         </button>
-        <nav class="app-menu" aria-label="Application menu">
-          <button type="button" data-app-menu="File">File</button><button type="button" data-app-menu="Edit">Edit</button><button type="button" data-app-menu="View">View</button><button type="button" data-app-menu="Help">Help</button>
-        </nav>
+        <button id="navigate-back" class="titlebar-icon titlebar-history" type="button" aria-label="Go back">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12.5 4.5-5.5 5.5 5.5 5.5"></path></svg>
+        </button>
+        <button id="navigate-forward" class="titlebar-icon titlebar-history" type="button" aria-label="Go forward">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 4.5 5.5 5.5-5.5 5.5"></path></svg>
+        </button>
       </div>
       <div class="window-controls no-drag">
         <button type="button" data-window-action="minimize" aria-label="Minimize"><svg viewBox="0 0 20 20"><path d="M5 10h10"></path></svg></button>
@@ -204,7 +207,6 @@
 
     <input id="artifact-file" type="file" hidden>
 
-    <div id="app-menu-popover" class="popover menu-surface app-menu-popover no-drag" hidden></div>
     <div id="select-popover" class="popover menu-surface select-popover no-drag" role="listbox" hidden></div>
     <div id="sidebar-context-menu" class="popover menu-surface sidebar-context-menu" hidden></div>
 

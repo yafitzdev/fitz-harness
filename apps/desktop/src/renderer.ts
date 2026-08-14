@@ -24,7 +24,6 @@ import { ConversationLayout } from "./ui/layout/conversation-layout.js";
 import { ManagementPageLayout, managementRefreshIcon } from "./ui/layout/management-page.js";
 import { WorkspacePageController } from "./ui/layout/workspace-pages.js";
 import { AppNavigationController } from "./ui/navigation/app-navigation.js";
-import { ApplicationMenuController } from "./ui/navigation/application-menu.js";
 import { CustomSelectController } from "./ui/primitives/custom-select.js";
 import type { ActionStatusTone } from "./ui/primitives/action-status.js";
 import { requiredElement as element, requiredQuery as query, svgIcon as svg, textBlock } from "./ui/primitives/dom.js";
@@ -188,7 +187,7 @@ const composer = new Composer({
       else void agentRuns.cancel();
     } else if (mediaJobs.active && !submission.mediaCommand && submission.content.trim().length === 0) {
       void mediaJobs.cancelActive().catch((error) => showStatus(errorMessage(error), "error"));
-    } else void sendPrompt(submission);
+    } else return sendPrompt(submission);
   },
   onInput: (text) => {
     conversationContext.refresh();
@@ -772,24 +771,6 @@ const appNavigation = new AppNavigationController({
     pairingError.textContent = "";
   },
 });
-const appMenus = new ApplicationMenuController({
-  popover: element("app-menu-popover"),
-  toggles: [...document.querySelectorAll<HTMLButtonElement>("[data-app-menu]")],
-  newChat: openNewChat,
-  newProject: () => projectSidebar.beginCreateProject(),
-  toggleSidebar,
-  editCommand: (command) => window.fitz.editCommand(command),
-  windowAction: (action) => window.fitz.windowAction(action),
-  openExternal: (url) => window.fitz.openExternal(url),
-  showStatus,
-  errorMessage,
-  closeOthers: () => {
-    customSelects.close();
-    composer.closePopovers();
-    projectSidebar.hideMenu();
-    projectSidebar.resetMenuToggles();
-  },
-});
 void initialize();
 
 window.fitz.onNavigationCommand((command) => void appNavigation.navigate(command === "back" ? -1 : 1));
@@ -817,6 +798,8 @@ modelsButton.addEventListener("click", () => void appNavigation.openManagement("
 usageButton.addEventListener("click", () => void appNavigation.openManagement("usage"));
 administrationButton.addEventListener("click", () => void appNavigation.openManagement("administration"));
 element("sidebar-menu").addEventListener("click", toggleSidebar);
+element("navigate-back").addEventListener("click", () => void appNavigation.navigate(-1));
+element("navigate-forward").addEventListener("click", () => void appNavigation.navigate(1));
 for (const windowButton of document.querySelectorAll<HTMLButtonElement>("[data-window-action]")) {
   windowButton.addEventListener("click", () => {
     void window.fitz.windowAction(windowButton.dataset.windowAction as "minimize" | "maximize" | "close")
@@ -961,7 +944,12 @@ function handleRouteChange(): void {
   conversationContext.refresh();
 }
 
-function closePopovers(): void { appMenus.close(); }
+function closePopovers(): void {
+  customSelects.close();
+  composer.closePopovers();
+  projectSidebar.hideMenu();
+  projectSidebar.resetMenuToggles();
+}
 
 async function sendPrompt(submittedContent?: string | ComposerSubmission, existingUserMessage?: HTMLElement): Promise<void> {
   await promptSubmission.submit(submittedContent, existingUserMessage);

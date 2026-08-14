@@ -1,9 +1,9 @@
 .sidebar-content-divider { margin: 12px 7px 4px; border-top: 1px solid var(--border-soft); }
 .sidebar-section { margin-top: 8px; min-height: 0; overflow: auto; }
 .sidebar-section + .sidebar-section { margin-top: 10px; }
-.section-heading { height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 0 7px; color: var(--muted); }
+.section-heading { height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 0 7px; color: var(--sidebar-muted); }
 .section-heading, .project-row, .task-row, .chat-row { font-size: 13.5px; }
-.pinned-heading > span, .projects-heading > span, .chats-heading > span { color: var(--subtle); font-weight: 650; }
+.pinned-heading > span, .projects-heading > span, .chats-heading > span { color: var(--sidebar-subtle); font-weight: 650; }
 .projects-heading #new-project, .chats-heading #new-standalone-chat { opacity: 0; pointer-events: none; transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease; }
 .projects-heading:hover #new-project, .projects-heading:focus-within #new-project, #new-project:focus-visible, .chats-heading:hover #new-standalone-chat, .chats-heading:focus-within #new-standalone-chat, #new-standalone-chat:focus-visible { opacity: 1; pointer-events: auto; }
 .project-tree { display: grid; gap: 1px; }
@@ -12,7 +12,7 @@
 .project-children-inner { min-height: 0; display: grid; gap: 0; overflow: hidden; }
 .project-group.expanded > .project-children { grid-template-rows: 1fr; opacity: 1; transform: translateY(0); }
 .tree-item { position: relative; min-width: 0; }
-.project-row, .task-row, .chat-row { width: 100%; display: flex; align-items: center; gap: 8px; min-width: 0; background: transparent; color: var(--text); border-radius: var(--sidebar-item-radius); cursor: pointer; text-align: left; transition: padding-right 120ms ease; }
+.project-row, .task-row, .chat-row { width: 100%; display: flex; align-items: center; gap: 8px; min-width: 0; background: transparent; color: var(--sidebar-text); border-radius: var(--sidebar-item-radius); cursor: pointer; text-align: left; transition: padding-right 120ms ease; }
 .project-row { padding: 5px 8px; font-weight: 500; }
 .task-row { padding: 4px 9px 4px 30px; }
 .chat-row { padding: 4px 9px; }
@@ -25,7 +25,7 @@
 .project-folder-open { display: none; }
 .project-group.expanded > .tree-item > .project-row .project-folder-closed { display: none; }
 .project-group.expanded > .tree-item > .project-row .project-folder-open { display: initial; }
-.tree-menu-toggle, .tree-quick-action, .tree-pin-action { position: absolute; z-index: 2; top: 50%; width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border-radius: 7px; transform: translateY(-50%); background: transparent; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease; }
+.tree-menu-toggle, .tree-quick-action, .tree-pin-action { position: absolute; z-index: 2; top: 50%; width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border-radius: 7px; transform: translateY(-50%); background: transparent; color: var(--sidebar-muted); cursor: pointer; opacity: 0; transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease; }
 .tree-menu-toggle { right: 4px; }
 .tree-quick-action { right: 31px; }
 .tree-pin-action { right: 31px; }
@@ -34,7 +34,7 @@
 .tree-menu-toggle:hover, .tree-quick-action:hover, .tree-pin-action:hover { background: var(--tint-5); color: var(--text); }
 .tree-menu-toggle svg, .tree-quick-action svg, .tree-pin-action svg { width: 15px; height: 15px; }
 .tree-pin-action.pinned svg { fill: currentColor; }
-.tree-empty { padding: 6px 9px 8px 30px; color: var(--subtle); font-size: 12px; }
+.tree-empty { padding: 6px 9px 8px 30px; color: var(--sidebar-subtle); font-size: 12px; }
 .tree-editing { display: grid; gap: 2px; }
 .tree-rename-input { width: 100%; min-width: 0; padding: 6px 9px; border: 1px solid var(--grey-450); border-radius: var(--radius-lg); outline: 0; background: var(--grey-100); color: var(--text); font: inherit; }
 .tree-rename-input:focus { border-color: var(--grey-500); }
