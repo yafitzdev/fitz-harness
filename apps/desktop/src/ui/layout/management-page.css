@@ -20,7 +20,7 @@
    Playbooks/Connections lists — so every sidebar tab shares the same rhythm. */
 .management-page-content > .collapsible-section:first-of-type,
 .management-page-content > .playbook-list { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border-soft); }
-.management-search { height: 40px; display: flex; align-items: center; gap: 9px; margin-bottom: 36px; padding: 0 13px; border: 1px solid var(--grey-400); border-radius: 20px; background: var(--grey-300); color: var(--muted); }
+.management-search { height: 40px; display: flex; align-items: center; gap: 9px; margin-bottom: 36px; padding: 0 13px; border: 1px solid var(--grey-400); border-radius: 20px; background: var(--new-chat-base); color: var(--muted); }
 .management-search:focus-within { border-color: var(--grey-500); }
 .management-search svg { flex: 0 0 auto; }
 .management-search input { width: 100%; border: 0; outline: 0; background: transparent; color: var(--text); }

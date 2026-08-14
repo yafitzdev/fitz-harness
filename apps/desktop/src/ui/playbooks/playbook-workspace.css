@@ -1,7 +1,7 @@
 .playbook-list { display: grid; gap: 12px; }
-.recipe-card { width: 100%; min-height: 66px; display: grid; grid-template-columns: minmax(0,1fr) auto; overflow: hidden; border-radius: 10px; background: var(--grey-250); color: var(--text); transition: background-color 120ms ease; }
+.recipe-card { width: 100%; min-height: 66px; display: grid; grid-template-columns: minmax(0,1fr) auto; overflow: hidden; border: 1px solid var(--row-outline); border-radius: 10px; background: var(--new-chat-base); color: var(--text); transition: border-color 120ms ease; }
 .recipe-card + .recipe-card { margin-top: 7px; }
-.recipe-card:hover, .recipe-card:focus-within { background: var(--grey-350); }
+.recipe-card:hover, .recipe-card:focus-within { border-color: var(--row-outline-hover); background: var(--new-chat-base); }
 .recipe-card-details { min-width: 0; display: grid; align-content: center; gap: 7px; padding: 10px 12px; background: transparent; color: var(--text); cursor: pointer; text-align: left; }
 .recipe-display-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recipe-card-labels { min-width: 0; display: flex; align-items: center; gap: 6px; overflow: hidden; }
