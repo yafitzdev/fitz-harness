@@ -8,13 +8,14 @@
      roles below, so future palette changes stay inside this file. */
   --brand-black: #0d0d0d;
   --brand-white: #ffffff;
-  --brand-coral: #d74d3d;
-  --brand-coral-hover: #e15f4f;
-  --brand-coral-soft: #ef8a7e;
-  --brand-coral-tint: rgba(215,77,61,.16);
-  --brand-plum: #843378;
-  --brand-plum-light: #c47ab9;
-  --brand-plum-tint: rgba(132,51,120,.22);
+  --brand-blue: #6bb2ff;
+  --brand-blue-hover: #82beff;
+  --brand-blue-soft: #a8d2ff;
+  --brand-blue-tint: rgba(107,178,255,.16);
+  --brand-neutral: #70747a;
+  --brand-neutral-light: #aeb2b8;
+  --brand-neutral-tint: rgba(174,178,184,.18);
+  --brand-electric-blue: #458ce6;
 
   /* ---- The app's warm grey ramp -------------------------------------------
      One scale for every neutral grey: text, borders, and dark surfaces.
@@ -35,7 +36,7 @@
   --grey-300: #303030;   /* control surfaces: menus, search bars, code blocks */
   --grey-250: #303030;   /* composer and matching active surfaces intentionally share the code-block tone */
   --grey-200: #212121;   /* raised surfaces: inputs, artifact bubbles */
-  --grey-100: #181818;   /* inputs and the app background */
+  --grey-100: #17181c;   /* inputs and the app background */
   --grey-50: #0d0d0d;    /* deepest background, dark button text */
   --grey-0: #000000;     /* pure black (masks and masks only) */
 
@@ -58,7 +59,10 @@
   --window-background: var(--brand-black); /* Electron window before first paint */
   --browser-surface: #151515;            /* isolated web preview before a page paints */
   --bg: var(--grey-100);                /* app + workspace background */
-  --sidebar: var(--brand-black);        /* titlebar + navigation rail */
+  --sidebar: #121316;                   /* titlebar + navigation rail */
+  --sidebar-text: rgba(242,243,239,.82);
+  --sidebar-muted: rgba(255,255,255,.58);
+  --sidebar-subtle: rgba(255,255,255,.41);
   --surface: var(--grey-200);           /* inputs and bounded controls */
   --floating-surface: rgba(33,33,33,.96); /* popovers + dialogs (frosted) */
   --border: rgba(255,255,255,.16);      /* strong hairline (cards, code blocks) */
@@ -66,12 +70,12 @@
   --text: var(--grey-950);              /* brightest text */
   --muted: rgba(255,255,255,.70);       /* secondary text */
   --subtle: rgba(255,255,255,.50);      /* tertiary text, labels */
-  --accent: var(--brand-coral);         /* primary button face */
-  --accent-hover: var(--brand-coral-hover);
-  --accent-text: var(--brand-white);    /* primary button label */
-  --focus: var(--brand-coral);          /* keyboard and jump-target focus */
-  --selection: var(--brand-plum-tint);  /* selected navigation and tabs */
-  --selection-strong: var(--brand-plum);/* compact selected indicators */
+  --accent: var(--brand-blue);          /* primary button face */
+  --accent-hover: var(--brand-blue-hover);
+  --accent-text: var(--brand-black);    /* primary button label */
+  --focus: var(--brand-blue);           /* keyboard and jump-target focus */
+  --selection: var(--brand-neutral-tint);  /* selected navigation and tabs */
+  --selection-strong: var(--brand-neutral);/* compact selected indicators */
 
   /* ---- Radii, sizing, elevation, scrollbar -------------------------------- */
   --radius-sm: 7.5px;
@@ -90,13 +94,13 @@
   --scrollbar-thumb-hover: rgba(255,255,255,.34);
 
   /* ---- Link and status colors --------------------------------------------- */
-  --link: var(--brand-coral-soft);
+  --link: var(--brand-blue-soft);
   --link-hover: var(--brand-white);
-  --link-underline: rgba(215,77,61,.45);
-  --link-tint: rgba(215,77,61,.15);
-  --data-primary: var(--brand-coral);
-  --data-primary-tint: rgba(215,77,61,.10);
-  --media-image: var(--brand-plum-light);
+  --link-underline: rgba(107,178,255,.45);
+  --link-tint: rgba(107,178,255,.15);
+  --data-primary: var(--brand-blue);
+  --data-primary-tint: rgba(107,178,255,.10);
+  --media-image: var(--brand-neutral-light);
   --media-video: #65c98a;
   --media-audio: #e99a61;
   --status-danger: #ff6b63;             /* errors: dots, system messages */
@@ -125,7 +129,15 @@
   --shadow-float: 0 5px 16px rgba(0,0,0,.22);
   --shadow-panel: -12px 0 30px rgba(0,0,0,.12);
   --shadow-popover: 0 8px 16px -4px rgba(0,0,0,.12);
-  --shadow-new-chat: 0 -2px 34px rgba(215,77,61,.08), 0 6px 82px rgba(215,77,61,.11), 0 16px 150px rgba(215,77,61,.07);
-  --shadow-new-chat-rest: 0 -4px 32px rgba(215,77,61,.07), 0 4px 76px rgba(215,77,61,.10), 0 14px 142px rgba(215,77,61,.06);
-  --shadow-new-chat-bloom: 0 2px 40px rgba(215,77,61,.10), 0 12px 96px rgba(215,77,61,.14), 0 22px 170px rgba(215,77,61,.09);
+  --new-chat-base: var(--grey-100);
+  --new-chat-outline: rgba(255,255,255,.68);
+  --row-outline: rgba(255,255,255,.11);
+  --row-outline-hover: rgba(255,255,255,.28);
+  --shadow-chat-rest: 0 -4px 32px rgba(69,140,230,.09), 0 4px 76px rgba(69,140,230,.13), 0 14px 142px rgba(69,140,230,.08);
+  --shadow-chat-bloom: 0 2px 40px rgba(69,140,230,.14), 0 12px 96px rgba(69,140,230,.19), 0 22px 170px rgba(69,140,230,.115);
+  --shadow-new-chat: 0 -2px 34px rgba(69,140,230,.13), 0 6px 82px rgba(69,140,230,.18), 0 16px 150px rgba(69,140,230,.115);
+  --shadow-new-chat-rest: 0 -4px 32px rgba(69,140,230,.115), 0 4px 76px rgba(69,140,230,.16), 0 14px 142px rgba(69,140,230,.10);
+  --shadow-new-chat-bloom: 0 2px 40px rgba(69,140,230,.18), 0 12px 96px rgba(69,140,230,.24), 0 22px 170px rgba(69,140,230,.145);
+  --shadow-new-chat-implode: 0 0 30px rgba(69,140,230,.34), 0 0 62px rgba(69,140,230,.145);
+  --shadow-new-chat-gone: 0 0 0 rgba(69,140,230,0);
 }

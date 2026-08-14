@@ -74,11 +74,37 @@ describe("Composer", () => {
     expect(composer.root.querySelector<HTMLElement>("#new-chat-context")!.hidden).toBe(true);
   });
 
+  it("enters new chat in the unfocused silhouette state", () => {
+    const { composer } = setup();
+    const prompt = promptOf(composer);
+    prompt.focus();
+
+    composer.enterNewChat(undefined);
+
+    expect(document.activeElement).not.toBe(prompt);
+  });
+
   it("submits the prompt value through the form", () => {
     const { composer, calls } = setup();
     promptOf(composer).value = "  do the thing  ";
     composer.root.querySelector<HTMLFormElement>("#composer")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     expect(calls.onSubmit).toHaveBeenCalledWith({ content: "  do the thing  " });
+  });
+
+  it("implodes the new-chat halo while an initial submission materializes", async () => {
+    let finish = () => undefined;
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
+    const { composer, mount } = setup({ onSubmit: vi.fn(() => pending) });
+    mount.classList.add("new-chat-open");
+    promptOf(composer).value = "launch";
+
+    composer.root.querySelector<HTMLFormElement>("#composer")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    expect(composer.root.classList.contains("new-chat-launching")).toBe(true);
+
+    finish();
+    await pending;
+    await Promise.resolve();
+    expect(composer.root.classList.contains("new-chat-launching")).toBe(false);
   });
 
   it("submits with the Enter key", () => {

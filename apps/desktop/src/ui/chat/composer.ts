@@ -14,7 +14,7 @@ export interface ComposerOptions {
   closeAllPopovers: () => void;
   onRouteChange: () => void;
   onCompact: () => void | Promise<void>;
-  onSubmit: (submission: ComposerSubmission) => void;
+  onSubmit: (submission: ComposerSubmission) => void | Promise<void>;
   onInput: (text: string) => void;
   onValueChange: (text: string) => void;
   onAttach: () => void;
@@ -74,7 +74,6 @@ const COMPOSER_TEMPLATE = `
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"></path></svg>
           </button>
           <div id="composer-add-menu" class="popover composer-add-menu" hidden>
-            <small>Commands</small>
             <button type="button" data-composer-command="image"><svg viewBox="0 0 20 20"><rect x="3" y="4" width="14" height="12" rx="2"></rect><circle cx="7" cy="8" r="1.2"></circle><path d="m4.5 14 3.8-3.7 2.6 2.4 1.8-1.7 2.8 3"></path></svg><span><strong>/image</strong><small>Create an image</small></span></button>
             <button type="button" data-composer-command="video"><svg viewBox="0 0 20 20"><rect x="3" y="5" width="10" height="10" rx="2"></rect><path d="m13 8 4-2v8l-4-2"></path></svg><span><strong>/video</strong><small>Create a video</small></span></button>
             <button type="button" data-composer-command="audio"><svg viewBox="0 0 20 20"><path d="M5 13V7l9-2v6"></path><circle cx="4" cy="14" r="2"></circle><circle cx="13" cy="12" r="2"></circle></svg><span><strong>/audio</strong><small>Create music or audio</small></span></button>
@@ -275,6 +274,7 @@ export class Composer {
   }
 
   enterNewChat(projectName: string | undefined): void {
+    this.prompt.blur();
     this.newChatContext.hidden = projectName === undefined;
     this.newChatProject.textContent = projectName ?? "";
     this.newChatProjectControl.hidden = projectName === undefined;
@@ -288,6 +288,9 @@ export class Composer {
   }
 
   exitNewChat(): void {
+    if (this.root.classList.contains("new-chat-launching")) {
+      window.setTimeout(() => this.root.classList.remove("new-chat-launching"), 220);
+    } else this.root.classList.remove("new-chat-launching");
     this.newChatContext.hidden = true;
   }
 
@@ -407,7 +410,11 @@ export class Composer {
   private bind(): void {
     this.form.addEventListener("submit", (event) => {
       event.preventDefault();
-      this.options.onSubmit(this.submission);
+      const launch = this.root.parentElement?.classList.contains("new-chat-open") ?? false;
+      if (launch) this.root.classList.add("new-chat-launching");
+      void Promise.resolve(this.options.onSubmit(this.submission)).finally(() => {
+        if (this.root.parentElement?.classList.contains("new-chat-open")) this.root.classList.remove("new-chat-launching");
+      });
     });
     this.prompt.addEventListener("input", () => {
       if (this.promptHistoryIndex !== -1) { this.promptHistoryIndex = -1; this.promptDraft = ""; }

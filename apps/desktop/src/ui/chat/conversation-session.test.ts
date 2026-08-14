@@ -56,6 +56,7 @@ describe("ConversationSessionController", () => {
     expect(controller.newChat).toBe(true);
     expect(projects.setCurrentProject).toHaveBeenCalledWith(undefined);
     expect(options.workspace.classList.contains("new-chat-open")).toBe(true);
+    expect(options.composer.focus).not.toHaveBeenCalled();
     expect(options.remember).toHaveBeenCalledWith({ view: "conversation", path: ["new"] });
 
     const sessionId = await controller.ensurePromptSession("Hello", "fast");

@@ -99,7 +99,6 @@ export class ConversationSessionController {
     void this.#options.composer.refreshBranches();
     this.#options.context.refresh();
     this.#options.refreshControls();
-    this.#options.composer.focus();
     this.#options.remember({
       view: "conversation",
       path: ["new"],
