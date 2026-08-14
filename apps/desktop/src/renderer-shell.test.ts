@@ -28,7 +28,6 @@ const agentQueue = readFileSync(new URL("./ui/queue/work-queue.ts", import.meta.
 const artifactController = readFileSync(new URL("./ui/artifacts/artifact-controller.ts", import.meta.url), "utf8");
 const appNavigation = readFileSync(new URL("./ui/navigation/app-navigation.ts", import.meta.url), "utf8");
 const navigationHistory = readFileSync(new URL("./ui/navigation/navigation-history.ts", import.meta.url), "utf8");
-const applicationMenu = readFileSync(new URL("./ui/navigation/application-menu.ts", import.meta.url), "utf8");
 const composerControls = readFileSync(new URL("./ui/chat/composer-controls.ts", import.meta.url), "utf8");
 const composer = readFileSync(new URL("./ui/chat/composer.ts", import.meta.url), "utf8");
 const connectionWorkspace = readFileSync(new URL("./ui/connections/connection-workspace.ts", import.meta.url), "utf8");
@@ -77,6 +76,8 @@ describe("desktop renderer shell", () => {
   it("wires every visible shell action to a renderer interaction", () => {
     const rendererActions = [
       "sidebar-menu",
+      "navigate-back",
+      "navigate-forward",
       "sidebar-resizer",
       "new-session",
       "new-standalone-chat",
@@ -143,19 +144,21 @@ describe("desktop renderer shell", () => {
     expect(renderer).not.toContain("window.alert(");
   });
 
-  it("uses one integrated title bar with functional window and application menus", () => {
+  it("uses one integrated title bar with history and window controls", () => {
     expect(html).toContain('class="app-titlebar drag-region"');
     expect(html).toContain('class="titlebar-navigation"');
     expect(html).not.toContain('class="titlebar-navigation no-drag"');
     expect(styles).toContain(".no-drag, button, select, textarea, input { -webkit-app-region: no-drag; }");
     expect(html).toContain('class="workspace-header"');
     expect(html).not.toContain('class="workspace-header drag-region"');
-    expect(html).toContain('data-app-menu="File"');
+    expect(html).not.toContain('data-app-menu=');
+    expect(html).toContain('id="navigate-back"');
+    expect(html).toContain('id="navigate-forward"');
     expect(html).toContain('data-window-action="minimize"');
     expect(main).toContain("frame: false");
-    expect(html).toContain('id="app-menu-popover"');
-    expect(renderer).toContain("new ApplicationMenuController({");
-    expect(applicationMenu).toContain("open(name: string, toggle: HTMLButtonElement, event: MouseEvent)");
+    expect(html).not.toContain('id="app-menu-popover"');
+    expect(renderer).toContain('element("navigate-back").addEventListener("click", () => void appNavigation.navigate(-1))');
+    expect(renderer).toContain('element("navigate-forward").addEventListener("click", () => void appNavigation.navigate(1))');
     expect(main).toContain('ipcMain.handle("fitz:edit-command"');
     expect(main).not.toContain('ipcMain.handle("fitz:show-menu"');
     expect(main).toContain('ipcMain.handle("fitz:window-action"');
@@ -224,8 +227,8 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('id="pinned-section" class="sidebar-section pinned-section" hidden');
     expect(html).toContain('id="pinned" class="project-tree"');
     expect(styles).toContain(".sidebar-content-divider { margin: 12px 7px 4px; border-top: 1px solid var(--border-soft); }");
-    expect(styles).toContain(".pinned-heading > span, .projects-heading > span, .chats-heading > span { color: var(--subtle); font-weight: 650; }");
-    expect(styles).toContain(".project-row, .task-row, .chat-row { width: 100%; display: flex; align-items: center; gap: 8px; min-width: 0; background: transparent; color: var(--text);");
+    expect(styles).toContain(".pinned-heading > span, .projects-heading > span, .chats-heading > span { color: var(--sidebar-subtle); font-weight: 650; }");
+    expect(styles).toContain(".project-row, .task-row, .chat-row { width: 100%; display: flex; align-items: center; gap: 8px; min-width: 0; background: transparent; color: var(--sidebar-text);");
     expect(html).not.toContain("<kbd>Ctrl N</kbd>");
     expect(styles).toContain(".project-tree { display: grid; gap: 1px; }");
     expect(styles).toContain(".section-heading, .project-row, .task-row, .chat-row { font-size: 13.5px; }");
@@ -549,22 +552,24 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("grid-template-columns: var(--conversation-gutter) minmax(0, var(--conversation-width)) minmax(0, 1fr)");
     expect(styles).toContain("width: var(--conversation-width)");
     expect(styles).toContain("--composer-height: 112px");
-    expect(styles).toContain("padding: 32px 0 calc(var(--composer-height) + 44px)");
+    expect(styles).toContain("padding: 32px 0 calc(var(--composer-height) + 72px)");
     expect(styles).toContain("top: var(--workspace-header-height); bottom: 0; left: 0; width: var(--conversation-viewport)");
     expect(styles).toContain(".messages > * { grid-column: 2; }");
     expect(styles).toContain("left: var(--conversation-gutter)");
-    expect(styles).toContain("bottom: 12px");
+    expect(styles).toContain("bottom: 20px");
     expect(composerCss).toContain(".composer-dock::before");
-    expect(composerCss).toContain("inset: var(--radius-3xl) 0 -12px");
-    expect(styles).toContain("--conversation-scrollbar: 0px");
+    expect(composerCss).toContain("inset: var(--radius-3xl) 0 -20px");
+    expect(styles).toContain("--conversation-space: var(--conversation-viewport)");
+    expect(styles).not.toContain("--conversation-scrollbar");
     expect(styles).toContain(".workspace.inspector-open { --conversation-viewport: calc(100% - var(--inspector-width))");
     expect(renderer).toContain("new ConversationLayout({");
     expect(conversationLayout).toContain("new ResizeObserver(this.sync)");
     expect(conversationLayout).toContain("this.#resizeObserver.observe(target)");
-    expect(conversationLayout).toContain("messages.offsetWidth - messages.clientWidth");
     expect(conversationLayout).toContain('workspace.style.setProperty("--conversation-viewport", `${viewportWidth}px`)');
     expect(conversationLayout).toContain('workspace.style.setProperty("--conversation-width", `${conversationWidth}px`)');
     expect(conversationLayout).toContain('workspace.style.setProperty("--conversation-gutter", `${gutter}px`)');
+    expect(conversationLayout).not.toContain("scrollbarWidth");
+    expect(conversationLayout).not.toContain("messages.offsetWidth - messages.clientWidth");
     expect(conversationLayout).toContain("composer.offsetHeight");
     expect(composer).toContain('id="scroll-to-bottom"');
     expect(conversationLayout).toContain('options.messages.addEventListener("scroll", this.updateScrollButton');
@@ -632,7 +637,7 @@ describe("desktop renderer shell", () => {
   it("keeps every dropdown and overflow surface at the compact Codex menu density", () => {
     expect(styles).toContain(".popover { position: absolute; z-index: 18; padding: 4px;");
     expect(styles).toContain(".menu-surface button { width: 100%; min-height: 32px;");
-    expect(styles).toContain(".app-menu-popover { position: fixed; z-index: 60; width: 204px;");
+    expect(styles).not.toContain(".app-menu-popover");
     expect(styles).toContain(".sidebar-context-menu { position: fixed; z-index: 40; width: 242px;");
     expect(styles).toContain(".access-mode-menu { left: 0; bottom: 34px; width: 250px;");
     expect(styles).toContain(".settings-submenu { width: 100%;");
@@ -641,8 +646,14 @@ describe("desktop renderer shell", () => {
 
   it("uses a larger new-chat composer and quickly settles it into the canonical dock", () => {
     expect(composerCss).toContain("calc(var(--conversation-width) * 1.2)");
+    expect(composerCss).toContain("bottom: calc(100% + 64px)");
     expect(composerCss).toContain(".workspace.new-chat-open #prompt { min-height: 65px;");
-    expect(composerCss).toContain("bottom 200ms cubic-bezier(.23,1,.32,1)");
+    expect(composerCss).toContain(".composer-toolbar { position: relative; z-index: 1; min-height: 44px;");
+    expect(composerCss).toContain("padding: 6px 10px");
+    expect(composerCss).toContain(".workspace.new-chat-open .composer-toolbar { min-height: 53px; padding: 10px 10px 4px; }");
+    expect(composerCss).toContain("bottom 220ms cubic-bezier(.23,1,.32,1)");
+    expect(composerCss).toContain(".composer-dock.new-chat-launching");
+    expect(composerCss).toContain("@keyframes new-chat-halo-implode");
     expect(composerCss).not.toContain("bottom: auto");
     expect(conversationSession).toContain('workspace.classList.remove("new-chat-open")');
   });
@@ -659,7 +670,8 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("--bg: var(--grey-100)");
     expect(styles).toContain("--text: var(--grey-950)");
     expect(styles).toContain("--floating-surface: rgba(33,33,33,.96)");
-    expect(styles).toContain("--sidebar: var(--brand-black)");
+    expect(styles).toContain("--sidebar: #121316");
+    expect(styles).toContain("--sidebar-text: rgba(242,243,239,.82)");
     expect(styles).toContain("--radius-3xl: 25px");
     expect(styles).toContain("--control-size: 28px");
     expect(styles).toContain("--sidebar-width: 275px");
@@ -668,7 +680,15 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("backdrop-filter: blur(16px)");
     expect(styles).toContain("--elevation-prominent:");
     expect(styles).toContain("--shadow-new-chat:");
-    expect(composerCss).toContain(".workspace.new-chat-open .composer-card");
+    expect(styles).toContain("--new-chat-base: var(--grey-100)");
+    expect(styles).toContain("--new-chat-outline: rgba(255,255,255,.68)");
+    expect(styles).not.toContain("--chat-window-gradient:");
+    expect(styles).toContain("--shadow-chat-rest:");
+    expect(styles).toContain("--brand-electric-blue: #458ce6");
+    expect(composerCss).toContain(".composer-card { position: relative; overflow: visible; border: 1px solid var(--new-chat-outline)");
+    expect(composerCss).toContain(".composer-card:focus-within { background: var(--new-chat-base); }");
+    expect(composerCss).toContain("@keyframes chat-halo-breathe");
+    expect(composerCss).toContain("animation: chat-halo-breathe 7.2s ease-in-out infinite");
     expect(projectSidebar).toContain('class="project-folder-open"');
     expect(styles).toContain(".project-group.expanded > .tree-item > .project-row .project-folder-open { display: initial; }");
     expect(renderer).toContain('storageKey: "fitz-sidebar-width"');
@@ -680,15 +700,19 @@ describe("desktop renderer shell", () => {
     // Brand inputs, the neutral ramp, and overlay tints live in tokens.css.
     expect(styles).toContain("--brand-black: #0d0d0d");
     expect(styles).toContain("--brand-white: #ffffff");
-    expect(styles).toContain("--brand-coral: #d74d3d");
-    expect(styles).toContain("--brand-plum: #843378");
+    expect(styles).toContain("--brand-blue: #6bb2ff");
+    expect(styles).toContain("--brand-neutral: #70747a");
+    expect(styles).toContain("--selection: var(--brand-neutral-tint)");
     expect(styles).toContain("--grey-950: #f2f3ef");
     expect(styles).toContain("--grey-800: #c8cbc5");
-    expect(styles).toContain("--grey-100: #181818");
+    expect(styles).toContain("--grey-100: #17181c");
     expect(styles).toContain("--tint-3: rgba(255,255,255,.06)");
     expect(styles).toContain("--tint-5: rgba(255,255,255,.10)");
     expect(styles).toContain("--tint-7: rgba(255,255,255,.14)");
-    expect(styles).toContain(".recipe-card:hover, .recipe-card:focus-within { background: var(--grey-350); }");
+    expect(styles).toContain(".recipe-card:hover, .recipe-card:focus-within { border-color: var(--row-outline-hover); background: var(--new-chat-base); }");
+    expect(styles).not.toContain("--row-hover-glow");
+    expect(styles).toContain(".recipe-card { width: 100%; min-height: 66px;");
+    expect(styles).toContain("border: 1px solid var(--row-outline); border-radius: 10px; background: var(--new-chat-base)");
     expect(styles).toContain(".collapsible-toggle:hover, .collapsible-toggle:focus-visible { background: var(--tint-5); }");
     expect(composerControlsCss).toContain("#model-route { color: var(--text); }");
     expect(composerControlsCss).toContain("#model-effort { color: var(--text); opacity: .58; }");
@@ -766,7 +790,7 @@ describe("desktop renderer shell", () => {
     expect(projects).toContain("startChat(session: SessionRecord): void");
     expect(projects).toContain('else if (this.chatRecords.some((chat) => chat.id === id)) this.currentProjectIdValue = undefined');
     expect(styles).toContain(".chat-row { padding: 4px 9px; }");
-    expect(styles).toContain(".pinned-heading > span, .projects-heading > span, .chats-heading > span { color: var(--subtle); font-weight: 650; }");
+    expect(styles).toContain(".pinned-heading > span, .projects-heading > span, .chats-heading > span { color: var(--sidebar-subtle); font-weight: 650; }");
   });
 
   it("clears the starter screen and reports unobtrusive work progress before output arrives", () => {
@@ -1123,6 +1147,8 @@ describe("desktop renderer shell", () => {
     expect(html).not.toContain('class="management-actions"');
     expect(html).not.toContain('class="management-page-content"');
     expect(html).not.toContain('class="management-search"');
+    expect(styles).toContain(".management-search { height: 40px;");
+    expect(styles).toContain("border-radius: 20px; background: var(--new-chat-base)");
     expect(styles).not.toContain(".plugin-page-tabs");
     expect(styles).not.toContain(".plugin-content");
     expect(styles).not.toContain(".administration-content");

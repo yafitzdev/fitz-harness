@@ -30,16 +30,17 @@ export class ConversationLayout {
     const workspaceWidth = workspace.clientWidth;
     const panelWidth = workspace.classList.contains("inspector-open") ? this.#options.inspectorWidth() : 0;
     const viewportWidth = Math.max(280, workspaceWidth - panelWidth);
-    const scrollbarWidth = Math.max(0, messages.offsetWidth - messages.clientWidth);
     const compact = panelWidth > 0;
     const minimumGutter = compact ? 18 : 24;
     const inset = Math.max(compact ? 36 : 48, Math.min(compact ? 72 : 96, viewportWidth * (compact ? .07 : .08)));
-    const conversationWidth = Math.max(240, Math.min(768, viewportWidth - scrollbarWidth - inset));
-    const gutter = Math.max(minimumGutter, (viewportWidth - scrollbarWidth - conversationWidth) / 2);
+    // Scrollbars are viewport chrome, not conversation geometry. Keeping them
+    // out of these calculations prevents the composer and transcript axis from
+    // moving when content starts or stops overflowing.
+    const conversationWidth = Math.max(240, Math.min(768, viewportWidth - inset));
+    const gutter = Math.max(minimumGutter, (viewportWidth - conversationWidth) / 2);
     workspace.style.setProperty("--conversation-viewport", `${viewportWidth}px`);
     workspace.style.setProperty("--conversation-width", `${conversationWidth}px`);
     workspace.style.setProperty("--conversation-gutter", `${gutter}px`);
-    workspace.style.setProperty("--conversation-scrollbar", `${scrollbarWidth}px`);
     workspace.style.setProperty("--composer-height", `${composer.offsetHeight}px`);
     this.updateScrollButton();
   };
