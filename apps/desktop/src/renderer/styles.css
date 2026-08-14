@@ -265,6 +265,13 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .pairing-submit { justify-self: end; min-width: 110px; padding: 9px 17px; border-radius: var(--radius-md); background: var(--accent); color: var(--accent-text); cursor: pointer; font-weight: 550; }
 .pairing-submit:hover { background: var(--accent-hover); }
 .pairing-submit:disabled { opacity: .5; cursor: default; }
+.host-connection-form { margin-bottom: 20px; }
+.pairing-host-actions { display: flex; justify-content: space-between; gap: 10px; }
+.pairing-host-actions > button { min-height: 40px; padding: 0 15px; border-radius: var(--radius-md); background: var(--tint-5); color: var(--text); cursor: pointer; }
+.pairing-host-actions > button:hover { background: var(--tint-7); }
+.pairing-host-actions > .pairing-submit { background: var(--accent); color: var(--accent-text); }
+.pairing-separator { display: flex; align-items: center; gap: 12px; margin: 2px 0 20px; color: var(--subtle); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+.pairing-separator::before, .pairing-separator::after { content: ""; flex: 1; height: 1px; background: var(--border); }
 .pairing-page[hidden] { display: none; }
 
 /* Native select rendering is retained as the trigger; renderer.ts owns the Codex menu surface. */

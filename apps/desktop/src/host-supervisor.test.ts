@@ -23,4 +23,12 @@ describe("HostSupervisor", () => {
     const fetch = vi.fn(async () => { throw new Error("connection refused"); });
     await expect(new HostSupervisor({ origin, packaged: false, resourcesPath: "unused", fetch }).ensureReady()).rejects.toBeInstanceOf(HostStartupError);
   });
+
+  it("never starts a bundled local host as fallback for an unavailable remote host", async () => {
+    const fetch = vi.fn(async () => { throw new Error("offline"); });
+    await expect(new HostSupervisor({ origin: new URL("https://fitz.example.com"), packaged: true, resourcesPath: "unused", fetch }).ensureReady()).rejects.toMatchObject({
+      message: "The remote Fitz host is unavailable",
+      detail: expect.stringContaining("never start a local host"),
+    });
+  });
 });

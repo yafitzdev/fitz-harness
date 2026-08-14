@@ -1,7 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from "electron";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -13,6 +13,8 @@ import { HostClient, hostRequestDeadline } from "./host-client.js";
 import { createModelUnloadOnQuitHandler } from "./model-unload-on-quit.js";
 import { readThemeColor } from "./theme-token.js";
 import { InAppBrowserController } from "./in-app-browser-main.js";
+import { SharedHostGateway } from "./shared-host-gateway.js";
+import { CloudflareShareManager, type ShareFitzConfiguration } from "./cloudflare-share.js";
 
 const { autoUpdater } = electronUpdater;
 const execFileAsync = promisify(execFile);
@@ -21,9 +23,12 @@ const directory = dirname(fileURLToPath(import.meta.url));
 const windowBackground = readThemeColor(join(directory, "ui", "theme", "tokens.css"), "--window-background");
 const browserBackground = readThemeColor(join(directory, "ui", "theme", "tokens.css"), "--browser-surface");
 const localHostPort = commandLineValue("host-port");
-const hostUrl = validateHostUrl(commandLineValue("host-url") ?? (localHostPort ? `http://127.0.0.1:${localHostPort}` : undefined) ?? process.env.FITZ_HOST_URL ?? "http://127.0.0.1:8787");
+const storedHostUrl = readStoredHostUrl();
+const hostUrl = validateHostUrl(commandLineValue("host-url") ?? (localHostPort ? `http://127.0.0.1:${localHostPort}` : undefined) ?? process.env.FITZ_HOST_URL ?? storedHostUrl ?? "http://127.0.0.1:8787");
 let deviceToken = process.env.FITZ_DEVICE_TOKEN;
 const hostClient = new HostClient({ origin: hostUrl, getToken: () => deviceToken });
+let shareManager: CloudflareShareManager | undefined;
+let sharedGateway: SharedHostGateway | undefined;
 interface DesktopUpdateStatus { state: "idle" | "checking" | "available" | "downloading" | "current" | "downloaded" | "error" | "development"; percent?: number; version?: string }
 let latestUpdateStatus: DesktopUpdateStatus = { state: app.isPackaged ? "idle" : "development" };
 interface StoredConsumerConnection { id: string; displayName: string; baseUrl: string; authType: "none" | "bearer"; apiKey?: string; template: string; models: Array<{ id: string; recipeId: string }>; mediaModels: Array<{ id: string; routeId: string; recipeId: string; modality: string; template: string }>; updatedAt: string }
@@ -48,7 +53,28 @@ ipcMain.handle("fitz:request", async (event, input: unknown) => {
     event.sender.removeListener("destroyed", cancel);
   }
 });
-ipcMain.handle("fitz:connection-info", () => ({ origin: new URL(hostUrl).origin }));
+ipcMain.handle("fitz:connection-info", () => ({ origin: new URL(hostUrl).origin, isLoopback: isLoopbackHost(hostUrl), explicitlyConfigured: Boolean(storedHostUrl || commandLineValue("host-url") || process.env.FITZ_HOST_URL) }));
+ipcMain.handle("fitz:configure-host", (_event, value: unknown) => {
+  const url = validateHostUrl(requireBoundedText(value, "Host URL", 2048));
+  persistHostUrl(url.origin);
+  app.relaunch();
+  app.exit(0);
+});
+ipcMain.handle("fitz:share-status", () => shareManager?.status(Boolean(loadShareConfiguration())) ?? ({ state: "disabled", available: false, configured: false, origin: "http://127.0.0.1:8790", message: "Share Fitz is available only on the host PC" }));
+ipcMain.handle("fitz:share-enable", async (_event, input: unknown) => {
+  if (!isRecord(input)) throw new TypeError("Share Fitz configuration must be an object");
+  if (!shareManager) throw new Error("Share Fitz can only be enabled from the host PC");
+  if (!safeStorage.isEncryptionAvailable()) throw new Error("Secure credential storage is unavailable");
+  const configuration = { publicUrl: requireBoundedText(input.publicUrl, "Public URL", 2048), tunnelToken: requireBoundedText(input.tunnelToken, "Tunnel token", 4096) };
+  const result = await shareManager.start(configuration);
+  persistShareConfiguration(configuration);
+  return result;
+});
+ipcMain.handle("fitz:share-disable", async (_event, forget: unknown) => {
+  await shareManager?.stop();
+  if (forget === true) forgetShareConfiguration();
+  return shareManager?.status(Boolean(loadShareConfiguration()));
+});
 ipcMain.handle("fitz:consumer-connections-list", () => loadConsumerConnections().map(publicConsumerConnection));
 ipcMain.handle("fitz:consumer-connection-save", async (_event, input: unknown) => {
   if (!isRecord(input)) throw new TypeError("Connection must be an object");
@@ -119,7 +145,7 @@ ipcMain.handle("fitz:bootstrap-local-device", async () => {
   deviceToken = token;
   return true;
 });
-ipcMain.handle("fitz:pair-device", async (_event, input: unknown) => { if (!isRecord(input)) throw new TypeError("Pairing details must be an object"); const code = requireBoundedText(input.code, "Pairing code", 128); const displayName = requireBoundedText(input.displayName, "Display name", 100); const deviceName = requireBoundedText(input.deviceName, "Device name", 100); if (!safeStorage.isEncryptionAvailable()) return { status: 503, body: JSON.stringify({ error: "Secure credential storage is unavailable" }) }; const response = await hostClient.fetch("/api/v1/pairing/redeem", { method: "POST", authenticated: false, timeoutMs: 15_000, body: { code, displayName, deviceName } }); const body = await response.text(); if (!response.ok) return { status: response.status, body }; const parsed = JSON.parse(body) as Record<string, unknown>; const data = isRecord(parsed.data) ? parsed.data : {}; const token = typeof data.token === "string" ? data.token : undefined; if (!token) return { status: 502, body: JSON.stringify({ error: "The host did not return a device credential" }) }; persistDeviceToken(token); deviceToken = token; const { token: _token, ...safeData } = data; return { status: response.status, body: JSON.stringify({ ...parsed, data: safeData }) }; });
+ipcMain.handle("fitz:pair-device", async (_event, input: unknown) => { if (!isRecord(input)) throw new TypeError("Pairing details must be an object"); const code = requireBoundedText(input.code, "Pairing code", 128); const displayName = requireBoundedText(input.displayName, "Display name", 100); const deviceName = requireBoundedText(input.deviceName, "Device name", 100); if (!safeStorage.isEncryptionAvailable()) return { status: 503, body: JSON.stringify({ error: "Secure credential storage is unavailable" }) }; const pairingPath = isLoopbackHost(hostUrl) ? "/api/v1/pairing/redeem" : "/api/v1/pairing/redeem-shared"; const response = await hostClient.fetch(pairingPath, { method: "POST", authenticated: false, timeoutMs: 15_000, body: { code, displayName, deviceName } }); const body = await response.text(); if (!response.ok) return { status: response.status, body }; const parsed = JSON.parse(body) as Record<string, unknown>; const data = isRecord(parsed.data) ? parsed.data : {}; const token = typeof data.token === "string" ? data.token : undefined; if (!token) return { status: 502, body: JSON.stringify({ error: "The host did not return a device credential" }) }; persistDeviceToken(token); deviceToken = token; const { token: _token, ...safeData } = data; return { status: response.status, body: JSON.stringify({ ...parsed, data: safeData }) }; });
 ipcMain.handle("fitz:open-external", async (_event, url: unknown) => { if (typeof url !== "string" || !isAllowedExternalUrl(url)) throw new Error("External URL is not allowed"); await shell.openExternal(url); });
 ipcMain.handle("fitz:browser-open", async (event, url: unknown) => inAppBrowserFor(event.sender)?.open(url));
 ipcMain.handle("fitz:browser-bounds", (event, bounds: unknown) => inAppBrowserFor(event.sender)?.setBounds(bounds));
@@ -172,12 +198,17 @@ app.on("before-quit", createModelUnloadOnQuitHandler({
   app,
   shouldUnload: () => !desktopSmoke && isLoopbackHost(hostUrl),
   unload: async () => {
-    const response = await hostClient.fetch("/api/v1/management/instances/stop", {
-      method: "POST",
-      body: { mode: "force", reason: "desktop-quit" },
-      timeoutMs: 45_000,
-    });
-    if (!response.ok) throw new Error(hostError(await response.text()));
+    try {
+      const response = await hostClient.fetch("/api/v1/management/instances/stop", {
+        method: "POST",
+        body: { mode: "force", reason: "desktop-quit" },
+        timeoutMs: 45_000,
+      });
+      if (!response.ok) throw new Error(hostError(await response.text()));
+    } finally {
+      await shareManager?.stop();
+      await sharedGateway?.stop();
+    }
   },
   onError: (error) => console.warn("Could not unload the local model before quit", error),
 }));
@@ -194,6 +225,19 @@ if (!primaryInstance) {
   } else {
     if (isLoopbackHost(hostUrl) && !(await ensureLocalHost())) app.quit();
     else {
+      if (isLoopbackHost(hostUrl)) {
+        const executable = app.isPackaged ? join(process.resourcesPath, "cloudflared", "cloudflared.exe") : process.env.FITZ_CLOUDFLARED_PATH ?? "cloudflared";
+        sharedGateway = new SharedHostGateway({ target: hostUrl });
+        try {
+          await sharedGateway.start();
+          shareManager = new CloudflareShareManager({ gateway: sharedGateway, executable, manageGateway: false });
+          const savedShare = loadShareConfiguration();
+          if (savedShare) void shareManager.start(savedShare).catch((error) => console.warn("Share Fitz could not reconnect", error));
+        } catch (error) {
+          console.warn("The Share Fitz gateway could not start", error);
+          sharedGateway = undefined;
+        }
+      }
       void warmLocalDefault();
       createWindow();
       if (app.isPackaged) void autoUpdater.checkForUpdates().catch(() => undefined);
@@ -236,6 +280,24 @@ function requireBoundedText(value: unknown, label: string, maximum: number): str
 function deviceTokenPath(): string { const hostId = createHash("sha256").update(new URL(hostUrl).origin).digest("hex").slice(0, 16); return join(app.getPath("userData"), `device-token-${hostId}.bin`); }
 function persistDeviceToken(token: string): void { mkdirSync(dirname(deviceTokenPath()), { recursive: true }); writeFileSync(deviceTokenPath(), safeStorage.encryptString(token), { flag: "w" }); }
 function loadDeviceToken(): string | undefined { try { if (!safeStorage.isEncryptionAvailable() || !existsSync(deviceTokenPath())) return undefined; return safeStorage.decryptString(readFileSync(deviceTokenPath())); } catch { return undefined; } }
+function hostConfigurationPath(): string { return join(app.getPath("userData"), "host-connection.json"); }
+function readStoredHostUrl(): string | undefined {
+  try {
+    const value = JSON.parse(readFileSync(hostConfigurationPath(), "utf8")) as unknown;
+    return isRecord(value) && typeof value.origin === "string" ? value.origin : undefined;
+  } catch { return undefined; }
+}
+function persistHostUrl(origin: string): void { mkdirSync(dirname(hostConfigurationPath()), { recursive: true }); writeFileSync(hostConfigurationPath(), JSON.stringify({ origin }), { encoding: "utf8", flag: "w" }); }
+function shareConfigurationPath(): string { return join(app.getPath("userData"), "share-fitz.bin"); }
+function persistShareConfiguration(configuration: ShareFitzConfiguration): void { mkdirSync(dirname(shareConfigurationPath()), { recursive: true }); writeFileSync(shareConfigurationPath(), safeStorage.encryptString(JSON.stringify(configuration)), { flag: "w" }); }
+function loadShareConfiguration(): ShareFitzConfiguration | undefined {
+  try {
+    if (!safeStorage.isEncryptionAvailable() || !existsSync(shareConfigurationPath())) return undefined;
+    const value = JSON.parse(safeStorage.decryptString(readFileSync(shareConfigurationPath()))) as unknown;
+    return isRecord(value) && typeof value.publicUrl === "string" && typeof value.tunnelToken === "string" ? { publicUrl: value.publicUrl, tunnelToken: value.tunnelToken } : undefined;
+  } catch { return undefined; }
+}
+function forgetShareConfiguration(): void { try { unlinkSync(shareConfigurationPath()); } catch {} }
 function consumerConnectionsPath(): string {
   const hostId = createHash("sha256").update(new URL(hostUrl).origin).digest("hex").slice(0, 16);
   const ownerId = createHash("sha256").update(deviceToken ?? "unpaired").digest("hex").slice(0, 16);

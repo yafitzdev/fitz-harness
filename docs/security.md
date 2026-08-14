@@ -13,6 +13,12 @@ Device tokens are returned once, HMAC-SHA-256 hashed before persistence, and nev
 desktop renderer. Use `Authorization: Bearer <token>` for direct API access. Revocation takes effect
 on the next request.
 
+The public Share Fitz gateway accepts consumer credentials only. Its separate shared pairing route
+rejects agent and administrator codes, and consumer-owned agent runs cannot execute host tools.
+Creating or editing host-path projects, administration, global events, model configuration, and
+private bootstrap are not present on the gateway allowlist. The public URL is therefore an
+authenticated model-consumption boundary, not remote host administration.
+
 Administrators can access every inference route. Agent and consumer users only see and use routes
 listed in their explicit route grants. Their role default or custom quota limits request rate,
 prompt size, output tokens, and queue depth.
@@ -25,3 +31,7 @@ Administrators can issue short-lived, one-use pairing codes through
 at `POST /api/v1/pairing/redeem` and receives its device token once. Only the keyed code and token
 hashes are stored. Reusing or redeeming an expired code fails, and device revocation applies on the
 next authenticated request.
+
+For API clients, an administrator can create a named user and issue a named device/API key. The raw
+key is displayed once. Issue consumer keys for Share Fitz; privileged credentials are deliberately
+rejected by the public gateway.

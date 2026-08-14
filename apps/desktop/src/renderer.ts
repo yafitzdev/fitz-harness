@@ -32,6 +32,7 @@ import { ResizablePane } from "./ui/primitives/resizable-pane.js";
 import { PluginsPageController } from "./ui/plugins/plugins-page.js";
 import { ModelsPageController } from "./ui/models/models-page.js";
 import { AdministrationPageController } from "./ui/administration/administration-page.js";
+import { ShareFitzController } from "./ui/administration/share-fitz-controller.js";
 import { UsagePageController } from "./ui/usage/usage-page.js";
 import { PlaybookWorkspaceController } from "./ui/playbooks/playbook-workspace.js";
 import { ProjectsController } from "./ui/projects/projects.js";
@@ -74,6 +75,9 @@ const modelsPage = element("models-page");
 const modelsButton = element("manage-models") as HTMLButtonElement;
 const pairingPage = element("pairing-page");
 const pairingForm = element("pairing-form") as HTMLFormElement;
+const hostConnectionForm = element("host-connection-form") as HTMLFormElement;
+const hostConnectionUrl = element("host-connection-url") as HTMLInputElement;
+const setupLocalHost = element("setup-local-host") as HTMLButtonElement;
 const pairingCode = element("pairing-code") as HTMLInputElement;
 const pairingDisplayName = element("pairing-display-name") as HTMLInputElement;
 const pairingDeviceName = element("pairing-device-name") as HTMLInputElement;
@@ -563,6 +567,16 @@ const conversationMessages = new ConversationMessageFeed({
   runActive: () => agentRuns.active,
   projectRoot: () => projects.activeProject()?.rootPath ?? "",
 });
+new ShareFitzController({
+  form: element("share-fitz-form") as HTMLFormElement,
+  publicUrl: element("share-fitz-public-url") as HTMLInputElement,
+  tunnelToken: element("share-fitz-token") as HTMLInputElement,
+  status: element("share-fitz-status"),
+  refresh: element("refresh-share-fitz") as HTMLButtonElement,
+  disable: element("disable-share-fitz") as HTMLButtonElement,
+  forget: element("forget-share-fitz") as HTMLButtonElement,
+  origin: element("share-fitz-origin"),
+}, window.fitz);
 const administrationPageController = new AdministrationPageController({
   refresh: element("refresh-administration") as HTMLButtonElement,
   sections: administrationPage,
@@ -822,6 +836,8 @@ window.addEventListener("fitz:resource-appeared", (event) => {
 });
 element("context-add").addEventListener("click", () => artifactController.choose());
 pairingForm.addEventListener("submit", (event) => { event.preventDefault(); void pairDevice(); });
+hostConnectionForm.addEventListener("submit", (event) => { event.preventDefault(); void configureRemoteHost(); });
+setupLocalHost.addEventListener("click", () => void window.fitz.configureHost("http://127.0.0.1:8787"));
 document.addEventListener("click", closePopovers);
 
 async function initialize(): Promise<void> {
@@ -846,11 +862,24 @@ async function initialize(): Promise<void> {
     void loadManagementConfiguration(false);
   } catch (error) {
     if (error instanceof HostRequestError && error.status === 401) {
-      const bootstrapped = await window.fitz.bootstrapLocalDevice().catch(() => false);
+      const connection = await window.fitz.connectionInfo();
+      const bootstrapped = connection.isLoopback && connection.explicitlyConfigured ? await window.fitz.bootstrapLocalDevice().catch(() => false) : false;
       if (bootstrapped) { await initialize(); return; }
-      currentUserId = undefined; administrator = false; administrationButton.hidden = true; configuredHostOrigin = (await window.fitz.connectionInfo()).origin; setConnection("Pair device", "error"); setStatus("Pairing required", "error"); appNavigation.showPairing(`Enter a one-time code to connect to ${configuredHostOrigin}.`);
+      currentUserId = undefined; administrator = false; administrationButton.hidden = true; configuredHostOrigin = connection.origin; hostConnectionUrl.value = connection.isLoopback && !connection.explicitlyConfigured ? "" : configuredHostOrigin; setConnection("Pair device", "error"); setStatus("Pairing required", "error"); appNavigation.showPairing(connection.isLoopback && !connection.explicitlyConfigured ? "Host models on this PC, or connect to someone else's Fitz host." : `Enter a one-time code to connect to ${configuredHostOrigin}.`);
     }
-    else { setConnection("Click to retry", "error"); setStatus("Offline", "error"); showConnectionFailure(errorMessage(error)); }
+    else {
+      const connection = await window.fitz.connectionInfo().catch(() => undefined);
+      setConnection("Click to retry", "error"); setStatus("Offline", "error");
+      if (connection && !connection.isLoopback) {
+        configuredHostOrigin = connection.origin;
+        hostConnectionUrl.value = connection.origin;
+        administrator = false;
+        administrationButton.hidden = true;
+        appNavigation.showPairing(`Could not reach ${connection.origin}. Check the address or choose another host.`);
+        pairingError.textContent = errorMessage(error);
+        pairingError.hidden = false;
+      } else showConnectionFailure(errorMessage(error));
+    }
   } finally {
     refreshComposerState();
   }
@@ -898,6 +927,14 @@ async function pairDevice(): Promise<void> {
     pairingCode.value = ""; await initialize();
   } catch (error) { pairingError.textContent = errorMessage(error); pairingError.hidden = false; }
   finally { setFormBusy(pairingForm, false); }
+}
+
+async function configureRemoteHost(): Promise<void> {
+  setFormBusy(hostConnectionForm, true);
+  pairingError.hidden = true;
+  try { await window.fitz.configureHost(hostConnectionUrl.value.trim()); }
+  catch (error) { pairingError.textContent = errorMessage(error); pairingError.hidden = false; }
+  finally { setFormBusy(hostConnectionForm, false); }
 }
 
 async function loadManagementConfiguration(renderPage: boolean): Promise<Json | undefined> {

@@ -379,6 +379,22 @@ export class AdministrationPageController {
     }
     if (!(access.devices ?? []).length) devices.append(emptyState("No devices"));
 
+    const issueKey = document.createElement("form");
+    issueKey.className = "admin-issue-key";
+    const keyName = document.createElement("input");
+    keyName.required = true;
+    keyName.maxLength = 100;
+    keyName.placeholder = "Device or API client name";
+    keyName.setAttribute("aria-label", `New API key name for ${user.displayName}`);
+    const issue = document.createElement("button");
+    issue.type = "submit";
+    issue.textContent = "Issue API key";
+    const keyResult = document.createElement("div");
+    keyResult.className = "admin-api-key-result";
+    keyResult.hidden = true;
+    issueKey.append(keyName, issue);
+    issueKey.addEventListener("submit", (event) => { event.preventDefault(); void this.issueAdminDevice(user.id, keyName.value, issueKey, keyResult); });
+
     const actions = document.createElement("div");
     actions.className = "admin-user-actions";
     const save = document.createElement("button");
@@ -394,7 +410,7 @@ export class AdministrationPageController {
       toggle.addEventListener("click", () => void this.updateAdminUser(user.id, { status: user.status === "active" ? "disabled" : "active" }));
       actions.append(toggle);
     }
-    body.append(routesHeading, routeList, mediaHeading, mediaRoutes, quotaHeading, quota, devicesHeading, devices, actions);
+    body.append(routesHeading, routeList, mediaHeading, mediaRoutes, quotaHeading, quota, devicesHeading, devices, issueKey, keyResult, actions);
     details.append(summary, body);
     return details;
   }
@@ -477,6 +493,25 @@ export class AdministrationPageController {
       await this.load();
       this.options.showStatus("Device revoked", "success");
     } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
+  }
+
+  private async issueAdminDevice(userId: string, name: string, form: HTMLFormElement, result: HTMLElement): Promise<void> {
+    setFormBusy(form, true);
+    try {
+      const response = await this.options.api(`/api/v1/management/users/${userId}/devices`, "POST", { name: name.trim() });
+      const token = String(response.data?.token ?? "");
+      if (!token) throw new Error("The host did not return the one-time API key");
+      const value = Object.assign(document.createElement("code"), { textContent: token });
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.textContent = "Copy";
+      copy.addEventListener("click", () => void this.options.bridge.copyText(token));
+      result.replaceChildren(Object.assign(document.createElement("span"), { textContent: "Copy this key now. Fitz cannot show it again." }), value, copy);
+      result.hidden = false;
+      const input = form.querySelector("input") as HTMLInputElement | null;
+      if (input) input.value = "";
+    } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
+    finally { setFormBusy(form, false); }
   }
 
   private async saveAdminAccess(userId: string, card: HTMLElement, button: HTMLButtonElement): Promise<void> {

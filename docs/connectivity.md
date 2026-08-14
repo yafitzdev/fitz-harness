@@ -1,5 +1,36 @@
 # Connectivity
 
+## Share Fitz (clientless recipients)
+
+Share Fitz is the supported path for a girlfriend, friend, or API consumer who should not have to
+install Tailscale. The desktop keeps the restricted gateway on port 8790 available while the local
+app is running. It can be published either with Tailscale Funnel or with the packaged,
+checksum-pinned `cloudflared` connector. For Cloudflare, the tunnel token is encrypted with Electron
+`safeStorage`, passed through `TUNNEL_TOKEN` rather than process arguments, and forgotten when the
+administrator selects **Turn off and forget token**.
+
+Cloudflare's published hostname must target `http://127.0.0.1:8790`, never the host port. Port 8790
+is a loopback-only, fail-closed gateway with a method-aware consumer allowlist, independent rate and
+concurrency bounds, an 8 MiB request limit, minimal unauthenticated health, and consumer-role
+verification against the host on every request. It does not proxy management, bootstrap, global
+events, connections, model configuration, host-path project creation, or private pairing. Public
+pairing uses `/api/v1/pairing/redeem-shared`, which consumes only one-use consumer codes. Consumer
+agent runs are additionally barred from executing any host tool.
+
+The recipient selects **Use remote host** in the desktop, enters the public HTTPS origin, and then
+enters the one-use code. Remote HTTP and URL credentials/paths/query strings are rejected. A failed
+remote connection never starts a bundled local host as a fallback.
+
+Tailscale Funnel can publish the gateway without requiring Tailscale on recipient devices:
+
+```powershell
+tailscale funnel --bg --yes http://127.0.0.1:8790
+```
+
+Funnel must never target the privileged Fitz host port 8787.
+
+## Optional private Tailscale access
+
 `GET /api/v1/management/connectivity/status` reports normalized Tailscale availability, backend state, MagicDNS
 name, and tailnet addresses. An administrator can opt in to private HTTPS proxying through the
 Tailscale Serve management endpoint. Fitz invokes the current Serve form with a loopback-only target:
@@ -17,6 +48,5 @@ The desktop keeps the last native event sequence and retries transient bridge/ne
 jittered exponential backoff, capped at 15 seconds and 12 consecutive attempts. Successful replay
 continues from the last received sequence rather than duplicating visible output.
 
-Tailscale is not installed on the current machine, so the implementation is unit tested with command
-fixtures but has not changed or joined a live tailnet. Install and sign in on both PCs before enabling
-private HTTPS in Administration, then pair the remote desktop with a short-lived one-time code.
+Tailscale is optional and remains externally installed. It is useful for the owner's private devices;
+it is not required for Share Fitz recipients.

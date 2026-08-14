@@ -46,6 +46,9 @@ export class HostSupervisor {
     if (!this.#options.packaged) {
       throw new HostStartupError("The Fitz host is not running", `Start the host at ${this.#options.origin.origin} and retry.`);
     }
+    if (!isLoopback(this.#options.origin.hostname)) {
+      throw new HostStartupError("The remote Fitz host is unavailable", `Check your connection to ${this.#options.origin.origin} and retry. Fitz will never start a local host as a fallback for a remote connection.`);
+    }
     this.#spawnBundledHost();
     for (let attempt = 0; attempt < 60; attempt += 1) {
       const health = await this.#probe();
@@ -98,3 +101,5 @@ export class HostSupervisor {
     child.unref();
   }
 }
+
+function isLoopback(value: string): boolean { const host = value.replace(/^\[|\]$/g, "").toLowerCase(); return host === "127.0.0.1" || host === "::1" || host === "localhost"; }

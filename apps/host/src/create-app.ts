@@ -302,7 +302,15 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     const publicPath = request.url.split("?")[0];
     const internalAgent = publicPath === "/v1/chat/completions" && validBearerToken(request.headers.authorization, options.internalAgentToken);
     const devSupervisor = publicPath === "/__fitz/dev/shutdown" && validBearerToken(request.headers.authorization, options.devSessionToken);
-    if (authMode === "required" && !devSupervisor && publicPath !== "/health" && publicPath !== "/api/v1/pairing/redeem" && publicPath !== "/api/v1/pairing/bootstrap") {
+    // The bundled Share Fitz gateway deliberately strips Cloudflare headers.
+    // Seeing them here means the tunnel was pointed at the privileged host port
+    // instead of the consumer gateway; reject the configuration fail-closed.
+    if (isCloudflareProxiedRequest(request)) return reply.code(403).send({ error: "Cloudflare Tunnel must target the Share Fitz gateway on port 8790" });
+    if (authMode === "required" && publicPath === "/health") {
+      const principal = security?.authenticate(request.headers.authorization);
+      if (principal) principals.set(request, principal);
+    }
+    if (authMode === "required" && !devSupervisor && publicPath !== "/health" && publicPath !== "/api/v1/pairing/redeem" && publicPath !== "/api/v1/pairing/redeem-shared" && publicPath !== "/api/v1/pairing/bootstrap") {
       const principal = security?.authenticate(request.headers.authorization);
       if (!principal && !internalAgent) return reply.code(401).send({ error: "Valid device bearer token required" });
       if (principal) principals.set(request, principal);
@@ -326,12 +334,15 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     } catch { return payload; }
   });
 
-  app.get("/health", async () => {
+  app.get("/health", async (request) => {
+    const contract = { status: "ok", protocolVersion: PROTOCOL_VERSION, hostContractVersion: HOST_CONTRACT_VERSION };
+    // Unauthenticated health checks only expose protocol compatibility. The
+    // detailed engine/resource snapshot is operationally sensitive and is
+    // returned only to an authenticated Fitz device.
+    if (authMode === "required" && !principals.get(request)) return contract;
     const resourceSnapshot = await resources.snapshot();
     return {
-      status: "ok",
-      protocolVersion: PROTOCOL_VERSION,
-      hostContractVersion: HOST_CONTRACT_VERSION,
+      ...contract,
       engine: lifecycle.snapshot(),
       queueDepth: scheduler.queueDepth,
       resources: { ...resourceSnapshot, policy: resources.policy },
@@ -401,7 +412,8 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     };
   });
   app.get("/api/v1/connectivity/status", async () => ({ tailscale: await tailscale.status() }));
-  app.post("/api/v1/pairing/redeem", async (request, reply) => { try { const body = requireRecord(request.body); const access = securityRequired(security); const redeemed = access.redeemPairingCode(requireString(body.code, "code"), requireString(body.displayName, "displayName"), requireString(body.deviceName, "deviceName")); access.setRouteGrants(redeemed.user.id, [...CHAT_ROUTE_IDS]); return reply.code(201).send({ data: redeemed }); } catch (error) { return reply.code(error instanceof SecurityPolicyError ? 403 : 400).send({ error: errorMessage(error) }); } });
+  app.post("/api/v1/pairing/redeem", async (request, reply) => { try { if (!isDirectLoopbackRequest(request)) return reply.code(403).send({ error: "Private pairing is only available directly on the host; remote clients must use shared pairing" }); const body = requireRecord(request.body); const access = securityRequired(security); const redeemed = access.redeemPairingCode(requireString(body.code, "code"), requireString(body.displayName, "displayName"), requireString(body.deviceName, "deviceName")); access.setRouteGrants(redeemed.user.id, [...CHAT_ROUTE_IDS]); return reply.code(201).send({ data: redeemed }); } catch (error) { return reply.code(error instanceof SecurityPolicyError ? 403 : 400).send({ error: errorMessage(error) }); } });
+  app.post("/api/v1/pairing/redeem-shared", async (request, reply) => { try { const body = requireRecord(request.body); const access = securityRequired(security); const redeemed = access.redeemSharedPairingCode(requireString(body.code, "code"), requireString(body.displayName, "displayName"), requireString(body.deviceName, "deviceName")); access.setRouteGrants(redeemed.user.id, [...CHAT_ROUTE_IDS]); return reply.code(201).send({ data: redeemed }); } catch (error) { return reply.code(error instanceof SecurityPolicyError ? 403 : 400).send({ error: errorMessage(error) }); } });
 
   registerAgentRoutes({
     app,
@@ -771,10 +783,24 @@ function toNonNegativeInteger(value: string | undefined, fallback: number): numb
 }
 
 function canAccessOwner(principal: AuthenticatedPrincipal | undefined, ownerUserId: string | undefined): boolean { return !principal || principal.user.role === "administrator" || principal.user.id === ownerUserId; }
+function isCloudflareProxiedRequest(request: FastifyRequest): boolean {
+  return request.headers["cf-connecting-ip"] !== undefined || request.headers["cf-ray"] !== undefined || request.headers["cf-visitor"] !== undefined;
+}
 function isDirectLoopbackRequest(request: FastifyRequest): boolean {
   const address = request.ip.startsWith("::ffff:") ? request.ip.slice("::ffff:".length) : request.ip;
   if (address !== "127.0.0.1" && address !== "::1") return false;
-  const proxyHeaders = ["forwarded", "x-forwarded-for", "x-forwarded-host", "tailscale-user-login", "tailscale-user-name", "tailscale-user-profile-pic"];
+  const proxyHeaders = [
+    "forwarded",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "cf-connecting-ip",
+    "cf-ray",
+    "cf-visitor",
+    "tailscale-user-login",
+    "tailscale-user-name",
+    "tailscale-user-profile-pic",
+  ];
   return proxyHeaders.every((name) => request.headers[name] === undefined);
 }
 

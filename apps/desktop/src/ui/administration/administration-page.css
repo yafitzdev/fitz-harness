@@ -13,6 +13,19 @@
 .pairing-code-result > div { display: grid; gap: 2px; }
 .pairing-code-result small, .pairing-code-result span { color: var(--subtle); font-size: 10px; }
 .pairing-code-result strong { font: 600 18px/1.25 "Cascadia Mono", Consolas, monospace; letter-spacing: .08em; }
+.share-fitz-form { display: grid; grid-template-columns: minmax(180px,1fr) minmax(220px,1.2fr) auto; align-items: end; gap: 10px; }
+.share-fitz-form label { display: grid; gap: 6px; color: var(--subtle); font-size: 11px; }
+.share-fitz-form input { height: 38px; padding: 0 11px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--grey-200); color: var(--text); outline: none; }
+.share-fitz-form input:focus { border-color: var(--grey-500); }
+.share-fitz-form button { height: 38px; padding: 0 13px; border-radius: var(--radius-md); background: var(--accent); color: var(--accent-text); cursor: pointer; }
+.share-fitz-hint { margin: 10px 0 13px; color: var(--subtle); font-size: 11px; line-height: 1.5; }
+.share-fitz-hint code { color: var(--muted); }
+.share-fitz-status { display: grid; gap: 3px; padding: 11px 12px; border-radius: var(--radius-lg); background: var(--grey-200); }
+.share-fitz-status strong { font-size: 12px; }
+.share-fitz-status span { color: var(--subtle); font-size: 11px; }
+.share-fitz-status[data-state="connected"] strong { color: var(--status-success); }
+.share-fitz-status[data-state="error"] strong { color: var(--status-danger); }
+@media (max-width: 900px) { .share-fitz-form { grid-template-columns: 1fr; } }
 .remote-access-status { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; }
 .remote-access-card { min-height: 63px; display: grid; align-content: space-between; gap: 8px; padding: 10px 11px; border-radius: var(--radius-lg); background: var(--grey-200); }
 .remote-access-card small { color: var(--subtle); font-size: 10px; }
@@ -47,6 +60,11 @@
 .admin-device { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: var(--radius-md); background: var(--tint-1); color: var(--muted); font-size: 11px; }
 .admin-device button { width: 24px; height: 24px; padding: 0; border-radius: 50%; }
 .admin-user-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.admin-issue-key { display: flex; gap: 8px; margin-top: 10px; }
+.admin-issue-key input { flex: 1; min-width: 180px; height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--grey-200); color: var(--text); }
+.admin-api-key-result { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 10px; margin-top: 8px; padding: 10px 11px; border-radius: var(--radius-lg); background: var(--grey-200); color: var(--subtle); font-size: 10px; }
+.admin-api-key-result[hidden] { display: none; }
+.admin-api-key-result code { overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
 .admin-user-actions .danger { color: var(--status-danger-soft); }
 .tool-policies { display: grid; gap: 1px; margin-top: 16px; overflow: hidden; border-radius: var(--radius-lg); background: var(--border-soft); }
 .tool-policy { min-height: 43px; display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) auto; align-items: center; gap: 12px; padding: 8px 12px; background: var(--grey-200); font-size: 11px; }

@@ -143,12 +143,34 @@ export class AgentSafetyService {
   /** The runtime's `toolPolicy`: evaluates every non-read-only (and read) tool call. */
   createToolEvaluator(): ToolEvaluator {
     return async (request, signal) => {
-      const ctx = this.#getContext(request.runId, request.cwd);
       // Media tools (§5.9) resolve their per-tool policy against the run's owner, exactly
       // like the HTTP approval endpoint's `resolveToolPolicy(userId, role, toolName)`
       // consult: user-level policy wins, then role-level, then the "ask" default.
       const run = request.runId ? this.#store.getAgentRun(request.runId) : undefined;
       const owner = run?.ownerUserId ? this.#store.getUser(run.ownerUserId) : undefined;
+      // Consumer credentials are safe for Internet sharing: they may use the
+      // model and explicitly granted media APIs, but may never execute tools on
+      // the host PC. Agent and administrator accounts retain the normal policy.
+      if (owner?.role === "consumer") {
+        // Block before constructing a run safety context: context construction
+        // creates a workspace snapshot, which a remote consumer must not be able
+        // to trigger merely by asking the model to call a tool.
+        if (request.runId) {
+          try {
+            this.#store.appendToolAction({
+              runId: request.runId,
+              timestamp: new Date().toISOString(),
+              toolName: request.toolName,
+              effect: "block",
+              detail: { reason: "consumer-chat-only" },
+            });
+          } catch {
+            // A missing run row must not turn a safe block into a runtime error.
+          }
+        }
+        return { action: "block", reason: "Shared consumer accounts cannot execute tools on the Fitz host" };
+      }
+      const ctx = this.#getContext(request.runId, request.cwd);
       const policyCtx: PolicyContext = {
         runId: ctx.runId,
         cwd: ctx.cwd,

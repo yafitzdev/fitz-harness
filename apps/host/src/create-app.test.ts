@@ -869,9 +869,11 @@ describe("Fitz host", () => {
     const store = SqliteStore.memory(); const security = new SecurityService(store, "pepper"); const user = security.createUser("Consumer"); security.setRouteGrants(user.id, ["fast"]); const { token } = security.issueDevice(user.id, "Browser");
     const runtime = createHost({ store, security, authMode: "required" });
     const denied = await runtime.app.inject({ method: "GET", url: "/v1/models" });
+    const publicHealth = await runtime.app.inject({ method: "GET", url: "/health" });
+    const privateHealth = await runtime.app.inject({ method: "GET", url: "/health", headers: { authorization: `Bearer ${token}` } });
     const models = await runtime.app.inject({ method: "GET", url: "/v1/models", headers: { authorization: `Bearer ${token}` } });
     const completion = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", headers: { authorization: `Bearer ${token}` }, payload: { model: "default", stream: false, messages: [{ role: "user", content: "hello" }] } });
-    expect(denied.statusCode).toBe(401); expect(models.json().data.map((model: { id: string }) => model.id)).toEqual(["default"]); expect(completion.statusCode).toBe(200); await runtime.app.close();
+    expect(publicHealth.json()).not.toHaveProperty("resources"); expect(privateHealth.json()).toHaveProperty("resources"); expect(denied.statusCode).toBe(401); expect(models.json().data.map((model: { id: string }) => model.id)).toEqual(["default"]); expect(completion.statusCode).toBe(200); await runtime.app.close();
   });
 
   it("accepts the private Pi credential only on chat completions", async () => {
@@ -1251,6 +1253,26 @@ describe("Fitz host", () => {
     const issued = await runtime.app.inject({ method: "POST", url: "/api/v1/management/pairing-codes", headers, payload: { intendedRole: "consumer", ttlSeconds: 60 } }); expect(issued.statusCode).toBe(201); const code = issued.json().data.code;
     const redeemed = await runtime.app.inject({ method: "POST", url: "/api/v1/pairing/redeem", payload: { code, displayName: "Remote", deviceName: "Phone" } }); expect(redeemed.statusCode).toBe(201); const token = redeemed.json().data.token; const authenticated = await runtime.app.inject({ method: "GET", url: "/v1/models", headers: { authorization: `Bearer ${token}` } }); expect(authenticated.statusCode).toBe(200); expect(authenticated.json().data.map((model: { id: string }) => model.id)).toEqual(["default"]);
     const replay = await runtime.app.inject({ method: "POST", url: "/api/v1/pairing/redeem", payload: { code, displayName: "Replay", deviceName: "Other" } }); expect(replay.statusCode).toBe(403); await runtime.app.close();
+  });
+
+  it("rejects private pairing through a Cloudflare-style proxy", async () => {
+    const store = SqliteStore.memory(); const security = new SecurityService(store, "private-pairing-pepper"); const admin = security.createUser("Admin", "administrator"); const adminToken = security.issueDevice(admin.id, "Console").token; const runtime = createHost({ store, security, authMode: "required" });
+    const issued = security.issuePairingCode("agent", 60);
+    const proxied = await runtime.app.inject({ method: "POST", url: "/api/v1/pairing/redeem", headers: { "cf-connecting-ip": "203.0.113.10", "cf-ray": "test" }, payload: { code: issued.code, displayName: "Remote", deviceName: "PC" } });
+    expect(proxied.statusCode).toBe(403);
+    const rawHostManagement = await runtime.app.inject({ method: "GET", url: "/api/v1/management/users", headers: { authorization: `Bearer ${adminToken}`, "cf-connecting-ip": "203.0.113.10" } });
+    expect(rawHostManagement.statusCode).toBe(403);
+    expect((await runtime.app.inject({ method: "GET", url: "/api/v1/me", headers: { authorization: `Bearer ${adminToken}` } })).statusCode).toBe(200);
+    await runtime.app.close();
+  });
+
+  it("keeps shared public pairing consumer-only", async () => {
+    const store = SqliteStore.memory(); const security = new SecurityService(store, "shared-pairing-pepper"); const admin = security.createUser("Admin", "administrator"); const adminToken = security.issueDevice(admin.id, "Console").token; const runtime = createHost({ store, security, authMode: "required" }); const headers = { authorization: `Bearer ${adminToken}` };
+    const privileged = await runtime.app.inject({ method: "POST", url: "/api/v1/management/pairing-codes", headers, payload: { intendedRole: "agent", ttlSeconds: 60 } });
+    expect((await runtime.app.inject({ method: "POST", url: "/api/v1/pairing/redeem-shared", payload: { code: privileged.json().data.code, displayName: "Remote", deviceName: "PC" } })).statusCode).toBe(403);
+    const consumer = await runtime.app.inject({ method: "POST", url: "/api/v1/management/pairing-codes", headers, payload: { intendedRole: "consumer", ttlSeconds: 60 } });
+    const paired = await runtime.app.inject({ method: "POST", url: "/api/v1/pairing/redeem-shared", payload: { code: consumer.json().data.code, displayName: "Friend", deviceName: "PC" } });
+    expect(paired.statusCode).toBe(201); expect(paired.json().data.user.role).toBe("consumer"); await runtime.app.close();
   });
 
   it("bootstraps the first administrator only from a direct loopback request", async () => {

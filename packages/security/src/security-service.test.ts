@@ -23,6 +23,17 @@ describe("SecurityService", () => {
   });
 
   it("redeems a hashed one-time pairing code", () => { const store = SqliteStore.memory(); const security = new SecurityService(store, "pepper"); const pairing = security.issuePairingCode("agent", 60); expect(store.consumePairingCode(pairing.code, new Date().toISOString())).toBeUndefined(); const redeemed = security.redeemPairingCode(pairing.code, "Remote", "Phone"); expect(redeemed.user.role).toBe("agent"); expect(security.authenticate(`Bearer ${redeemed.token}`)?.device?.id).toBe(redeemed.device.id); expect(() => security.redeemPairingCode(pairing.code, "Again", "Again")).toThrow("already used"); store.close(); });
+  it("allows only consumer codes through public shared pairing", () => { const store = SqliteStore.memory(); const security = new SecurityService(store, "pepper"); const privileged = security.issuePairingCode("administrator", 60); expect(() => security.redeemSharedPairingCode(privileged.code, "Remote", "PC")).toThrow("consumer code"); const consumer = security.issuePairingCode("consumer", 60); expect(security.redeemSharedPairingCode(consumer.code, "Friend", "PC").user.role).toBe("consumer"); store.close(); });
+
+  it("normalizes and bounds externally supplied user and device names", () => {
+    const store = SqliteStore.memory(); const security = new SecurityService(store, "pepper");
+    const user = security.createUser("  Friend  ");
+    expect(user.displayName).toBe("Friend");
+    expect(security.issueDevice(user.id, "  Laptop  ").device.name).toBe("Laptop");
+    expect(() => security.createUser("x".repeat(101))).toThrow("1 and 100");
+    expect(() => security.issueDevice(user.id, " ")).toThrow("1 and 100");
+    store.close();
+  });
 
   it("rejects expired pairing codes, disabled users, and malformed bearer credentials", () => {
     const store = SqliteStore.memory(); const security = new SecurityService(store, "pepper");
