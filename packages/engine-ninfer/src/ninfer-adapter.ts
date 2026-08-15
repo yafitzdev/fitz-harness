@@ -13,19 +13,18 @@ import type {
   StopReport,
 } from "@fitz/inference-core";
 import type {
-  InferenceDelta,
   InferenceRequest,
   LaunchSpec,
   Recipe,
   ResourceEstimate,
   ValidationReport,
 } from "@fitz/protocol";
+import { OpenAICompatibleClient } from "@fitz/engine-openai-compatible";
 import {
   readNInferConfiguration,
   validateNInferConfiguration,
   type NInferRecipeConfiguration,
 } from "./config.js";
-import { parseSseJson } from "./sse.js";
 
 export interface NInferInstanceHandle extends EngineInstanceHandle {
   modelId: string;
@@ -234,44 +233,12 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
     instance: NInferInstanceHandle,
     request: InferenceRequest,
     signal: AbortSignal,
-  ): AsyncIterable<InferenceDelta> {
-    const response = await this.#fetch(`${instance.baseUrl}/v1/chat/completions`, {
-      method: "POST",
-      headers: { ...authorization(instance.apiKey), "content-type": "application/json" },
-      body: JSON.stringify({
-        model: instance.modelId,
-        messages: request.messages,
-        stream: true,
-        ...(request.maxTokens !== undefined ? { max_tokens: request.maxTokens } : {}),
-        ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
-        ...(request.topP !== undefined ? { top_p: request.topP } : {}),
-        ...(request.stop !== undefined ? { stop: request.stop } : {}),
-        ...(request.tools !== undefined ? { tools: request.tools } : {}),
-        ...(request.toolChoice !== undefined ? { tool_choice: request.toolChoice } : {}),
-        ...(request.parallelToolCalls !== undefined ? { parallel_tool_calls: request.parallelToolCalls } : {}),
-      }),
-      signal,
-    });
-    if (!response.ok || !response.body) {
-      const detail = await response.text().catch(() => "");
-      throw new Error(`NInfer request failed (${response.status}): ${detail.slice(0, 500)}`);
-    }
-    for await (const chunk of parseSseJson(response.body, signal)) {
-      if (chunk.error) throw new Error(chunk.error.message ?? "NInfer stream failed");
-      const choice = chunk.choices?.[0];
-      const finishReason = normalizeFinishReason(choice?.finish_reason);
-      yield {
-        text: choice?.delta?.content ?? "",
-        ...(choice?.delta?.tool_calls?.length ? { toolCalls: choice.delta.tool_calls } : {}),
-        ...(finishReason ? { finishReason } : {}),
-        ...(chunk.usage?.prompt_tokens !== undefined
-          ? { promptTokens: chunk.usage.prompt_tokens }
-          : {}),
-        ...(chunk.usage?.completion_tokens !== undefined
-          ? { completionTokens: chunk.usage.completion_tokens }
-          : {}),
-      };
-    }
+  ) {
+    // NInfer speaks the same normalized OpenAI-compatible contract as remote
+    // providers. Keep exactly one request builder and SSE decoder so reasoning,
+    // tool calls, history, and future protocol fields cannot drift by engine.
+    yield* new OpenAICompatibleClient({ fetch: this.#fetch, apiKey: instance.apiKey })
+      .streamChat(instance.baseUrl, instance.modelId, request, signal);
   }
 
   async stop(instance: NInferInstanceHandle, mode: StopMode): Promise<StopReport> {
@@ -352,6 +319,7 @@ export function buildCurrentNInferRecipe(
     maxPendingRequests?: number;
     pendingTimeoutMs?: number;
     vision?: boolean;
+    thinking?: boolean;
   } = {},
 ): Recipe {
   const maxContext = options.maxContext ?? 100_000;
@@ -370,7 +338,7 @@ export function buildCurrentNInferRecipe(
     draftTokens,
     lmHeadDraft: true,
     vision,
-    thinking: false,
+    thinking: options.thinking ?? false,
     temperature: 0.4,
     topP: 0.9,
     topK: 20,
@@ -464,13 +432,6 @@ async function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
     };
     signal.addEventListener("abort", aborted, { once: true });
   });
-}
-
-function normalizeFinishReason(value: string | null | undefined): InferenceDelta["finishReason"] {
-  if (value === "length") return "length";
-  if (value === "tool_calls") return "tool_calls";
-  if (value === "stop" || value === "stop_token") return "stop";
-  return undefined;
 }
 
 function hasExited(child: ChildProcessWithoutNullStreams): boolean {

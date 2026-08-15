@@ -4,6 +4,7 @@ import { OwnerFairQueue, type InferenceScheduler, type ScheduledStream } from "@
 import type { AgentRuntime, AgentRuntimeEvent, AgentRuntimeRun } from "@fitz/agent-core";
 import { randomUUID } from "node:crypto";
 import type { SqliteStore } from "@fitz/storage";
+import { completePlanAfterAnswer } from "./agent-plan-tools.js";
 
 interface AgentQueueJob {
   id: string;
@@ -17,6 +18,20 @@ interface AgentQueueJob {
 export interface SubagentRunResult {
   run: AgentRunRecord;
   text: string;
+}
+
+export interface SubagentRunInput {
+  parentRunId: string;
+  role: SubagentRoleDefinition;
+  request: Omit<AgentRunRequest, "delegation" | "sessionId">;
+  ownerUserId?: string;
+  planItemId?: string;
+  signal?: AbortSignal;
+}
+
+export interface SubagentLaunch {
+  run: AgentRunRecord;
+  result: Promise<SubagentRunResult>;
 }
 
 export class AgentQueueCapacityError extends Error {
@@ -64,56 +79,43 @@ export class AgentRunCoordinator {
     return this.store.getAgentRun(id)!;
   }
 
-  /**
-   * Runs one delegated child outside the ordinary owner queue. The ordinary
-   * per-owner queue cannot be used here: the waiting parent already occupies
-   * that owner's slot. Independent children may overlap; each remains a durable
-   * agent run and uses the
-   * same runtime, scheduler, safety layer, usage records, and shutdown path.
-   */
-  async runSubagent(input: {
-    parentRunId: string;
-    role: SubagentRoleDefinition;
-    request: Omit<AgentRunRequest, "delegation" | "sessionId">;
-    ownerUserId?: string;
-    signal?: AbortSignal;
-  }): Promise<SubagentRunResult> {
+  /** Launches a durable child immediately. Its result promise is intentionally
+   * separate so a tool call can hand control straight back to the parent. */
+  launchSubagent(input: SubagentRunInput): SubagentLaunch {
     if (!this.#accepting) throw new AgentCoordinatorClosedError();
     const parentRequest = this.store.getAgentRunRequest(input.parentRunId);
     if (!parentRequest) throw new Error(`Parent agent run ${input.parentRunId} was not found`);
     if (parentRequest.delegation) throw new Error("Subagents cannot delegate to other subagents");
-
-    let job: AgentQueueJob | undefined;
-    try {
-      if (!this.#accepting) throw new AgentCoordinatorClosedError();
-      if (input.signal?.aborted) throw abortError();
-      const { enabled: _enabled, ...roleSnapshot } = input.role;
-      const request: AgentRunRequest = {
-        ...input.request,
-        delegation: { role: roleSnapshot, parentRunId: input.parentRunId },
-      };
-      const id = randomUUID();
-      const now = new Date().toISOString();
-      const run: AgentRunRecord = {
-        id,
-        routeId: request.model,
-        status: "queued",
-        createdAt: now,
-        updatedAt: now,
-        lastSequence: 0,
-        ...(input.ownerUserId ? { ownerUserId: input.ownerUserId } : {}),
-      };
-      this.store.createAgentRun(run, request);
-      this.#emit(id, "run.created", { routeId: request.model, subagent: true, roleId: input.role.id, roleVersion: input.role.version, parentRunId: input.parentRunId });
-      job = { id, request, stream: undefined, cancelRequested: false, shutdownRequested: false, ...(input.ownerUserId ? { ownerUserId: input.ownerUserId } : {}) };
-      this.#activeSubagents.set(id, job);
-      const cancel = () => { job!.cancelRequested = true; job!.stream?.cancel(); };
-      input.signal?.addEventListener("abort", cancel, { once: true });
-      const task = this.#runJob(job);
-      this.#tasks.add(task);
+    if (input.signal?.aborted) throw abortError();
+    const { enabled: _enabled, ...roleSnapshot } = input.role;
+    const request: AgentRunRequest = {
+      ...input.request,
+      delegation: { role: roleSnapshot, parentRunId: input.parentRunId, ...(input.planItemId ? { planItemId: input.planItemId } : {}) },
+    };
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const run: AgentRunRecord = {
+      id,
+      routeId: request.model,
+      status: "queued",
+      createdAt: now,
+      updatedAt: now,
+      lastSequence: 0,
+      ...(input.ownerUserId ? { ownerUserId: input.ownerUserId } : {}),
+    };
+    this.store.createAgentRun(run, request);
+    this.#emit(id, "run.created", { routeId: request.model, subagent: true, roleId: input.role.id, roleVersion: input.role.version, parentRunId: input.parentRunId, ...(input.planItemId ? { planItemId: input.planItemId } : {}) });
+    const job: AgentQueueJob = { id, request, stream: undefined, cancelRequested: false, shutdownRequested: false, ...(input.ownerUserId ? { ownerUserId: input.ownerUserId } : {}) };
+    this.#activeSubagents.set(id, job);
+    const cancel = () => { job.cancelRequested = true; job.stream?.cancel(); };
+    input.signal?.addEventListener("abort", cancel, { once: true });
+    const task = this.#runJob(job);
+    this.#tasks.add(task);
+    const result = (async (): Promise<SubagentRunResult> => {
       try { await task; }
       finally {
         this.#tasks.delete(task);
+        this.#activeSubagents.delete(id);
         input.signal?.removeEventListener("abort", cancel);
       }
       const completed = this.store.getAgentRun(id)!;
@@ -122,9 +124,13 @@ export class AgentRunCoordinator {
         .map((event) => String(event.data.text ?? ""))
         .join("");
       return { run: completed, text };
-    } finally {
-      if (job) this.#activeSubagents.delete(job.id);
-    }
+    })();
+    return { run: this.store.getAgentRun(id)!, result };
+  }
+
+  /** Compatibility helper for callers that deliberately need a blocking child. */
+  async runSubagent(input: SubagentRunInput): Promise<SubagentRunResult> {
+    return this.launchSubagent(input).result;
   }
 
   get(id: string): AgentRunRecord | undefined { return this.store.getAgentRun(id); }
@@ -145,10 +151,17 @@ export class AgentRunCoordinator {
     if (active) {
       active.cancelRequested = true;
       active.stream?.cancel();
+      this.#cancelSubagentsForParent(id);
+      return true;
+    }
+    const activeSubagent = this.#activeSubagents.get(id);
+    if (activeSubagent) {
+      activeSubagent.cancelRequested = true;
+      activeSubagent.stream?.cancel();
       return true;
     }
     const job = this.#queue.values().find((candidate) => candidate.id === id); if (!job || !this.#queue.remove(job)) return false;
-    this.#emit(id, "run.cancelled", { queued: true }); this.#publishQueue(); this.#notifyCompletion(id); return true;
+    this.#emit(id, "run.cancelled", { queued: true }); this.#cancelSubagentsForParent(id); this.#publishQueue(); this.#notifyCompletion(id); return true;
   }
   /** Queue a steering message into the currently running stream. The run must be actively streaming and its runtime must support steering. */
   async steer(runId: string, text: string): Promise<boolean> {
@@ -231,7 +244,7 @@ export class AgentRunCoordinator {
     this.#emit(id, "run.started", {});
     let assistantText = ""; let reasoningText = "";
     let assistantFrom = 0; let assistantThrough = 0; let reasoningFrom = 0; let reasoningThrough = 0;
-    const flushAssistant = (phase: "commentary" | "final") => { if (assistantText) this.#appendAssistantTranscript(id, assistantText, phase, assistantFrom, assistantThrough); assistantText = ""; assistantFrom = 0; assistantThrough = 0; };
+    const flushAssistant = (phase: "commentary" | "final") => { const emitted = Boolean(assistantText); if (assistantText) this.#appendAssistantTranscript(id, assistantText, phase, assistantFrom, assistantThrough); assistantText = ""; assistantFrom = 0; assistantThrough = 0; return emitted; };
     const flushReasoning = () => { if (reasoningText) this.#appendReasoningTranscript(id, reasoningText, reasoningFrom, reasoningThrough); reasoningText = ""; reasoningFrom = 0; reasoningThrough = 0; };
     try {
       for await (const delta of stream) {
@@ -244,10 +257,13 @@ export class AgentRunCoordinator {
         if (event.type === "user.steer") { const text = String(event.data.text ?? ""); const sessionId = this.store.getAgentRun(id)?.sessionId; if (sessionId && text) this.store.appendTranscriptEntry({ id: `agent-event:${id}:user-steer:${event.sequence}`, sessionId, kind: "message", role: "user", content: { text, runId: id, eventSequence: event.sequence }, createdAt: event.timestamp }); }
         this.#appendToolTranscript(id, event);
       }
-      flushAssistant("final"); flushReasoning();
+      const emittedFinal = flushAssistant("final"); flushReasoning();
       if (job.shutdownRequested) this.#emit(id, "run.interrupted", { error: "host_shutdown", resumable: true });
       else if (job.cancelRequested) this.#emit(id, "run.cancelled", {});
-      else this.#emit(id, "run.completed", {});
+      else {
+        if (emittedFinal && this.store.getAgentRunPlan(id)?.status === "ready_for_answer") completePlanAfterAnswer(this.store, id);
+        this.#emit(id, "run.completed", {});
+      }
     } catch (error) {
       flushAssistant("final"); flushReasoning(); const cancelled = error instanceof Error && error.name === "AbortError"; const message = error instanceof Error ? error.message : String(error);
       if (job.shutdownRequested) this.#emit(id, "run.interrupted", { error: "host_shutdown", resumable: true });
@@ -255,6 +271,13 @@ export class AgentRunCoordinator {
     }
   }
   #activeForOwner(ownerUserId: string | undefined): number { const owner = ownerUserId ?? "local"; return [...this.#active.values()].filter((job) => (job.ownerUserId ?? "local") === owner).length; }
+  #cancelSubagentsForParent(parentRunId: string): void {
+    for (const job of this.#activeSubagents.values()) {
+      if (job.request.delegation?.parentRunId !== parentRunId) continue;
+      job.cancelRequested = true;
+      job.stream?.cancel();
+    }
+  }
   #notifyCompletion(runId: string): void {
     if (!this.onRunCompleted) return;
     let task: Promise<void>;

@@ -155,6 +155,32 @@ describe("AgentRunCoordinator", () => {
     store.close();
   });
 
+  it("returns a durable worker handle immediately while the child keeps running", async () => {
+    const store = SqliteStore.memory();
+    const runtime = new ControlledRuntime();
+    const coordinator = new AgentRunCoordinator(store, {} as InferenceScheduler, runtime);
+    const now = new Date(0).toISOString();
+    store.createAgentRun(
+      { id: "parent", routeId: "default", status: "running", createdAt: now, updatedAt: now, lastSequence: 0 },
+      { model: "default", messages: [{ role: "user", content: "parent" }] },
+    );
+
+    const launch = coordinator.launchSubagent({
+      parentRunId: "parent",
+      planItemId: "research",
+      role: store.getSubagentRole("researcher")!,
+      request: { model: "default", messages: [{ role: "user", content: "background" }] },
+    });
+
+    expect(launch.run.status).toBe("running");
+    await waitFor(() => runtime.starts.includes("background"));
+    expect(store.getAgentRun(launch.run.id)?.status).toBe("running");
+    expect(store.getAgentRunRequest(launch.run.id)?.delegation?.planItemId).toBe("research");
+    runtime.release("background");
+    await expect(launch.result).resolves.toEqual(expect.objectContaining({ run: expect.objectContaining({ status: "completed" }), text: "done:background" }));
+    store.close();
+  });
+
   it("forbids nested subagent delegation", async () => {
     const store = SqliteStore.memory();
     const coordinator = new AgentRunCoordinator(store, {} as InferenceScheduler, new ControlledRuntime());
@@ -169,6 +195,36 @@ describe("AgentRunCoordinator", () => {
       role: store.getSubagentRole("researcher")!,
       request: { model: "default", messages: [{ role: "user", content: "nested" }] },
     })).rejects.toThrow("cannot delegate");
+    store.close();
+  });
+
+  it("persists exactly one final answer after plan readiness with no answer-shaped commentary", async () => {
+    const store = SqliteStore.memory();
+    const now = new Date(0).toISOString();
+    store.createSession({ id: "session-final", title: "Final", status: "active", createdAt: now, updatedAt: now });
+    const runtime: AgentRuntime = {
+      id: "single-final",
+      run: (_request, _signal, options) => ({
+        cancel: () => undefined,
+        async *[Symbol.asyncIterator]() {
+          store.saveAgentRunPlan({
+            runId: options!.runId!, revision: 1, status: "ready_for_answer", createdAt: now, updatedAt: now,
+            items: [{ id: "inspect", task: "Inspect implementation", dependencies: [], owner: "main", workerEligible: false, required: true, status: "completed", attempts: 0, result: "done" }],
+          });
+          yield { type: "tool.started" as const, toolCallId: "ready", toolName: "agent_plan", input: { action: "ready" } };
+          yield { type: "tool.completed" as const, toolCallId: "ready", toolName: "agent_plan", result: { details: { plan: { status: "ready_for_answer" } } } };
+          yield { type: "assistant.delta" as const, text: "One standalone final answer." };
+        },
+      }),
+    };
+    const coordinator = new AgentRunCoordinator(store, {} as InferenceScheduler, runtime);
+    const run = coordinator.start({ model: "default", sessionId: "session-final", messages: [{ role: "user", content: "work" }] });
+    await waitFor(() => coordinator.get(run.id)?.status === "completed");
+
+    const assistant = store.transcriptAfter("session-final", 0, 100).filter((entry) => entry.role === "assistant");
+    expect(assistant).toHaveLength(1);
+    expect(assistant[0]?.content).toEqual(expect.objectContaining({ phase: "final", text: "One standalone final answer." }));
+    expect(store.getAgentRunPlan(run.id)?.status).toBe("completed");
     store.close();
   });
 });

@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { broadFilesystemScanReason, buildFitzSystemInstructions, createSessionLookupTool, createTrashTool, formatSessionSnapshot, PiAgentRuntime, readEnabledExtensionDirs, SESSION_LOOKUP_TOOL, TRASH_TOOL, type PiSession, type PiSessionFactory, type PiSessionReader, type PiSessionSnapshot } from "./pi-agent-runtime.js";
+import { broadFilesystemScanReason, buildFitzSystemInstructions, createSessionLookupTool, createTrashTool, formatSessionSnapshot, limitToolResultContent, PiAgentRuntime, readEnabledExtensionDirs, SESSION_LOOKUP_TOOL, TRASH_TOOL, type PiSession, type PiSessionFactory, type PiSessionReader, type PiSessionSnapshot } from "./pi-agent-runtime.js";
 
 describe("PiAgentRuntime", () => {
   it("passes Fitz runtime locations to the session factory", async () => {
@@ -19,6 +19,167 @@ describe("PiAgentRuntime", () => {
     });
     const events = []; for await (const event of runtime.run({ model: "fast", messages: [{ role: "user", content: "where" }] })) events.push(event);
     expect(events).toEqual([{ type: "assistant.delta", text: "ready" }]);
+  });
+
+  it("enforces plan-first tools and continues the model until the durable plan is complete", async () => {
+    let planned = false; let ready = false; const prompts: string[] = [];
+    const runtime = new PiAgentRuntime({
+      toolPolicy: async () => ({ action: "allow" }),
+      customTools: () => [{ ...createTrashTool(async () => ({ moved: 0, entries: [] })), name: "agent_plan" }],
+      runPlan: () => ({
+        initialInstruction: "CREATE DURABLE PLAN FIRST",
+        admissionReason: (call) => !planned && call.toolName !== "agent_plan" ? "plan required" : undefined,
+        completionIssue: () => ready ? undefined : "CONTINUE UNTIL PLAN READY",
+        phase: () => ready ? "ready_for_answer" : planned ? "active" : "missing",
+      }),
+      createSession: async (options) => {
+        let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+        return {
+          subscribe: (next) => { listener = next; return () => undefined; },
+          prompt: async (prompt) => {
+            prompts.push(prompt);
+            if (!planned) {
+              expect(await options.evaluateTool!({ toolCallId: "early", toolName: "read", input: {} })).toEqual({ action: "block", reason: "plan required" });
+              expect(await options.evaluateTool!({ toolCallId: "plan", toolName: "agent_plan", input: { action: "set" } })).toEqual({ action: "allow" });
+              planned = true;
+              return;
+            }
+            ready = true;
+            listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "done" } });
+          },
+          steer: async () => undefined,
+          abort: async () => undefined,
+          dispose: () => undefined,
+        };
+      },
+    });
+    const events = []; for await (const event of runtime.run({ model: "fast", messages: [{ role: "user", content: "work" }] }, undefined, { runId: "run-1" })) events.push(event);
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).toContain("CREATE DURABLE PLAN FIRST");
+    expect(prompts[1]).toBe("CONTINUE UNTIL PLAN READY");
+    expect(events).toEqual([{ type: "assistant.delta", text: "done" }]);
+    expect(ready).toBe(true);
+  });
+
+  it("promotes text buffered before a successful ready transition and suppresses the redundant follow-up", async () => {
+    let phase: "active" | "ready_for_answer" | "completed" = "active";
+    let abort = vi.fn(async () => undefined);
+    const runtime = new PiAgentRuntime({
+      runPlan: () => ({
+        initialInstruction: "PLAN FIRST",
+        admissionReason: () => undefined,
+        completionIssue: () => phase === "active" ? "KEEP WORKING" : undefined,
+        phase: () => phase,
+      }),
+      createSession: async () => {
+        let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+        abort = vi.fn(async () => { listener({ type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "terminated" } }); });
+        return {
+          subscribe: (next) => { listener = next; return () => undefined; },
+          prompt: async () => {
+            listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Complete standalone answer." } });
+            listener({ type: "tool_execution_start", toolCallId: "ready-1", toolName: "agent_plan", args: { action: "ready" } });
+            phase = "ready_for_answer";
+            listener({ type: "tool_execution_end", toolCallId: "ready-1", toolName: "agent_plan", result: { details: { plan: { status: "ready_for_answer" } } } });
+            listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "The answer above is complete." } });
+          },
+          steer: async () => undefined,
+          abort,
+          dispose: () => undefined,
+        };
+      },
+    });
+
+    const events = []; for await (const event of runtime.run({ model: "default", messages: [{ role: "user", content: "work" }] }, undefined, { runId: "run-1" })) events.push(event);
+
+    expect(events).toEqual([
+      { type: "tool.started", toolCallId: "ready-1", toolName: "agent_plan", input: { action: "ready" } },
+      { type: "tool.completed", toolCallId: "ready-1", toolName: "agent_plan", result: { details: { plan: { status: "ready_for_answer" } } } },
+      { type: "assistant.delta", text: "Complete standalone answer." },
+    ]);
+    expect(phase).toBe("ready_for_answer");
+    await vi.waitFor(() => expect(abort).toHaveBeenCalledOnce());
+  });
+
+  it("preserves progress commentary emitted before the initial plan tool call", async () => {
+    let phase: "missing" | "active" | "ready_for_answer" = "missing";
+    const runtime = new PiAgentRuntime({
+      runPlan: () => ({
+        initialInstruction: "PLAN FIRST",
+        admissionReason: () => undefined,
+        completionIssue: () => phase === "active" ? "FINISH WORK" : undefined,
+        phase: () => phase,
+      }),
+      createSession: async () => {
+        let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+        let prompts = 0;
+        return {
+          subscribe: (next) => { listener = next; return () => undefined; },
+          prompt: async () => {
+            prompts += 1;
+            if (prompts === 1) {
+              listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "I’ll map the project first, then inspect its main subsystems." } });
+              listener({ type: "tool_execution_start", toolCallId: "plan-1", toolName: "agent_plan", args: { action: "set" } });
+              phase = "active";
+              listener({ type: "tool_execution_end", toolCallId: "plan-1", toolName: "agent_plan", result: { details: { status: "active" } } });
+              return;
+            }
+            phase = "ready_for_answer";
+            listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Final answer." } });
+          },
+          steer: async () => undefined,
+          abort: async () => undefined,
+          dispose: () => undefined,
+        };
+      },
+    });
+
+    const events = []; for await (const event of runtime.run({ model: "default", messages: [{ role: "user", content: "inspect" }] })) events.push(event);
+    expect(events).toEqual([
+      { type: "assistant.delta", text: "I’ll map the project first, then inspect its main subsystems." },
+      { type: "tool.started", toolCallId: "plan-1", toolName: "agent_plan", input: { action: "set" } },
+      { type: "tool.completed", toolCallId: "plan-1", toolName: "agent_plan", result: { details: { status: "active" } } },
+      { type: "assistant.delta", text: "Final answer." },
+    ]);
+  });
+
+  it("never publishes a draft attached to a rejected ready transition", async () => {
+    let phase: "active" | "ready_for_answer" | "completed" = "active";
+    let prompts = 0;
+    const runtime = new PiAgentRuntime({
+      runPlan: () => ({
+        initialInstruction: "PLAN FIRST",
+        admissionReason: () => undefined,
+        completionIssue: () => phase === "active" ? "FINISH OPEN WORK" : undefined,
+        phase: () => phase,
+      }),
+      createSession: async () => {
+        let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+        return {
+          subscribe: (next) => { listener = next; return () => undefined; },
+          prompt: async () => {
+            prompts += 1;
+            if (prompts === 1) {
+              listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Premature hidden draft." } });
+              listener({ type: "tool_execution_start", toolCallId: "ready-rejected", toolName: "agent_plan", args: { action: "ready" } });
+              listener({ type: "tool_execution_end", toolCallId: "ready-rejected", toolName: "agent_plan", result: { details: { status: "rejected" } }, isError: true });
+              return;
+            }
+            phase = "ready_for_answer";
+            listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Verified final answer." } });
+          },
+          steer: async () => undefined,
+          abort: async () => undefined,
+          dispose: () => undefined,
+        };
+      },
+    });
+
+    const events = []; for await (const event of runtime.run({ model: "default", messages: [{ role: "user", content: "work" }] }, undefined, { runId: "run-1" })) events.push(event);
+
+    expect(events).not.toContainEqual({ type: "assistant.delta", text: "Premature hidden draft." });
+    expect(events).toContainEqual({ type: "assistant.delta", text: "Verified final answer." });
+    expect(phase).toBe("ready_for_answer");
   });
 
   it("passes workspace mutation leasing through the session boundary", async () => {
@@ -102,6 +263,38 @@ describe("PiAgentRuntime", () => {
     expect(events).toEqual([{ type: "assistant.delta", text: "ok" }]);
   });
 
+  it("selects the provider thinking wire format per resolved request", async () => {
+    let seen: string | undefined;
+    const runtime = new PiAgentRuntime({
+      thinkingFormat: (request) => request.model === "default" ? "qwen-chat-template" : undefined,
+      createSession: async (options) => {
+        seen = options.thinkingFormat;
+        return {
+          subscribe: (listener) => { listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "ok" } }); return () => undefined; },
+          prompt: async () => undefined,
+          abort: async () => undefined,
+          dispose: () => undefined,
+        };
+      },
+    });
+    for await (const _event of runtime.run({ model: "default", messages: [{ role: "user", content: "hi" }] })) { /* consume */ }
+    expect(seen).toBe("qwen-chat-template");
+  });
+
+  it("resolves the thinking level from each request's effort", async () => {
+    const seen: string[] = [];
+    const runtime = new PiAgentRuntime({
+      thinkingLevel: (request) => request.effort === "high" ? "high" : "low",
+      createSession: async (options) => {
+        seen.push(options.thinkingLevel ?? "missing");
+        return { subscribe: (listener) => { listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "ok" } }); return () => undefined; }, prompt: async () => undefined, abort: async () => undefined, dispose: () => undefined };
+      },
+    });
+    for await (const _event of runtime.run({ model: "default", effort: "light", messages: [{ role: "user", content: "quick" }] })) { /* consume */ }
+    for await (const _event of runtime.run({ model: "default", effort: "high", messages: [{ role: "user", content: "deep" }] })) { /* consume */ }
+    expect(seen).toEqual(["low", "high"]);
+  });
+
   it("builds authoritative Fitz paths into the appended system instructions", () => {
     const prompt = buildFitzSystemInstructions({ cwd: "C:/project", agentDir: "C:/Fitz/pi", llmRoot: "C:/Users/me/.llm" });
     expect(prompt).toContain("C:/Fitz/pi/extensions");
@@ -110,6 +303,9 @@ describe("PiAgentRuntime", () => {
     expect(prompt).toContain("Do not inspect ~/.pi");
     expect(prompt).toContain("Never recursively search /");
     expect(prompt).toContain("Do not read or reveal authentication files");
+    expect(prompt).not.toContain("progress commentary");
+    expect(prompt).toContain("executable source and package manifests outrank design documents");
+    expect(prompt).toContain("label intended design separately from verified current code");
   });
 
   it("blocks filesystem-wide shell discovery while allowing scoped searches", () => {
@@ -144,61 +340,6 @@ describe("PiAgentRuntime", () => {
     for await (const _ of new PiAgentRuntime({ forwardWorkContext: true, createSession }).run({ model: "fast", messages: [{ role: "user", content: "hi" }] }, undefined, context)) { /* consume */ }
     for await (const _ of new PiAgentRuntime({ createSession }).run({ model: "fast", messages: [{ role: "user", content: "hi" }] }, undefined, context)) { /* consume */ }
     expect(seen).toEqual([context, undefined]);
-  });
-
-  it("turns a structured media command into a single active tool and trusted forced choice", async () => {
-    const seen: unknown[] = [];
-    const runtime = new PiAgentRuntime({
-      forwardWorkContext: true,
-      customTools: () => [],
-      createSession: async (options) => {
-        seen.push({ tools: options.tools, activeTools: options.activeTools, workContext: options.workContext });
-        let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
-        return {
-          subscribe: (next) => { listener = next; return () => undefined; },
-          prompt: async () => { listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "ok" } }); },
-          abort: async () => undefined,
-          dispose: () => undefined,
-        };
-      },
-    });
-    for await (const _ of runtime.run(
-      { model: "smart", mediaCommand: "image", messages: [{ role: "user", content: "/image a tree on fire" }] },
-      undefined,
-      { runId: "run-media" },
-    )) { /* consume */ }
-    expect(seen).toEqual([{ tools: [], activeTools: ["generate_image"], workContext: { runId: "run-media", forcedToolName: "generate_image" } }]);
-  });
-
-  it("rewrites media commands into an explicit tool instruction with a default prompt when empty", async () => {
-    const prompts: string[] = [];
-    const runtime = new PiAgentRuntime({
-      customTools: () => [],
-      createSession: async () => {
-        let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
-        return {
-          subscribe: (next) => { listener = next; return () => undefined; },
-          prompt: async (prompt) => {
-            prompts.push(prompt);
-            listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "ok" } });
-          },
-          abort: async () => undefined,
-          dispose: () => undefined,
-        };
-      },
-    });
-    for await (const _ of runtime.run({ model: "smart", mediaCommand: "video", messages: [{ role: "user", content: "/video a cat playing piano" }] })) { /* consume */ }
-    for await (const _ of runtime.run({ model: "smart", mediaCommand: "video", messages: [{ role: "user", content: "/video" }] })) { /* consume */ }
-    for await (const _ of runtime.run({ model: "smart", mediaCommand: "audio", messages: [{ role: "user", content: "/audio drum and bass song about BMW\n\nMaximum duration: 30 seconds." }] })) { /* consume */ }
-    expect(prompts[0]).toContain("generate_video");
-    expect(prompts[0]).toContain("a cat playing piano");
-    expect(prompts[0]).not.toContain("USER: /video a cat playing piano");
-    expect(prompts[1]).toContain("generate_video");
-    expect(prompts[1]).toContain("a short video clip");
-    expect(prompts[2]).toContain("Rewrite a casual idea into a detailed production caption");
-    expect(prompts[2]).toContain("write concise original lyrics about that topic");
-    expect(prompts[2]).toContain("drum and bass song about BMW");
-    expect(prompts[2]).toContain("Maximum duration: 30 seconds");
   });
 
   it("forwards steering messages to the live session and emits user.steer at delivery", async () => {
@@ -314,35 +455,6 @@ describe("PiAgentRuntime", () => {
     ]);
   });
 
-  it("treats a reviewed media-command card as approval for its single forced tool", async () => {
-    let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
-    const requestToolApproval = vi.fn(() => ({ approvalId: "unexpected", decision: Promise.resolve("approved" as const) }));
-    const runtime = new PiAgentRuntime({
-      requestToolApproval,
-      createSession: async (options) => ({
-        subscribe: (next) => { listener = next; return () => undefined; },
-        prompt: async () => {
-          expect(await options.evaluateTool!({
-            toolCallId: "audio-1",
-            toolName: "generate_audio",
-            input: { prompt: "liquid drum and bass", lyrics: "[Chorus]\nBMW" },
-          })).toEqual({ action: "allow" });
-          listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "queued" } });
-        },
-        abort: async () => undefined,
-        dispose: () => undefined,
-      }),
-    });
-    for await (const _ of runtime.run({
-      model: "smart",
-      sessionId: "session-1",
-      accessMode: "full",
-      mediaCommand: "audio",
-      messages: [{ role: "user", content: "/audio song about BMW" }],
-    })) { /* consume */ }
-    expect(requestToolApproval).not.toHaveBeenCalled();
-  });
-
   it("blocks media generation tools in full mode when no approval service exists", async () => {
     let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
     const runtime = new PiAgentRuntime({ createSession: async (options) => ({ subscribe: (next) => { listener = next; return () => undefined; }, prompt: async () => {
@@ -406,7 +518,7 @@ describe("PiAgentRuntime", () => {
 
   it("runs the real Pi loop against the selected Fitz route and executes coding tools", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "fitz-pi-"));
-    await writeFile(join(cwd, "probe.txt"), "PI_TOOL_OK", "utf8");
+    await writeFile(join(cwd, "probe.txt"), `PI_TOOL_OK\n${"a".repeat(20_000)}`, "utf8");
     const requests: any[] = []; const authorizations: Array<string | undefined> = [];
     const server = createServer(async (request, response) => handlePiRequest(request, response, requests, authorizations));
     server.listen(0, "127.0.0.1");
@@ -433,7 +545,11 @@ describe("PiAgentRuntime", () => {
       const toolNames: string[] = requests[0].tools.map((tool: any) => tool.function?.name ?? tool.name);
       expect(toolNames).toEqual(expect.arrayContaining([SESSION_LOOKUP_TOOL, TRASH_TOOL]));
       expect(toolNames.every((name: string) => /^[a-zA-Z0-9_-]+$/.test(name))).toBe(true);
-      expect(requests[1].messages.some((message: any) => message.role === "tool" && JSON.stringify(message.content).includes("PI_TOOL_OK"))).toBe(true);
+      const replayedTool = requests[1].messages.find((message: any) => message.role === "tool");
+      const replayedToolText = JSON.stringify(replayedTool?.content);
+      expect(replayedToolText).toContain("PI_TOOL_OK");
+      expect(replayedToolText).toContain("Fitz truncated this tool result at 12000");
+      expect(replayedToolText.length).toBeLessThan(13_000);
       expect(events).toEqual(expect.arrayContaining([
         expect.objectContaining({ type: "tool.started", toolName: "read", input: { path: "probe.txt" } }),
         expect.objectContaining({ type: "tool.completed", toolName: "read" }),
@@ -647,7 +763,7 @@ describe("PiAgentRuntime", () => {
     expect(events).toEqual([{ type: "assistant.delta", text: "ok" }]);
   });
 
-  it("blocks delegated tool calls after the child budget and steers it to report", async () => {
+  it("blocks delegated tool calls after the child budget", async () => {
     let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
     const steer = vi.fn(async () => undefined);
     const runtime = new PiAgentRuntime({
@@ -676,11 +792,87 @@ describe("PiAgentRuntime", () => {
       messages: [{ role: "user", content: "research" }],
     })) events.push(event);
 
-    expect(steer).toHaveBeenCalledWith(expect.stringContaining("return the concise final report"));
+    expect(steer).not.toHaveBeenCalled();
     expect(events).toContainEqual({ type: "assistant.delta", text: "report" });
   });
 
-  it("uses only Fast children for Smart familiarization and then releases parent tools", async () => {
+  it("mechanically bounds root substantive tools while exempting plan operations", async () => {
+    let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+    const runtime = new PiAgentRuntime({
+      toolCallBudget: 2,
+      toolPolicy: async () => ({ action: "allow" }),
+      createSession: async (options) => ({
+        subscribe: (next) => { listener = next; return () => undefined; },
+        prompt: async (text) => {
+          expect(text).toContain("hard budget of 2 substantive tool calls");
+          expect(await options.evaluateTool!({ toolCallId: "plan", toolName: "agent_plan", input: {} })).toEqual({ action: "allow" });
+          expect(await options.evaluateTool!({ toolCallId: "read-1", toolName: "read", input: {} })).toEqual({ action: "allow" });
+          expect(await options.evaluateTool!({ toolCallId: "read-2", toolName: "read", input: {} })).toEqual({ action: "allow" });
+          expect(await options.evaluateTool!({ toolCallId: "read-3", toolName: "read", input: {} }))
+            .toMatchObject({ action: "block", reason: expect.stringContaining("2-call substantive tool budget") });
+          listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "bounded" } });
+        },
+        steer: async () => undefined,
+        abort: async () => undefined,
+        dispose: () => undefined,
+      }),
+    });
+    const events = [];
+    for await (const event of runtime.run({ model: "default", messages: [{ role: "user", content: "inspect" }] })) events.push(event);
+    expect(events).toContainEqual({ type: "assistant.delta", text: "bounded" });
+  });
+
+  it("caps oversized text tool results with a deterministic continuation marker", () => {
+    const original = [{ type: "text", text: "a".repeat(20_000) }, { type: "image", data: "kept" }];
+    const limited = limitToolResultContent(original, 1_000) as Array<Record<string, unknown>>;
+    expect(String(limited[0]?.text)).toContain("Fitz truncated this tool result at 1000 of 20000 characters");
+    expect(String(limited[0]?.text).length).toBeLessThanOrEqual(1_000);
+    expect(limited[1]).toEqual({ type: "image", data: "kept" });
+    expect(limitToolResultContent([{ type: "text", text: "short" }], 1_000)).toEqual([{ type: "text", text: "short" }]);
+  });
+
+  it("retries a delegated worker in mechanically enforced report-only mode when its tool loop returns no answer", async () => {
+    let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+    let evaluateTool: Parameters<PiSessionFactory>[0]["evaluateTool"];
+    const prompt = vi.fn(async (text: string) => {
+      if (prompt.mock.calls.length === 1) {
+        listener({ type: "tool_execution_start", toolCallId: "read-1", toolName: "read", args: { path: "README.md" } });
+        listener({ type: "tool_execution_end", toolCallId: "read-1", toolName: "read", result: "evidence" });
+        return;
+      }
+      expect(text).toContain("tool phase is closed");
+      expect(await evaluateTool!({ toolCallId: "read-2", toolName: "read", input: { path: "package.json" } }))
+        .toMatchObject({ action: "block", reason: expect.stringContaining("no more tools") });
+      listener({ type: "message_start", message: { role: "user", content: text } });
+      listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "final worker report" } });
+    });
+    const runtime = new PiAgentRuntime({
+      toolPolicy: async () => ({ action: "allow" }),
+      createSession: async (options) => {
+        evaluateTool = options.evaluateTool;
+        return {
+          subscribe: (next) => { listener = next; return () => undefined; },
+          prompt,
+          steer: async () => undefined,
+          abort: async () => undefined,
+          dispose: () => undefined,
+        };
+      },
+    });
+    const events = [];
+    for await (const event of runtime.run({
+      model: "default",
+      accessMode: "read-only",
+      delegation: { role: role(20), parentRunId: "parent" },
+      messages: [{ role: "user", content: "research" }],
+    })) events.push(event);
+
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(events).toContainEqual({ type: "assistant.delta", text: "final worker report" });
+    expect(events).not.toContainEqual(expect.objectContaining({ type: "user.steer" }));
+  });
+
+  it("enforces an explicit Fast-worker request and then releases parent tools", async () => {
     let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
     const runtime = new PiAgentRuntime({
       customTools: () => [{ ...createTrashTool(async () => ({ moved: 0, entries: [] })), name: "subagent" }],
@@ -720,7 +912,7 @@ describe("PiAgentRuntime", () => {
     const events = [];
     for await (const event of runtime.run({
       model: "smart",
-      messages: [{ role: "user", content: "Get familiar with my project. What do you think about it, and what is it missing?" }],
+      messages: [{ role: "user", content: "Launch three fast researcher subagents for independent parts of this task." }],
     })) events.push(event);
     expect(events).toContainEqual({ type: "assistant.delta", text: "done" });
   });

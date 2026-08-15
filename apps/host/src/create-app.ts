@@ -59,7 +59,7 @@ import { registerSecurityAdministrationRoutes } from "./security-administration-
 import { registerSafetyAdministrationRoutes } from "./safety-administration-routes.js";
 import { registerHostingRoutes } from "./hosting-routes.js";
 import type { HostingService } from "./hosting-service.js";
-import { discardLegacyConsumerConnections, registerConsumerConnectionRoutes } from "./consumer-connection-routes.js";
+import { discardLegacyConsumerConnections, ensureRecipeExecutionClasses, registerConsumerConnectionRoutes } from "./consumer-connection-routes.js";
 import {
   ensureMediaRoutes,
   MEDIA_ROUTE_IDS,
@@ -67,6 +67,7 @@ import {
   scanEngineFolders,
 } from "./model-management-routes.js";
 import { CHAT_ROUTE_IDS, LOCAL_OWNER_ID, UserRouteResolver } from "./user-route-resolver.js";
+import { contextTokensForAgentRequest } from "./route-context.js";
 
 export { ensureMediaRoutes } from "./model-management-routes.js";
 
@@ -192,6 +193,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     routes.upsertRoute(reconciledDefault);
   };
   reconcileRecipeCatalog();
+  ensureRecipeExecutionClasses(store);
   const userRoutes = new UserRouteResolver(store, routes);
   ensureMediaRoutes(store, routes);
   const events = new LifecycleEventBus(1_000, store.latestLifecycleSequence());
@@ -237,6 +239,8 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     // One local model remains resident. Recipes opt into small batched
     // generation through maxConcurrentGenerations; other engines stay serial.
     gpuConcurrency: options.schedulerOptions?.gpuConcurrency ?? 3,
+    // High Smart may dispatch six Fast workers and two Smart peers together.
+    cloudConcurrency: options.schedulerOptions?.cloudConcurrency ?? 8,
     recordUsage: async (record) => {
       store.recordRequestUsage(record);
       await options.schedulerOptions?.recordUsage?.(record);
@@ -291,7 +295,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   };
   const requestStarts = new WeakMap<object, number>();
   const principals = new WeakMap<object, AuthenticatedPrincipal>();
-  const internalWorkContexts = new WeakMap<object, { runId?: string; ownerUserId?: string; sessionId?: string; forcedToolName?: string }>();
+  const internalWorkContexts = new WeakMap<object, { runId?: string; ownerUserId?: string; sessionId?: string }>();
   const ownerUserId = (request: object): string => principals.get(request)?.user.id ?? LOCAL_OWNER_ID;
   app.addHook("onRequest", async (request, reply) => {
     requestStarts.set(request, performance.now());
@@ -411,7 +415,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     context,
     principals,
     ...(security ? { security } : {}),
-    contextTokensForRoute: (routeId, routeOwnerUserId) => userRoutes.contextTokens(routeId, routeOwnerUserId ?? LOCAL_OWNER_ID),
+    contextTokensForRequest: (agentRequest, routeOwnerUserId) => contextTokensForAgentRequest(store, agentRequest, routeOwnerUserId ?? LOCAL_OWNER_ID),
   });
 
   registerMediaRoutes({
@@ -736,7 +740,7 @@ function validBearerToken(authorization: string | undefined, expected: string | 
   return timingSafeEqual(actualHash, expectedHash);
 }
 
-function trustedInternalWorkContext(headers: Record<string, string | string[] | undefined>): { runId?: string; ownerUserId?: string; sessionId?: string; forcedToolName?: string } {
+function trustedInternalWorkContext(headers: Record<string, string | string[] | undefined>): { runId?: string; ownerUserId?: string; sessionId?: string } {
   const value = (name: string): string | undefined => {
     const candidate = headers[name];
     return typeof candidate === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(candidate) ? candidate : undefined;
@@ -744,11 +748,7 @@ function trustedInternalWorkContext(headers: Record<string, string | string[] | 
   const runId = value("x-fitz-run-id");
   const ownerUserId = value("x-fitz-owner-user-id");
   const sessionId = value("x-fitz-session-id");
-  const requestedTool = value("x-fitz-forced-tool");
-  const forcedToolName = requestedTool === "generate_image" || requestedTool === "generate_video" || requestedTool === "generate_audio"
-    ? requestedTool
-    : undefined;
-  return { ...(runId ? { runId } : {}), ...(ownerUserId ? { ownerUserId } : {}), ...(sessionId ? { sessionId } : {}), ...(forcedToolName ? { forcedToolName } : {}) };
+  return { ...(runId ? { runId } : {}), ...(ownerUserId ? { ownerUserId } : {}), ...(sessionId ? { sessionId } : {}) };
 }
 
 function adminGuard(expectedToken: string | undefined, authMode: "disabled" | "required", principals: WeakMap<object, AuthenticatedPrincipal>) {

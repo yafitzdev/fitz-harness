@@ -52,4 +52,18 @@ describe("parseChatCompletionRequest", () => {
       messages: [{ role: "user", content: [{ type: "text", text: "hello " }, { type: "text", text: "agent" }] }],
     }).messages[0]?.content).toBe("hello agent");
   });
+
+  it("preserves assistant reasoning history and validated template controls", () => {
+    expect(parseChatCompletionRequest({
+      model: "default",
+      messages: [{ role: "assistant", content: "answer", reasoning_content: "reasoning" }],
+      chat_template_kwargs: { enable_thinking: true, preserve_thinking: true },
+    })).toMatchObject({
+      messages: [{ role: "assistant", content: "answer", reasoning_content: "reasoning" }],
+      chat_template_kwargs: { enable_thinking: true, preserve_thinking: true },
+    });
+    expect(() => parseChatCompletionRequest({
+      model: "default", messages: [{ role: "user", content: "hi", reasoning_content: "invalid" }],
+    })).toThrow("requires an assistant string");
+  });
 });

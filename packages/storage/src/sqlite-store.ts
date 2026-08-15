@@ -4,6 +4,7 @@ import type {
   AgentEventEnvelope,
   ArtifactRecord,
   AgentRunRecord,
+  AgentRunPlan,
   AgentRunRequest,
   ProjectRecord,
   SessionRecord,
@@ -216,6 +217,8 @@ export class SqliteStore {
     return this.#agentRuns.listRuns(ownerUserId, limit);
   }
   getAgentRunRequest(id: string): AgentRunRequest | undefined { return this.#agentRuns.getRunRequest(id); }
+  getAgentRunPlan(id: string): AgentRunPlan | undefined { return this.#agentRuns.getRunPlan(id); }
+  saveAgentRunPlan(plan: AgentRunPlan, expectedRevision?: number): boolean { return this.#agentRuns.saveRunPlan(plan, expectedRevision); }
   latestSessionAgentRun(sessionId: string): AgentRunRecord | undefined { return this.#agentRuns.latestSessionRun(sessionId); }
   agentRunResumedFrom(sourceRunId: string): AgentRunRecord | undefined { return this.#agentRuns.runResumedFrom(sourceRunId); }
   agentRunForClientRequest(clientRequestId: string): AgentRunRecord | undefined { return this.#agentRuns.runForClientRequest(clientRequestId); }

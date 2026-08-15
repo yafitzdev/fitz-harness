@@ -607,4 +607,63 @@ export const MIGRATIONS: readonly Migration[] = [
       );
     `,
   },
+  {
+    version: 21,
+    // A root run's execution plan is a durable, independently queryable
+    // artifact. The JSON document is revisioned so background workers and the
+    // main agent cannot silently overwrite one another's state transitions.
+    sql: `
+      CREATE TABLE agent_run_plans (
+        run_id TEXT PRIMARY KEY REFERENCES agent_runs(id) ON DELETE CASCADE,
+        revision INTEGER NOT NULL CHECK (revision > 0),
+        status TEXT NOT NULL CHECK (status IN ('active', 'completed')),
+        plan_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT
+      );
+    `,
+  },
+  {
+    version: 22,
+    // Final synthesis is runtime-owned. The model finishes prerequisite work,
+    // moves the plan to ready_for_answer, and the runtime marks it completed
+    // only after one final assistant answer has been emitted.
+    rebuild: true,
+    sql: `
+      CREATE TABLE agent_run_plans_v22 (
+        run_id TEXT PRIMARY KEY REFERENCES agent_runs(id) ON DELETE CASCADE,
+        revision INTEGER NOT NULL CHECK (revision > 0),
+        status TEXT NOT NULL CHECK (status IN ('active', 'ready_for_answer', 'completed')),
+        plan_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT
+      );
+      INSERT INTO agent_run_plans_v22 (run_id, revision, status, plan_json, created_at, updated_at, completed_at)
+        SELECT run_id, revision, status, plan_json, created_at, updated_at, completed_at FROM agent_run_plans;
+      DROP TABLE agent_run_plans;
+      ALTER TABLE agent_run_plans_v22 RENAME TO agent_run_plans;
+
+      UPDATE subagent_role_definitions
+      SET system_instructions = system_instructions || ' For claims about the current implementation, executable source and package manifests outrank design documents. Never infer a framework, runtime, test count, or architecture detail from aspirational documentation; identify intended design separately from verified current code.'
+      WHERE id IN ('researcher', 'reviewer') AND enabled = 1;
+    `,
+  },
+  {
+    version: 23,
+    // Repository research should return evidence, not consume an entire worker
+    // context through open-ended exploration. Preserve v1 for historical run
+    // snapshots and enable the bounded v2 definition for new dispatches.
+    sql: `
+      UPDATE subagent_role_definitions SET enabled = 0 WHERE id = 'researcher' AND enabled = 1;
+      INSERT INTO subagent_role_definitions (
+        id, version, display_name, dispatch_description, system_instructions,
+        access_mode, tool_call_budget, max_output_tokens, output_contract, enabled, created_at
+      )
+      SELECT id, 2, display_name, dispatch_description, system_instructions,
+        access_mode, 12, max_output_tokens, output_contract, 1, datetime('now')
+      FROM subagent_role_definitions WHERE id = 'researcher' AND version = 1;
+    `,
+  },
 ] as const;

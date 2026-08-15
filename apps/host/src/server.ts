@@ -13,13 +13,13 @@ import { createHost } from "./create-app.js";
 import { createMediaTools } from "./media-tools.js";
 import type { MediaJobCoordinator } from "./media-jobs.js";
 import { ModelCatalogService } from "./model-catalog.js";
-import { PiAgentRuntime, PiPackageService, WorkspaceMutationLeaseManager } from "@fitz/agent-pi";
+import { PiAgentRuntime, PiPackageService, WorkspaceMutationLeaseManager, requiredInitialSubagentRoutes } from "@fitz/agent-pi";
 import { createNInferPlaybook } from "./ninfer-playbook.js";
 import { createComfyUIPlaybook } from "./comfyui-playbook.js";
 import { reconcileNInferConfiguration } from "./ninfer-reconcile.js";
 import { createToolApprovalRequester } from "./tool-approval-gate.js";
 import { createSessionReader } from "./session-reader.js";
-import { contextTokensForAgentRequest, contextTokensForRoute } from "./route-context.js";
+import { contextTokensForAgentRequest, contextTokensForRoute, executionClassForRoute, thinkingFormatForAgentRequest } from "./route-context.js";
 import { WindowsStartupManager } from "@fitz/connectivity";
 import { SharedHostGateway, TailscaleFunnelManager } from "@fitz/connectivity";
 import { FitzConfigService } from "@fitz/config";
@@ -38,6 +38,8 @@ import { createSubagentTool, isDelegatedToolContext, subagentRouteBudget } from 
 import type { AgentRunCoordinator } from "./agent-runs.js";
 import { LOCAL_OWNER_ID } from "./user-route-resolver.js";
 import { HostingService } from "./hosting-service.js";
+import { createAgentPlanTool, planAdmissionReason, planCompletionIssue, planPromptInstruction } from "./agent-plan-tools.js";
+import { rootAgentToolCallBudget } from "./agent-effort-policy.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const runtimePaths = resolveRuntimePaths();
@@ -163,6 +165,9 @@ const runtime = createHost({
     agentRuntime: new PiAgentRuntime({
       baseUrl: agentBaseUrl,
       apiKey: process.env.FITZ_AGENT_API_KEY ?? internalAgentToken ?? "fitz-local",
+      thinkingLevel: (request) => request.effort === "high" ? "high" : request.effort === "light" ? "low" : "medium",
+      thinkingFormat: (request, context) => thinkingFormatForAgentRequest(store, request, context?.ownerUserId),
+      toolCallBudget: (request) => rootAgentToolCallBudget(request.effort),
       forwardWorkContext: Boolean(internalAgentToken),
       // The pi session's context window must match the recipe the route resolves to
       // (e.g. 131072 for consumer/DeepSeek routes, 100000 for ninfer), not a fixed default.
@@ -183,6 +188,16 @@ const runtime = createHost({
       toolLease: workspaceMutationLeases.acquire,
       redactToolResult: safety.createResultRedactor(),
       subagentBudget: (request, context) => subagentRouteBudget(store, context?.ownerUserId ?? LOCAL_OWNER_ID, request.model, request.effort ?? "normal"),
+      runPlan: (_request, context) => context?.runId ? {
+        initialInstruction: planPromptInstruction(),
+        admissionReason: (toolCall) => planAdmissionReason(store, context.runId!, toolCall),
+        completionIssue: () => planCompletionIssue(store, context.runId!),
+        phase: () => store.getAgentRunPlan(context.runId!)?.status ?? "missing",
+        // Older in-memory agent-pi builds called this hook. Keep a no-op while
+        // dev processes roll between builds; AgentRunCoordinator owns the real
+        // post-persistence transition to `completed`.
+        completeAfterAnswer: () => undefined,
+      } : undefined,
       customTools: (context) => {
         const delegated = isDelegatedToolContext(store, context);
         const ownerUserId = (context.runId ? store.getAgentRun(context.runId)?.ownerUserId : undefined) ?? LOCAL_OWNER_ID;
@@ -191,11 +206,19 @@ const runtime = createHost({
         const subagentBudget = subagentRouteBudget(store, ownerUserId, parentRoute, parentRequest?.effort ?? "normal");
         return [
           ...safety.createCustomTools()(context),
+          ...(!delegated ? [createAgentPlanTool({
+            store,
+            ...(parentRequest && subagentBudget ? { requiredWorkerRoutes: [...requiredInitialSubagentRoutes(parentRequest, subagentBudget)] } : {}),
+          }, context)] : []),
           // Authenticated runs enforce the owner's media quota and route grants.
           // Explicit local auth-disabled mode has no user and follows the existing
           // administrator-diagnostic path used by the management media test.
           ...(!delegated && mediaJobs ? createMediaTools({ mediaJobs, store, ...(security ? { security } : {}) })(context) : []),
-          ...(!delegated && subagentBudget && agentRuns ? [createSubagentTool({ agentRuns, store }, context, subagentBudget)] : []),
+          ...(!delegated && subagentBudget && agentRuns ? [createSubagentTool({
+            agentRuns,
+            store,
+            executionClass: executionClassForRoute(store, parentRoute, ownerUserId),
+          }, context, subagentBudget)] : []),
         ];
       },
       agentDir: runtimePaths.piAgentDir,

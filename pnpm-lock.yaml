@@ -207,6 +207,9 @@ importers:
 
   packages/engine-ninfer:
     dependencies:
+      '@fitz/engine-openai-compatible':
+        specifier: workspace:*
+        version: link:../engine-openai-compatible
       '@fitz/inference-core':
         specifier: workspace:*
         version: link:../inference-core

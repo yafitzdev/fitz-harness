@@ -34,6 +34,9 @@ export type SandboxedBashExecutor = (input: {
 /** Matches the SDK's bash tool output limits: last 2000 lines or 50KB, whichever hits first. */
 const MAX_OUTPUT_LINES = 2000;
 const MAX_OUTPUT_BYTES = 50 * 1024;
+/** Exploratory commands must not be able to hold an agent run indefinitely.
+ * Known long-running work can opt into a larger explicit timeout per call. */
+export const DEFAULT_AGENT_BASH_TIMEOUT_SECONDS = 15;
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;
@@ -85,13 +88,13 @@ function appendTruncationFooter(text: string, trunc: TruncatedOutput): string {
 export function createSandboxedBashTool(executor: SandboxedBashExecutor): ToolDefinition {
   const parameters = Type.Object({
     command: Type.String({ description: "Bash command to execute" }),
-    timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
+    timeout: Type.Optional(Type.Number({ description: `Timeout in seconds (optional; defaults to ${DEFAULT_AGENT_BASH_TIMEOUT_SECONDS})` })),
   });
   const tool: ToolDefinition<typeof parameters> = {
     name: "bash",
     label: "bash",
     description:
-      "Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to the last 2000 lines or 50KB (whichever is hit first). Optionally provide a timeout in seconds. Commands run inside the Fitz safety sandbox: the project workspace, the Fitz runtime dirs, and the temp dirs are writable; everything else is read-only, so destructive commands outside those areas cannot succeed.",
+      `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to the last 2000 lines or 50KB (whichever is hit first). Commands default to a ${DEFAULT_AGENT_BASH_TIMEOUT_SECONDS}-second deadline; set timeout explicitly for known long-running work. Commands run inside the Fitz safety sandbox: the project workspace, the Fitz runtime dirs, and the temp dirs are writable; everything else is read-only, so destructive commands outside those areas cannot succeed.`,
     promptSnippet: "Execute bash commands (ls, grep, find, etc.)",
     promptGuidelines: [
       "Prefer relative paths and commands that operate inside the project workspace.",
@@ -104,7 +107,7 @@ export function createSandboxedBashTool(executor: SandboxedBashExecutor): ToolDe
       try {
         outcome = await executor({
           command: params.command,
-          ...(params.timeout !== undefined ? { timeout: params.timeout } : {}),
+          timeout: params.timeout ?? DEFAULT_AGENT_BASH_TIMEOUT_SECONDS,
           ...(signal ? { signal } : {}),
         });
       } catch (error) {

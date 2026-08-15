@@ -20,10 +20,10 @@ export class PiDelegationPolicy {
   readonly #admittedInitialSubagents = new Map<string, SubagentRoute>();
   #admittedParentWork = false;
   #delegatedToolCalls = 0;
-  #budgetSteered = false;
+  #finalReportOnly = false;
 
   constructor(request: AgentRunRequest, budget: SubagentRouteBudget | undefined) {
-    this.initialRoutes = requestedInitialSubagents(request, budget);
+    this.initialRoutes = requiredInitialSubagentRoutes(request, budget);
     this.toolCallBudget = request.delegation?.role.toolCallBudget;
   }
 
@@ -54,6 +54,7 @@ export class PiDelegationPolicy {
    * repeated policy callbacks cannot satisfy the fan-out twice.
    */
   admissionReason(toolCall: DelegationToolCall): string | undefined {
+    if (this.#finalReportOnly) return "Worker research is finished. Return the final report now; no more tools are available.";
     const fanoutReason = this.#initialFanoutReason(toolCall);
     if (fanoutReason) return fanoutReason;
     const smartPeerReason = this.#smartPeerReason(toolCall);
@@ -65,19 +66,20 @@ export class PiDelegationPolicy {
   }
 
   recordAllowedTool(toolCall: DelegationToolCall): void {
-    if (toolCall.toolName !== "subagent") this.#admittedParentWork = true;
+    if (toolCall.toolName !== "subagent" && toolCall.toolName !== "agent_plan") this.#admittedParentWork = true;
   }
 
-  /** Returns the one-time steering message once a child consumes its budget. */
-  claimBudgetSteer(): string | undefined {
-    if (this.toolCallBudget === undefined || this.#delegatedToolCalls < this.toolCallBudget || this.#budgetSteered) return undefined;
-    this.#budgetSteered = true;
-    return subagentBudgetReason(this.toolCallBudget);
+  /** Permanently closes a delegated worker's tool phase. The runtime enters
+   * this state before a recovery completion, so producing a terminal report is
+   * mechanically enforced instead of merely requested in prose. */
+  beginFinalReport(): string {
+    this.#finalReportOnly = true;
+    return "SYSTEM: The tool phase is closed. Return the concise final report now. Do not call tools.";
   }
 
   initialPromptInstruction(): string | undefined {
     if (!this.requiresInitialFanout) return undefined;
-    return `SYSTEM: DELEGATION ORDER: Your first tool calls must launch ${formatSubagentRoutes(this.initialRoutes)} with disjoint scopes. Do not announce that delegation is available or ask the user to request it. Put the subagent calls first, then begin your own parent tool work in the same response so it runs concurrently. The parent must independently handle the overarching analysis and final synthesis.`;
+    return `SYSTEM: REQUIRED WORKERS: After creating the durable execution plan, launch ${formatSubagentRoutes(this.initialRoutes)} for distinct worker-eligible plan items. Do not announce that delegation is available or ask the user to request it. Put those launches first, then begin your own parent tool work in the same response. The parent independently owns the overarching analysis and final synthesis.`;
   }
 
   retryPrompt(): string {
@@ -90,6 +92,7 @@ export class PiDelegationPolicy {
 
   #initialFanoutReason(toolCall: DelegationToolCall): string | undefined {
     if (!this.requiresInitialFanout || this.initialFanoutComplete) return undefined;
+    if (toolCall.toolName === "agent_plan") return undefined;
     if (toolCall.toolName === "subagent") {
       if (this.#admittedInitialSubagents.has(toolCall.toolCallId)) return undefined;
       const route = subagentRouteFromInput(toolCall.input);
@@ -118,7 +121,7 @@ export function delegatedCompaction(contextWindow: number, maxTokens: number): {
   };
 }
 
-function requestedInitialSubagents(request: AgentRunRequest, budget: SubagentRouteBudget | undefined): SubagentRoute[] {
+export function requiredInitialSubagentRoutes(request: AgentRunRequest, budget: SubagentRouteBudget | undefined): SubagentRoute[] {
   if (request.delegation || !budget) return [];
   const lastUserText = [...request.messages].reverse().find((message) => message.role === "user");
   if (!lastUserText) return [];
@@ -127,9 +130,9 @@ function requestedInitialSubagents(request: AgentRunRequest, budget: SubagentRou
   const fastCapacity = Array.from({ length: Math.max(0, budget.fast) }, () => "fast" as const);
   const smartCapacity = Array.from({ length: Math.max(0, budget.smart) }, () => "smart" as const);
   if (defaultCapacity.length + fastCapacity.length + smartCapacity.length === 0) return [];
-  // Familiarization is bounded research. The optional Smart child remains a
-  // voluntary concurrent peer and is never spent as an expensive researcher.
-  if (broadRepositoryFamiliarization(text)) return defaultCapacity.length ? defaultCapacity : fastCapacity;
+  // Task semantics belong to the orchestrator and its durable plan. The runtime
+  // does not classify request subjects. It forces initial fan-out only when the
+  // user explicitly asks for workers, preserving that direct user instruction.
   const explicitCount = explicitlyRequestedSubagentCount(text);
   if (explicitCount === 0) return [];
   if (defaultCapacity.length) {
@@ -153,12 +156,6 @@ function explicitlyRequestedSubagentCount(text: string): number {
   if (!count) return 1;
   const parsed = /^\d+$/.test(count) ? Number(count) : words[count];
   return Math.max(1, Math.min(16, parsed ?? 1));
-}
-
-function broadRepositoryFamiliarization(text: string): boolean {
-  return /\b(?:get|become|make\s+(?:yourself|you))\s+familiar\b/.test(text)
-    || /\b(?:understand|learn|explore|assess|analy[sz]e|review)\s+(?:this|the|my|our)?\s*(?:project|repo(?:sitory)?|codebase)\b/.test(text)
-    || /\b(?:project|repo(?:sitory)?|codebase)\s+(?:overview|orientation|familiarization)\b/.test(text);
 }
 
 function subagentRouteFromInput(input: unknown): SubagentRoute | undefined {

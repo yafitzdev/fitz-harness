@@ -17,18 +17,22 @@ export interface OpenAICompatibleModel {
   task?: string;
 }
 
+interface StreamDelta {
+  content?: string;
+  reasoning_content?: string;
+  reasoning?: string;
+  reasoning_text?: string;
+  tool_calls?: Array<{
+    index: number;
+    id?: string;
+    type?: "function";
+    function?: { name?: string; arguments?: string };
+  }>;
+}
+
 interface StreamChunk {
   choices?: Array<{
-    delta?: {
-      content?: string;
-      reasoning_content?: string;
-      tool_calls?: Array<{
-        index: number;
-        id?: string;
-        type?: "function";
-        function?: { name?: string; arguments?: string };
-      }>;
-    };
+    delta?: StreamDelta;
     finish_reason?: string | null;
   }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number };
@@ -102,6 +106,7 @@ export class OpenAICompatibleClient {
         ...(request.tools !== undefined ? { tools: request.tools } : {}),
         ...(request.toolChoice !== undefined ? { tool_choice: request.toolChoice } : {}),
         ...(request.parallelToolCalls !== undefined ? { parallel_tool_calls: request.parallelToolCalls } : {}),
+        ...(request.chatTemplateKwargs !== undefined ? { chat_template_kwargs: request.chatTemplateKwargs } : {}),
       }),
       signal,
     });
@@ -117,9 +122,10 @@ export class OpenAICompatibleClient {
       if (chunk.error) throw new Error(chunk.error.message ?? "OpenAI-compatible stream failed");
       const choice = chunk.choices?.[0];
       const finishReason = normalizeFinishReason(choice?.finish_reason);
+      const providerReasoning = reasoningText(choice?.delta);
       yield {
         text: choice?.delta?.content ?? "",
-        ...(choice?.delta?.reasoning_content ? { reasoning: choice.delta.reasoning_content } : {}),
+        ...(providerReasoning ? { reasoning: providerReasoning } : {}),
         ...(choice?.delta?.tool_calls?.length ? { toolCalls: choice.delta.tool_calls } : {}),
         ...(finishReason ? { finishReason } : {}),
         ...(chunk.usage?.prompt_tokens !== undefined ? { promptTokens: chunk.usage.prompt_tokens } : {}),
@@ -133,6 +139,11 @@ export class OpenAICompatibleClient {
   private headers(): Record<string, string> {
     return this.#apiKey ? { authorization: `Bearer ${this.#apiKey}` } : {};
   }
+}
+
+function reasoningText(delta: StreamDelta | undefined): string | undefined {
+  if (!delta) return undefined;
+  return delta.reasoning_content || delta.reasoning || delta.reasoning_text || undefined;
 }
 
 /**

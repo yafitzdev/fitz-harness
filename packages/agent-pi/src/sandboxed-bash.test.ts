@@ -18,10 +18,12 @@ describe("createSandboxedBashTool", () => {
   });
 
   it("returns stdout text on success", async () => {
-    const tool = createSandboxedBashTool(async () => okResult({ stdout: "hello world\n" }));
+    const executor = vi.fn(async () => okResult({ stdout: "hello world\n" })) as unknown as SandboxedBashExecutor;
+    const tool = createSandboxedBashTool(executor);
     const result = await tool.execute("call-1", { command: "echo hello world" });
     expect(result.content[0]).toMatchObject({ type: "text", text: "hello world\n" });
     expect(result.details).toMatchObject({ contained: true, exitCode: 0 });
+    expect(executor).toHaveBeenCalledWith({ command: "echo hello world", timeout: 15 });
   });
 
   it("merges stderr after stdout", async () => {

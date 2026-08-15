@@ -1,4 +1,5 @@
 export * from "./pi-agent-runtime.js";
+export { requiredInitialSubagentRoutes } from "./pi-delegation-policy.js";
 export * from "./pi-packages.js";
 export * from "./sandboxed-bash.js";
 export * from "./workspace-mutation-leases.js";

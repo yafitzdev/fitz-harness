@@ -17,6 +17,7 @@
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
+    "@fitz/engine-openai-compatible": "workspace:*",
     "@fitz/inference-core": "workspace:*",
     "@fitz/protocol": "workspace:*"
   }

@@ -1,10 +1,10 @@
 import type { ChatMessage } from "./openai.js";
-import type { MediaModality } from "./domain.js";
 
 export const AGENT_PROTOCOL_VERSION = "1" as const;
 export type AgentRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
 export type ToolAccessMode = "full" | "ask" | "read-only";
-/** User-selected work depth. This is independent from the output-token limit. */
+/** User-selected work depth. `normal` is retained as the wire value for the
+ * user-facing Medium tier so existing sessions and clients remain compatible. */
 export type AgentEffort = "light" | "normal" | "high";
 
 /** System-owned, versioned dispatch behavior. Recipes configure anonymous
@@ -29,6 +29,37 @@ export type SubagentRoleSnapshot = Omit<SubagentRoleDefinition, "enabled">;
 export interface AgentDelegation {
   role: SubagentRoleSnapshot;
   parentRunId: string;
+  planItemId?: string;
+}
+
+export type AgentPlanStatus = "active" | "ready_for_answer" | "completed";
+export type AgentPlanItemStatus = "pending" | "running" | "completed" | "failed";
+export type AgentPlanItemOwner = "main" | "worker";
+export interface AgentPlanItem {
+  id: string;
+  task: string;
+  dependencies: string[];
+  owner: AgentPlanItemOwner;
+  workerEligible: boolean;
+  required: boolean;
+  status: AgentPlanItemStatus;
+  attempts: number;
+  workerRunId?: string;
+  result?: string;
+  error?: string;
+}
+/** Durable, revisable execution gameplan owned by one root agent run. */
+export interface AgentRunPlan {
+  runId: string;
+  revision: number;
+  status: AgentPlanStatus;
+  items: AgentPlanItem[];
+  /** Explicit user-requested/system-required worker launches that must be
+   * durably assigned before the plan may complete. */
+  requiredWorkerRoutes?: Array<"default" | "fast" | "smart">;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
 }
 
 export type AgentResumeSafety = "safe" | "review-required";
@@ -48,7 +79,7 @@ export interface AgentRunCheckpoint {
   updatedAt: string;
 }
 
-export interface AgentRunRequest { model: string; messages: ChatMessage[]; effort?: AgentEffort; maxTokens?: number; temperature?: number; sessionId?: string; accessMode?: ToolAccessMode; clientRequestId?: string; mediaCommand?: MediaModality; delegation?: AgentDelegation }
+export interface AgentRunRequest { model: string; messages: ChatMessage[]; effort?: AgentEffort; maxTokens?: number; temperature?: number; sessionId?: string; accessMode?: ToolAccessMode; clientRequestId?: string; delegation?: AgentDelegation }
 export interface AgentRunRecord { id: string; routeId: string; status: AgentRunStatus; createdAt: string; updatedAt: string; lastSequence: number; ownerUserId?: string; sessionId?: string; error?: string; resumeOfRunId?: string; resumable?: boolean; checkpoint?: AgentRunCheckpoint }
 export interface AgentQueueItem { runId: string; routeId: string; status: "running" | "queued"; position: number; depth: number; createdAt: string; ownerUserId?: string; sessionId?: string; sessionTitle?: string; projectName?: string }
 export type AgentEventType = "run.created" | "run.queue.updated" | "run.started" | "assistant.delta" | "reasoning.delta" | "reasoning.completed" | "user.steer" | "tool.approval.requested" | "tool.approval.resolved" | "tool.started" | "tool.completed" | "run.completed" | "run.failed" | "run.cancelled" | "run.interrupted";

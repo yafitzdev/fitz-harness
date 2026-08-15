@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SqliteStore } from "@fitz/storage";
-import { contextTokensForAgentRequest, contextTokensForRoute } from "./route-context.js";
+import { contextTokensForAgentRequest, contextTokensForRoute, thinkingFormatForAgentRequest } from "./route-context.js";
 
 function recipe(store: SqliteStore, id: string, contextTokens: number): void {
   store.upsertRecipe({
@@ -56,7 +56,23 @@ describe("contextTokensForRoute", () => {
     }
   });
 
-  it("uses the recipe topology for a 128K local orchestrator and 64K delegated workers", () => {
+  it("selects Qwen template controls only for a resolved NInfer recipe", () => {
+    const store = SqliteStore.memory();
+    try {
+      recipe(store, "local", 100_000);
+      const local = store.listRecipes().find((candidate) => candidate.id === "local")!;
+      store.upsertRecipe({ ...local, adapter: "ninfer" });
+      store.upsertRoute({ id: "default", displayName: "Default", recipeId: "local", enabled: true, isDefault: true });
+      expect(thinkingFormatForAgentRequest(store, { model: "default", messages: [] })).toBe("ninfer");
+
+      store.upsertRecipe({ ...local, adapter: "openai-compatible" });
+      expect(thinkingFormatForAgentRequest(store, { model: "default", messages: [] })).toBeUndefined();
+    } finally {
+      store.close();
+    }
+  });
+
+  it("uses configured self-hosted context independently of effort", () => {
     const store = SqliteStore.memory();
     try {
       recipe(store, "orchestrator", 262_144);
@@ -71,13 +87,72 @@ describe("contextTokensForRoute", () => {
 
       expect(contextTokensForAgentRequest(store, {
         model: "default",
+        effort: "high",
         messages: [{ role: "user", content: "coordinate" }],
       })).toBe(128_000);
       expect(contextTokensForAgentRequest(store, {
         model: "default",
+        effort: "high",
         delegation: { role: roleSnapshot(store, "implementer"), parentRunId: "parent" },
         messages: [{ role: "user", content: "implement" }],
       })).toBe(64_000);
+      expect(contextTokensForAgentRequest(store, {
+        model: "default",
+        effort: "light",
+        messages: [{ role: "user", content: "quick answer" }],
+      })).toBe(128_000);
+      expect(contextTokensForAgentRequest(store, {
+        model: "default",
+        messages: [{ role: "user", content: "normal answer" }],
+      })).toBe(128_000);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("caps cloud parent and delegated worker context by inherited effort", () => {
+    const store = SqliteStore.memory();
+    try {
+      recipe(store, "default-recipe", 100_000);
+      recipe(store, "fast-recipe", 131_072);
+      store.upsertRoute({ id: "default", displayName: "Default", recipeId: "default-recipe", enabled: true, isDefault: true });
+      store.setSetting("consumerCloudRoutes", [{ ownerUserId: "alice", role: "fast", recipeId: "fast-recipe", updatedAt: new Date(0).toISOString() }]);
+      expect(contextTokensForAgentRequest(store, { model: "fast", effort: "light", messages: [] }, "alice")).toBe(12_000);
+      expect(contextTokensForAgentRequest(store, { model: "fast", effort: "normal", messages: [] }, "alice")).toBe(32_000);
+      expect(contextTokensForAgentRequest(store, {
+        model: "fast",
+        effort: "high",
+        delegation: { role: roleSnapshot(store, "researcher"), parentRunId: "parent" },
+        messages: [],
+      }, "alice")).toBe(64_000);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("keeps a trusted remote self-hosted route on recipe context rules", () => {
+    const store = SqliteStore.memory();
+    try {
+      recipe(store, "remote-gpu", 196_000);
+      const current = store.listRecipes().find((candidate) => candidate.id === "remote-gpu")!;
+      store.upsertRecipe({
+        ...current,
+        executionClass: "self_hosted",
+        capabilities: { ...current.capabilities, toolCalls: true, maxConcurrentGenerations: 3 },
+        agentTopology: { sharedContextTokens: 192_000, workers: { count: 2, contextTokens: 48_000 } },
+      });
+      store.setSetting("consumerConnections", [{
+        ownerUserId: "alice", id: "yan-gpu", displayName: "Yan GPU", baseUrl: "https://yan.tail.test/v1",
+        authType: "bearer", credentialEnv: "FITZ_TEST", template: "openai-compatible",
+        executionClass: "self_hosted", accessClass: "trusted_remote",
+        models: [{ modelId: "remote-gpu", recipeId: "remote-gpu" }], mediaModels: [], updatedAt: new Date(0).toISOString(),
+      }]);
+      store.setSetting("consumerCloudRoutes", [{ ownerUserId: "alice", role: "smart", recipeId: "remote-gpu", updatedAt: new Date(0).toISOString() }]);
+
+      expect(contextTokensForAgentRequest(store, { model: "smart", effort: "light", messages: [] }, "alice")).toBe(96_000);
+      expect(contextTokensForAgentRequest(store, {
+        model: "smart", effort: "high", delegation: { role: roleSnapshot(store, "researcher"), parentRunId: "parent" }, messages: [],
+      }, "alice")).toBe(48_000);
     } finally {
       store.close();
     }

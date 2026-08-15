@@ -14,13 +14,13 @@ export interface RegisterAgentRoutesOptions {
   context: ContextManager;
   principals: WeakMap<object, AuthenticatedPrincipal>;
   security?: SecurityService;
-  contextTokensForRoute(routeId: string, ownerUserId?: string): number;
+  contextTokensForRequest(request: AgentRunRequest, ownerUserId?: string): number;
 }
 
 /** Owns durable agent-run creation, queue visibility, steering, cancellation,
  * replay, and live SSE delivery. */
 export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
-  const { app, store, agentRuns, scheduler, context, principals, security, contextTokensForRoute } = options;
+  const { app, store, agentRuns, scheduler, context, principals, security, contextTokensForRequest } = options;
 
   app.post("/api/v1/agent/runs", async (request, reply) => {
     try {
@@ -45,7 +45,7 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
       }
       const executionRouteId = body.model;
       const durableRequest = { ...body, model: executionRouteId };
-      const prepared = await context.prepare(durableRequest, contextTokensForRoute(executionRouteId, principal?.user.id));
+      const prepared = await context.prepare(durableRequest, contextTokensForRequest(durableRequest, principal?.user.id));
       let run;
       try { run = agentRuns.start(prepared.request, principal?.user.id, body.messages, durableRequest); }
       catch (error) {
@@ -138,6 +138,16 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
     return { protocolVersion: PROTOCOL_VERSION, data: store.listRequestUsageForRun(runId) };
   });
 
+  app.get("/api/v1/agent/runs/:runId/plan", async (request, reply) => {
+    const runId = (request.params as { runId: string }).runId;
+    const run = agentRuns.get(runId);
+    if (!run) return reply.code(404).send({ error: "Agent run not found" });
+    if (!canAccessOwner(principals.get(request), run.ownerUserId)) return reply.code(403).send({ error: "Agent run access denied" });
+    const plan = store.getAgentRunPlan(runId);
+    if (!plan) return reply.code(404).send({ error: "Agent plan not found" });
+    return { protocolVersion: PROTOCOL_VERSION, data: plan };
+  });
+
   app.delete("/api/v1/agent/runs/:runId", async (request, reply) => {
     const runId = (request.params as { runId: string }).runId;
     const run = agentRuns.get(runId);
@@ -187,7 +197,7 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
     try {
       if (principal && !security?.authorizeRoute(principal, resumeRequest.model)) return reply.code(403).send({ error: "Route access denied" });
       if (principal) security?.enforceQuota(principal, recoveryInstruction.length, resumeRequest.maxTokens ?? principal.quota.maxOutputTokens, agentRuns.queue(principal.user.id).length);
-      const prepared = await context.prepare(resumeRequest, contextTokensForRoute(resumeRequest.model, principal?.user.id ?? source.ownerUserId));
+      const prepared = await context.prepare(resumeRequest, contextTokensForRequest(resumeRequest, principal?.user.id ?? source.ownerUserId));
       if (!store.claimAgentRunResume(sourceRunId)) {
         const concurrentResume = store.agentRunResumedFrom(sourceRunId);
         if (concurrentResume) return reply.code(200).send({ protocolVersion: PROTOCOL_VERSION, data: concurrentResume, resumedFrom: sourceRunId, idempotentReplay: true });
@@ -258,15 +268,15 @@ function parseAgentRunRequest(value: unknown): AgentRunRequest {
     ...(parsed.temperature !== undefined ? { temperature: parsed.temperature } : {}),
     ...(typeof source.sessionId === "string" ? { sessionId: source.sessionId } : {}),
     accessMode,
-    ...(source.mediaCommand === "image" || source.mediaCommand === "video" || source.mediaCommand === "audio" ? { mediaCommand: source.mediaCommand } : {}),
     ...(typeof source.clientRequestId === "string" && source.clientRequestId.trim() ? { clientRequestId: validateClientRequestId(source.clientRequestId) } : {}),
   };
 }
 
 function parseAgentEffort(value: unknown): "light" | "normal" | "high" {
   if (value === undefined) return "normal";
+  if (value === "medium") return "normal";
   if (value === "light" || value === "normal" || value === "high") return value;
-  throw new TypeError("effort must be light, normal, or high");
+  throw new TypeError("effort must be light, medium, or high");
 }
 
 function validateClientRequestId(value: string): string {

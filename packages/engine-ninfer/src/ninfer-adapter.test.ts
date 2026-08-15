@@ -50,7 +50,7 @@ describe("NInferEngineAdapter launch contract", () => {
       "/models/ninfer/qwen3_8_27b.ninfer",
       3,
       "/engines/ninfer/build/apps/ninfer-serve",
-      { maxContext: 16_384, kvCapacity: "auto", maxConcurrency: 2, vision: true },
+      { maxContext: 16_384, kvCapacity: "auto", maxConcurrency: 2, vision: true, thinking: true },
     );
     const spec = await new NInferEngineAdapter({ validatePaths: false }).buildLaunchSpec(recipe, { host: "127.0.0.1", port: 19_001 });
 
@@ -65,6 +65,7 @@ describe("NInferEngineAdapter launch contract", () => {
       "--max-concurrency", "2",
       "--vision",
     ]));
+    expect(spec.args).not.toContain("--no-thinking");
   });
 
   it("rejects extra arguments that override Fitz-owned process controls", () => {
@@ -130,7 +131,7 @@ describe("NInferEngineAdapter launch contract", () => {
     );
   });
 
-  it("forwards tools and returns streamed function-call deltas", async () => {
+  it("uses the shared OpenAI transport for reasoning history, template controls, and tool deltas", async () => {
     let requestBody: any;
     const encoder = new TextEncoder();
     const adapter = new NInferEngineAdapter({
@@ -138,6 +139,7 @@ describe("NInferEngineAdapter launch contract", () => {
         requestBody = JSON.parse(String(init?.body));
         const body = new ReadableStream<Uint8Array>({
           start(controller) {
+            controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"reasoning_content":"Inspecting the repository."},"finish_reason":null}]}\n\n'));
             controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"read","arguments":"{\\"path\\":\\"README.md\\"}"}}]}}]}\n\n'));
             controller.enqueue(encoder.encode('data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n'));
             controller.close();
@@ -149,12 +151,24 @@ describe("NInferEngineAdapter launch contract", () => {
     const instance = { modelId: "qwen", baseUrl: "http://127.0.0.1:19001", apiKey: "secret" } as NInferInstanceHandle;
     const chunks = [];
     for await (const chunk of adapter.streamChat(instance, {
-      id: "request", routeId: "smart", messages: [{ role: "user", content: "read" }],
+      id: "request", routeId: "smart", messages: [
+        { role: "assistant", content: "Earlier answer", reasoning_content: "Earlier reasoning" },
+        { role: "user", content: "read" },
+      ],
       tools: [{ type: "function", function: { name: "read", parameters: { type: "object" } } }],
       toolChoice: "auto",
+      chatTemplateKwargs: { preserve_thinking: true },
     }, new AbortController().signal)) chunks.push(chunk);
-    expect(requestBody).toMatchObject({ model: "qwen", tools: [expect.objectContaining({ function: expect.objectContaining({ name: "read" }) })], tool_choice: "auto" });
+    expect(requestBody).toMatchObject({
+      model: "qwen",
+      stream_options: { include_usage: true },
+      tools: [expect.objectContaining({ function: expect.objectContaining({ name: "read" }) })],
+      tool_choice: "auto",
+      messages: [expect.objectContaining({ reasoning_content: "Earlier reasoning" }), expect.anything()],
+      chat_template_kwargs: { preserve_thinking: true },
+    });
     expect(chunks).toEqual([
+      expect.objectContaining({ reasoning: "Inspecting the repository.", text: "" }),
       expect.objectContaining({ toolCalls: [expect.objectContaining({ id: "call-1", function: expect.objectContaining({ name: "read" }) })] }),
       expect.objectContaining({ finishReason: "tool_calls" }),
     ]);

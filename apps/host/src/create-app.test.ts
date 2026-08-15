@@ -5,11 +5,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { createHost } from "./create-app.js";
+import { createHost as createHostRuntime, type CreateHostOptions } from "./create-app.js";
 import { ModelCatalogService } from "./model-catalog.js";
 import { SecurityService } from "@fitz/security";
 import { ArtifactRepository, LocalBlobStore, SqliteStore, StorageDurabilityService } from "@fitz/storage";
 import { FakeEngineAdapter } from "@fitz/engine-fake";
+
+// Unit/integration tests must not depend on whatever model the developer is
+// currently running on the physical GPU. Individual resource-policy tests
+// override this deterministic monitor explicitly.
+function createHost(options: CreateHostOptions = {}) {
+  return createHostRuntime({
+    resourceMonitor: { snapshot: async () => ({ capturedAt: new Date().toISOString(), totalRamMiB: 64_000, freeRamMiB: 48_000, totalVramMiB: 48_000, usedVramMiB: 0, freeVramMiB: 48_000, gpuTelemetryAvailable: true }) },
+    ...options,
+  });
+}
 
 describe("Fitz host", () => {
   it("loads the host-owned Default model at startup and exposes only configured chat choices", async () => {
@@ -63,6 +73,33 @@ describe("Fitz host", () => {
         totals: expect.objectContaining({ requests: 1, successful: 1, failed: 0, tokenReportedRequests: 1 }),
         routes: expect.arrayContaining([expect.objectContaining({ key: "default", requests: 1 })]),
       }));
+    } finally { await runtime.app.close(); }
+  });
+
+  it("preserves normalized reasoning through the shared OpenAI route for every engine adapter", async () => {
+    class ReasoningAdapter extends FakeEngineAdapter {
+      override async *streamChat(..._args: Parameters<FakeEngineAdapter["streamChat"]>) {
+        yield { text: "", reasoning: "Inspecting the request." };
+        yield { text: "Done.", finishReason: "stop" as const };
+      }
+    }
+    const runtime = createHost({ fakeAdapter: new ReasoningAdapter() });
+    try {
+      const nonStreaming = await runtime.app.inject({
+        method: "POST", url: "/v1/chat/completions",
+        payload: { model: "default", stream: false, messages: [{ role: "user", content: "work" }] },
+      });
+      expect(nonStreaming.statusCode, nonStreaming.body).toBe(200);
+      expect(nonStreaming.json().choices[0].message).toEqual(expect.objectContaining({
+        reasoning_content: "Inspecting the request.", content: "Done.",
+      }));
+
+      const streaming = await runtime.app.inject({
+        method: "POST", url: "/v1/chat/completions",
+        payload: { model: "default", stream: true, messages: [{ role: "user", content: "work" }] },
+      });
+      expect(streaming.statusCode, streaming.body).toBe(200);
+      expect(streaming.body).toContain('"reasoning_content":"Inspecting the request."');
     } finally { await runtime.app.close(); }
   });
 
@@ -298,7 +335,7 @@ describe("Fitz host", () => {
     } finally { await runtime.app.close(); }
   });
 
-  it("passes media-command tool choice through without forcing a function override", async () => {
+  it("passes ordinary OpenAI-compatible tool choice through unchanged", async () => {
     const adapter = new FakeEngineAdapter();
     const runtime = createHost({
       fakeAdapter: adapter,
@@ -337,25 +374,11 @@ describe("Fitz host", () => {
       });
       expect(recipe.statusCode, recipe.body).toBe(200);
 
-      // Media runs no longer force a specific function tool_choice (thinking-mode
-      // providers reject it); the agent runtime drives determinism via the
-      // activeTools allowlist and a rewritten prompt instead.
       const internal = await runtime.app.inject({
         method: "POST", url: "/v1/chat/completions",
-        headers: { authorization: "Bearer agent-secret", "x-fitz-forced-tool": "generate_image" }, payload,
+        headers: { authorization: "Bearer agent-secret" }, payload,
       });
       expect(internal.statusCode, internal.body).toBe(200);
-      expect(adapter.requests.at(-1)?.toolChoice).toBe("auto");
-
-      const publicCall = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", headers: { "x-fitz-forced-tool": "generate_image" }, payload });
-      expect(publicCall.statusCode, publicCall.body).toBe(200);
-      expect(adapter.requests.at(-1)?.toolChoice).toBe("auto");
-
-      const unsupportedInternalOverride = await runtime.app.inject({
-        method: "POST", url: "/v1/chat/completions",
-        headers: { authorization: "Bearer agent-secret", "x-fitz-forced-tool": "bash" }, payload,
-      });
-      expect(unsupportedInternalOverride.statusCode, unsupportedInternalOverride.body).toBe(200);
       expect(adapter.requests.at(-1)?.toolChoice).toBe("auto");
     } finally { await runtime.app.close(); }
   });
@@ -375,16 +398,7 @@ describe("Fitz host", () => {
       const consumerModel = saved.json().data.models[0];
       expect(consumerModel).toEqual({ id: "upstream-model", recipeId: expect.any(String) });
       expect(saved.json().data.models.map((model: { id: string }) => model.id)).toEqual(["upstream-model", "explicit-chat-model"]);
-      const topology = await runtime.app.inject({
-        method: "PUT",
-        url: `/api/v1/connections/test-api/models/${consumerModel.recipeId}/agent-topology`,
-        payload: { displayName: "Cloud research", workers: { count: 2, contextTokens: 64_000 } },
-      });
-      expect(topology.statusCode, topology.body).toBe(200);
-      expect(topology.json().data).toMatchObject({
-        displayName: "Cloud research",
-        agentTopology: { capacityMode: "independent", sharedContextTokens: 131_072, workers: { count: 2, contextTokens: 64_000 } },
-      });
+      expect(runtime.routes.resolveRecipe(consumerModel.recipeId).agentTopology).toBeUndefined();
       expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((item: { id: string }) => item.id).sort()).toEqual(["default"]);
       const models = await runtime.app.inject({ method: "GET", url: "/v1/models" });
       expect(models.json().data.map((item: { id: string }) => item.id)).toEqual(["default"]);
@@ -410,10 +424,7 @@ describe("Fitz host", () => {
       expect(fastCompletion.statusCode, fastCompletion.body).toBe(200);
       expect(fastCompletion.json().choices[0].message.content).toContain("upstream ok");
       await runtime.app.inject({ method: "PUT", url: "/api/v1/connections/test-api", payload: { displayName: "Test API", baseUrl: `http://127.0.0.1:${address.port}/v1`, authType: "none" } });
-      expect(runtime.routes.resolveRecipe(consumerModel.recipeId)).toMatchObject({
-        displayName: "Cloud research",
-        agentTopology: { capacityMode: "independent", workers: { count: 2, contextTokens: 64_000 } },
-      });
+      expect(runtime.routes.resolveRecipe(consumerModel.recipeId).agentTopology).toBeUndefined();
       const refreshedStatus = await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" });
       expect(refreshedStatus.json().cloudRoutes.smart).toBe(consumerModel.recipeId);
       expect(refreshedStatus.json().cloudRoutes.fast).toBe(consumerModel.recipeId);
@@ -991,17 +1002,24 @@ describe("Fitz host", () => {
     const usage = await runtime.app.inject({ method: "GET", url: `/api/v1/agent/runs/${runId}/usage` });
     expect(usage.statusCode, usage.body).toBe(200);
     expect(usage.json().data).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "chat", runId, ttftMs: expect.any(Number), completionTokens: expect.any(Number) })]));
+    runtime.store.saveAgentRunPlan({ runId, revision: 1, status: "completed", createdAt: run!.createdAt, updatedAt: run!.updatedAt, completedAt: run!.updatedAt, items: [{ id: "answer", task: "Answer", dependencies: [], owner: "main", workerEligible: false, required: true, status: "completed", attempts: 0, result: "done" }] });
+    const plan = await runtime.app.inject({ method: "GET", url: `/api/v1/agent/runs/${runId}/plan` });
+    expect(plan.statusCode, plan.body).toBe(200);
+    expect(plan.json().data).toEqual(expect.objectContaining({ runId, status: "completed", items: [expect.objectContaining({ id: "answer" })] }));
     const sse = await runtime.app.inject({ method: "GET", url: `/api/v1/agent/runs/${runId}/events`, headers: { accept: "text/event-stream", "last-event-id": "2" } }); expect(sse.statusCode).toBe(200); expect(sse.body).toContain("event: run.completed"); expect(sse.body).not.toContain("id: 1\n"); await runtime.app.close();
   });
 
-  it("defaults missing effort to Normal and rejects unknown effort independently of max_tokens", async () => {
+  it("defaults missing effort to Medium, accepts its public alias, and rejects unknown effort independently of max_tokens", async () => {
     const runtime = createHost();
     const normal = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", messages: [{ role: "user", content: "normal" }], max_tokens: 77 } });
     expect(normal.statusCode).toBe(202);
     expect(runtime.store.getAgentRunRequest(normal.json().data.id)).toEqual(expect.objectContaining({ effort: "normal", maxTokens: 77 }));
+    const medium = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", messages: [{ role: "user", content: "medium" }], effort: "medium", max_tokens: 77 } });
+    expect(medium.statusCode).toBe(202);
+    expect(runtime.store.getAgentRunRequest(medium.json().data.id)).toEqual(expect.objectContaining({ effort: "normal", maxTokens: 77 }));
     const invalid = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", messages: [{ role: "user", content: "invalid" }], effort: "maximum", max_tokens: 77 } });
     expect(invalid.statusCode).toBe(400);
-    expect(invalid.body).toContain("effort must be light, normal, or high");
+    expect(invalid.body).toContain("effort must be light, medium, or high");
     await runtime.app.close();
   });
 

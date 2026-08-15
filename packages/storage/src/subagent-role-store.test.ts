@@ -7,13 +7,14 @@ describe("subagent role registry", () => {
     try {
       expect(store.listSubagentRoles().map((role) => role.id)).toEqual(["implementer", "researcher", "reviewer"]);
       expect(store.getSubagentRole("researcher")).toMatchObject({
-        version: 1,
+        version: 2,
         accessMode: "read-only",
-        toolCallBudget: 20,
+        toolCallBudget: 12,
         maxOutputTokens: 4096,
         enabled: true,
       });
       expect(store.getSubagentRole("researcher", 1)?.systemInstructions).toContain("without modifying files");
+      expect(store.getSubagentRole("researcher", 1)).toMatchObject({ enabled: false, toolCallBudget: 20 });
       expect(store.getSubagentRole("missing")).toBeUndefined();
     } finally {
       store.close();

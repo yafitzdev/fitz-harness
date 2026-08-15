@@ -19,7 +19,6 @@ interface InternalWorkContext {
   runId?: string;
   ownerUserId?: string;
   sessionId?: string;
-  forcedToolName?: string;
 }
 
 export interface OpenAIRouteOptions {
@@ -71,8 +70,6 @@ export function registerOpenAIRoutes(options: OpenAIRouteOptions): void {
       if (!resolved.recipe.capabilities.chatCompletions) throw new TypeError(`Route ${model} does not support chat completions`);
       if (body.stream !== false && !resolved.recipe.capabilities.streaming) throw new TypeError(`Route ${model} does not support streaming`);
       if (body.tools?.length && !resolved.recipe.capabilities.toolCalls) throw new TypeError(`Route ${model} does not support tool calls`);
-      const forcedToolName = internalWorkContexts.get(request)?.forcedToolName;
-      if (forcedToolName && !body.tools?.some((tool) => tool.function.name === forcedToolName)) throw new TypeError(`Forced tool ${forcedToolName} is unavailable`);
     } catch (error) {
       const statusCode = error instanceof RouteNotFoundError ? 404 : error instanceof SecurityPolicyError ? 429 : 400;
       return reply.code(statusCode).send(openAIError(error, "invalid_request_error"));
@@ -89,13 +86,9 @@ export function registerOpenAIRoutes(options: OpenAIRouteOptions): void {
         ...(body.top_p !== undefined ? { topP: body.top_p } : {}),
         ...(body.stop !== undefined ? { stop: body.stop } : {}),
         ...(body.tools !== undefined ? { tools: body.tools } : {}),
-        // Media-command runs no longer force a specific function tool_choice here:
-        // thinking-mode providers reject forced tool_choice with a 400. Determinism
-        // is handled by the agent runtime instead — the run exposes only the
-        // generate_<modality> tool (activeTools allowlist) and the prompt is
-        // rewritten into an explicit tool-call instruction.
         ...(body.tool_choice !== undefined ? { toolChoice: body.tool_choice } : {}),
         ...(body.parallel_tool_calls !== undefined ? { parallelToolCalls: body.parallel_tool_calls } : {}),
+        ...(body.chat_template_kwargs !== undefined ? { chatTemplateKwargs: body.chat_template_kwargs } : {}),
         ...(principal ? { userId: principal.user.id } : internalContext?.ownerUserId ? { userId: internalContext.ownerUserId } : body.user !== undefined ? { userId: body.user } : {}),
       }, undefined, { ...(principal ? { ownerUserId: principal.user.id } : {}), ...internalContext, label: `${model} completion` });
     } catch (error) {
@@ -136,6 +129,7 @@ export function registerOpenAIRoutes(options: OpenAIRouteOptions): void {
       for await (const delta of stream) {
         await writeSse(reply.raw, streamChunk(completionId, created, model, {
           ...(delta.text ? { content: delta.text } : {}),
+          ...(delta.reasoning ? { reasoning_content: delta.reasoning } : {}),
           ...(delta.toolCalls?.length ? { tool_calls: delta.toolCalls } : {}),
         }, delta.finishReason ?? null), responseController.signal);
       }
@@ -155,12 +149,14 @@ export function registerOpenAIRoutes(options: OpenAIRouteOptions): void {
 
 async function collectCompletion(requestId: string, model: string, stream: AsyncIterable<InferenceDelta>): Promise<Record<string, unknown>> {
   let content = "";
+  let reasoning = "";
   let promptTokens = 0;
   let completionTokens = 0;
   let finishReason = "stop";
   const toolCalls = new Map<number, { id: string; type: "function"; function: { name: string; arguments: string } }>();
   for await (const delta of stream) {
     content += delta.text;
+    reasoning += delta.reasoning ?? "";
     for (const call of delta.toolCalls ?? []) {
       const current = toolCalls.get(call.index) ?? { id: "", type: "function" as const, function: { name: "", arguments: "" } };
       if (call.id) current.id = call.id;
@@ -177,7 +173,7 @@ async function collectCompletion(requestId: string, model: string, stream: Async
     object: "chat.completion",
     created: Math.floor(Date.now() / 1_000),
     model,
-    choices: [{ index: 0, message: { role: "assistant", content, ...(toolCalls.size ? { tool_calls: [...toolCalls.values()] } : {}) }, finish_reason: finishReason }],
+    choices: [{ index: 0, message: { role: "assistant", content, ...(reasoning ? { reasoning_content: reasoning } : {}), ...(toolCalls.size ? { tool_calls: [...toolCalls.values()] } : {}) }, finish_reason: finishReason }],
     usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: promptTokens + completionTokens },
   };
 }

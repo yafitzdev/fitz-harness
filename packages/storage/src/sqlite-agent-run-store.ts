@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type {
   AgentEventEnvelope,
   AgentRunCheckpoint,
+  AgentRunPlan,
   AgentRunRecord,
   AgentRunRequest,
   TranscriptEntryRecord,
@@ -91,6 +92,26 @@ export class SqliteAgentRunStore {
   getRunRequest(id: string): AgentRunRequest | undefined {
     const row = this.database.prepare("SELECT request_json FROM agent_run_state WHERE run_id = ?").get(id) as Pick<AgentRunStateRow, "request_json"> | undefined;
     return row ? JSON.parse(row.request_json) as AgentRunRequest : undefined;
+  }
+
+  getRunPlan(runId: string): AgentRunPlan | undefined {
+    const row = this.database
+      .prepare("SELECT plan_json FROM agent_run_plans WHERE run_id = ?")
+      .get(runId) as { plan_json: string } | undefined;
+    return row ? JSON.parse(row.plan_json) as AgentRunPlan : undefined;
+  }
+
+  saveRunPlan(plan: AgentRunPlan, expectedRevision?: number): boolean {
+    const existing = this.getRunPlan(plan.runId);
+    if (expectedRevision !== undefined && existing?.revision !== expectedRevision) return false;
+    if (!existing) {
+      this.database.prepare("INSERT INTO agent_run_plans (run_id, revision, status, plan_json, created_at, updated_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run(plan.runId, plan.revision, plan.status, JSON.stringify(plan), plan.createdAt, plan.updatedAt, plan.completedAt ?? null);
+      return true;
+    }
+    const result = this.database.prepare("UPDATE agent_run_plans SET revision = ?, status = ?, plan_json = ?, updated_at = ?, completed_at = ? WHERE run_id = ? AND revision = ?")
+      .run(plan.revision, plan.status, JSON.stringify(plan), plan.updatedAt, plan.completedAt ?? null, plan.runId, existing.revision);
+    return Number(result.changes) === 1;
   }
 
   latestSessionRun(sessionId: string): AgentRunRecord | undefined {

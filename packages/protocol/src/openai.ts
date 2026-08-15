@@ -35,6 +35,8 @@ export type ChatContentPart =
 export interface ChatMessage {
   role: ChatRole;
   content: string | ChatContentPart[];
+  /** Provider-native reasoning from a completed assistant turn. */
+  reasoning_content?: string;
   name?: string;
   tool_call_id?: string;
   tool_calls?: ChatToolCall[];
@@ -52,6 +54,7 @@ export interface ChatCompletionRequest {
   tools?: ChatCompletionTool[];
   tool_choice?: ChatToolChoice;
   parallel_tool_calls?: boolean;
+  chat_template_kwargs?: { preserve_thinking?: boolean; enable_thinking?: boolean };
 }
 
 export interface InferenceRequest {
@@ -66,6 +69,7 @@ export interface InferenceRequest {
   tools?: ChatCompletionTool[];
   toolChoice?: ChatToolChoice;
   parallelToolCalls?: boolean;
+  chatTemplateKwargs?: { preserve_thinking?: boolean; enable_thinking?: boolean };
 }
 
 export interface InferenceDelta {
@@ -158,6 +162,16 @@ export function parseChatCompletionRequest(value: unknown): ChatCompletionReques
     if (typeof value.parallel_tool_calls !== "boolean") throw new TypeError("parallel_tool_calls must be a boolean");
     request.parallel_tool_calls = value.parallel_tool_calls;
   }
+  if (value.chat_template_kwargs !== undefined) {
+    if (!isRecord(value.chat_template_kwargs)) throw new TypeError("chat_template_kwargs must be an object");
+    const kwargs: { preserve_thinking?: boolean; enable_thinking?: boolean } = {};
+    for (const key of ["preserve_thinking", "enable_thinking"] as const) {
+      const option = value.chat_template_kwargs[key];
+      if (option !== undefined && typeof option !== "boolean") throw new TypeError(`chat_template_kwargs.${key} must be a boolean`);
+      if (option !== undefined) kwargs[key] = option;
+    }
+    request.chat_template_kwargs = kwargs;
+  }
 
   return request;
 }
@@ -166,6 +180,12 @@ function parseMessage(value: unknown, index: number): ChatMessage {
   if (!isRecord(value)) throw new TypeError(`messages[${index}] must be an object`);
   if (!isChatRole(value.role)) throw new TypeError(`messages[${index}].role is invalid`);
   const message: ChatMessage = { role: value.role, content: parseMessageContent(value.content, index) };
+  if (value.reasoning_content !== undefined) {
+    if (value.role !== "assistant" || typeof value.reasoning_content !== "string") {
+      throw new TypeError(`messages[${index}].reasoning_content requires an assistant string`);
+    }
+    message.reasoning_content = value.reasoning_content;
+  }
   if (typeof value.name === "string") message.name = value.name;
   if (typeof value.tool_call_id === "string") message.tool_call_id = value.tool_call_id;
   if (value.tool_calls !== undefined) {

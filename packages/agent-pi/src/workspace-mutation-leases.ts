@@ -26,7 +26,7 @@ interface WorkspaceLock {
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls", "fitz_session"]);
 // Orchestration and media handoff tools do not mutate the workspace themselves.
 // A delegated worker's actual edit/bash calls acquire their own normal leases.
-const NON_WORKSPACE_TOOLS = new Set(["generate_image", "generate_video", "generate_audio", "subagent"]);
+const NON_WORKSPACE_TOOLS = new Set(["generate_image", "generate_video", "generate_audio", "subagent", "agent_plan"]);
 
 /** A fair, exclusive lease around workspace-mutating tools. Agent state
  * machines may run concurrently, but edits, shell commands, trash operations,
