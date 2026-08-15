@@ -79,7 +79,7 @@ export class ActivityTimeline {
     return row;
   }
 
-  /** A model thinking segment, rendered as a collapsible row inside the work feed. */
+  /** Provider-native model reasoning, rendered as visible prose inside the work feed. */
   appendReasoning(running: boolean, createdAt?: string): HTMLElement {
     this.#removeLanding();
     this.#burst = undefined;
@@ -257,6 +257,7 @@ export class ActivityTimeline {
       : Math.max(work.lastAt, this.#timestamp(completedAt));
     const label = work.toggle.querySelector<HTMLElement>(".work-summary-label");
     if (label) label.textContent = `Worked for ${this.#formatElapsed(endedAt - work.startedAt)}`;
+    work.root.classList.toggle("completed", boundary === "completed");
     work.details.hidden = true;
     work.root.classList.remove("open");
     work.toggle.setAttribute("aria-expanded", "false");
@@ -434,6 +435,7 @@ export class ActivityTimeline {
   #shellCommand(input: unknown): string { if (input && typeof input === "object") { const value = input as Json; const command = value.command ?? value.cmd; if (typeof command === "string") return projectRelativeText(command, this.#options.projectRoot?.() ?? ""); } return this.#formatPayload(input, "Command unavailable"); }
   #shellOutput(result: unknown): string { if (result && typeof result === "object") { const content = (result as Json).content; if (Array.isArray(content)) { const text = content.filter((item) => item && typeof item === "object" && typeof item.text === "string").map((item) => item.text).join(""); if (text) return projectRelativeText(text.trimEnd(), this.#options.projectRoot?.() ?? ""); } } return this.#formatPayload(result, "No output"); }
   #formatPayload(value: unknown, emptyLabel: string): string { if (value === undefined || value === null) return emptyLabel; const root = this.#options.projectRoot?.() ?? ""; const raw = typeof value === "string" ? projectRelativeText(value, root) : this.#safeStringify(value, root); return raw.length > 50_000 ? `${raw.slice(0, 50_000)}\n… ${raw.length - 50_000} more characters` : raw; }
+
   #safeStringify(value: unknown, root: string): string { try { return JSON.stringify(value, (_key, item) => typeof item === "string" ? projectRelativeText(item, root) : item, 2) ?? String(value); } catch { return projectRelativeText(String(value), root); } }
   #button(label: string, className?: string): HTMLButtonElement { const button = document.createElement("button"); button.type = "button"; if (className) button.className = className; button.textContent = label; return button; }
   #timestamp(value?: string): number { if (value) { const timestamp = Date.parse(value); if (Number.isFinite(timestamp)) return timestamp; } return Date.now(); }

@@ -25,6 +25,7 @@ cpSync(new URL("../src/ui/primitives/scroll-surface.css", import.meta.url), new 
 cpSync(new URL("../src/ui/primitives/action-menu.css", import.meta.url), new URL("../dist/ui/primitives/action-menu.css", import.meta.url));
 cpSync(new URL("../src/ui/chat/message-actions.css", import.meta.url), new URL("../dist/ui/chat/message-actions.css", import.meta.url));
 cpSync(new URL("../src/ui/chat/activity-timeline.css", import.meta.url), new URL("../dist/ui/chat/activity-timeline.css", import.meta.url));
+cpSync(new URL("../src/ui/chat/agent-plan-panel.css", import.meta.url), new URL("../dist/ui/chat/agent-plan-panel.css", import.meta.url));
 cpSync(new URL("../src/ui/chat/media-creation-form.css", import.meta.url), new URL("../dist/ui/chat/media-creation-form.css", import.meta.url));
 cpSync(new URL("../src/ui/chat/reasoning-view.css", import.meta.url), new URL("../dist/ui/chat/reasoning-view.css", import.meta.url));
 cpSync(new URL("../src/ui/chat/composer-controls.css", import.meta.url), new URL("../dist/ui/chat/composer-controls.css", import.meta.url));

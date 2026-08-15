@@ -44,6 +44,28 @@ describe("ConversationTranscript", () => {
     expect(activity.completeTool).toHaveBeenCalledWith(row, "bash", undefined, "ok", false, undefined);
   });
 
+  it("restores plan revisions into one external artifact instead of the activity feed", () => {
+    const messages = document.createElement("main");
+    const activity = { clear: vi.fn(), appendTool: vi.fn(() => document.createElement("div")), completeTool: vi.fn(), appendReasoning: vi.fn(), appendReasoningDelta: vi.fn(), completeReasoning: vi.fn(), appendContext: vi.fn() };
+    const resetPlan = vi.fn();
+    const updatePlan = vi.fn();
+    const view = new ConversationTranscript({ messages, activity, appendMessage: vi.fn(), appendCommentary: vi.fn(), rebuildHistory: vi.fn(), resetPlan, updatePlan });
+    const first = { details: { plan: { runId: "run-1", revision: 1, items: [] } } };
+    const second = { details: { plan: { runId: "run-1", revision: 2, items: [] } } };
+
+    view.restore([
+      { kind: "tool-call", id: "plan-1", content: { toolCallId: "plan-1", toolName: "agent_plan", input: { action: "set" } } },
+      { kind: "tool-result", id: "result-1", content: { toolCallId: "plan-1", result: first } },
+      { kind: "tool-call", id: "plan-2", content: { toolCallId: "plan-2", toolName: "agent_plan", input: { action: "update" } } },
+      { kind: "tool-result", id: "result-2", content: { toolCallId: "plan-2", result: second } },
+    ]);
+
+    expect(resetPlan).toHaveBeenCalledOnce();
+    expect(updatePlan.mock.calls).toEqual([[first], [second]]);
+    expect(activity.appendTool).not.toHaveBeenCalled();
+    expect(activity.completeTool).not.toHaveBeenCalled();
+  });
+
   it("records the highest durable event sequence for each restored run", () => {
     const view = new ConversationTranscript({ messages: document.createElement("main"), activity: { clear: vi.fn(), appendTool: vi.fn(() => document.createElement("div")), completeTool: vi.fn(), appendReasoning: vi.fn(() => document.createElement("div")), appendReasoningDelta: vi.fn(), completeReasoning: vi.fn(), appendContext: vi.fn() }, appendMessage: vi.fn(), appendCommentary: vi.fn(), rebuildHistory: vi.fn() });
     view.restore([

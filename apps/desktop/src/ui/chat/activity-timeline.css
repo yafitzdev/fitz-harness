@@ -18,7 +18,6 @@
 .tool-activity-detail { min-width: 0; display: grid; gap: 4px; }
 .tool-activity-detail-label { color: var(--subtle); font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .04em; }
 .tool-activity-value { max-height: 260px; margin: 0; padding: 0; overflow: auto; color: var(--grey-800); background: transparent; font: 12px/1.55 Consolas, "Cascadia Mono", monospace; white-space: pre-wrap; word-break: break-word; }
-
 .agent-activity-details.shell-details { position: relative; display: grid; gap: 0; max-height: 370px; margin: 3px 0 8px; padding: 0; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-xl); background: var(--grey-300); color: var(--muted); }
 .shell-title { position: sticky; top: 0; z-index: 1; padding: 7px 10px 4px; background: var(--grey-300); color: var(--muted); font-size: 12px; }
 .shell-command, .shell-output { margin: 0; padding: 7px 10px; color: var(--grey-800); background: transparent; font: 12px/1.5 Consolas, "Cascadia Mono", monospace; white-space: pre-wrap; word-break: break-word; }
@@ -71,6 +70,7 @@
 .work-summary-chevron svg { width: 12px; height: 12px; }
 .work-summary.open .work-summary-chevron { transform: rotate(90deg); }
 .work-summary-details { padding: 6px 0 0; }
+.work-summary.completed.open .work-summary-details { margin-bottom: 6px; padding-bottom: 18px; border-bottom: 1px solid var(--border-soft); }
 .work-summary-details > .message.commentary { margin: 0 0 8px; }
 .context-activity { width: 100%; display: flex; align-items: center; gap: 6px; margin-bottom: 12px; color: var(--muted); }
 .context-activity .agent-activity-icon { width: 18px; height: 18px; }

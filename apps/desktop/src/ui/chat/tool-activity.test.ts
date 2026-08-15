@@ -63,6 +63,9 @@ describe("describeTool", () => {
     expect(describeTool("read", { path: "C:/work/fitz-codex/src/app.ts" }, false, "C:\\work\\fitz-codex")).toBe("Read src/app.ts");
     expect(describeTool("subagent", { role: "researcher", task: "Inspect routing" }, true)).toBe("Delegating to researcher");
     expect(describeTool("subagent", { role: "researcher", task: "Inspect routing" }, false)).toBe("Delegated to researcher");
+    expect(describeTool("subagent", { role: "researcher", plan_item_id: "inspect-routing" }, false)).toBe("Delegated inspect-routing to researcher");
+    expect(describeTool("agent_plan", { action: "set" }, true)).toBe("Creating task plan");
+    expect(describeTool("agent_plan", { action: "ready" }, false)).toBe("Prerequisite work finished");
   });
 
   it("keeps single-word tool names lowercase when a known tool has no target", () => {

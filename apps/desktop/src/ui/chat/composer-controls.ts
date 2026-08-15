@@ -126,7 +126,7 @@ export class ComposerControls {
     // The host or consumer connection owns the concrete model behind a role;
     // every route uses the same short-name/full-model presentation contract.
     const routeName = option?.dataset.displayName || fullLabel;
-    const effortLabel = [...this.elements.effort.options].find((candidate) => candidate.value === this.elements.effort.value)?.textContent ?? "Normal";
+    const effortLabel = [...this.elements.effort.options].find((candidate) => candidate.value === this.elements.effort.value)?.textContent ?? "Medium";
     this.elements.modelRoute.textContent = routeName;
     this.elements.modelEffort.textContent = ` · ${effortLabel}`;
     this.elements.modelValue.textContent = fullLabel;

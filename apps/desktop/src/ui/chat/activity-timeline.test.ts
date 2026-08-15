@@ -109,7 +109,7 @@ describe("ActivityTimeline", () => {
     expect(after.closest(".activity-burst")).toBe(bursts[1]);
   });
 
-  it("renders model reasoning as a collapsible row in the work feed, separate from chat", () => {
+  it("renders model reasoning inline in the work feed, separate from chat", () => {
     const { messages, timeline } = setup();
     const row = timeline.appendReasoning(true);
     timeline.appendReasoningDelta(row, "Let me inspect the codebase.");
@@ -119,13 +119,7 @@ describe("ActivityTimeline", () => {
     expect(row.classList.contains("running")).toBe(false);
     expect(messages.querySelector(".reasoning-content")?.textContent).toBe("Let me inspect the codebase.");
     expect(messages.querySelector(".work-summary-details > .reasoning-activity")).toBe(row);
-    const summary = messages.querySelector<HTMLButtonElement>(".reasoning-activity .agent-activity-summary")!;
-    expect(summary.textContent).toContain("Thought through the approach");
-    const details = messages.querySelector<HTMLElement>(".reasoning-activity .reasoning-details")!;
-    expect(details.hidden).toBe(true);
-    summary.click();
-    expect(details.hidden).toBe(false);
-    expect(summary.getAttribute("aria-expanded")).toBe("true");
+    expect(messages.querySelector(".reasoning-activity .agent-activity-summary")).toBeNull();
   });
 
   it("ends the previous tool burst when a reasoning segment starts", () => {
@@ -206,6 +200,11 @@ describe("ActivityTimeline", () => {
     expect(messages.querySelectorAll(".work-summary")).toHaveLength(1);
     expect(messages.querySelector(".work-summary-label")?.textContent).toBe("Worked for 5s");
     expect(messages.querySelector<HTMLElement>(".work-summary-details")?.hidden).toBe(true);
+    const summary = messages.querySelector<HTMLElement>(".work-summary")!;
+    expect(summary.classList.contains("completed")).toBe(true);
+    summary.querySelector<HTMLButtonElement>(".work-summary-toggle")!.click();
+    expect(summary.classList.contains("open")).toBe(true);
+    expect(summary.querySelector<HTMLElement>(".work-summary-details")?.hidden).toBe(false);
   });
 
   it("formats sessions of an hour or more as hours and minutes without seconds", () => {
@@ -221,6 +220,7 @@ describe("ActivityTimeline", () => {
     timeline.completeTool(row, "generate_video", { prompt: "dog" }, "submitted", false, "2026-08-08T23:36:53.203Z");
     timeline.finishWork("2026-08-09T06:35:43.888Z", "next-message");
     expect(messages.querySelector(".work-summary-label")?.textContent).toBe("Worked for 22s");
+    expect(messages.querySelector(".work-summary")?.classList.contains("completed")).toBe(false);
   });
 
   it("marks restored media tools with their durable job id for result anchoring", () => {

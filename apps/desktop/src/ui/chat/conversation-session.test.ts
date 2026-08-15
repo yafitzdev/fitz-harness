@@ -36,6 +36,7 @@ function harness() {
     runs: { active: () => false, detach: vi.fn(), attach: vi.fn() },
     recovery: { clear: vi.fn(), show: vi.fn() },
     assistantPerformance: { reset: vi.fn() },
+    plan: { reset: vi.fn() },
     mediaJobs: { reset: vi.fn(), watch: vi.fn(), failureMessage: vi.fn(async () => "failed") },
     mediaFeed: { reset: vi.fn(), render: vi.fn() },
     activity: { appendApproval: vi.fn(), finishWork: vi.fn() },
@@ -76,6 +77,7 @@ describe("ConversationSessionController", () => {
       .mockResolvedValueOnce({ data: { id: "run-1", status: "running" } })
       .mockResolvedValueOnce({ data: [{ id: "job-1", modality: "image", status: "completed" }] });
     vi.mocked(options.transcript.restore).mockReturnValue(42);
+    options.runs.active = () => true;
 
     await controller.selectSession("session-2");
 
@@ -83,6 +85,22 @@ describe("ConversationSessionController", () => {
     expect(options.activity.appendApproval).toHaveBeenCalledWith({ id: "approval-1" });
     expect(options.runs.attach).toHaveBeenCalledWith({ id: "run-1", status: "running" }, 0);
     expect(options.mediaFeed.render).toHaveBeenCalledWith(expect.objectContaining({ id: "job-1" }), undefined, undefined);
+    expect(options.activity.finishWork).not.toHaveBeenCalled();
     expect(options.remember).toHaveBeenCalledWith({ view: "conversation", path: ["session", "session-2"], context: { projectId: "project-1" } });
+  });
+
+  it("removes a restored plan when the session has no active run", async () => {
+    const { controller, options, setSessionId } = harness();
+    setSessionId("session-done");
+    vi.mocked(options.api)
+      .mockResolvedValueOnce({ data: [], page: {} })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: { status: "completed" } })
+      .mockResolvedValueOnce({ data: [] });
+
+    await controller.selectSession("session-done");
+
+    expect(options.plan?.reset).toHaveBeenCalledTimes(2);
+    expect(options.runs.attach).not.toHaveBeenCalled();
   });
 });

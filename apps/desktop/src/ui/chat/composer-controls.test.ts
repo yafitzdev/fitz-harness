@@ -26,7 +26,7 @@ function setup(storage = memoryStorage()) {
   const accessReadOnly = node<HTMLButtonElement>("button");
   accessReadOnly.dataset.accessMode = "read-only";
   const effort = node<HTMLSelectElement>("select");
-  for (const [label, value, maxTokens] of [["Light", "light", "4096"], ["Normal", "normal", "10240"], ["High", "high", "24576"]]) {
+  for (const [label, value, maxTokens] of [["Light", "light", "4096"], ["Medium", "normal", "10240"], ["High", "high", "24576"]]) {
     const option = document.createElement("option");
     option.textContent = label;
     option.value = value;
@@ -73,7 +73,7 @@ describe("ComposerControls", () => {
     expect(controls.routeId).toBe("smart");
     expect(controls.effort).toBe("normal");
     expect(controls.maxTokens).toBe(10_240);
-    expect(elements.modelSummary.textContent).toBe("Smart · Normal");
+    expect(elements.modelSummary.textContent).toBe("Smart · Medium");
 
     click(elements.settingRows[0]!);
     expect(elements.settingsSubmenu.hidden).toBe(false);
@@ -83,7 +83,7 @@ describe("ComposerControls", () => {
     click([...elements.settingsSubmenu.querySelectorAll("button")][0]!);
 
     expect(controls.routeId).toBe("default");
-    expect(elements.modelSummary.textContent).toBe("Local · Normal");
+    expect(elements.modelSummary.textContent).toBe("Local · Medium");
     expect(calls.onRouteChange).toHaveBeenCalledWith("default");
     expect(calls.closeAllPopovers).toHaveBeenCalled();
   });
@@ -94,19 +94,19 @@ describe("ComposerControls", () => {
       { id: "smart", label: "Smart · ninfer-1.5b", displayName: "Smart", group: "Routes" },
     ], "smart");
 
-    expect(elements.modelSummary.textContent).toBe("Smart · Normal");
+    expect(elements.modelSummary.textContent).toBe("Smart · Medium");
     expect(elements.modelRoute.textContent).toBe("Smart");
-    expect(elements.modelEffort.textContent).toBe(" · Normal");
+    expect(elements.modelEffort.textContent).toBe(" · Medium");
     // The settings menu still shows the full label.
     expect(elements.modelValue.textContent).toBe("Smart · ninfer-1.5b");
 
     // A route without a model name collapses the name span entirely.
     controls.setRoutes([{ id: "default", label: "Local", displayName: "Local" }], "default");
-    expect(elements.modelSummary.textContent).toBe("Local · Normal");
+    expect(elements.modelSummary.textContent).toBe("Local · Medium");
     expect(elements.modelRoute.textContent).toBe("Local");
   });
 
-  it("resets every new chat to Local with normal effort", () => {
+  it("resets every new chat to Local with medium effort", () => {
     const { controls, elements } = setup();
     controls.setRoutes([
       { id: "default", label: "Local", displayName: "Local" },
@@ -118,7 +118,7 @@ describe("ComposerControls", () => {
 
     expect(controls.routeId).toBe("default");
     expect(controls.effort).toBe("normal");
-    expect(elements.modelSummary.textContent).toBe("Local · Normal");
+    expect(elements.modelSummary.textContent).toBe("Local · Medium");
   });
 
   it("restores and persists temperature and access mode", () => {

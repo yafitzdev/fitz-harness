@@ -1,6 +1,6 @@
 import { reconnectDelay } from "@fitz/connectivity/reconnect";
 import type { ActionFeedback } from "../primitives/action-status.js";
-import type { AgentEffort, MediaModality } from "@fitz/protocol";
+import type { AgentEffort } from "@fitz/protocol";
 
 import { mediaJobIdFromToolResult } from "./media-job-tracker.js";
 import { scrollToLatestIfFollowing } from "./conversation-scroll.js";
@@ -30,7 +30,6 @@ export interface AgentRunRequest {
   sessionId: string;
   accessMode: string;
   clientRequestId?: string;
-  mediaCommand?: MediaModality;
   messages: Array<{ role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> }>;
 }
 
@@ -38,6 +37,14 @@ export interface AgentRunControllerOptions {
   messages: HTMLElement;
   activity: AgentRunActivity;
   api: (path: string, method?: string, body?: unknown) => Promise<Json>;
+  /** Subscribe to the host's normalized live agent feed. Polling remains a
+   * compatibility fallback for tests and older shells. */
+  subscribeAgentEvents?: (
+    input: { runId: string; after: number },
+    listener: (message: AgentEventStreamMessage) => void,
+  ) => () => void;
+  /** Gives the browser a paint boundary between native reasoning deltas. */
+  yieldToPaint?: () => Promise<void>;
   appendAssistant: (runId: string, createdAt?: string) => HTMLElement;
   appendAssistantDelta: (target: HTMLElement, delta: string) => void;
   appendSystem: (message: string) => void;
@@ -53,10 +60,21 @@ export interface AgentRunControllerOptions {
   showStatus: ActionFeedback;
   errorMessage: (error: unknown) => string;
   terminalReplayError: (error: unknown) => boolean;
+  /** Replace the composer-adjacent plan artifact with the newest durable revision. */
+  updatePlan: (result: unknown) => void;
+  /** Remove the plan after the run has emitted its terminal answer/state. */
+  clearPlan: () => void;
   refreshAssistantPerformance?: (runId: string) => void | Promise<void>;
   /** Start following an asynchronous image/audio/video job submitted by an agent tool. */
   onMediaJobSubmitted?: (jobId: string, toolName: string) => void;
 }
+
+type AgentEventStreamMessage =
+  | { type: "event"; event: Json }
+  | { type: "end" }
+  | { type: "error"; error: string };
+
+type AgentEventStreamDelivery = AgentEventStreamMessage | { type: "idle" };
 
 /** Owns agent-run submission, event replay, reconnect, cancellation, and model warmup state. */
 export class AgentRunController {
@@ -216,6 +234,7 @@ export class AgentRunController {
     let assistant: HTMLElement | undefined;
     let reasoning: HTMLElement | undefined;
     const tools = new Map<string, { row: HTMLElement; toolName: string; input: unknown }>();
+    const planToolCalls = new Set<string>();
     const approvals = new Map<string, HTMLElement>();
     const changedFiles = new Map<string, "edited" | "created">();
     let done = false;
@@ -223,18 +242,52 @@ export class AgentRunController {
     let reconnectAttempt = 0;
     let nextEnginePoll = 0;
     let mediaHandedOff = false;
-    while (!done && this.#runId === runId && this.#generation === generation) {
-      let replay: Json;
-      try {
-        replay = await this.#options.api(`/api/v1/agent/runs/${runId}/events?after=${this.#lastSequence}`);
-        reconnectAttempt = 0;
-      } catch (error) {
-        if (this.#options.terminalReplayError(error) || reconnectAttempt >= 12) throw error;
-        this.#options.setStatus(`Reconnecting ${reconnectAttempt + 1}`, "loading");
-        await this.#delay(reconnectDelay(reconnectAttempt++));
-        continue;
-      }
-      for (const event of replay.events ?? []) {
+    let eventStream: AgentEventInbox | undefined;
+    let unsubscribeEventStream: (() => void) | undefined;
+    const connectEventStream = () => {
+      if (!this.#options.subscribeAgentEvents) return;
+      const inbox = new AgentEventInbox();
+      eventStream = inbox;
+      unsubscribeEventStream = this.#options.subscribeAgentEvents(
+        { runId, after: this.#lastSequence },
+        (message) => inbox.push(message),
+      );
+    };
+    connectEventStream();
+    try {
+      while (!done && this.#runId === runId && this.#generation === generation) {
+        let replay: Json;
+        if (eventStream) {
+          const delivery = await eventStream.next(1_000);
+          if (this.#runId !== runId || this.#generation !== generation) break;
+          if (delivery.type === "event") {
+            replay = { events: [delivery.event] };
+            reconnectAttempt = 0;
+          } else if (delivery.type === "idle") {
+            replay = { events: [] };
+          } else {
+            unsubscribeEventStream?.();
+            unsubscribeEventStream = undefined;
+            eventStream = undefined;
+            const error = new Error(delivery.type === "error" ? delivery.error : "The agent event stream ended before the run reached a terminal state");
+            if (reconnectAttempt >= 12) throw error;
+            this.#options.setStatus(`Reconnecting ${reconnectAttempt + 1}`, "loading");
+            await this.#delay(reconnectDelay(reconnectAttempt++));
+            connectEventStream();
+            continue;
+          }
+        } else {
+          try {
+            replay = await this.#options.api(`/api/v1/agent/runs/${runId}/events?after=${this.#lastSequence}`);
+            reconnectAttempt = 0;
+          } catch (error) {
+            if (this.#options.terminalReplayError(error) || reconnectAttempt >= 12) throw error;
+            this.#options.setStatus(`Reconnecting ${reconnectAttempt + 1}`, "loading");
+            await this.#delay(reconnectDelay(reconnectAttempt++));
+            continue;
+          }
+        }
+        for (const event of replay.events ?? []) {
         this.#lastSequence = Number(event.sequence ?? this.#lastSequence);
         if (event.type === "run.queue.updated") {
           queued = event.data?.status === "queued";
@@ -260,14 +313,14 @@ export class AgentRunController {
           scrollToLatestIfFollowing(this.#options.messages);
         }
         if (event.type === "reasoning.delta") {
-          // Model thinking streams into its own collapsible activity row, separate
-          // from the assistant bubble: it is never persisted as a chat message and
-          // never re-sent to the model as context.
+          // Provider-native reasoning streams as visible prose between tool bursts.
+          // It remains outside the assistant bubble and is never re-sent as context.
           const delta = String(event.data?.text ?? "");
           if (delta) {
             if (!reasoning) { activity.remove(); reasoning = this.#options.activity.appendReasoning(true); }
             this.#options.activity.appendReasoningDelta(reasoning, delta);
             this.#options.addTokenEstimate(delta);
+            await this.#yieldToPaint();
           }
         }
         if (event.type === "reasoning.completed") {
@@ -303,14 +356,29 @@ export class AgentRunController {
           activity.remove();
           if (assistant) { this.#options.activity.markAssistantAsCommentary(assistant); assistant = undefined; }
           if (reasoning) { this.#options.activity.completeReasoning(reasoning); reasoning = undefined; }
-          tools.set(toolCallId, { row: this.#options.activity.appendTool(toolName, input, toolCallId, true), toolName, input });
           this.#options.addTokenEstimate(stringifyForEstimate(input));
-          this.#options.setStatus(`Running ${toolName}`, "active");
-          this.#options.setEngineState(toolName.toUpperCase());
+          if (toolName === "agent_plan") {
+            planToolCalls.add(toolCallId);
+            this.#options.setStatus("Updating tasks", "active");
+            this.#options.setEngineState("WORKING");
+          } else {
+            tools.set(toolCallId, { row: this.#options.activity.appendTool(toolName, input, toolCallId, true), toolName, input });
+            this.#options.setStatus(`Running ${toolName}`, "active");
+            this.#options.setEngineState(toolName.toUpperCase());
+          }
         }
         if (event.type === "tool.completed") {
           const toolCallId = String(event.data?.toolCallId ?? "");
           let existing = tools.get(toolCallId);
+          const completedToolName = planToolCalls.has(toolCallId) ? "agent_plan" : existing?.toolName ?? String(event.data?.toolName ?? "tool");
+          if (completedToolName === "agent_plan") {
+            planToolCalls.delete(toolCallId);
+            this.#options.updatePlan(event.data?.result);
+            this.#options.addTokenEstimate(stringifyForEstimate(event.data?.result));
+            this.#options.setStatus("Working", "active");
+            this.#options.setEngineState("WORKING");
+            continue;
+          }
           if (!existing) {
             const restored = this.#options.messages.querySelector<HTMLElement>(`[data-tool-call-id="${CSS.escape(toolCallId)}"]`);
             if (restored) existing = { row: restored, toolName: restored.dataset.toolName ?? String(event.data?.toolName ?? "tool"), input: undefined };
@@ -352,9 +420,10 @@ export class AgentRunController {
           // running in the background. Keep the outer work disclosure active;
           // MediaJobTracker closes it with the true terminal timestamp.
           if (!mediaHandedOff) this.#options.activity.finishWork();
+          this.#options.clearPlan();
         }
       }
-      if (!done && !queued && !assistant && Date.now() >= nextEnginePoll) {
+        if (!done && !queued && !assistant && !reasoning && (!eventStream || (replay.events?.length ?? 0) === 0) && Date.now() >= nextEnginePoll) {
         nextEnginePoll = Date.now() + 1_000;
         try {
           const management = await this.#options.api("/api/v1/management/status");
@@ -369,13 +438,49 @@ export class AgentRunController {
           else if (state === "FAILED") activity.textContent = `Model failed: ${management.engine?.failureReason ?? "Unknown error"}`;
           else this.#options.activity.setRun(activity, "Working", startedAt);
         } catch { this.#options.activity.setRun(activity, "Working", startedAt); }
+        }
+        if (!done && !eventStream) await this.#delay(350);
       }
-      if (!done) await this.#delay(350);
+    } finally {
+      unsubscribeEventStream?.();
     }
     if (done) await this.#options.refreshAssistantPerformance?.(runId);
   }
 
+  #yieldToPaint(): Promise<void> {
+    if (this.#options.yieldToPaint) return this.#options.yieldToPaint();
+    return new Promise((resolve) => {
+      if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => resolve());
+      else setTimeout(resolve, 0);
+    });
+  }
+
   #delay(milliseconds: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }
+}
+
+class AgentEventInbox {
+  readonly #queue: AgentEventStreamMessage[] = [];
+  #waiter: { resolve: (message: AgentEventStreamDelivery) => void; timer: ReturnType<typeof setTimeout> } | undefined;
+
+  push(message: AgentEventStreamMessage): void {
+    const waiter = this.#waiter;
+    if (!waiter) { this.#queue.push(message); return; }
+    this.#waiter = undefined;
+    clearTimeout(waiter.timer);
+    waiter.resolve(message);
+  }
+
+  next(timeoutMs: number): Promise<AgentEventStreamDelivery> {
+    const queued = this.#queue.shift();
+    if (queued) return Promise.resolve(queued);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        if (this.#waiter?.resolve === resolve) this.#waiter = undefined;
+        resolve({ type: "idle" });
+      }, timeoutMs);
+      this.#waiter = { resolve, timer };
+    });
+  }
 }
 
 /** Text form of a tool input/result for context estimation; structured payloads become JSON. */

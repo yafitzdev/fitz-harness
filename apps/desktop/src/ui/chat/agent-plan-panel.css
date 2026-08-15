@@ -1,0 +1,20 @@
+.agent-plan-panel { position: relative; z-index: 2; box-sizing: border-box; width: 100%; max-height: 220px; margin: 0 0 8px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-xl); background: var(--grey-200); box-shadow: var(--shadow-popover); color: var(--muted); }
+.agent-plan-panel[hidden] { display: none; }
+.agent-plan-panel > header { min-height: 34px; border-bottom: 1px solid var(--border-soft); }
+.agent-plan-panel-toggle { width: 100%; min-height: 34px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 7px 12px; background: transparent; color: inherit; cursor: pointer; text-align: left; }
+.agent-plan-panel-toggle:hover { background: var(--tint-2); }
+.agent-plan-panel-toggle strong { color: var(--text); font-size: 12px; font-weight: 600; }
+.agent-plan-panel-toggle > span:not(.agent-plan-panel-chevron) { justify-self: end; color: var(--subtle); font-size: 11px; }
+.agent-plan-panel-chevron { color: var(--subtle); font-size: 18px; line-height: 1; transform: rotate(90deg); transition: transform 150ms cubic-bezier(.23,1,.32,1); }
+.agent-plan-panel.collapsed { max-height: 36px; }
+.agent-plan-panel.collapsed > header { border-bottom: 0; }
+.agent-plan-panel.collapsed .agent-plan-panel-chevron { transform: rotate(0); }
+.agent-plan-panel-list { display: grid; gap: 5px; max-height: 176px; margin: 0; padding: 9px 12px 11px; overflow: auto; list-style: none; }
+.agent-plan-panel-list[hidden] { display: none; }
+.agent-plan-panel-item { min-width: 0; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: start; gap: 7px; font-size: 12px; line-height: 1.4; }
+.agent-plan-panel-item.completed { color: var(--subtle); }
+.agent-plan-panel-item.completed .agent-plan-panel-task { text-decoration: line-through; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); }
+.agent-plan-panel-item.running .agent-plan-panel-mark { color: var(--accent); animation: activity-pulse 1.25s ease-in-out infinite; }
+.agent-plan-panel-item.failed .agent-plan-panel-mark { color: var(--status-danger-soft); }
+.agent-plan-panel-task { min-width: 0; overflow-wrap: anywhere; }
+.agent-plan-panel-owner { padding: 1px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--subtle); font-size: 10px; line-height: 1.25; }

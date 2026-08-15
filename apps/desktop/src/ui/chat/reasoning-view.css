@@ -1,5 +1,4 @@
-.reasoning-activity .agent-activity-icon, .reasoning-activity .agent-activity-label { color: var(--subtle); }
-.reasoning-activity .agent-activity-label { font-style: italic; }
-.reasoning-content { max-height: 300px; margin: 0; padding: 0; overflow: auto; color: var(--subtle); background: transparent; font: 12px/1.55 Consolas, "Cascadia Mono", monospace; white-space: pre-wrap; word-break: break-word; }
+.message.reasoning-activity { margin: 0 0 12px; color: var(--text); }
+.reasoning-content { margin: 0; padding: 0; color: var(--text); background: transparent; font: inherit; line-height: 1.62; white-space: pre-wrap; overflow-wrap: anywhere; }
 .transcript-load-earlier { display: block; margin: 4px auto 12px; padding: 6px 10px; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
 .transcript-load-earlier:hover { background: var(--tint-2); color: var(--text); }

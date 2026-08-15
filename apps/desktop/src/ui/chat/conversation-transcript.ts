@@ -19,6 +19,8 @@ export interface ConversationTranscriptOptions {
   appendMessage: (role: string, text: string, createdAt?: string, runId?: string) => HTMLElement;
   appendCommentary: (text: string, createdAt?: string) => HTMLElement;
   rebuildHistory: (messages: string[]) => void;
+  resetPlan?: () => void;
+  updatePlan?: (result: unknown) => void;
   loadEarlier?: (beforeSequence: number) => Promise<{ data: Json[]; page?: TranscriptPageState }>;
 }
 
@@ -45,10 +47,11 @@ export class ConversationTranscript {
   }
 
   #render(entries: readonly Json[]): void {
-    this.#options.messages.replaceChildren(); this.#options.activity.clear();
+    this.#options.messages.replaceChildren(); this.#options.activity.clear(); this.#options.resetPlan?.();
     const tools = new Map<string, { row: HTMLElement; toolName: string; input: unknown }>();
+    const planToolCalls = new Set<string>();
     for (const entry of entries) {
-      this.#restoreEntry(entry, tools);
+      this.#restoreEntry(entry, tools, planToolCalls);
     }
     if (this.#window.hiddenCount > 0 || this.#hasServerHistory) this.#options.messages.prepend(this.#earlierButton());
   }
@@ -97,7 +100,7 @@ export class ConversationTranscript {
       .map((entry) => entry.content.text as string));
   }
 
-  #restoreEntry(entry: Json, tools: Map<string, { row: HTMLElement; toolName: string; input: unknown }>): void {
+  #restoreEntry(entry: Json, tools: Map<string, { row: HTMLElement; toolName: string; input: unknown }>, planToolCalls: Set<string>): void {
     if (entry.kind === "message") {
       const text = String(entry.content?.text ?? "");
       if (entry.role === "assistant" && entry.content?.phase === "commentary") this.#options.appendCommentary(text, entry.createdAt);
@@ -112,13 +115,19 @@ export class ConversationTranscript {
       const toolCallId = String(entry.content?.toolCallId ?? entry.id);
       const toolName = String(entry.content?.toolName ?? "tool");
       const input = entry.content?.input;
+      if (toolName === "agent_plan") { planToolCalls.add(toolCallId); return; }
       tools.set(toolCallId, { row: this.#options.activity.appendTool(toolName, input, toolCallId, true, entry.createdAt), toolName, input });
       return;
     }
     if (entry.kind === "tool-result") {
       const toolCallId = String(entry.content?.toolCallId ?? entry.id);
       const existing = tools.get(toolCallId);
-      const toolName = existing?.toolName ?? String(entry.content?.toolName ?? "tool");
+      const toolName = planToolCalls.has(toolCallId) ? "agent_plan" : existing?.toolName ?? String(entry.content?.toolName ?? "tool");
+      if (toolName === "agent_plan") {
+        planToolCalls.delete(toolCallId);
+        this.#options.updatePlan?.(entry.content?.result);
+        return;
+      }
       const input = existing?.input;
       const row = existing?.row ?? this.#options.activity.appendTool(toolName, undefined, toolCallId, true, entry.createdAt);
       this.#options.activity.completeTool(row, toolName, input, entry.content?.result, Boolean(entry.content?.isError), entry.createdAt);

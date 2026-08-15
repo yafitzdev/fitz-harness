@@ -13,6 +13,7 @@ import { HostClient, hostRequestDeadline } from "./host-client.js";
 import { createModelUnloadOnQuitHandler } from "./model-unload-on-quit.js";
 import { readThemeColor } from "./theme-token.js";
 import { InAppBrowserController } from "./in-app-browser-main.js";
+import { parseAgentEventStream } from "./agent-event-stream.js";
 
 const { autoUpdater } = electronUpdater;
 const execFileAsync = promisify(execFile);
@@ -27,8 +28,11 @@ let deviceToken = process.env.FITZ_DEVICE_TOKEN;
 const hostClient = new HostClient({ origin: hostUrl, getToken: () => deviceToken });
 interface DesktopUpdateStatus { state: "idle" | "checking" | "available" | "downloading" | "current" | "downloaded" | "error" | "development"; percent?: number; version?: string }
 let latestUpdateStatus: DesktopUpdateStatus = { state: app.isPackaged ? "idle" : "development" };
-interface StoredConsumerConnection { id: string; displayName: string; baseUrl: string; authType: "none" | "bearer"; apiKey?: string; template: string; models: Array<{ id: string; recipeId: string }>; mediaModels: Array<{ id: string; routeId: string; recipeId: string; modality: string; template: string }>; updatedAt: string }
+type InferenceExecutionClass = "self_hosted" | "metered_cloud";
+type HostAccessClass = "same_device" | "trusted_remote" | "public_remote";
+interface StoredConsumerConnection { id: string; displayName: string; baseUrl: string; authType: "none" | "bearer"; apiKey?: string; template: string; executionClass?: InferenceExecutionClass; accessClass?: HostAccessClass; models: Array<{ id: string; recipeId: string }>; mediaModels: Array<{ id: string; routeId: string; recipeId: string; modality: string; template: string }>; updatedAt: string }
 const inAppBrowsers = new WeakMap<BrowserWindow, InAppBrowserController>();
+const agentEventStreams = new Map<string, AbortController>();
 
 ipcMain.handle("fitz:request", async (event, input: unknown) => {
   if (!isRecord(input)) throw new TypeError("Request must be an object");
@@ -49,7 +53,33 @@ ipcMain.handle("fitz:request", async (event, input: unknown) => {
     event.sender.removeListener("destroyed", cancel);
   }
 });
-ipcMain.handle("fitz:connection-info", () => ({ origin: new URL(hostUrl).origin, isLoopback: isLoopbackHost(hostUrl), explicitlyConfigured: Boolean(storedHostUrl || commandLineValue("host-url") || process.env.FITZ_HOST_URL) }));
+ipcMain.on("fitz:agent-events-subscribe", (event, input: unknown) => {
+  const candidateId = isRecord(input) && typeof input.subscriptionId === "string" ? input.subscriptionId : "invalid";
+  try {
+    const subscription = requireAgentEventSubscription(input);
+    const key = `${event.sender.id}:${subscription.subscriptionId}`;
+    agentEventStreams.get(key)?.abort();
+    const controller = new AbortController();
+    agentEventStreams.set(key, controller);
+    const cancel = () => controller.abort();
+    event.sender.once("destroyed", cancel);
+    void relayAgentEvents(subscription.runId, subscription.after, controller.signal, (message) => {
+      if (!event.sender.isDestroyed()) event.sender.send("fitz:agent-events", { subscriptionId: subscription.subscriptionId, ...message });
+    }).finally(() => {
+      event.sender.removeListener("destroyed", cancel);
+      if (agentEventStreams.get(key) === controller) agentEventStreams.delete(key);
+    });
+  } catch (error) {
+    if (!event.sender.isDestroyed()) event.sender.send("fitz:agent-events", { subscriptionId: candidateId.slice(0, 128), type: "error", error: desktopErrorMessage(error) });
+  }
+});
+ipcMain.on("fitz:agent-events-unsubscribe", (event, subscriptionId: unknown) => {
+  if (typeof subscriptionId !== "string") return;
+  const key = `${event.sender.id}:${subscriptionId}`;
+  agentEventStreams.get(key)?.abort();
+  agentEventStreams.delete(key);
+});
+ipcMain.handle("fitz:connection-info", () => ({ origin: new URL(hostUrl).origin, isLoopback: isLoopbackHost(hostUrl), explicitlyConfigured: Boolean(storedHostUrl || commandLineValue("host-url") || process.env.FITZ_HOST_URL), accessClass: isLoopbackHost(hostUrl) ? "same_device" : deviceToken ? "trusted_remote" : "public_remote" }));
 ipcMain.handle("fitz:configure-host", (_event, value: unknown) => {
   const url = validateHostUrl(requireBoundedText(value, "Host URL", 2048));
   persistHostUrl(url.origin);
@@ -79,6 +109,7 @@ ipcMain.handle("fitz:consumer-connection-save", async (_event, input: unknown) =
   const id = existing?.id ?? randomUUID();
   const displayName = requireBoundedText(input.displayName, "Connection name", 100);
   const template = requireConsumerTemplate(input.template);
+  const executionClass = requireExecutionClass(input.executionClass ?? existing?.executionClass);
   // fal and Replicate hide their base URL (the host applies its own default, §5.7);
   // openai-compatible and openai-media always require one.
   const baseUrl = template === "fal" || template === "replicate" ? (input.baseUrl === undefined ? "" : requireConsumerBaseUrl(input.baseUrl)) : requireConsumerBaseUrl(input.baseUrl);
@@ -93,12 +124,13 @@ ipcMain.handle("fitz:consumer-connection-save", async (_event, input: unknown) =
     template,
     ...(baseUrl ? { baseUrl } : {}),
     authType,
+    executionClass,
     ...(apiKey ? { apiKey } : {}),
     ...(modelIds.length ? { modelIds } : {}),
   });
   const parsed = await parseHostResponse(response);
   const data = isRecord(parsed.data) ? parsed.data : {};
-  const connection: StoredConsumerConnection = { id, displayName, baseUrl, authType, template, ...(apiKey ? { apiKey } : {}), models: parseConsumerModels(data.models), mediaModels: parseConsumerMediaModels(data.mediaModels), updatedAt: typeof data.updatedAt === "string" ? data.updatedAt : new Date().toISOString() };
+  const connection: StoredConsumerConnection = { id, displayName, baseUrl, authType, template, executionClass, accessClass: parseAccessClass(data.accessClass, executionClass, baseUrl), ...(apiKey ? { apiKey } : {}), models: parseConsumerModels(data.models), mediaModels: parseConsumerMediaModels(data.mediaModels), updatedAt: typeof data.updatedAt === "string" ? data.updatedAt : new Date().toISOString() };
   persistConsumerConnections([...loadConsumerConnections().filter((item) => item.id !== id), connection]);
   return publicConsumerConnection(connection);
 });
@@ -119,6 +151,7 @@ ipcMain.handle("fitz:consumer-connections-sync", async () => {
         template: connection.template,
         ...(baseUrl ? { baseUrl } : {}),
         authType: connection.authType,
+        executionClass: connection.executionClass ?? "metered_cloud",
         ...(connection.apiKey ? { apiKey: connection.apiKey } : {}),
         ...(connection.mediaModels?.length ? { modelIds: [...new Set(connection.mediaModels.map((model) => model.id))] } : {}),
       });
@@ -249,6 +282,51 @@ async function ensureLocalHost(): Promise<boolean> {
     }
   }
 }
+type AgentEventRelayMessage =
+  | { type: "event"; event: Record<string, unknown> }
+  | { type: "end" }
+  | { type: "error"; error: string };
+
+async function relayAgentEvents(
+  runId: string,
+  after: number,
+  signal: AbortSignal,
+  publish: (message: AgentEventRelayMessage) => void,
+): Promise<void> {
+  try {
+    const response = await hostClient.fetch(`/api/v1/agent/runs/${encodeURIComponent(runId)}/events?after=${after}&stream=true`, {
+      timeoutMs: 24 * 60 * 60_000,
+      signal,
+    });
+    if (!response.ok) throw new Error(await agentEventResponseError(response));
+    if (!response.body) throw new Error("The Fitz host returned an empty agent event stream");
+    for await (const event of parseAgentEventStream(response.body, signal)) publish({ type: "event", event });
+    if (!signal.aborted) publish({ type: "end" });
+  } catch (error) {
+    if (!signal.aborted) publish({ type: "error", error: desktopErrorMessage(error) });
+  }
+}
+
+function requireAgentEventSubscription(value: unknown): { subscriptionId: string; runId: string; after: number } {
+  if (!isRecord(value)) throw new TypeError("Agent event subscription must be an object");
+  const subscriptionId = requireBoundedText(value.subscriptionId, "Subscription ID", 128);
+  const runId = requireBoundedText(value.runId, "Run ID", 128);
+  if (!/^[A-Za-z0-9._:-]+$/.test(subscriptionId) || !/^[A-Za-z0-9._:-]+$/.test(runId)) throw new TypeError("Agent event subscription is invalid");
+  if (typeof value.after !== "number" || !Number.isSafeInteger(value.after) || value.after < 0) throw new TypeError("Agent event sequence is invalid");
+  return { subscriptionId, runId, after: value.after };
+}
+
+async function agentEventResponseError(response: Response): Promise<string> {
+  const content = await response.text();
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    if (isRecord(parsed) && typeof parsed.error === "string") return parsed.error;
+    if (isRecord(parsed) && isRecord(parsed.error) && typeof parsed.error.message === "string") return parsed.error.message;
+  } catch { /* fall through to an HTTP-level error */ }
+  return `The Fitz host rejected the agent event stream (HTTP ${response.status})`;
+}
+
+function desktopErrorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function commandLineValue(name: string): string | undefined { const prefix = `--${name}=`; return process.argv.find((value) => value.startsWith(prefix))?.slice(prefix.length); }
 function isLoopbackHost(value: URL): boolean { const name = value.hostname.replace(/^\[|\]$/g, "").toLowerCase(); return name === "127.0.0.1" || name === "::1" || name === "localhost"; }
@@ -300,11 +378,14 @@ function loadConsumerConnections(): StoredConsumerConnection[] {
   } catch { return []; }
 }
 function persistConsumerConnections(connections: StoredConsumerConnection[]): void { if (!safeStorage.isEncryptionAvailable()) throw new Error("Secure credential storage is unavailable"); mkdirSync(dirname(consumerConnectionsPath()), { recursive: true }); writeFileSync(consumerConnectionsPath(), safeStorage.encryptString(JSON.stringify(connections)), { flag: "w" }); }
-function publicConsumerConnection(connection: StoredConsumerConnection) { return { id: connection.id, displayName: connection.displayName, baseUrl: connection.baseUrl, authType: connection.authType, hasCredential: Boolean(connection.apiKey), template: connection.template ?? "openai-compatible", models: connection.models, mediaModels: connection.mediaModels ?? [], updatedAt: connection.updatedAt }; }
+function publicConsumerConnection(connection: StoredConsumerConnection) { const executionClass = connection.executionClass ?? "metered_cloud"; return { id: connection.id, displayName: connection.displayName, baseUrl: connection.baseUrl, authType: connection.authType, hasCredential: Boolean(connection.apiKey), template: connection.template ?? "openai-compatible", executionClass, accessClass: connection.accessClass ?? accessClassForConnection(connection.baseUrl, executionClass), models: connection.models, mediaModels: connection.mediaModels ?? [], updatedAt: connection.updatedAt }; }
 function isStoredConsumerConnection(value: unknown): value is StoredConsumerConnection { return isRecord(value) && typeof value.id === "string" && typeof value.displayName === "string" && typeof value.baseUrl === "string" && (value.authType === "none" || value.authType === "bearer") && (value.template === undefined || typeof value.template === "string") && Array.isArray(value.models) && (value.mediaModels === undefined || Array.isArray(value.mediaModels)) && typeof value.updatedAt === "string"; }
 function parseConsumerModels(value: unknown): Array<{ id: string; recipeId: string }> { if (!Array.isArray(value)) return []; return value.flatMap((item) => isRecord(item) && typeof item.id === "string" && typeof item.recipeId === "string" ? [{ id: item.id, recipeId: item.recipeId }] : []); }
 function parseConsumerMediaModels(value: unknown): Array<{ id: string; routeId: string; recipeId: string; modality: string; template: string }> { if (!Array.isArray(value)) return []; return value.flatMap((item) => isRecord(item) && typeof item.id === "string" && typeof item.routeId === "string" && typeof item.recipeId === "string" && (item.modality === "image" || item.modality === "video" || item.modality === "audio") ? [{ id: item.id, routeId: item.routeId, recipeId: item.recipeId, modality: item.modality, template: typeof item.template === "string" ? item.template : "openai-compatible" }] : []); }
 function requireConsumerTemplate(value: unknown): string { if (value === undefined) return "openai-compatible"; if (typeof value === "string" && (value === "openai-compatible" || value === "openai-media" || value === "fal" || value === "replicate")) return value; throw new Error("Template must be openai-compatible, openai-media, fal, or replicate"); }
+function requireExecutionClass(value: unknown): InferenceExecutionClass { if (value === undefined || value === "metered_cloud") return "metered_cloud"; if (value === "self_hosted") return value; throw new Error("Execution must be self-hosted or metered cloud"); }
+function parseAccessClass(value: unknown, executionClass: InferenceExecutionClass, baseUrl: string): HostAccessClass { return value === "same_device" || value === "trusted_remote" || value === "public_remote" ? value : accessClassForConnection(baseUrl, executionClass); }
+function accessClassForConnection(baseUrl: string, executionClass: InferenceExecutionClass): HostAccessClass { try { const host = new URL(baseUrl).hostname.replace(/^\[|\]$/g, "").toLowerCase(); if (host === "localhost" || host === "127.0.0.1" || host === "::1") return "same_device"; } catch {} return executionClass === "self_hosted" ? "trusted_remote" : "public_remote"; }
 function requireModelIds(value: unknown): string[] { if (value === undefined) return []; if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !item.trim() || item.trim().length > 200)) throw new Error("Model IDs must be an array of strings"); return [...new Set(value.map((item) => (item as string).trim()).filter(Boolean))]; }
 function requireConsumerBaseUrl(value: unknown): string { const text = requireBoundedText(value, "Base URL", 2048); const url = new URL(text); if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Base URL must use HTTP or HTTPS"); if (url.username || url.password || url.search || url.hash) throw new Error("Base URL must not contain credentials, a query, or a fragment"); return url.toString().replace(/\/$/, ""); }
 async function trustedHostRequest(path: string, method: string, body?: unknown): Promise<Response> { return hostClient.fetch(path, { method, ...(body !== undefined ? { body } : {}) }); }

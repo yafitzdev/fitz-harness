@@ -17,6 +17,7 @@ const activityTimeline = readFileSync(new URL("./ui/chat/activity-timeline.ts", 
 const toolActivity = readFileSync(new URL("./ui/chat/tool-activity.ts", import.meta.url), "utf8");
 const reasoningView = readFileSync(new URL("./ui/chat/reasoning-view.ts", import.meta.url), "utf8");
 const agentRunController = readFileSync(new URL("./ui/chat/agent-run-controller.ts", import.meta.url), "utf8");
+const agentPlanPanel = readFileSync(new URL("./ui/chat/agent-plan-panel.ts", import.meta.url), "utf8");
 const mediaJobFeed = readFileSync(new URL("./ui/chat/media-job-feed.ts", import.meta.url), "utf8");
 const conversationMessageFeed = readFileSync(new URL("./ui/chat/conversation-message-feed.ts", import.meta.url), "utf8");
 const conversationLanding = readFileSync(new URL("./ui/chat/conversation-landing.ts", import.meta.url), "utf8");
@@ -55,6 +56,7 @@ const styles = [
   readFileSync(new URL("./ui/primitives/scroll-surface.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/message-actions.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/activity-timeline.css", import.meta.url), "utf8"),
+  readFileSync(new URL("./ui/chat/agent-plan-panel.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/media-creation-form.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/reasoning-view.css", import.meta.url), "utf8"),
   composerControlsCss,
@@ -99,7 +101,7 @@ describe("desktop renderer shell", () => {
     }
   });
 
-  it("always starts the desktop on a fresh Local · Normal chat", () => {
+  it("always starts the desktop on a fresh Local · Medium chat", () => {
     expect(renderer).toContain("let initialNavigationPending = true");
     expect(renderer).toContain("await projects.load(undefined, undefined, !initialNavigationPending)");
     expect(renderer).toContain("initialNavigationPending = false");
@@ -115,7 +117,7 @@ describe("desktop renderer shell", () => {
     // The composer docks into the conversation column, so its width tracks the
     // chat window (and the Inspector stealing space). Width container queries
     // drop text in two stages: the access label goes icon-only first, then the
-    // model name hides leaving the route and effort ("Smart · Normal").
+    // model name hides leaving the route and effort ("Smart · Medium").
     expect(composerCss).toContain("container-type: inline-size");
     expect(composerCss).toContain("container-name: composer");
     expect(composerCss).toContain("@container composer (max-width: 480px)");
@@ -283,8 +285,8 @@ describe("desktop renderer shell", () => {
     expect(renderer).not.toContain('candidate.routeId === card.id');
     expect(connectionWorkspace).not.toContain('recipe-test-button');
     expect(connectionWorkspace).toContain("private views(): ConnectionView[]");
-    expect(connectionWorkspace).toContain('id: LOCAL_CONNECTION_ID');
-    expect(connectionWorkspace).toContain('this.configuration?.hostName ?? "This PC"');
+    expect(connectionWorkspace).toContain('id: `${LOCAL_CONNECTION_ID}--${engineId}`');
+    expect(connectionWorkspace).toContain('folder?.engine?.displayName ?? engineDisplayName(engineId)');
     expect(renderer).not.toContain('configuredConnectionId');
     expect(renderer).not.toContain('edit.textContent = configuredConnectionId');
     expect(connectionWorkspace).toContain('for (const model of connection.availableModels)');
@@ -293,10 +295,10 @@ describe("desktop renderer shell", () => {
     expect(connectionWorkspace).toContain('this.assignCloudRoute(definition, model)');
     expect(connectionWorkspace).toContain('if (!connection.hosted)');
     expect(connectionWorkspace).not.toContain('url.className = "connection-url"');
-    expect(connectionWorkspace).toContain('title: "Inference"');
-    expect(connectionWorkspace).toContain('this.inferenceSection("Local"');
-    expect(connectionWorkspace).toContain('this.inferenceSection("Cloud"');
-    expect(connectionWorkspace).toContain("openAgentEditor(model");
+    expect(connectionWorkspace).toContain('{ id: "inference-cloud-tab", label: "Cloud", active: true }');
+    expect(connectionWorkspace).toContain('{ id: "inference-local-tab", label: "Local" }');
+    expect(connectionWorkspace).toContain('title: "Cloud"');
+    expect(connectionWorkspace).toContain("openRecipeEditor(model");
     expect(connectionWorkspace).toContain("http://127.0.0.1:8000/v1");
     expect(styles).toContain('max-height: min(440px, calc(100vh - 32px)); overflow-y: auto;');
     expect(main).toContain('safeStorage.encryptString(JSON.stringify(connections))');
@@ -346,7 +348,9 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain('search: { id: "playbook-search"');
     expect(renderer).toContain('id: "management-browser"');
     expect(renderer).toContain('appNavigation.openManagement("connections")');
-    expect(connectionWorkspace).toContain('description: "Local engines and cloud APIs."');
+    expect(connectionWorkspace).toContain('description: "Provider APIs and remote model servers."');
+    expect(managementPage).toContain("#syncTitleToActiveTab");
+    expect(renderer).toContain('{ id: "hosting-overview-tab", label: "Overview", active: true }');
     expect(playbookWorkspace).toContain("render(): void");
     expect(connectionWorkspace).toContain("TEXT_ROUTE_DEFINITIONS.map(withRouteIcon)");
     expect(renderer).toContain("textRouteOptions(managementConfiguration)");
@@ -456,6 +460,21 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".message.commentary");
   });
 
+  it("keeps the durable task plan as one live composer artifact", () => {
+    expect(renderer).toContain("new AgentPlanPanel(composer.root)");
+    expect(agentPlanPanel).toContain('title.textContent = "Tasks"');
+    expect(agentPlanPanel).toContain("this.#list.replaceChildren");
+    expect(agentPlanPanel).toContain('className = "agent-plan-panel-toggle"');
+    expect(agentPlanPanel).toContain("this.#setCollapsed");
+    expect(agentRunController).toContain('toolName === "agent_plan"');
+    expect(agentRunController).toContain("this.#options.updatePlan(event.data?.result)");
+    expect(agentRunController).toContain("this.#options.clearPlan()");
+    expect(conversationTranscript).toContain('if (toolName === "agent_plan")');
+    expect(styles).toContain(".agent-plan-panel-list");
+    expect(styles).toContain(".agent-plan-panel.collapsed");
+    expect(activityTimeline).not.toContain("plan-activity");
+  });
+
   it("matches Codex assistant, command disclosure, and shell presentation", () => {
     expect(renderer).not.toContain('className = "assistant-mark"');
     expect(styles).not.toContain(".assistant-mark");
@@ -488,19 +507,27 @@ describe("desktop renderer shell", () => {
     expect(activityTimeline).toContain("?.complete()");
     expect(reasoningView).toContain("export class ReasoningView");
     expect(reasoningView).toContain('className = "reasoning-content"');
-    expect(reasoningView).toContain('label.textContent = running ? "Thinking…" : "Thought through the approach"');
+    expect(reasoningView).not.toContain("Thought through the approach");
+    expect(reasoningView).not.toContain("agent-activity-summary");
     expect(conversationTranscript).toContain('entry.kind === "reasoning"');
     expect(conversationTranscript).toContain("this.#options.activity.appendReasoning(false, entry.createdAt)");
     expect(styles).toContain(".reasoning-content");
-    expect(styles).toContain(".reasoning-activity .agent-activity-label { font-style: italic; }");
+    expect(styles).toContain(".message.reasoning-activity { margin: 0 0 12px; color: var(--text); }");
+    expect(styles).not.toContain("reasoning-cursor");
+    expect(renderer).toContain("window.fitz.subscribeAgentEvents(input, listener)");
+    expect(preload).toContain('ipcRenderer.send("fitz:agent-events-subscribe"');
+    expect(main).toContain('ipcMain.on("fitz:agent-events-subscribe"');
+    expect(main).toContain("parseAgentEventStream(response.body, signal)");
   });
 
   it("collapses completed Pi activity behind a durable work summary", () => {
     expect(conversationMessageFeed).toContain('role === "user" ? "next-message" : "completed"');
     expect(activityTimeline).toContain("this.#ensureWork(createdAt)");
     expect(activityTimeline).toContain('label.textContent = `Worked for ${this.#formatElapsed(endedAt - work.startedAt)}`');
+    expect(activityTimeline).toContain('work.root.classList.toggle("completed", boundary === "completed")');
     expect(activityTimeline).toContain('row.className = "message context-activity"');
     expect(styles).toContain(".work-summary-toggle");
+    expect(styles).toContain(".work-summary.completed.open .work-summary-details");
     expect(styles).toContain(".context-activity");
   });
 
@@ -612,7 +639,7 @@ describe("desktop renderer shell", () => {
     expect(composerControls).toContain("this.showSettingsRoot()");
     expect(composerControls).not.toContain("positionNestedPopover");
     expect(composerControls).not.toContain("settings-page-back");
-    expect(composer).toContain('<option value="light" data-max-tokens="4096">Light</option><option value="normal" data-max-tokens="10240" selected>Normal</option><option value="high" data-max-tokens="24576">High</option>');
+    expect(composer).toContain('<option value="light" data-max-tokens="4096">Light</option><option value="normal" data-max-tokens="10240" selected>Medium</option><option value="high" data-max-tokens="24576">High</option>');
     expect(promptSubmission).toContain("effort: settings.effort");
     expect(composer).not.toContain('data-setting="speed"');
     expect(composer).not.toContain("Extra High");
@@ -701,7 +728,8 @@ describe("desktop renderer shell", () => {
     expect(styles).not.toContain("--chat-window-gradient:");
     expect(styles).toContain("--shadow-chat-rest:");
     expect(styles).toContain("--brand-electric-blue: #458ce6");
-    expect(composerCss).toContain(".composer-card { position: relative; overflow: visible; border: 1px solid var(--new-chat-outline)");
+    expect(composerCss).toContain(".composer-card { position: relative; z-index: 1; isolation: isolate; overflow: visible; border: 1px solid var(--new-chat-outline)");
+    expect(composerCss).toContain(".composer-card::before");
     expect(composerCss).toContain(".composer-card:focus-within { background: var(--new-chat-base); }");
     expect(composerCss).toContain("@keyframes chat-halo-breathe");
     expect(composerCss).toContain("animation: chat-halo-breathe 7.2s ease-in-out infinite");

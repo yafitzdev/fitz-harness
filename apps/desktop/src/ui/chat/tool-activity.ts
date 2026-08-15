@@ -44,6 +44,7 @@ const BUILT_IN_TOOLS: Record<string, ToolMeta> = {
   generate_video: { kind: "command", presentVerb: "Generating", pastVerb: "Generated", icon: "sparkle", displayName: "video" },
   generate_audio: { kind: "command", presentVerb: "Generating", pastVerb: "Generated", icon: "sparkle", displayName: "audio" },
   subagent: { kind: "command", presentVerb: "Delegating", pastVerb: "Delegated", icon: "sparkle", displayName: "subagent" },
+  agent_plan: { kind: "command", presentVerb: "Updating", pastVerb: "Updated", icon: "sparkle", displayName: "task plan" },
 };
 
 const DEFAULT_TOOL: ToolMeta = { kind: "command", presentVerb: "Running", pastVerb: "Ran", icon: "sparkle" };
@@ -119,7 +120,16 @@ export function describeTool(toolName: string, input: unknown, running: boolean,
   const verb = running ? meta.presentVerb : meta.pastVerb;
   if (toolName === "subagent" && input && typeof input === "object") {
     const role = String((input as Record<string, unknown>).role ?? "").trim();
-    if (role) return `${verb} to ${role}`;
+    const item = String((input as Record<string, unknown>).plan_item_id ?? "").trim();
+    if (role) return `${verb} ${item ? `${item} ` : ""}to ${role}`;
+  }
+  if (toolName === "agent_plan" && input && typeof input === "object") {
+    const action = String((input as Record<string, unknown>).action ?? "").trim();
+    if (action === "set") return running ? "Creating task plan" : "Created task plan";
+    if (action === "status") return running ? "Checking task plan" : "Checked task plan";
+    if (action === "ready") return running ? "Finishing prerequisite work" : "Prerequisite work finished";
+    const item = String((input as Record<string, unknown>).item_id ?? "").trim();
+    if (action === "update" && item) return `${verb} task ${item}`;
   }
   const target = toolTarget(toolName, input, workspaceRoot);
   return target ? `${verb} ${target}` : `${verb} ${meta.displayName ?? displayName(toolName)}`;

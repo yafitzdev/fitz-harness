@@ -101,11 +101,11 @@ const COMPOSER_TEMPLATE = `
           </div>
         </div>
         <div class="model-picker">
-          <button id="model-toggle" class="model-toggle" type="button" aria-label="Model settings" aria-expanded="false" disabled><span id="model-summary"><span id="model-route">Model</span><span id="model-effort"> · Normal</span></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"></path></svg></button>
+          <button id="model-toggle" class="model-toggle" type="button" aria-label="Model settings" aria-expanded="false" disabled><span id="model-summary"><span id="model-route">Model</span><span id="model-effort"> · Medium</span></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"></path></svg></button>
           <div id="model-menu" class="popover model-menu" hidden>
             <div id="model-menu-root">
               <button class="setting-row" type="button" data-setting="model"><span>Model</span><span><span id="model-value">Model</span><svg viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"></path></svg></span></button>
-              <button class="setting-row" type="button" data-setting="effort"><span>Effort</span><span><span id="effort-value">Normal</span><svg viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"></path></svg></span></button>
+              <button class="setting-row" type="button" data-setting="effort"><span>Effort</span><span><span id="effort-value">Medium</span><svg viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"></path></svg></span></button>
               <div class="settings-divider"></div>
               <button id="advanced-settings" class="advanced-row" type="button" aria-expanded="false"><span>Advanced</span><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></button>
               <div id="advanced-settings-panel" class="advanced-settings-panel" hidden>
@@ -116,7 +116,7 @@ const COMPOSER_TEMPLATE = `
             </div>
             <div id="settings-submenu" class="settings-submenu" hidden></div>
             <select id="model" aria-label="Model route" hidden disabled></select>
-            <select id="effort" aria-label="Effort" hidden><option value="light" data-max-tokens="4096">Light</option><option value="normal" data-max-tokens="10240" selected>Normal</option><option value="high" data-max-tokens="24576">High</option></select>
+            <select id="effort" aria-label="Effort" hidden><option value="light" data-max-tokens="4096">Light</option><option value="normal" data-max-tokens="10240" selected>Medium</option><option value="high" data-max-tokens="24576">High</option></select>
           </div>
         </div>
         <span id="status" class="run-status visually-hidden" data-state="loading">Connecting</span>

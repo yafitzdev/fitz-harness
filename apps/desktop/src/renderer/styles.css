@@ -3,6 +3,7 @@
 @import "../ui/primitives/action-menu.css";
 @import "../ui/chat/message-actions.css";
 @import "../ui/chat/activity-timeline.css";
+@import "../ui/chat/agent-plan-panel.css";
 @import "../ui/chat/media-creation-form.css";
 @import "../ui/chat/reasoning-view.css";
 @import "../ui/chat/composer-controls.css";

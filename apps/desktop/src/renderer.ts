@@ -4,6 +4,7 @@ import { MessageActions } from "./ui/chat/message-actions.js";
 import { AssistantPerformance } from "./ui/chat/assistant-performance.js";
 import { ActivityTimeline } from "./ui/chat/activity-timeline.js";
 import { AgentRunController } from "./ui/chat/agent-run-controller.js";
+import { AgentPlanPanel } from "./ui/chat/agent-plan-panel.js";
 import { RunRecoveryView } from "./ui/chat/run-recovery-view.js";
 import { MediaJobFeed } from "./ui/chat/media-job-feed.js";
 import { MediaJobTracker, type MediaJobSummary } from "./ui/chat/media-job-tracker.js";
@@ -140,7 +141,7 @@ const administrationLayout = new ManagementPageLayout(administrationPage, {
   actions: [{ id: "refresh-administration", icon: managementRefreshIcon, label: "Refresh administration" }],
 });
 administrationLayout.addContent({
-  title: "Hosting",
+  title: "Overview",
   description: "Host your models, manage people, and understand how the service is used.",
   body: [element("administration-sections")],
 });
@@ -207,6 +208,7 @@ const composer = new Composer({
   onError: (message) => showStatus(message, "error"),
   isRunning: () => agentRuns.active,
 });
+const agentPlanPanel = new AgentPlanPanel(composer.root);
 const conversationContext = new ConversationContextController({
   draft: () => composer.value,
   estimateTokens,
@@ -286,6 +288,8 @@ const conversationTranscript = new ConversationTranscript({
   appendMessage,
   appendCommentary,
   rebuildHistory: (history) => composer.rebuildHistory(history),
+  resetPlan: () => agentPlanPanel.reset(),
+  updatePlan: (result) => { agentPlanPanel.updateFromToolResult(result); },
   loadEarlier: async (beforeSequence) => {
     const sessionId = projects.currentSessionId;
     if (!sessionId) return { data: [], page: { hasEarlier: false } };
@@ -362,6 +366,7 @@ const agentRuns = new AgentRunController({
   messages,
   activity: activityTimeline,
   api,
+  subscribeAgentEvents: (input, listener) => window.fitz.subscribeAgentEvents(input, listener),
   appendAssistant: (runId, createdAt) => appendMessage("assistant", "", createdAt, runId),
   appendAssistantDelta: (target, delta) => appendMarkdown(target, delta),
   appendSystem: (message) => { appendMessage("system", message); },
@@ -376,6 +381,8 @@ const agentRuns = new AgentRunController({
   showStatus,
   errorMessage,
   terminalReplayError: (error) => error instanceof HostRequestError,
+  updatePlan: (result) => { agentPlanPanel.updateFromToolResult(result); },
+  clearPlan: () => agentPlanPanel.reset(),
   refreshAssistantPerformance: (runId) => assistantPerformance.refresh(runId),
   onMediaJobSubmitted: (jobId, toolName) => {
     const modality = toolName === "generate_image" ? "image" : toolName === "generate_audio" ? "audio" : "video";
@@ -707,6 +714,7 @@ const conversationSessions = new ConversationSessionController({
   },
   recovery: { clear: () => runRecovery.clear(), show: (state) => runRecovery.show(state as Parameters<typeof runRecovery.show>[0]) },
   assistantPerformance: { reset: () => assistantPerformance.reset() },
+  plan: { reset: () => agentPlanPanel.reset() },
   mediaJobs: {
     reset: () => mediaJobs.reset(),
     watch: (jobId) => mediaJobs.watch(jobId),

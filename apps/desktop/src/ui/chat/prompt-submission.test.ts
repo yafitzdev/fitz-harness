@@ -100,7 +100,7 @@ describe("PromptSubmissionController", () => {
     expect(options.startRun).not.toHaveBeenCalled();
   });
 
-  it("routes an audio brief and explicit lyrics through the chat model for Music 3 planning", async () => {
+  it("submits an audio brief and explicit lyrics directly to the media pipeline", async () => {
     const { controller, options } = setup({ draft: () => ({ content: "dreamy synth-pop", mediaCommand: "audio" }) });
     await controller.submit();
     await mediaCreationRequest(options).submit({
@@ -108,16 +108,14 @@ describe("PromptSubmissionController", () => {
       durationSeconds: 90,
       lyrics: "[Verse]\nNeon rain\n[Chorus]\nCome alive",
     });
-    expect(options.startRun).toHaveBeenCalledWith(expect.objectContaining({
-      model: "smart",
-      mediaCommand: "audio",
-      sessionId: "session-1",
-      messages: [{ role: "user", content: expect.stringContaining("Maximum duration: 90 seconds") }],
+    expect(options.submitMedia).toHaveBeenCalledWith(expect.objectContaining({
+      routeId: "audio",
+      modality: "audio",
+      prompt: "dreamy synth-pop",
+      durationSeconds: 90,
+      lyrics: "[Verse]\nNeon rain\n[Chorus]\nCome alive",
     }));
-    expect(options.startRun).toHaveBeenCalledWith(expect.objectContaining({
-      messages: [{ role: "user", content: expect.stringContaining("Use these lyrics verbatim:\n[Verse]\nNeon rain") }],
-    }));
-    expect(options.submitMedia).not.toHaveBeenCalled();
+    expect(options.startRun).not.toHaveBeenCalled();
   });
 
   it("creates and persists a media-only session without a text route", async () => {
@@ -187,8 +185,8 @@ describe("PromptSubmissionController", () => {
     expect(mediaCreationRequest(options).refs).toEqual([]);
 
     await mediaCreationRequest(options).submit({ prompt: "narrate this" });
-    expect(options.startRun).toHaveBeenCalledWith(expect.objectContaining({ mediaCommand: "audio" }));
-    expect(options.submitMedia).not.toHaveBeenCalled();
+    expect(options.submitMedia).toHaveBeenCalledWith(expect.objectContaining({ routeId: "audio", modality: "audio", prompt: "narrate this" }));
+    expect(options.startRun).not.toHaveBeenCalled();
   });
 
   it("shows an error when the media submission fails and does not track a job", async () => {

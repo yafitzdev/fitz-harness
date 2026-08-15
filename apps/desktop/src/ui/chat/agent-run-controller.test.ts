@@ -29,7 +29,10 @@ function request(): AgentRunRequest {
   return { model: "default", effort: "normal", max_tokens: 2048, temperature: 0.2, sessionId: "session-1", accessMode: "full", messages: [{ role: "user", content: "hello" }] };
 }
 
-function setup(api: AgentRunControllerOptions["api"]) {
+function setup(
+  api: AgentRunControllerOptions["api"],
+  options: Pick<AgentRunControllerOptions, "subscribeAgentEvents" | "yieldToPaint"> = {},
+) {
   const messages = document.createElement("main");
   document.body.append(messages);
   const activity = activityMock();
@@ -44,6 +47,8 @@ function setup(api: AgentRunControllerOptions["api"]) {
     setEngineState: vi.fn(),
     refreshControls: vi.fn(),
     refreshQueue: vi.fn(),
+    updatePlan: vi.fn(),
+    clearPlan: vi.fn(),
     showStatus: vi.fn(),
   };
   const controller = new AgentRunController({
@@ -54,6 +59,8 @@ function setup(api: AgentRunControllerOptions["api"]) {
     queueVisible: () => true,
     errorMessage: (error) => error instanceof Error ? error.message : String(error),
     terminalReplayError: () => false,
+    yieldToPaint: async () => undefined,
+    ...options,
   });
   return { controller, activity, assistant, calls };
 }
@@ -86,7 +93,43 @@ describe("AgentRunController", () => {
     expect(calls.setStatus).toHaveBeenCalledWith("Ready", "idle");
     expect(calls.setEngineState).toHaveBeenLastCalledWith("READY");
     expect(activity.timeline.finishWork).toHaveBeenCalledOnce();
+    expect(calls.clearPlan).toHaveBeenCalledOnce();
     expect(calls.refreshControls).toHaveBeenCalledTimes(2);
+  });
+
+  it("consumes normalized live events without waiting for replay polling", async () => {
+    const api = vi.fn(async (path: string) => {
+      if (path === "/api/v1/agent/runs") return { data: { id: "run-live-stream" } };
+      throw new Error(`Unexpected polling request: ${path}`);
+    });
+    const unsubscribe = vi.fn();
+    const yieldToPaint = vi.fn(async () => undefined);
+    const subscribeAgentEvents = vi.fn((_input, listener) => {
+      queueMicrotask(() => {
+        listener({ type: "event", event: { sequence: 1, type: "run.started", data: {} } });
+        listener({ type: "event", event: { sequence: 2, type: "reasoning.delta", data: { text: "one" } } });
+        listener({ type: "event", event: { sequence: 3, type: "reasoning.delta", data: { text: " two" } } });
+        listener({ type: "event", event: { sequence: 4, type: "reasoning.completed", data: {} } });
+        listener({ type: "event", event: { sequence: 5, type: "assistant.delta", data: { text: "answer" } } });
+        listener({ type: "event", event: { sequence: 6, type: "run.completed", data: {} } });
+        listener({ type: "end" });
+      });
+      return unsubscribe;
+    });
+    const { controller, activity, calls } = setup(api, { subscribeAgentEvents, yieldToPaint });
+
+    await controller.start(request());
+
+    expect(subscribeAgentEvents).toHaveBeenCalledWith(
+      { runId: "run-live-stream", after: 0 },
+      expect.any(Function),
+    );
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(activity.timeline.appendReasoningDelta).toHaveBeenNthCalledWith(1, activity.reasoning, "one");
+    expect(activity.timeline.appendReasoningDelta).toHaveBeenNthCalledWith(2, activity.reasoning, " two");
+    expect(yieldToPaint).toHaveBeenCalledTimes(2);
+    expect(calls.appendAssistantDelta).toHaveBeenCalledWith(expect.any(HTMLElement), "answer");
+    expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
   it("shows the model loading phase while a cold chat start is waiting", async () => {
@@ -182,6 +225,26 @@ describe("AgentRunController", () => {
     expect(activity.timeline.finishWork).toHaveBeenCalledOnce();
   });
 
+  it("updates the live plan without appending plan tools to the work feed", async () => {
+    const result = { details: { plan: { runId: "run-plan", revision: 2, status: "active", items: [] } } };
+    const api = vi.fn(async (path: string) => path === "/api/v1/agent/runs"
+      ? { data: { id: "run-plan" } }
+      : { events: [
+        { sequence: 1, type: "run.started", data: {} },
+        { sequence: 2, type: "tool.started", data: { toolName: "agent_plan", toolCallId: "plan-1", input: { action: "update" } } },
+        { sequence: 3, type: "tool.completed", data: { toolCallId: "plan-1", result, isError: false } },
+        { sequence: 4, type: "assistant.delta", data: { text: "Done" } },
+        { sequence: 5, type: "run.completed", data: {} },
+      ] });
+    const { controller, activity, calls } = setup(api);
+
+    await controller.start(request());
+
+    expect(calls.updatePlan).toHaveBeenCalledWith(result);
+    expect(activity.timeline.appendTool).not.toHaveBeenCalled();
+    expect(activity.timeline.completeTool).not.toHaveBeenCalled();
+  });
+
   it("hands asynchronous media jobs to the media lifecycle tracker", async () => {
     const api = vi.fn(async (path: string) => path === "/api/v1/agent/runs"
       ? { data: { id: "run-media" } }
@@ -199,6 +262,8 @@ describe("AgentRunController", () => {
       appendAssistant: () => document.createElement("div"), appendAssistantDelta: vi.fn(), appendSystem, appendChangeSummary: vi.fn(),
       addTokenEstimate: vi.fn(), recalibrateEstimate: vi.fn(), setStatus: vi.fn(), setEngineState: vi.fn(), refreshControls: vi.fn(),
       queueVisible: () => false, refreshQueue: vi.fn(), showStatus: vi.fn(), errorMessage: String, terminalReplayError: () => false,
+      updatePlan: vi.fn(),
+      clearPlan: vi.fn(),
       onMediaJobSubmitted,
     });
 

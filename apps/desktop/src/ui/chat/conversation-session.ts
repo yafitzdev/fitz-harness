@@ -35,6 +35,7 @@ export interface ConversationSessionOptions {
   runs: { active: () => boolean; detach(): void; attach(state: Json, afterSequence: number): void };
   recovery: { clear(): void; show(state: Json): void };
   assistantPerformance: { reset(): void };
+  plan?: { reset(): void };
   mediaJobs: {
     reset(): void;
     watch(jobId: string): void;
@@ -90,6 +91,7 @@ export class ConversationSessionController {
     projects.beginNewChat();
     this.#newChat = true;
     this.#options.context.reset();
+    this.#options.plan?.reset();
     this.#options.composer.resetContextStatus();
     this.#options.composer.resetForNewChat();
     this.#options.workspace.classList.add("new-chat-open");
@@ -137,6 +139,7 @@ export class ConversationSessionController {
     recovery.clear();
     mediaJobs.reset();
     mediaFeed.reset();
+    this.#options.plan?.reset();
     if (sessionId !== this.#inspectorChatId) this.#scopeInspector(sessionId, true);
     composer.resetContextStatus();
     const selectedSession = this.#options.projects.currentSessionRecord();
@@ -154,7 +157,10 @@ export class ConversationSessionController {
       if (!isCurrent()) return;
       if (runState.data?.status === "queued" || runState.data?.status === "running") {
         runs.attach(runState.data, this.#options.transcript.eventSequenceForRun(String(runState.data.id)));
-      } else if (runState.data?.resumable) recovery.show(runState.data);
+      } else {
+        this.#options.plan?.reset();
+        if (runState.data?.resumable) recovery.show(runState.data);
+      }
       context.refresh();
       if (!messages.childElementCount) this.#options.showLanding(true);
       messages.scrollTop = messages.scrollHeight;
@@ -177,6 +183,7 @@ export class ConversationSessionController {
   }
 
   async showNoSession(): Promise<void> {
+    this.#options.plan?.reset();
     this.#options.mediaJobs.reset();
     this.#options.mediaFeed.reset();
     this.#scopeInspector(undefined, true);
@@ -212,7 +219,12 @@ export class ConversationSessionController {
       this.#options.mediaFeed.render(job, failure, artifact);
     }
     if (!isCurrent()) return;
-    if (!hasActiveJob) this.#options.activity.finishWork(undefined, "next-message");
+    // Restoring media lineage must not close an activity group that belongs to
+    // an agent run we just reattached. Live run events should keep extending
+    // that same group until AgentRunController observes the terminal event.
+    if (!hasActiveJob && !this.#options.runs.active()) {
+      this.#options.activity.finishWork(undefined, "next-message");
+    }
     this.#options.messages.scrollTop = this.#options.messages.scrollHeight;
   }
 }

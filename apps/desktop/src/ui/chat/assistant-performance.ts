@@ -48,7 +48,7 @@ export class AssistantPerformance {
       const response = await this.#options.api(`/api/v1/agent/runs/${encodeURIComponent(runId)}/usage`);
       if (generation !== this.#generation) return;
       const usage = (Array.isArray(response.data) ? response.data : []) as RequestUsageRecord[];
-      this.#apply(runId, usage.filter((record) => record.kind === "chat"));
+      this.#apply(runId, usage.filter((record) => record.kind === "chat" && record.status === "completed"));
     } catch {
       // Telemetry is supplementary; never turn a successful response into a UI error.
     }
@@ -56,9 +56,11 @@ export class AssistantPerformance {
 
   #apply(runId: string, usage: RequestUsageRecord[]): void {
     const messages = (this.#tracked.get(runId) ?? []).filter((item) => item.target.isConnected);
-    const used = new Set(messages.map((item) => item.target.dataset.usageId).filter(Boolean));
+    // A live assistant bubble can appear before its request's terminal usage
+    // record has been persisted. Re-evaluate every assignment on refresh so a
+    // provisional match to the preceding tool-call request cannot stick.
+    const used = new Set<string>();
     for (const message of messages) {
-      if (message.target.dataset.usageId) continue;
       const timestamp = Date.parse(message.observedAt);
       const candidate = usage
         .filter((record) => !used.has(record.id))
