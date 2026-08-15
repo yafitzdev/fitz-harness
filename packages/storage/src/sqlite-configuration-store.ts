@@ -1,9 +1,21 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { EngineRegistration, Recipe, Route, RouteKind } from "@fitz/protocol";
+import type { EngineRegistration, Recipe, Route, RouteKind, SubagentRoleDefinition } from "@fitz/protocol";
 
 interface RecipeRow { recipe_json: string }
 interface PlaybookRow { id: string; name: string; adapter: string; configuration_json: string; created_at: string; updated_at: string }
 interface RouteRow { id: string; display_name: string; description: string | null; recipe_id: string; kind: string; enabled: number; is_default: number }
+interface SubagentRoleRow {
+  id: string;
+  version: number;
+  display_name: string;
+  dispatch_description: string;
+  system_instructions: string;
+  access_mode: "full" | "read-only";
+  tool_call_budget: number;
+  max_output_tokens: number;
+  output_contract: string;
+  enabled: number;
+}
 
 /** Engine, recipe, and route configuration persistence. */
 export class SqliteConfigurationStore {
@@ -40,6 +52,33 @@ export class SqliteConfigurationStore {
     const rows = this.database.prepare(`SELECT id, display_name, description, recipe_id, kind, enabled, is_default FROM routes ORDER BY id`).all() as unknown as RouteRow[];
     return rows.map((row) => ({ id: row.id, displayName: row.display_name, recipeId: row.recipe_id, enabled: row.enabled === 1, ...(row.description ? { description: row.description } : {}), ...(row.is_default === 1 ? { isDefault: true } : {}), ...(row.kind !== "chat" ? { kind: row.kind as RouteKind } : {}) }));
   }
+
+  listSubagentRoles(enabledOnly = true): SubagentRoleDefinition[] {
+    const rows = this.database.prepare(`SELECT id, version, display_name, dispatch_description, system_instructions, access_mode, tool_call_budget, max_output_tokens, output_contract, enabled FROM subagent_role_definitions ${enabledOnly ? "WHERE enabled = 1" : ""} ORDER BY display_name, version DESC`).all() as unknown as SubagentRoleRow[];
+    return rows.map(mapSubagentRole);
+  }
+
+  getSubagentRole(id: string, version?: number): SubagentRoleDefinition | undefined {
+    const row = (version === undefined
+      ? this.database.prepare("SELECT id, version, display_name, dispatch_description, system_instructions, access_mode, tool_call_budget, max_output_tokens, output_contract, enabled FROM subagent_role_definitions WHERE id = ? AND enabled = 1").get(id)
+      : this.database.prepare("SELECT id, version, display_name, dispatch_description, system_instructions, access_mode, tool_call_budget, max_output_tokens, output_contract, enabled FROM subagent_role_definitions WHERE id = ? AND version = ?").get(id, version)) as SubagentRoleRow | undefined;
+    return row ? mapSubagentRole(row) : undefined;
+  }
 }
 
 function mapPlaybook(row: PlaybookRow): EngineRegistration { const value = JSON.parse(row.configuration_json) as Omit<EngineRegistration, "id" | "displayName" | "createdAt" | "updatedAt">; return { id: row.id, displayName: row.name, ...value, createdAt: row.created_at, updatedAt: row.updated_at }; }
+
+function mapSubagentRole(row: SubagentRoleRow): SubagentRoleDefinition {
+  return {
+    id: row.id,
+    version: row.version,
+    displayName: row.display_name,
+    dispatchDescription: row.dispatch_description,
+    systemInstructions: row.system_instructions,
+    accessMode: row.access_mode,
+    toolCallBudget: row.tool_call_budget,
+    maxOutputTokens: row.max_output_tokens,
+    outputContract: row.output_contract,
+    enabled: row.enabled === 1,
+  };
+}

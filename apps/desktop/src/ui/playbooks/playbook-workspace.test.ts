@@ -74,7 +74,8 @@ function setup(
     engineEditorTitle: node("h1"),
     recipeForm: node("form"), recipePlaybookId: node("input"), recipeId: node("input"), recipeDisplayName: node("input"),
     recipeAdapter: node("input"), recipeModelId: node("input"), recipeContextTokens: node("input"), recipeConfiguration: node("section"),
-    recipeEditorTitle: node("h1"),
+    recipeEditorTitle: node("h1"), recipeEditorEyebrow: node("small"), recipeEditorDescription: node("p"),
+    recipeRename: node("button"), recipeIdentityFields: node("div"),
   };
   elements.editor.hidden = true;
   elements.engineForm.hidden = true;
@@ -255,20 +256,105 @@ describe("PlaybookWorkspaceController", () => {
     expect(elements.recipeConfiguration.querySelector("textarea:not([data-field-type])")).toBeNull();
   });
 
+  it("edits only the anonymous worker pool and derives the main agent context", async () => {
+    const configuration = sampleConfiguration();
+    configuration.recipes[0] = {
+      id: "qwen-team", playbookId: "ninfer", displayName: "Qwen Team", adapter: "ninfer", modelId: "qwen3.8-27b", contextTokens: 262_144,
+      capabilities: { chatCompletions: true, streaming: true, toolCalls: true, responseFormat: false, minP: false, maxConcurrentGenerations: 3 },
+      lifecycle: { loadPolicy: "onDemand", evictionPolicy: "never", idleTtlSeconds: 0, minimumResidencySeconds: 0 },
+      configuration: { executable: "ninfer-serve", artifact: "qwen.ninfer", maxContext: 144_320 },
+      agentTopology: { sharedContextTokens: 272_320, workers: { count: 2, contextTokens: 64_000 } },
+    };
+    const { controller, elements, api } = setup(configuration);
+    controller.render();
+    click(elements.list.querySelector(".recipe-card-details")!);
+
+    expect(elements.recipeEditorTitle.textContent).toBe("Qwen Team");
+    expect(elements.recipeRename.hidden).toBe(false);
+    expect(elements.recipeEditorDescription.hidden).toBe(true);
+    expect(elements.recipeIdentityFields.hidden).toBe(true);
+    expect(elements.recipeConfiguration.textContent).not.toContain("Model limit");
+    expect(elements.recipeConfiguration.textContent).not.toContain("Shared capacity");
+    expect(elements.recipeConfiguration.textContent).not.toContain("Runtime settings");
+    expect(elements.recipeConfiguration.textContent).not.toContain("Server executable");
+    expect(elements.recipeConfiguration.textContent).not.toContain("Maximum context");
+    expect(elements.recipeConfiguration.textContent).not.toContain("Agent topology");
+    expect(elements.recipeConfiguration.textContent).not.toContain("The main agent is automatic");
+    expect(elements.recipeConfiguration.textContent).not.toContain("Worker instructions");
+    expect(elements.recipeConfiguration.textContent).not.toContain("Worker role");
+    expect(elements.recipeConfiguration.textContent).not.toContain("Shared context pool");
+    expect(elements.recipeConfiguration.textContent).not.toContain("Concurrency:");
+    expect(elements.recipeConfiguration.textContent).not.toContain("144,320 + 2 × 64,000");
+    expect(elements.recipeConfiguration.querySelector<HTMLElement>("[data-agent-main-context]")?.textContent).toBe("144,320 context");
+    const count = elements.recipeConfiguration.querySelector<HTMLInputElement>("[data-agent-worker-count]")!;
+    const workerContext = elements.recipeConfiguration.querySelector<HTMLInputElement>("[data-agent-worker-context]")!;
+    expect(count.value).toBe("2");
+    expect(workerContext.value).toBe("64000");
+    expect(workerContext.step).toBe("1");
+    expect(workerContext.checkValidity()).toBe(true);
+
+    count.value = "1"; count.dispatchEvent(new Event("input", { bubbles: true }));
+    workerContext.value = "32000"; workerContext.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(elements.recipeConfiguration.querySelector<HTMLElement>("[data-agent-main-context]")?.textContent).toBe("240,320 context");
+
+    submit(elements.recipeForm);
+    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/recipes/qwen-team", "PUT", expect.objectContaining({
+      contextTokens: 262_144,
+      agentTopology: { sharedContextTokens: 272_320, workers: { count: 1, contextTokens: 32_000 } },
+      configuration: expect.objectContaining({ maxContext: 144_320 }),
+    })));
+  });
+
+  it("renames an existing recipe inline from the header pen", () => {
+    const { controller, elements } = setup();
+    controller.render();
+    click(elements.list.querySelector(".recipe-card-details")!);
+
+    expect(elements.recipeEditorTitle.textContent).toBe("Qwen 3.6");
+    expect(elements.recipeDisplayName.hidden).toBe(true);
+    click(elements.recipeRename);
+    expect(elements.recipeEditorTitle.hidden).toBe(true);
+    expect(elements.recipeDisplayName.hidden).toBe(false);
+
+    elements.recipeDisplayName.value = "My Qwen";
+    elements.recipeDisplayName.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(elements.recipeEditorTitle.textContent).toBe("My Qwen");
+    expect(elements.recipeEditorTitle.hidden).toBe(false);
+    expect(elements.recipeDisplayName.hidden).toBe(true);
+  });
+
   it("rejects an unknown adapter instead of silently applying another adapter's fields", () => {
     const editor = new RecipeConfigurationEditor(document.createElement("section"));
     expect(() => editor.load("unknown-adapter", {})).toThrow("Unsupported recipe adapter: unknown-adapter");
   });
 
-  it("accepts decimal values in numeric recipe fields", () => {
+  it("keeps request sampling out of recipe configuration", () => {
     const root = document.createElement("section");
     const editor = new RecipeConfigurationEditor(root);
-    editor.load("ninfer", { temperature: 0.4 });
-    const temperature = root.querySelector<HTMLInputElement>('input[data-label="Default temperature"]')!;
-    expect(temperature.value).toBe("0.4");
-    expect(temperature.step).toBe("any");
-    expect(temperature.validity.valid).toBe(true);
+    editor.load("ninfer", { temperature: 0.4, topP: 0.9, topK: 20, thinking: false });
+    expect(root.textContent).not.toContain("Temperature");
+    expect(root.textContent).not.toContain("Top P");
+    expect(root.textContent).not.toContain("Top K");
+    expect(root.textContent).not.toContain("Thinking mode");
     expect(editor.value().temperature).toBe(0.4);
+  });
+
+  it.each(["llama.cpp", "vllm"])("configures anonymous workers for %s recipes", (playbookId) => {
+    const root = document.createElement("section");
+    const editor = new RecipeConfigurationEditor(root);
+    editor.load("openai-managed", {}, {
+      playbookId,
+      contextTokens: 32_768,
+      capabilities: { chatCompletions: true, toolCalls: true, maxConcurrentGenerations: 3 },
+      agentTopology: { sharedContextTokens: 32_768, workers: { count: 0, contextTokens: 8_192 } },
+    });
+
+    const workers = root.querySelector<HTMLInputElement>("[data-agent-worker-count]");
+    const workerContext = root.querySelector<HTMLInputElement>("[data-agent-worker-context]");
+    expect(workers?.disabled).toBe(false);
+    expect(workers?.max).toBe("2");
+    expect(workerContext?.disabled).toBe(false);
+    expect(editor.agentTopology()).toEqual({ sharedContextTokens: 32_768, workers: { count: 0, contextTokens: 8_192 } });
   });
 
   it("refreshes from the page header and closes the editor with the back surface", () => {

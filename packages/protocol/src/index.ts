@@ -5,6 +5,7 @@ export * from "./errors.js";
 export * from "./openai.js";
 export * from "./security.js";
 export * from "./agent.js";
+export * from "./agent-topology.js";
 export * from "./collaboration.js";
 export * from "./artifacts.js";
 export * from "./safety.js";

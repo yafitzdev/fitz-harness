@@ -7,6 +7,7 @@ import type { Recipe } from "@fitz/protocol";
 import type { SqliteStore } from "@fitz/storage";
 import type { ManagedLinuxRuntimeLayout } from "./managed-linux-runtime.js";
 import type { FitzRuntimePaths } from "./runtime-paths.js";
+import { withLocalAgentCapacity } from "./local-agent-capacity.js";
 
 export const VLLM_PLAYBOOK_ID = "vllm";
 
@@ -102,7 +103,7 @@ export class VllmModelReconciler {
     this.#upsertEngine(executable);
     for (const registration of runnable.values()) {
       const existing = existingRecipes.get(registration.recipe.id);
-      const recipe = this.#recipe(registration, executable, existing?.displayName);
+      const recipe = this.#recipe(registration, executable, existing);
       this.#store.upsertRecipe(recipe);
       routes?.upsertRecipe(recipe);
       if (!existing) registered.push(recipe.id);
@@ -134,7 +135,7 @@ export class VllmModelReconciler {
     return registrations;
   }
 
-  #recipe(registration: VllmModelRegistration, executable: string, existingDisplayName?: string): Recipe {
+  #recipe(registration: VllmModelRegistration, executable: string, existing?: Recipe): Recipe {
     const declared = registration.recipe;
     const serving = declared.serving;
     // Optimization level is registration-owned because vLLM startup/throughput
@@ -162,10 +163,10 @@ export class VllmModelReconciler {
     args.push("--mm-processor-cache-gb", String(serving.mmProcessorCacheGb));
     if (declared.toolCallParser) args.push("--enable-auto-tool-choice", "--tool-call-parser", declared.toolCallParser);
     if (declared.reasoningParser) args.push("--reasoning-parser", declared.reasoningParser);
-    return {
+    return withLocalAgentCapacity({
       id: declared.id,
       playbookId: VLLM_PLAYBOOK_ID,
-      displayName: existingDisplayName ?? declared.displayName,
+      displayName: existing?.displayName ?? declared.displayName,
       adapter: "openai-managed",
       modelId: declared.modelId,
       contextTokens: declared.contextTokens,
@@ -195,7 +196,7 @@ export class VllmModelReconciler {
           ...(serving.persistStartupPlan ? { VLLM_ENABLE_STARTUP_PLAN: "1" } : {}),
         },
       },
-    };
+    }, existing?.agentTopology);
   }
 
   #upsertEngine(executable: string): void {

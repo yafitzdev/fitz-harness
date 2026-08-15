@@ -1,4 +1,4 @@
-import type { AgentEventEnvelope, AgentEventType, AgentQueueItem, AgentRunRecord, AgentRunRequest, SubagentRole } from "@fitz/protocol";
+import type { AgentEventEnvelope, AgentEventType, AgentQueueItem, AgentRunRecord, AgentRunRequest, SubagentRoleDefinition } from "@fitz/protocol";
 import { AGENT_PROTOCOL_VERSION } from "@fitz/protocol";
 import { OwnerFairQueue, type InferenceScheduler, type ScheduledStream } from "@fitz/inference-core";
 import type { AgentRuntime, AgentRuntimeEvent, AgentRuntimeRun } from "@fitz/agent-core";
@@ -73,8 +73,7 @@ export class AgentRunCoordinator {
    */
   async runSubagent(input: {
     parentRunId: string;
-    role: SubagentRole;
-    toolCallBudget: number;
+    role: SubagentRoleDefinition;
     request: Omit<AgentRunRequest, "delegation" | "sessionId">;
     ownerUserId?: string;
     signal?: AbortSignal;
@@ -88,9 +87,10 @@ export class AgentRunCoordinator {
     try {
       if (!this.#accepting) throw new AgentCoordinatorClosedError();
       if (input.signal?.aborted) throw abortError();
+      const { enabled: _enabled, ...roleSnapshot } = input.role;
       const request: AgentRunRequest = {
         ...input.request,
-        delegation: { role: input.role, parentRunId: input.parentRunId, toolCallBudget: input.toolCallBudget },
+        delegation: { role: roleSnapshot, parentRunId: input.parentRunId },
       };
       const id = randomUUID();
       const now = new Date().toISOString();
@@ -104,7 +104,7 @@ export class AgentRunCoordinator {
         ...(input.ownerUserId ? { ownerUserId: input.ownerUserId } : {}),
       };
       this.store.createAgentRun(run, request);
-      this.#emit(id, "run.created", { routeId: request.model, subagent: true, role: input.role, parentRunId: input.parentRunId });
+      this.#emit(id, "run.created", { routeId: request.model, subagent: true, roleId: input.role.id, roleVersion: input.role.version, parentRunId: input.parentRunId });
       job = { id, request, stream: undefined, cancelRequested: false, shutdownRequested: false, ...(input.ownerUserId ? { ownerUserId: input.ownerUserId } : {}) };
       this.#activeSubagents.set(id, job);
       const cancel = () => { job!.cancelRequested = true; job!.stream?.cancel(); };

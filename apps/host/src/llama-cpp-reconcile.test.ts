@@ -31,15 +31,45 @@ describe("llama.cpp model reconciliation", () => {
 
     const added = reconciler.reconcile();
     expect(added.registered).toHaveLength(1);
-    expect(store.listRecipes()).toEqual([expect.objectContaining({ playbookId: "llama.cpp", modelId: "Model-Q5_K_M" })]);
+    expect(store.listRecipes()).toEqual([expect.objectContaining({
+      playbookId: "llama.cpp",
+      modelId: "Model-Q5_K_M",
+      capabilities: expect.objectContaining({ maxConcurrentGenerations: 3 }),
+      agentTopology: { sharedContextTokens: 32_768, workers: { count: 0, contextTokens: 15_360 } },
+    })]);
     expect(store.listRecipes()[0]!.lifecycle).toMatchObject({ evictionPolicy: "never", idleTtlSeconds: 0 });
     expect(store.listRecipes()[0]!.configuration.args).toContain("/opt/fitz/llm/models/gguf/org/repo/mmproj-Model-BF16.gguf");
     expect(store.listRecipes()[0]!.configuration).toMatchObject({ runtime: "linux-managed", runtimeId: "inference-linux" });
+    expect(store.listRecipes()[0]!.configuration.args).toEqual(expect.arrayContaining(["--parallel", "3", "--ctx-size", "32768"]));
 
     rmSync(model);
     expect(reconciler.reconcile().unregistered).toEqual(added.registered);
     expect(store.listRecipes()).toEqual([]);
     expect(root).toBeTruthy();
+    store.close();
+  });
+
+  it("preserves user worker allocation while refreshing managed llama.cpp settings", () => {
+    const { store, paths } = fixture();
+    const model = join(paths.ggufModelRoot, "org", "repo", "Model-Q5_K_M.gguf");
+    mkdirSync(dirname(model), { recursive: true }); writeFileSync(model, "payload");
+    const reconciler = new LlamaCppModelReconciler(store, paths);
+    reconciler.reconcile();
+    const current = store.listRecipes()[0]!;
+    store.upsertRecipe({
+      ...current,
+      displayName: "My llama",
+      agentTopology: { sharedContextTokens: 32_768, workers: { count: 1, contextTokens: 8_192 } },
+    });
+
+    reconciler.reconcile();
+
+    expect(store.listRecipes()[0]).toMatchObject({
+      displayName: "My llama",
+      capabilities: { maxConcurrentGenerations: 3 },
+      agentTopology: { sharedContextTokens: 32_768, workers: { count: 1, contextTokens: 8_192 } },
+    });
+    expect(store.listRecipes()[0]!.configuration.args).toEqual(expect.arrayContaining(["--parallel", "3", "--ctx-size", "32768"]));
     store.close();
   });
 

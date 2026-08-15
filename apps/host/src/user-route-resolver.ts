@@ -1,4 +1,4 @@
-import type { Route } from "@fitz/protocol";
+import { resolveRecipeAgentTopology, type Route } from "@fitz/protocol";
 import { RecipeNotFoundError, RouteNotFoundError, type ResolvedRoute, type RouteResolver } from "@fitz/inference-core";
 import type { SqliteStore } from "@fitz/storage";
 
@@ -75,7 +75,7 @@ export class UserRouteResolver {
   }
 
   contextTokens(routeId: string, ownerUserId = LOCAL_OWNER_ID, internal = false): number {
-    return this.resolve(routeId, ownerUserId, internal).recipe.contextTokens;
+    return resolveRecipeAgentTopology(this.resolve(routeId, ownerUserId, internal).recipe).orchestratorContextTokens;
   }
 
   connections(ownerUserId: string): ConsumerConnectionRegistration[] {

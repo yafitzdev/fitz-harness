@@ -6,7 +6,6 @@ import type {
   AgentRunRecord,
   AgentRunRequest,
   ProjectRecord,
-  PairingCodeRecord,
   SessionRecord,
   ToolApprovalRecord,
   ToolPolicyRecord,
@@ -31,6 +30,8 @@ import type {
   GpuWorkRecord,
   RequestUsageRecord,
   UsageReport,
+  UserUsageSummary,
+  SubagentRoleDefinition,
 } from "@fitz/protocol";
 import { MIGRATIONS } from "./migrations.js";
 import { SqliteAgentRunStore } from "./sqlite-agent-run-store.js";
@@ -50,6 +51,12 @@ import {
 export type { MediaJobEventEnvelope } from "./sqlite-media-store.js";
 export type { ArtifactStorageEntry, ArtifactStorageRef, LegacyArtifactContent } from "./sqlite-workspace-store.js";
 
+export interface SettingsBackend {
+  get<T>(key: string): T | undefined;
+  set(key: string, value: unknown): void;
+  delete(key: string): boolean;
+}
+
 export class SqliteStore {
   readonly #database: DatabaseSync;
   readonly #agentRuns: SqliteAgentRunStore;
@@ -60,6 +67,7 @@ export class SqliteStore {
   readonly #safety: SqliteSafetyStore;
   readonly #settings: SqliteSettingsStore;
   readonly #workspace: SqliteWorkspaceStore;
+  #settingsBackend: SettingsBackend | undefined;
 
   constructor(path: string) {
     this.#database = new DatabaseSync(path);
@@ -127,6 +135,8 @@ export class SqliteStore {
   deleteRecipe(recipeId: string): void { this.#configuration.deleteRecipe(recipeId); }
   listRecipes(): Recipe[] { return this.#configuration.listRecipes(); }
   listRoutes(): Route[] { return this.#configuration.listRoutes(); }
+  listSubagentRoles(enabledOnly = true): SubagentRoleDefinition[] { return this.#configuration.listSubagentRoles(enabledOnly); }
+  getSubagentRole(id: string, version?: number): SubagentRoleDefinition | undefined { return this.#configuration.getSubagentRole(id, version); }
 
   appendLifecycleEvent(event: InferenceLifecycleEvent): void { this.#inferenceTelemetry.appendLifecycleEvent(event); }
   lifecycleEventsAfter(sequence: number, limit = 500): InferenceLifecycleEvent[] { return this.#inferenceTelemetry.lifecycleEventsAfter(sequence, limit); }
@@ -140,6 +150,7 @@ export class SqliteStore {
   recordRequestUsage(record: RequestUsageRecord): void { this.#inferenceTelemetry.recordRequestUsage(record); }
   listRequestUsageForRun(runId: string): RequestUsageRecord[] { return this.#inferenceTelemetry.listRequestUsageForRun(runId); }
   usageReport(options: { from: string; to: string; bucket: "hour" | "day"; ownerUserId?: string }): UsageReport { return this.#inferenceTelemetry.usageReport(options); }
+  userUsageSummaries(options: { from: string; to: string }): UserUsageSummary[] { return this.#inferenceTelemetry.userUsageSummaries(options); }
 
   createMediaJob(job: MediaJobRecord): void {
     this.#media.createJob(job);
@@ -196,8 +207,6 @@ export class SqliteStore {
   getUserQuota(userId: string): UserQuota | undefined { return this.#identity.getUserQuota(userId); }
   appendAuditEvent(event: AuditEventRecord): void { this.#identity.appendAuditEvent(event); }
   listAuditEvents(limit = 100): AuditEventRecord[] { return this.#identity.listAuditEvents(limit); }
-  createPairingCode(record: PairingCodeRecord, codeHash: string): void { this.#identity.createPairingCode(record, codeHash); }
-  consumePairingCode(codeHash: string, timestamp: string): UserRecord["role"] | undefined { return this.#identity.consumePairingCode(codeHash, timestamp); }
 
   createAgentRun(run: AgentRunRecord, request?: AgentRunRequest, resumeOfRunId?: string): void {
     this.#agentRuns.createRun(run, request, resumeOfRunId);
@@ -277,9 +286,22 @@ export class SqliteStore {
   markTrashRestored(id: string, restoredAt: string): boolean { return this.#safety.markTrashRestored(id, restoredAt); }
   deleteTrashEntry(id: string): boolean { return this.#safety.deleteTrashEntry(id); }
   deleteTrashEntriesBefore(before: string, workspaceRoot?: string): number { return this.#safety.deleteTrashEntriesBefore(before, workspaceRoot); }
-  setSetting(key: string, value: unknown): void { this.#settings.set(key, value); }
-  getSetting<T>(key: string): T | undefined { return this.#settings.get<T>(key); }
-  deleteSetting(key: string): boolean { return this.#settings.delete(key); }
+  /** Switches non-secret settings to the canonical JSON backend after legacy
+   * SQLite values have been migrated. Security material always remains in the
+   * private database. */
+  useSettingsBackend(backend: SettingsBackend): void { this.#settingsBackend = backend; }
+  listLegacySettings(): Record<string, unknown> { return this.#settings.list(); }
+  setSetting(key: string, value: unknown): void { this.#settingsTarget(key).set(key, value); }
+  getSetting<T>(key: string): T | undefined { return this.#settingsTarget(key).get<T>(key); }
+  deleteSetting(key: string): boolean { return this.#settingsTarget(key).delete(key); }
+
+  #settingsTarget(key: string): SettingsBackend {
+    // These keys are normalized runtime records retained for compatibility
+    // until they receive dedicated tables. They are not app settings and must
+    // never be copied into the human/LLM-editable canonical configuration.
+    const sqliteRecord = key === "consumerConnections" || key === "consumerCloudRoutes";
+    return key.startsWith("security.") || sqliteRecord ? this.#settings : this.#settingsBackend ?? this.#settings;
+  }
 
   async backupTo(path: string): Promise<number> {
     return backup(this.#database, path);

@@ -52,6 +52,17 @@ export interface RecipeLifecyclePolicy {
   minimumResidencySeconds: number;
 }
 
+/** Recipe-owned local agent capacity. The main agent is implicit; only its
+ * homogeneous worker pool is user-configurable. `sharedContextTokens` is an
+ * engine/runtime capability and is displayed read-only by the recipe editor. */
+export interface RecipeAgentTopology {
+  sharedContextTokens: number;
+  workers: {
+    count: number;
+    contextTokens: number;
+  };
+}
+
 export interface Recipe {
   id: string;
   playbookId: string;
@@ -62,6 +73,7 @@ export interface Recipe {
   capabilities: EngineCapabilities;
   lifecycle: RecipeLifecyclePolicy;
   configuration: Readonly<Record<string, unknown>>;
+  agentTopology?: RecipeAgentTopology;
 }
 
 export type EngineConnectionMode = "managed" | "external";

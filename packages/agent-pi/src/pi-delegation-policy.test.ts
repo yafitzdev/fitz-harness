@@ -5,7 +5,7 @@ describe("PiDelegationPolicy", () => {
   it("uses Fast children for repository familiarization and releases parent work after fan-out", () => {
     const policy = new PiDelegationPolicy(
       { model: "smart", messages: [{ role: "user", content: "Get familiar with this codebase." }] },
-      { fast: 3, smart: 1 },
+      { default: 0, fast: 3, smart: 1 },
     );
 
     expect(policy.initialRoutes).toEqual(["fast", "fast", "fast"]);
@@ -28,7 +28,7 @@ describe("PiDelegationPolicy", () => {
   it("enforces explicit Fast fan-out without consuming Smart peer capacity", () => {
     const policy = new PiDelegationPolicy(
       { model: "smart", messages: [{ role: "user", content: "Launch two fast researcher subagents." }] },
-      { fast: 3, smart: 1 },
+      { default: 0, fast: 3, smart: 1 },
     );
     expect(policy.initialRoutes).toEqual(["fast", "fast"]);
     expect(policy.admissionReason(call("wrong-route", "subagent", { route: "smart" }))).toContain("2 Fast subagents");
@@ -38,7 +38,7 @@ describe("PiDelegationPolicy", () => {
   it("does not make an explicitly requested Smart peer part of initial fan-out", () => {
     const policy = new PiDelegationPolicy(
       { model: "smart", messages: [{ role: "user", content: "Launch one smart subagent for a concurrent task." }] },
-      { fast: 3, smart: 1 },
+      { default: 0, fast: 3, smart: 1 },
     );
     expect(policy.requiresInitialFanout).toBe(false);
     expect(policy.initialRoutes).toEqual([]);
@@ -47,7 +47,7 @@ describe("PiDelegationPolicy", () => {
   it("counts each admitted child tool call and emits one budget steering message", () => {
     const policy = new PiDelegationPolicy({
       model: "fast",
-      delegation: { role: "researcher", parentRunId: "parent", toolCallBudget: 2 },
+      delegation: { role: role(2), parentRunId: "parent" },
       messages: [{ role: "user", content: "Research this area." }],
     }, undefined);
 
@@ -62,13 +62,27 @@ describe("PiDelegationPolicy", () => {
   it("does not let duplicate tool-call ids satisfy initial fan-out twice", () => {
     const policy = new PiDelegationPolicy(
       { model: "fast", messages: [{ role: "user", content: "Launch two researcher subagents." }] },
-      { fast: 2, smart: 0 },
+      { default: 0, fast: 2, smart: 0 },
     );
     expect(policy.admissionReason(call("same", "subagent", { route: "fast" }))).toBeUndefined();
     expect(policy.admissionReason(call("same", "subagent", { route: "fast" }))).toBeUndefined();
     expect(policy.initialFanoutComplete).toBe(false);
     expect(policy.retryPrompt()).toContain("1 Fast subagent");
     expect(policy.admissionReason(call("other", "subagent", { route: "fast" }))).toBeUndefined();
+    expect(policy.initialFanoutComplete).toBe(true);
+  });
+
+  it("requires two local workers when a Default orchestrator explicitly asks for them", () => {
+    const policy = new PiDelegationPolicy(
+      { model: "default", messages: [{ role: "user", content: "Use two workers for independent parts of this task." }] },
+      { default: 2, fast: 0, smart: 0 },
+    );
+
+    expect(policy.initialRoutes).toEqual(["default", "default"]);
+    expect(policy.initialPromptInstruction()).toContain("2 local workers");
+    expect(policy.admissionReason(call("read-early", "read", { path: "README.md" }))).toContain("Delegation must happen first");
+    expect(policy.admissionReason(call("local-1", "subagent", { route: "default" }))).toBeUndefined();
+    expect(policy.admissionReason(call("local-2", "subagent", { route: "default" }))).toBeUndefined();
     expect(policy.initialFanoutComplete).toBe(true);
   });
 
@@ -79,4 +93,12 @@ describe("PiDelegationPolicy", () => {
 
 function call(toolCallId: string, toolName: string, input: unknown) {
   return { toolCallId, toolName, input };
+}
+
+function role(toolCallBudget: number) {
+  return {
+    id: "researcher", version: 1, displayName: "Researcher", dispatchDescription: "Research",
+    systemInstructions: "Investigate", accessMode: "read-only" as const, toolCallBudget,
+    maxOutputTokens: 4096, outputContract: "Report findings",
+  };
 }

@@ -558,4 +558,53 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX idx_sessions_standalone ON sessions(updated_at DESC) WHERE project_id IS NULL;
     `,
   },
+  {
+    version: 20,
+    // Recipes own anonymous worker capacity. Dispatch behavior is a separate,
+    // system-owned and versioned registry so every child run can snapshot the
+    // exact instructions and permissions it received.
+    sql: `
+      CREATE TABLE subagent_role_definitions (
+        id TEXT NOT NULL,
+        version INTEGER NOT NULL CHECK (version > 0),
+        display_name TEXT NOT NULL,
+        dispatch_description TEXT NOT NULL,
+        system_instructions TEXT NOT NULL,
+        access_mode TEXT NOT NULL CHECK (access_mode IN ('full', 'read-only')),
+        tool_call_budget INTEGER NOT NULL CHECK (tool_call_budget > 0),
+        max_output_tokens INTEGER NOT NULL CHECK (max_output_tokens > 0),
+        output_contract TEXT NOT NULL,
+        enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (id, version)
+      );
+      CREATE UNIQUE INDEX idx_subagent_role_enabled
+        ON subagent_role_definitions(id) WHERE enabled = 1;
+
+      INSERT INTO subagent_role_definitions VALUES (
+        'implementer', 1, 'Implementer',
+        'Use for a bounded implementation task that should modify files and verify the result.',
+        'Implement the assigned change. Inspect before editing, preserve unrelated work, stay inside the requested scope, and verify the result in proportion to risk.',
+        'full', 40, 10000,
+        'Return a concise report with the outcome, files changed, verification performed, and remaining risks.',
+        1, datetime('now')
+      );
+      INSERT INTO subagent_role_definitions VALUES (
+        'researcher', 1, 'Researcher',
+        'Use for evidence gathering, repository investigation, or a focused technical question.',
+        'Investigate the assigned question without modifying files. Inspect the highest-value sources first, distinguish evidence from inference, and stop exploring once the question can be answered reliably.',
+        'read-only', 20, 4096,
+        'Return a compact synthesis with precise file or source references and any unresolved uncertainty.',
+        1, datetime('now')
+      );
+      INSERT INTO subagent_role_definitions VALUES (
+        'reviewer', 1, 'Reviewer',
+        'Use for an independent review of correctness, regressions, security, or test coverage.',
+        'Independently inspect and critique the assigned scope without modifying files. Prioritize concrete correctness, security, and regression risks over stylistic preferences.',
+        'read-only', 16, 4096,
+        'Return findings ordered by severity with precise file references, verification performed, and a clear statement when no actionable issue is found.',
+        1, datetime('now')
+      );
+    `,
+  },
 ] as const;

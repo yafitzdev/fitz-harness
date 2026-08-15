@@ -26,6 +26,12 @@ describe("NInferEngineAdapter launch contract", () => {
         "19001",
         "--max-context",
         "100000",
+        "--max-concurrency",
+        "1",
+        "--max-pending-requests",
+        "16",
+        "--pending-timeout-ms",
+        "30000",
         "--spec",
         "mtp",
         "--draft-tokens",
@@ -35,6 +41,30 @@ describe("NInferEngineAdapter launch contract", () => {
       ]),
     );
     expect(spec.args).not.toContain("--api-key");
+  });
+
+  it("renders concurrent vision residency as fixed startup arguments", async () => {
+    const recipe = buildCurrentNInferRecipe(
+      "qwen38-vision",
+      "qwen3.8-27b",
+      "/models/ninfer/qwen3_8_27b.ninfer",
+      3,
+      "/engines/ninfer/build/apps/ninfer-serve",
+      { maxContext: 16_384, kvCapacity: "auto", maxConcurrency: 2, vision: true },
+    );
+    const spec = await new NInferEngineAdapter({ validatePaths: false }).buildLaunchSpec(recipe, { host: "127.0.0.1", port: 19_001 });
+
+    expect(validateNInferConfiguration(recipe)).toEqual([]);
+    expect(recipe.capabilities).toMatchObject({
+      maxConcurrentGenerations: 2,
+      modalities: { input: ["text", "image"], output: [] },
+    });
+    expect(spec.args).toEqual(expect.arrayContaining([
+      "--max-context", "16384",
+      "--kv-capacity", "auto",
+      "--max-concurrency", "2",
+      "--vision",
+    ]));
   });
 
   it("rejects extra arguments that override Fitz-owned process controls", () => {

@@ -4,18 +4,31 @@ import type { MediaModality } from "./domain.js";
 export const AGENT_PROTOCOL_VERSION = "1" as const;
 export type AgentRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
 export type ToolAccessMode = "full" | "ask" | "read-only";
-export type SubagentRole = "worker" | "reviewer" | "researcher";
 /** User-selected work depth. This is independent from the output-token limit. */
 export type AgentEffort = "light" | "normal" | "high";
+
+/** System-owned, versioned dispatch behavior. Recipes configure anonymous
+ * worker capacity; the orchestrator selects one of these roles per dispatch. */
+export interface SubagentRoleDefinition {
+  id: string;
+  version: number;
+  displayName: string;
+  dispatchDescription: string;
+  systemInstructions: string;
+  accessMode: Exclude<ToolAccessMode, "ask">;
+  toolCallBudget: number;
+  maxOutputTokens: number;
+  outputContract: string;
+  enabled: boolean;
+}
+
+export type SubagentRoleSnapshot = Omit<SubagentRoleDefinition, "enabled">;
 
 /** Internal correlation for a delegated run. Child runs are deliberately
  * isolated from the parent conversation and cannot delegate recursively. */
 export interface AgentDelegation {
-  role: SubagentRole;
+  role: SubagentRoleSnapshot;
   parentRunId: string;
-  /** Maximum tool attempts for this isolated child turn. The runtime blocks
-   * further calls with an instruction to return the report immediately. */
-  toolCallBudget: number;
 }
 
 export type AgentResumeSafety = "safe" | "review-required";

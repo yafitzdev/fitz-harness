@@ -672,7 +672,7 @@ describe("PiAgentRuntime", () => {
     for await (const event of runtime.run({
       model: "default",
       accessMode: "read-only",
-      delegation: { role: "researcher", parentRunId: "parent", toolCallBudget: 2 },
+      delegation: { role: role(2), parentRunId: "parent" },
       messages: [{ role: "user", content: "research" }],
     })) events.push(event);
 
@@ -684,7 +684,7 @@ describe("PiAgentRuntime", () => {
     let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
     const runtime = new PiAgentRuntime({
       customTools: () => [{ ...createTrashTool(async () => ({ moved: 0, entries: [] })), name: "subagent" }],
-      subagentBudget: () => ({ smart: 1, fast: 3 }),
+      subagentBudget: () => ({ default: 0, smart: 1, fast: 3 }),
       toolPolicy: async () => ({ action: "allow" }),
       createSession: async (options) => ({
         subscribe: (next) => { listener = next; return () => undefined; },
@@ -748,7 +748,7 @@ describe("PiAgentRuntime", () => {
     });
     const runtime = new PiAgentRuntime({
       customTools: () => [{ ...createTrashTool(async () => ({ moved: 0, entries: [] })), name: "subagent" }],
-      subagentBudget: () => ({ smart: 0, fast: 2 }),
+      subagentBudget: () => ({ default: 0, smart: 0, fast: 2 }),
       createSession: async () => ({
         subscribe: (next) => { listener = next; return () => undefined; },
         prompt,
@@ -784,7 +784,7 @@ describe("PiAgentRuntime", () => {
     for await (const _event of runtime.run({
       model: "subagent",
       maxTokens: 4_096,
-      delegation: { role: "researcher", parentRunId: "parent", toolCallBudget: 24 },
+      delegation: { role: role(24), parentRunId: "parent" },
       messages: [{ role: "user", content: "research" }],
     })) { /* consume */ }
   });
@@ -940,4 +940,12 @@ function sse(response: ServerResponse, value: Record<string, any>): void {
     ...value,
     ...(usage ? { usage } : {}),
   })}\n\n`);
+}
+
+function role(toolCallBudget: number) {
+  return {
+    id: "researcher", version: 1, displayName: "Researcher", dispatchDescription: "Research",
+    systemInstructions: "Investigate", accessMode: "read-only" as const, toolCallBudget,
+    maxOutputTokens: 4096, outputContract: "Report findings",
+  };
 }

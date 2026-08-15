@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SqliteStore } from "@fitz/storage";
-import { contextTokensForRoute } from "./route-context.js";
+import { contextTokensForAgentRequest, contextTokensForRoute } from "./route-context.js";
 
 function recipe(store: SqliteStore, id: string, contextTokens: number): void {
   store.upsertRecipe({
@@ -55,4 +55,36 @@ describe("contextTokensForRoute", () => {
       store.close();
     }
   });
+
+  it("uses the recipe topology for a 128K local orchestrator and 64K delegated workers", () => {
+    const store = SqliteStore.memory();
+    try {
+      recipe(store, "orchestrator", 262_144);
+      const current = store.listRecipes().find((candidate) => candidate.id === "orchestrator")!;
+      store.upsertRecipe({
+        ...current,
+        capabilities: { ...current.capabilities, toolCalls: true, maxConcurrentGenerations: 3 },
+        configuration: {},
+        agentTopology: { sharedContextTokens: 256_000, workers: { count: 2, contextTokens: 64_000 } },
+      });
+      store.upsertRoute({ id: "default", displayName: "Default", recipeId: "orchestrator", enabled: true, isDefault: true });
+
+      expect(contextTokensForAgentRequest(store, {
+        model: "default",
+        messages: [{ role: "user", content: "coordinate" }],
+      })).toBe(128_000);
+      expect(contextTokensForAgentRequest(store, {
+        model: "default",
+        delegation: { role: roleSnapshot(store, "implementer"), parentRunId: "parent" },
+        messages: [{ role: "user", content: "implement" }],
+      })).toBe(64_000);
+    } finally {
+      store.close();
+    }
+  });
 });
+
+function roleSnapshot(store: SqliteStore, id: string) {
+  const { enabled: _enabled, ...snapshot } = store.getSubagentRole(id)!;
+  return snapshot;
+}

@@ -52,7 +52,7 @@ export interface PiSessionSnapshot { title: string; status: string; updatedAt: s
  * implementation; the pi package owns the contract and the tool that uses it.
  */
 export type PiSessionReader = (sessionId: string, options?: { after?: number; limit?: number }) => Promise<PiSessionSnapshot | undefined>;
-export type SubagentRoute = "fast" | "smart";
+export type SubagentRoute = "default" | "fast" | "smart";
 export type SubagentRouteBudget = Readonly<Record<SubagentRoute, number>>;
 export type PiSessionFactory = (options: {
   cwd: string;
@@ -181,7 +181,7 @@ export class PiAgentRuntime implements AgentRuntime {
     const hasSubagentTool = customTools.some((tool) => tool.name === "subagent");
     const sessionTask = (async () => {
       if (delegation.requiresInitialFanout && !hasSubagentTool) {
-        throw new Error("Subagents are unavailable for the selected route. Choose a configured Fast or Smart cloud route in Connections first.");
+        throw new Error("Subagents are unavailable for the selected route. Select a local recipe with worker capacity or configure a Fast or Smart cloud route first.");
       }
       const created = await this.#createSession({
         cwd,

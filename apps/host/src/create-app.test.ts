@@ -7,7 +7,6 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import { createHost } from "./create-app.js";
 import { ModelCatalogService } from "./model-catalog.js";
-import { TailscaleMonitor, TailscaleServeManager, WindowsStartupManager } from "@fitz/connectivity";
 import { SecurityService } from "@fitz/security";
 import { ArtifactRepository, LocalBlobStore, SqliteStore, StorageDurabilityService } from "@fitz/storage";
 import { FakeEngineAdapter } from "@fitz/engine-fake";
@@ -153,7 +152,7 @@ describe("Fitz host", () => {
   it("returns an immediate OpenAI-compatible 429 when the GPU lane is saturated", async () => {
     const runtime = createHost({
       fakeAdapter: new FakeEngineAdapter({ tokenDelayMs: 100 }),
-      schedulerOptions: { gpuQueueCapacity: 1 },
+      schedulerOptions: { gpuConcurrency: 1, gpuQueueCapacity: 1 },
     });
     for (let attempt = 0; attempt < 50 && runtime.lifecycle.snapshot().state !== "READY"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
     const active = runtime.scheduler.enqueue("default", { messages: [{ role: "user", content: "active" }] });
@@ -180,7 +179,7 @@ describe("Fitz host", () => {
   it("saves a Default change immediately even when its background warm cannot enter the full queue", async () => {
     const runtime = createHost({
       fakeAdapter: new FakeEngineAdapter({ tokenDelayMs: 100 }),
-      schedulerOptions: { gpuQueueCapacity: 1 },
+      schedulerOptions: { gpuConcurrency: 1, gpuQueueCapacity: 1 },
     });
     for (let attempt = 0; attempt < 50 && runtime.lifecycle.snapshot().state !== "READY"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
     const active = runtime.scheduler.enqueue("default", { messages: [{ role: "user", content: "active" }] });
@@ -228,6 +227,62 @@ describe("Fitz host", () => {
 
       expect(responses.map((response) => response.statusCode)).toEqual([200, 200, 200]);
       expect(adapter.maximumActive).toBe(1);
+      expect(adapter.starts).toHaveLength(1);
+    } finally { await runtime.app.close(); }
+  });
+
+  it("admits three local generations when the selected recipe opts into C3", async () => {
+    class CountingAdapter extends FakeEngineAdapter {
+      active = 0;
+      maximumActive = 0;
+      override async *streamChat(...args: Parameters<FakeEngineAdapter["streamChat"]>) {
+        this.active += 1;
+        this.maximumActive = Math.max(this.maximumActive, this.active);
+        try { yield* super.streamChat(...args); }
+        finally { this.active -= 1; }
+      }
+    }
+    const store = SqliteStore.memory();
+    store.upsertRecipe({
+      id: "fake-c3",
+      playbookId: "test",
+      displayName: "Fake C3",
+      adapter: "fake",
+      modelId: "fake-c3",
+      contextTokens: 128_000,
+      capabilities: { chatCompletions: true, streaming: true, toolCalls: true, responseFormat: false, minP: false, maxConcurrentGenerations: 3 },
+      lifecycle: { loadPolicy: "onDemand", evictionPolicy: "never", idleTtlSeconds: 0, minimumResidencySeconds: 0 },
+      configuration: {},
+    });
+    store.upsertRoute({ id: "default", displayName: "Local", recipeId: "fake-c3", enabled: true, isDefault: true });
+    const adapter = new CountingAdapter({ tokenDelayMs: 10 });
+    const runtime = createHost({
+      store,
+      fakeAdapter: adapter,
+      resourceMonitor: {
+        snapshot: async () => ({
+          capturedAt: new Date(0).toISOString(),
+          totalRamMiB: 64_000,
+          freeRamMiB: 32_000,
+          totalVramMiB: 32_000,
+          usedVramMiB: 0,
+          freeVramMiB: 32_000,
+          gpuTelemetryAvailable: true,
+        }),
+      },
+    });
+    try {
+      for (let attempt = 0; attempt < 50 && runtime.lifecycle.snapshot().state !== "READY"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+      const complete = (content: string) => runtime.app.inject({
+        method: "POST",
+        url: "/v1/chat/completions",
+        payload: { model: "default", stream: false, messages: [{ role: "user", content }] },
+      });
+
+      const responses = await Promise.all([complete("one"), complete("two"), complete("three")]);
+
+      expect(responses.map((response) => response.statusCode)).toEqual([200, 200, 200]);
+      expect(adapter.maximumActive).toBe(3);
       expect(adapter.starts).toHaveLength(1);
     } finally { await runtime.app.close(); }
   });
@@ -499,6 +554,46 @@ describe("Fitz host", () => {
     expect(response.statusCode).toBe(200);
     expect(status.json().recipes).toContainEqual(expect.objectContaining({ id: "custom-recipe", playbookId: "custom-playbook" }));
     await runtime.app.close();
+  });
+
+  it("persists a recipe-owned worker pool and derives the NInfer main context", async () => {
+    const runtime = createHost();
+    try {
+      const response = await runtime.app.inject({
+        method: "PUT",
+        url: "/api/v1/management/recipes/qwen-team",
+        payload: {
+          playbookId: "ninfer",
+          displayName: "Qwen Team",
+          adapter: "ninfer",
+          modelId: "qwen3.8-27b",
+          contextTokens: 262_144,
+          capabilities: { chatCompletions: true, streaming: true, toolCalls: true, responseFormat: false, minP: false, maxConcurrentGenerations: 3 },
+          lifecycle: { loadPolicy: "onDemand", evictionPolicy: "never", idleTtlSeconds: 0, minimumResidencySeconds: 0 },
+          configuration: { executable: "ninfer-serve", artifact: "qwen.ninfer", maxContext: 1, maxConcurrency: 3 },
+          agentTopology: { sharedContextTokens: 272_320, workers: { count: 2, contextTokens: 64_000 } },
+        },
+      });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json().data).toMatchObject({
+        contextTokens: 262_144,
+        configuration: { maxContext: 144_320 },
+        agentTopology: { sharedContextTokens: 272_320, workers: { count: 2, contextTokens: 64_000 } },
+      });
+
+      const invalid = await runtime.app.inject({
+        method: "PUT",
+        url: "/api/v1/management/recipes/qwen-overcommitted",
+        payload: {
+          ...response.json().data,
+          agentTopology: { sharedContextTokens: 100_000, workers: { count: 2, contextTokens: 64_000 } },
+        },
+      });
+      expect(invalid.statusCode).toBe(400);
+      expect(invalid.json().error.message, invalid.body).toContain("leave at least 2,048");
+    } finally {
+      await runtime.app.close();
+    }
   });
 
   it("tests an exact recipe without changing fixed route assignments", async () => {
@@ -818,50 +913,12 @@ describe("Fitz host", () => {
     await runtime.app.close();
   });
 
-  it("onboards private Tailscale Serve access through administrator endpoints", async () => {
-    const calls: string[][] = [];
-    const monitor = new TailscaleMonitor(async () => ({ stdout: JSON.stringify({ BackendState: "Running", Self: { DNSName: "fitz.tail.test.", TailscaleIPs: ["100.64.0.1"] } }) }));
-    const serve = new TailscaleServeManager(async (args) => { calls.push([...args]); return { stdout: JSON.stringify({ Web: { "fitz.tail.test:443": {} } }) }; });
-    const store = SqliteStore.memory(); const security = new SecurityService(store, "remote-pepper"); const admin = security.createUser("Admin", "administrator"); const token = security.issueDevice(admin.id, "Console").token;
-    const runtime = createHost({ store, security, authMode: "required", tailscaleMonitor: monitor, tailscaleServeManager: serve, localPort: 9999 });
-    const headers = { authorization: `Bearer ${token}` };
-    const status = await runtime.app.inject({ method: "GET", url: "/api/v1/management/connectivity/status", headers });
-    const enabled = await runtime.app.inject({ method: "POST", url: "/api/v1/management/connectivity/tailscale-serve", headers, payload: {} });
-    const disabled = await runtime.app.inject({ method: "DELETE", url: "/api/v1/management/connectivity/tailscale-serve", headers });
-    expect(status.json().data).toEqual(expect.objectContaining({ tailscale: expect.objectContaining({ state: "connected", dnsName: "fitz.tail.test" }), serve: expect.objectContaining({ available: true }) }));
-    expect(enabled.statusCode).toBe(200); expect(disabled.statusCode).toBe(204);
-    expect(calls).toEqual([
-      ["serve", "status", "--json"],
-      ["serve", "--https=443", "--bg", "--yes", "http://127.0.0.1:9999"],
-      ["serve", "status", "--json"],
-      ["serve", "--https=443", "off"],
-    ]);
-    await runtime.app.close();
-  });
-
-  it("refuses to expose a host whose device authentication was explicitly disabled", async () => {
-    let invoked = false;
-    const serve = new TailscaleServeManager(async () => { invoked = true; return { stdout: "{}" }; });
-    const runtime = createHost({ authMode: "disabled", adminToken: "development-token", tailscaleServeManager: serve });
-    const response = await runtime.app.inject({ method: "POST", url: "/api/v1/management/connectivity/tailscale-serve", headers: { "x-fitz-admin-token": "development-token" }, payload: {} });
-    expect(response.statusCode).toBe(409); expect(invoked).toBe(false);
-    await runtime.app.close();
-  });
-
-  it("manages per-user Windows host startup independently of Default warm-up", async () => {
-    let configured = false;
-    const startup = new WindowsStartupManager("C:\\Fitz Host\\start-host.ps1", async (args) => {
-      if (args[0] === "add") configured = true;
-      if (args[0] === "delete") configured = false;
-      if (args[0] === "query" && !configured) throw new Error("not found");
-      return { stdout: configured ? "FitzCodexHost REG_SZ command" : "" };
-    }, "win32", () => true);
-    const runtime = createHost({ adminToken: "startup-test-token", startupManager: startup });
-    const headers = { "x-fitz-admin-token": "startup-test-token" };
-    expect((await runtime.app.inject({ method: "GET", url: "/api/v1/management/startup", headers })).json().data.configured).toBe(false);
-    expect((await runtime.app.inject({ method: "POST", url: "/api/v1/management/startup", headers })).json().data.configured).toBe(true);
-    expect(["PREPARING", "LOADING", "READY"]).toContain((await runtime.app.inject({ method: "GET", url: "/health" })).json().engine.state);
-    expect((await runtime.app.inject({ method: "DELETE", url: "/api/v1/management/startup", headers })).json().data.configured).toBe(false);
+  it("does not retain the removed Serve and standalone startup administration surfaces", async () => {
+    const runtime = createHost({ adminToken: "development-token" });
+    const headers = { "x-fitz-admin-token": "development-token" };
+    expect((await runtime.app.inject({ method: "GET", url: "/api/v1/management/connectivity/status", headers })).statusCode).toBe(404);
+    expect((await runtime.app.inject({ method: "POST", url: "/api/v1/management/connectivity/tailscale-serve", headers, payload: {} })).statusCode).toBe(404);
+    expect((await runtime.app.inject({ method: "GET", url: "/api/v1/management/startup", headers })).statusCode).toBe(404);
     await runtime.app.close();
   });
 
@@ -1248,32 +1305,7 @@ describe("Fitz host", () => {
     expect(compacted.statusCode).toBe(200); expect(compacted.json().data).toEqual(expect.objectContaining({ originalMessageCount: 1, estimatedContextTokens: expect.any(Number) })); expect(runtime.store.transcriptAfter(sessionId, 0).at(-1)).toEqual(expect.objectContaining({ kind: "compaction", content: expect.objectContaining({ manual: true, throughSequence: 1 }) })); await runtime.app.close();
   });
 
-  it("issues and redeems one-time pairing codes without pre-authentication", async () => {
-    const store = SqliteStore.memory(); const security = new SecurityService(store, "pairing-pepper"); const admin = security.createUser("Admin", "administrator"); const adminToken = security.issueDevice(admin.id, "Console").token; const runtime = createHost({ store, security, authMode: "required" }); const headers = { authorization: `Bearer ${adminToken}` };
-    const issued = await runtime.app.inject({ method: "POST", url: "/api/v1/management/pairing-codes", headers, payload: { intendedRole: "consumer", ttlSeconds: 60 } }); expect(issued.statusCode).toBe(201); const code = issued.json().data.code;
-    const redeemed = await runtime.app.inject({ method: "POST", url: "/api/v1/pairing/redeem", payload: { code, displayName: "Remote", deviceName: "Phone" } }); expect(redeemed.statusCode).toBe(201); const token = redeemed.json().data.token; const authenticated = await runtime.app.inject({ method: "GET", url: "/v1/models", headers: { authorization: `Bearer ${token}` } }); expect(authenticated.statusCode).toBe(200); expect(authenticated.json().data.map((model: { id: string }) => model.id)).toEqual(["default"]);
-    const replay = await runtime.app.inject({ method: "POST", url: "/api/v1/pairing/redeem", payload: { code, displayName: "Replay", deviceName: "Other" } }); expect(replay.statusCode).toBe(403); await runtime.app.close();
-  });
-
-  it("rejects private pairing through a Cloudflare-style proxy", async () => {
-    const store = SqliteStore.memory(); const security = new SecurityService(store, "private-pairing-pepper"); const admin = security.createUser("Admin", "administrator"); const adminToken = security.issueDevice(admin.id, "Console").token; const runtime = createHost({ store, security, authMode: "required" });
-    const issued = security.issuePairingCode("agent", 60);
-    const proxied = await runtime.app.inject({ method: "POST", url: "/api/v1/pairing/redeem", headers: { "cf-connecting-ip": "203.0.113.10", "cf-ray": "test" }, payload: { code: issued.code, displayName: "Remote", deviceName: "PC" } });
-    expect(proxied.statusCode).toBe(403);
-    const rawHostManagement = await runtime.app.inject({ method: "GET", url: "/api/v1/management/users", headers: { authorization: `Bearer ${adminToken}`, "cf-connecting-ip": "203.0.113.10" } });
-    expect(rawHostManagement.statusCode).toBe(403);
-    expect((await runtime.app.inject({ method: "GET", url: "/api/v1/me", headers: { authorization: `Bearer ${adminToken}` } })).statusCode).toBe(200);
-    await runtime.app.close();
-  });
-
-  it("keeps shared public pairing consumer-only", async () => {
-    const store = SqliteStore.memory(); const security = new SecurityService(store, "shared-pairing-pepper"); const admin = security.createUser("Admin", "administrator"); const adminToken = security.issueDevice(admin.id, "Console").token; const runtime = createHost({ store, security, authMode: "required" }); const headers = { authorization: `Bearer ${adminToken}` };
-    const privileged = await runtime.app.inject({ method: "POST", url: "/api/v1/management/pairing-codes", headers, payload: { intendedRole: "agent", ttlSeconds: 60 } });
-    expect((await runtime.app.inject({ method: "POST", url: "/api/v1/pairing/redeem-shared", payload: { code: privileged.json().data.code, displayName: "Remote", deviceName: "PC" } })).statusCode).toBe(403);
-    const consumer = await runtime.app.inject({ method: "POST", url: "/api/v1/management/pairing-codes", headers, payload: { intendedRole: "consumer", ttlSeconds: 60 } });
-    const paired = await runtime.app.inject({ method: "POST", url: "/api/v1/pairing/redeem-shared", payload: { code: consumer.json().data.code, displayName: "Friend", deviceName: "PC" } });
-    expect(paired.statusCode).toBe(201); expect(paired.json().data.user.role).toBe("consumer"); await runtime.app.close();
-  });
+  it("has no pairing-code onboarding API", async () => { const runtime = createHost({ adminToken: "test-token" }); const headers = { "x-fitz-admin-token": "test-token" }; expect((await runtime.app.inject({ method: "POST", url: "/api/v1/management/pairing-codes", headers, payload: {} })).statusCode).toBe(404); expect((await runtime.app.inject({ method: "POST", url: "/api/v1/pairing/redeem-shared", payload: {} })).statusCode).toBe(404); await runtime.app.close(); });
 
   it("bootstraps the first administrator only from a direct loopback request", async () => {
     const store = SqliteStore.memory(); const security = new SecurityService(store, "bootstrap-pepper"); const runtime = createHost({ store, security, authMode: "required" });

@@ -123,6 +123,13 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
       recipe.modelId,
       "--max-context",
       String(config.maxContext),
+      ...(config.kvCapacity !== undefined ? ["--kv-capacity", String(config.kvCapacity)] : []),
+      "--max-concurrency",
+      String(config.maxConcurrency),
+      "--max-pending-requests",
+      String(config.maxPendingRequests),
+      "--pending-timeout-ms",
+      String(config.pendingTimeoutMs),
       "--kv-dtype",
       config.kvDtype,
       "--temperature",
@@ -136,6 +143,7 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
       args.push("--spec", config.speculativeMode, "--draft-tokens", String(config.draftTokens));
     }
     if (config.lmHeadDraft) args.push("--lm-head-draft");
+    if (config.vision) args.push("--vision");
     if (!config.thinking) args.push("--no-thinking");
     if (config.requestLogJsonl) args.push("--request-log-jsonl", config.requestLogJsonl);
     if (config.extraArgs) args.push(...config.extraArgs);
@@ -337,15 +345,31 @@ export function buildCurrentNInferRecipe(
   artifact: string,
   draftTokens: number,
   executable: string,
+  options: {
+    maxContext?: number;
+    kvCapacity?: number | "auto";
+    maxConcurrency?: number;
+    maxPendingRequests?: number;
+    pendingTimeoutMs?: number;
+    vision?: boolean;
+  } = {},
 ): Recipe {
+  const maxContext = options.maxContext ?? 100_000;
+  const maxConcurrency = options.maxConcurrency ?? 1;
+  const vision = options.vision ?? false;
   const configuration: NInferRecipeConfiguration = {
     executable,
     artifact,
-    maxContext: 100_000,
+    maxContext,
+    ...(options.kvCapacity !== undefined ? { kvCapacity: options.kvCapacity } : {}),
+    maxConcurrency,
+    maxPendingRequests: options.maxPendingRequests ?? 16,
+    pendingTimeoutMs: options.pendingTimeoutMs ?? 30_000,
     kvDtype: "int8",
     speculativeMode: "mtp",
     draftTokens,
     lmHeadDraft: true,
+    vision,
     thinking: false,
     temperature: 0.4,
     topP: 0.9,
@@ -358,14 +382,15 @@ export function buildCurrentNInferRecipe(
     displayName: modelId,
     adapter: "ninfer",
     modelId,
-    contextTokens: 100_000,
+    contextTokens: maxContext,
     capabilities: {
       chatCompletions: true,
       streaming: true,
       toolCalls: true,
       responseFormat: false,
       minP: false,
-      maxConcurrentGenerations: 1,
+      maxConcurrentGenerations: maxConcurrency,
+      ...(vision ? { modalities: { input: ["text", "image"], output: [] } } : {}),
     },
     lifecycle: {
       loadPolicy: "onDemand",

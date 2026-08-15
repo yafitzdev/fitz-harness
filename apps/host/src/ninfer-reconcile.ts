@@ -1,47 +1,59 @@
 import type { SqliteStore } from "@fitz/storage";
-import { createNInferPlaybook } from "./ninfer-playbook.js";
+import { createNInferPlaybook, QWEN38_ORCHESTRATOR_RECIPE_ID } from "./ninfer-playbook.js";
 import type { NInferRuntimeLayout } from "./ninfer-runtime.js";
+import { compileRecipeAgentTopology } from "./recipe-agent-topology.js";
 
 /** Well-known media route ids created by `ensureMediaRoutes` (model-management-routes.ts).
  *  The ninfer boot reconcile deletes every route that is not a consumer route or
  *  a ninfer template; without this exemption the image/video/audio routes would
  *  be wiped at every boot and assignments lost (§5.2). */
 const NINFER_MEDIA_ROUTE_EXEMPTIONS = new Set(["image", "video", "audio"]);
+const RETIRED_NINFER_RECIPES = new Map([
+  ["qwen38-27b-mtp3-16k-vision-c2", QWEN38_ORCHESTRATOR_RECIPE_ID],
+  ["qwen38-27b-mtp3-128k-vision-c3", QWEN38_ORCHESTRATOR_RECIPE_ID],
+]);
 
-/** Runs before `createHost()` in ninfer mode: refreshes canonical executable and
- * artifact paths, prunes routes outside the current route contract, and
- * materializes the current templates. It deliberately contains no old-id or
- * old-schema aliases. */
+/** Runs before `createHost()` in ninfer mode: additively materializes current
+ * recipes, refreshes their canonical configuration, migrates explicitly retired
+ * recipe ids, and prunes routes outside the current route contract. */
 export function reconcileNInferConfiguration(store: SqliteStore, runtime: NInferRuntimeLayout): void {
   const playbook = createNInferPlaybook(runtime);
-  const templatesById = new Map(playbook.recipes.map((recipe) => [recipe.id, recipe]));
-  for (const recipe of store.listRecipes()) {
-    const template = templatesById.get(recipe.id);
-    const { runtimeDistribution: _discardedDistribution, ...currentConfiguration } = recipe.configuration;
-    const migratedConfiguration = template && recipe.adapter === "ninfer"
-      ? {
-          ...currentConfiguration,
-          executable: template.configuration.executable,
-          artifact: template.configuration.artifact,
-          requestLogJsonl: template.configuration.requestLogJsonl,
-          ...(template.configuration.runtimeId ? {
-            runtimeId: template.configuration.runtimeId,
-            engineRef: template.configuration.engineRef,
-            modelRef: template.configuration.modelRef,
-          } : {}),
-        }
-      : recipe.configuration;
-    const configurationChanged = migratedConfiguration !== recipe.configuration
-      && (migratedConfiguration.executable !== recipe.configuration.executable
-        || migratedConfiguration.artifact !== recipe.configuration.artifact
-        || migratedConfiguration.requestLogJsonl !== recipe.configuration.requestLogJsonl
-        || migratedConfiguration.runtimeId !== recipe.configuration.runtimeId
-        || migratedConfiguration.engineRef !== recipe.configuration.engineRef
-        || migratedConfiguration.modelRef !== recipe.configuration.modelRef
-        || "runtimeDistribution" in recipe.configuration);
-    if (configurationChanged) {
-      store.upsertRecipe({ ...recipe, configuration: migratedConfiguration });
+  const existingRecipes = store.listRecipes();
+  for (const template of playbook.recipes) {
+    const existing = existingRecipes.find((recipe) => recipe.id === template.id);
+    if (!existing) {
+      store.upsertRecipe(template);
+      continue;
     }
+    if (existing.adapter !== "ninfer") continue;
+    const {
+      runtimeDistribution: _discardedDistribution,
+      workerContextTokens: legacyWorkerContext,
+      maxLocalWorkers: legacyWorkerCount,
+      ...currentConfiguration
+    } = existing.configuration;
+    const migratedLegacyWorkers = Number.isSafeInteger(legacyWorkerCount) && Number(legacyWorkerCount) >= 0
+      && Number.isSafeInteger(legacyWorkerContext) && Number(legacyWorkerContext) > 0
+      ? { count: Number(legacyWorkerCount), contextTokens: Number(legacyWorkerContext) }
+      : undefined;
+    const agentTopology = template.agentTopology
+      ? {
+          sharedContextTokens: template.agentTopology.sharedContextTokens,
+          workers: existing.agentTopology?.workers ?? migratedLegacyWorkers ?? template.agentTopology.workers,
+        }
+      : existing.agentTopology;
+    store.upsertRecipe(compileRecipeAgentTopology({
+      ...existing,
+      playbookId: template.playbookId,
+      displayName: template.displayName,
+      adapter: template.adapter,
+      modelId: template.modelId,
+      contextTokens: template.contextTokens,
+      capabilities: template.capabilities,
+      lifecycle: template.lifecycle,
+      configuration: { ...currentConfiguration, ...template.configuration },
+      ...(agentTopology ? { agentTopology } : {}),
+    }));
   }
   const templates = playbook.routes;
   const existingRoutes = store.listRoutes();
@@ -52,7 +64,12 @@ export function reconcileNInferConfiguration(store: SqliteStore, runtime: NInfer
   }
   for (const template of templates) {
     const existing = existingById.get(template.id);
-    const recipeId = existing && recipeIds.has(existing.recipeId) ? existing.recipeId : template.recipeId;
+    const selectedRecipeId = existing ? (RETIRED_NINFER_RECIPES.get(existing.recipeId) ?? existing.recipeId) : undefined;
+    const recipeId = selectedRecipeId && recipeIds.has(selectedRecipeId) ? selectedRecipeId : template.recipeId;
     store.upsertRoute({ ...template, recipeId });
+  }
+  const referencedRecipeIds = new Set(store.listRoutes().map((route) => route.recipeId));
+  for (const retiredRecipeId of RETIRED_NINFER_RECIPES.keys()) {
+    if (!referencedRecipeIds.has(retiredRecipeId)) store.deleteRecipe(retiredRecipeId);
   }
 }

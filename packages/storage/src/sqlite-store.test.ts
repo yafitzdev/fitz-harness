@@ -96,6 +96,34 @@ describe("SqliteStore", () => {
     store.close();
   });
 
+  it("routes non-secret settings through a canonical backend but keeps security material private", () => {
+    const store = SqliteStore.memory();
+    store.setSetting("legacy", 1);
+    const values = new Map<string, unknown>();
+    store.useSettingsBackend({
+      get: <T>(key: string) => values.get(key) as T | undefined,
+      set: (key, value) => { values.set(key, value); },
+      delete: (key) => values.delete(key),
+    });
+    store.setSetting("engineRoot", "D:\\engines");
+    store.setSetting("security.authPepper", "private");
+    expect(store.getSetting("engineRoot")).toBe("D:\\engines");
+    expect(store.getSetting("security.authPepper")).toBe("private");
+    expect(store.listLegacySettings()).toMatchObject({ legacy: 1, "security.authPepper": "private" });
+    store.close();
+  });
+
+  it("aggregates usage by owning user", () => {
+    const store = SqliteStore.memory();
+    store.recordRequestUsage({ id: "alice-1", kind: "chat", status: "completed", routeId: "default", ownerUserId: "alice", executionLane: "gpu", enqueuedAt: "2026-08-09T10:00:00.000Z", completedAt: "2026-08-09T10:00:01.000Z", promptTokens: 10, completionTokens: 5, durationMs: 1000 });
+    store.recordRequestUsage({ id: "bob-1", kind: "image", status: "failed", routeId: "image", ownerUserId: "bob", executionLane: "gpu", enqueuedAt: "2026-08-09T11:00:00.000Z", completedAt: "2026-08-09T11:00:02.000Z", durationMs: 2000 });
+    expect(store.userUsageSummaries({ from: "2026-08-09T00:00:00.000Z", to: "2026-08-10T00:00:00.000Z" })).toEqual([
+      expect.objectContaining({ ownerUserId: "bob", requests: 1, failed: 1, mediaJobs: 1 }),
+      expect.objectContaining({ ownerUserId: "alice", requests: 1, totalTokens: 15 }),
+    ]);
+    store.close();
+  });
+
   it("deletes obsolete routes", () => {
     const store = SqliteStore.memory();
     store.upsertRoute({ id: "obsolete", displayName: "Obsolete", recipeId: "recipe-1", enabled: true });

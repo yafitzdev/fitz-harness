@@ -1,6 +1,6 @@
 import type { AgentRunRequest } from "@fitz/protocol";
 
-type SubagentRoute = "fast" | "smart";
+type SubagentRoute = "default" | "fast" | "smart";
 type SubagentRouteBudget = Readonly<Record<SubagentRoute, number>>;
 
 export interface DelegationToolCall {
@@ -10,7 +10,7 @@ export interface DelegationToolCall {
 }
 
 /**
- * Per-run delegation state. It owns initial cloud fan-out enforcement, Smart
+ * Per-run delegation state. It owns initial local/cloud fan-out enforcement, Smart
  * peer admission, and delegated-worker tool budgets so every Pi callback uses
  * the same decisions and counters.
  */
@@ -24,7 +24,7 @@ export class PiDelegationPolicy {
 
   constructor(request: AgentRunRequest, budget: SubagentRouteBudget | undefined) {
     this.initialRoutes = requestedInitialSubagents(request, budget);
-    this.toolCallBudget = request.delegation?.toolCallBudget;
+    this.toolCallBudget = request.delegation?.role.toolCallBudget;
   }
 
   get requiresInitialFanout(): boolean {
@@ -81,7 +81,7 @@ export class PiDelegationPolicy {
   }
 
   retryPrompt(): string {
-    return `SYSTEM: Your previous response was invalid because it did not launch the required cloud workers. Call the subagent tool now to launch ${formatSubagentRoutes(this.remainingInitialRoutes())}. Do not answer in prose.`;
+    return `SYSTEM: Your previous response was invalid because it did not launch the required workers. Call the subagent tool now to launch ${formatSubagentRoutes(this.remainingInitialRoutes())}. Do not answer in prose.`;
   }
 
   missingFanoutError(): Error {
@@ -95,7 +95,7 @@ export class PiDelegationPolicy {
       const route = subagentRouteFromInput(toolCall.input);
       const remaining = this.remainingInitialRoutes();
       if (!route || !remaining.includes(route)) {
-        return `This delegation does not match the required cloud budget. Launch ${formatSubagentRoutes(remaining)} before using parent tools.`;
+        return `This delegation does not match the required worker budget. Launch ${formatSubagentRoutes(remaining)} before using parent tools.`;
       }
       this.#admittedInitialSubagents.set(toolCall.toolCallId, route);
       return undefined;
@@ -123,14 +123,19 @@ function requestedInitialSubagents(request: AgentRunRequest, budget: SubagentRou
   const lastUserText = [...request.messages].reverse().find((message) => message.role === "user");
   if (!lastUserText) return [];
   const text = extractTextFromContent(lastUserText.content).toLowerCase();
+  const defaultCapacity = Array.from({ length: Math.max(0, budget.default) }, () => "default" as const);
   const fastCapacity = Array.from({ length: Math.max(0, budget.fast) }, () => "fast" as const);
   const smartCapacity = Array.from({ length: Math.max(0, budget.smart) }, () => "smart" as const);
-  if (fastCapacity.length + smartCapacity.length === 0) return [];
+  if (defaultCapacity.length + fastCapacity.length + smartCapacity.length === 0) return [];
   // Familiarization is bounded research. The optional Smart child remains a
   // voluntary concurrent peer and is never spent as an expensive researcher.
-  if (broadRepositoryFamiliarization(text)) return fastCapacity;
+  if (broadRepositoryFamiliarization(text)) return defaultCapacity.length ? defaultCapacity : fastCapacity;
   const explicitCount = explicitlyRequestedSubagentCount(text);
   if (explicitCount === 0) return [];
+  if (defaultCapacity.length) {
+    const explicitlyCloud = /\b(?:fast|smart)\s+(?:\w+\s+)?subagents?\b/.test(text);
+    return explicitlyCloud ? [] : defaultCapacity.slice(0, explicitCount);
+  }
   const explicitlyFast = /\bfast\s+(?:\w+\s+)?subagents?\b/.test(text);
   const explicitlySmart = /\bsmart\s+(?:\w+\s+)?subagents?\b/.test(text);
   if (explicitlySmart && !explicitlyFast) return [];
@@ -139,7 +144,7 @@ function requestedInitialSubagents(request: AgentRunRequest, budget: SubagentRou
 
 function explicitlyRequestedSubagentCount(text: string): number {
   if (!/\b(?:launch|spawn|run|use|delegate(?:\s+to)?)\b/.test(text)) return 0;
-  if (!/\b(?:subagents?|researcher\s+subagents?|worker\s+subagents?|reviewer\s+subagents?)\b/.test(text)) return 0;
+  if (!/\b(?:subagents?|workers?|researchers?|reviewers?|researcher\s+subagents?|worker\s+subagents?|reviewer\s+subagents?)\b/.test(text)) return 0;
   const words: Record<string, number> = {
     one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
     nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
@@ -159,15 +164,17 @@ function broadRepositoryFamiliarization(text: string): boolean {
 function subagentRouteFromInput(input: unknown): SubagentRoute | undefined {
   if (!input || typeof input !== "object") return undefined;
   const route = (input as Record<string, unknown>).route;
-  return route === "fast" || route === "smart" ? route : undefined;
+  return route === "default" || route === "fast" || route === "smart" ? route : undefined;
 }
 
 function formatSubagentRoutes(routes: readonly SubagentRoute[]): string {
+  const local = routes.filter((route) => route === "default").length;
   const fast = routes.filter((route) => route === "fast").length;
   const smart = routes.filter((route) => route === "smart").length;
   const parts = [
     ...(smart ? [`${smart} Smart subagent${smart === 1 ? "" : "s"}`] : []),
     ...(fast ? [`${fast} Fast subagent${fast === 1 ? "" : "s"}`] : []),
+    ...(local ? [`${local} local worker${local === 1 ? "" : "s"}`] : []),
   ];
   return parts.join(" and ") || "the remaining subagents";
 }

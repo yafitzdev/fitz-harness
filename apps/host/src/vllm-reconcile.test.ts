@@ -26,7 +26,8 @@ describe("vLLM model reconciliation", () => {
       playbookId: "vllm",
       modelId: "qwen3.6-35b-a3b-nvfp4",
       contextTokens: 32_768,
-      capabilities: expect.objectContaining({ toolCalls: true, maxConcurrentGenerations: 1 }),
+      capabilities: expect.objectContaining({ toolCalls: true, maxConcurrentGenerations: 3 }),
+      agentTopology: { sharedContextTokens: 32_768, workers: { count: 0, contextTokens: 15_360 } },
       configuration: expect.objectContaining({
         runtime: "linux-managed",
         runtimeId: "inference-linux",
@@ -42,7 +43,7 @@ describe("vLLM model reconciliation", () => {
     const args = store.listRecipes()[0]!.configuration.args as string[];
     expect(args).toEqual(expect.arrayContaining([
       "--load-format", "instanttensor", "--language-model-only", "--skip-mm-profiling",
-      "--mm-processor-cache-gb", "0", "--max-num-seqs", "1", "--max-num-batched-tokens", "2048",
+      "--mm-processor-cache-gb", "0", "--max-num-seqs", "3", "--max-num-batched-tokens", "2048",
       "-O2", "--tool-call-parser", "qwen3_xml", "--reasoning-parser", "qwen3",
     ]));
     expect(store.listRoutes()).toEqual([]);
@@ -94,13 +95,20 @@ describe("vLLM model reconciliation", () => {
     const reconciler = new VllmModelReconciler(store, paths, layout, { runtimePathExists: () => true });
     reconciler.reconcile();
     const recipe = store.listRecipes()[0]!;
-    store.upsertRecipe({ ...recipe, displayName: "My worker", configuration: { ...recipe.configuration, command: "/stale/vllm" } });
+    store.upsertRecipe({
+      ...recipe,
+      displayName: "My worker",
+      agentTopology: { sharedContextTokens: 32_768, workers: { count: 1, contextTokens: 8_192 } },
+      configuration: { ...recipe.configuration, command: "/stale/vllm" },
+    });
 
     expect(reconciler.reconcile()).toEqual({ registered: [], unregistered: [] });
     expect(store.listRecipes()[0]).toEqual(expect.objectContaining({
       displayName: "My worker",
+      agentTopology: { sharedContextTokens: 32_768, workers: { count: 1, contextTokens: 8_192 } },
       configuration: expect.objectContaining({ command: `${layout.environmentRoot}/vllm/bin/vllm` }),
     }));
+    expect(store.listRecipes()[0]!.configuration.args).toEqual(expect.arrayContaining(["--max-num-seqs", "3", "--max-model-len", "24576"]));
     store.close();
   });
 

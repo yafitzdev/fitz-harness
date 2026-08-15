@@ -65,6 +65,8 @@ export class ComposerControls {
   private readonly options: ComposerControlsOptions;
   private readonly storage: Pick<Storage, "getItem" | "setItem">;
   private mode: AccessMode;
+  private defaultRoute = "default";
+  private defaultEffort: AgentEffort = "normal";
 
   constructor(elements: ComposerControlsElements, options: ComposerControlsOptions) {
     this.elements = elements;
@@ -107,9 +109,14 @@ export class ComposerControls {
     return true;
   }
 
+  setDefaults(routeId: string, effort: AgentEffort): void {
+    this.defaultRoute = ["default", "fast", "smart"].includes(routeId) ? routeId : "default";
+    this.defaultEffort = ["light", "normal", "high"].includes(effort) ? effort : "normal";
+  }
+
   resetForNewChat(): void {
-    this.setRoute("default");
-    this.elements.effort.value = "normal";
+    if (!this.setRoute(this.defaultRoute)) this.setRoute("default");
+    this.elements.effort.value = [...this.elements.effort.options].some((option) => option.value === this.defaultEffort) ? this.defaultEffort : "normal";
     this.refreshLabels();
   }
 

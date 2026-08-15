@@ -6,6 +6,7 @@ import type { RouteResolver } from "@fitz/inference-core";
 import type { SqliteStore } from "@fitz/storage";
 import type { FitzRuntimePaths } from "./runtime-paths.js";
 import { managedLinuxRuntimeLayout, type ManagedLinuxRuntimeLayout } from "./managed-linux-runtime.js";
+import { withLocalAgentCapacity } from "./local-agent-capacity.js";
 
 const LLAMA_CPP_PLAYBOOK_ID = "llama.cpp";
 const REGISTRATION_DIRECTORY = ".fitz";
@@ -54,7 +55,7 @@ export class LlamaCppModelReconciler {
       representedPayloads.add(registration.payload.path.toLowerCase());
       if (!existsSync(modelPath)) continue;
       const existed = recipes.has(registration.id);
-      const recipe = this.#canonicalRecipe(registration.recipe);
+      const recipe = this.#canonicalRecipe(registration.recipe, recipes.get(registration.id));
       this.#store.upsertRecipe(recipe);
       routes?.upsertRecipe(recipe);
       recipes.set(recipe.id, recipe);
@@ -102,7 +103,7 @@ export class LlamaCppModelReconciler {
       args.push("--model-draft", posix.join(guestDirectory, dflash), "--spec-type", "draft-dflash", "--spec-draft-ngl", "999", "--spec-draft-n-max", "15");
     }
     args.push("--ctx-size", "{context}", "--parallel", "1", "--flash-attn", "on", "--jinja", "--n-gpu-layers", "999");
-    return {
+    return withLocalAgentCapacity({
       id,
       playbookId: LLAMA_CPP_PLAYBOOK_ID,
       displayName: fileName.replaceAll("_", " "),
@@ -122,7 +123,7 @@ export class LlamaCppModelReconciler {
         readinessTimeoutMs: 300_000,
         preloadPaths: preloadGgufPaths(args),
       },
-    };
+    });
   }
 
   #readRegistrations(): Map<string, GgufRegistration> {
@@ -163,9 +164,10 @@ export class LlamaCppModelReconciler {
     return existsSync(join(this.#paths.engineRoot, "llama.cpp", "build-linux-cuda", "bin", "llama-server"));
   }
 
-  #canonicalRecipe(recipe: Recipe): Recipe {
-    return {
+  #canonicalRecipe(recipe: Recipe, existing?: Recipe): Recipe {
+    return withLocalAgentCapacity({
       ...recipe,
+      displayName: existing?.displayName ?? recipe.displayName,
       adapter: "openai-managed",
       configuration: {
         ...recipe.configuration,
@@ -176,7 +178,7 @@ export class LlamaCppModelReconciler {
         workingDirectory: ".",
         preloadPaths: preloadGgufPaths(recipe.configuration.args),
       },
-    };
+    }, existing?.agentTopology);
   }
 }
 

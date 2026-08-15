@@ -40,6 +40,10 @@ export interface PlaybookWorkspaceElements {
   recipeContextTokens: HTMLInputElement;
   recipeConfiguration: HTMLElement;
   recipeEditorTitle: HTMLElement;
+  recipeEditorEyebrow: HTMLElement;
+  recipeEditorDescription: HTMLElement;
+  recipeRename: HTMLButtonElement;
+  recipeIdentityFields: HTMLElement;
 }
 
 export interface PlaybookWorkspaceOptions {
@@ -55,6 +59,7 @@ export class PlaybookWorkspaceController {
   private readonly options: PlaybookWorkspaceOptions;
   private configuration: Json | undefined;
   private editingRecipe: Json | undefined;
+  private originalRecipeDisplayName = "";
   private readonly configurationEditor: RecipeConfigurationEditor;
 
   constructor(elements: PlaybookWorkspaceElements, options: PlaybookWorkspaceOptions) {
@@ -126,12 +131,20 @@ export class PlaybookWorkspaceController {
   openRecipeEditor(recipe?: Json, playbook?: Json): void {
     this.editingRecipe = recipe;
     this.elements.recipeForm.reset();
-    this.elements.recipeEditorTitle.textContent = recipe ? "Edit recipe" : "Create recipe";
+    this.originalRecipeDisplayName = String(recipe?.displayName ?? "");
+    this.elements.recipeEditorTitle.textContent = recipe?.displayName ?? "Create recipe";
+    this.elements.recipeEditorTitle.hidden = !recipe;
+    this.elements.recipeEditorEyebrow.textContent = recipe ? "Recipe" : "Create recipe";
+    this.elements.recipeEditorDescription.textContent = recipe ? "" : "Name the model and provide the runtime information needed to create it.";
+    this.elements.recipeEditorDescription.hidden = Boolean(recipe);
+    this.elements.recipeRename.hidden = !recipe;
+    this.elements.recipeIdentityFields.hidden = Boolean(recipe);
     const playbookIds = [...new Set((this.configuration?.recipes ?? []).map((item: Json) => item.playbookId))];
     const playbookId = recipe?.playbookId ?? playbook?.id ?? (playbookIds.length === 1 ? playbookIds[0] : "");
     this.elements.recipePlaybookId.value = playbookId; this.elements.recipePlaybookId.readOnly = Boolean(playbookId);
     this.elements.recipeId.value = recipe?.id ?? ""; this.elements.recipeId.readOnly = Boolean(recipe);
     this.elements.recipeDisplayName.value = recipe?.displayName ?? "";
+    this.elements.recipeDisplayName.hidden = Boolean(recipe);
     const adapter = recipe?.adapter ?? (playbook?.connectionMode === "managed" ? "openai-managed" : "openai-compatible");
     this.elements.recipeAdapter.value = adapter; this.elements.recipeAdapter.readOnly = true;
     this.elements.recipeModelId.value = recipe?.modelId ?? "";
@@ -139,10 +152,13 @@ export class PlaybookWorkspaceController {
     const defaultConfiguration = playbook?.connectionMode === "managed"
       ? { enginePath: playbook.runtime === "linux-managed" ? `/opt/fitz/llm/engines/${playbook.folderName}` : playbook.rootPath, runtime: playbook.runtime, command: playbook.launchCommand, args: playbook.launchArguments, workingDirectory: playbook.workingDirectory ?? ".", healthPath: playbook.healthPath, readinessTimeoutMs: 120_000, ...(playbook.runtimeId ? { runtimeId: playbook.runtimeId } : {}) }
       : playbook ? { baseUrl: playbook.baseUrl, healthPath: playbook.healthPath, allowInsecureRemote: false } : {};
-    this.configurationEditor.load(adapter, recipe?.configuration ?? defaultConfiguration);
+    this.configurationEditor.load(adapter, recipe?.configuration ?? defaultConfiguration, recipe ?? {
+      contextTokens: Number(this.elements.recipeContextTokens.value),
+      capabilities: { chatCompletions: true, toolCalls: false, maxConcurrentGenerations: 1 },
+    }, { showRuntimeSettings: !recipe });
     this.showEditor("recipe");
     this.options.onRouteChange?.(["recipe", playbookId, ...(recipe?.id ? [String(recipe.id)] : [])]);
-    this.elements.recipeId.focus();
+    (recipe ? this.elements.recipeRename : this.elements.recipeDisplayName).focus();
   }
 
   openRoute(path: readonly string[]): boolean {
@@ -178,6 +194,14 @@ export class PlaybookWorkspaceController {
     this.elements.search.addEventListener("input", () => this.render());
     this.elements.engineForm.addEventListener("submit", (event) => { event.preventDefault(); void this.saveEngine(); });
     this.elements.recipeForm.addEventListener("submit", (event) => { event.preventDefault(); void this.saveRecipe(); });
+    this.elements.recipeContextTokens.addEventListener("input", () => this.configurationEditor.setModelContextTokens(Number(this.elements.recipeContextTokens.value)));
+    this.elements.recipeRename.addEventListener("click", () => this.beginRecipeRename());
+    this.elements.recipeDisplayName.addEventListener("blur", () => { if (this.editingRecipe) this.commitRecipeRename(); });
+    this.elements.recipeDisplayName.addEventListener("keydown", (event) => {
+      if (!this.editingRecipe) return;
+      if (event.key === "Enter") { event.preventDefault(); this.commitRecipeRename(); }
+      if (event.key === "Escape") { event.preventDefault(); this.cancelRecipeRename(); }
+    });
     this.elements.engineFolder.addEventListener("change", () => this.applyEngineFolderChoice());
     this.elements.engineConnection.addEventListener("change", () => this.updateEngineFieldVisibility());
     this.elements.engineRuntime.addEventListener("change", () => this.updateEngineFieldVisibility());
@@ -219,6 +243,39 @@ export class PlaybookWorkspaceController {
     return section.root;
   }
 
+  private beginRecipeRename(): void {
+    if (!this.editingRecipe) return;
+    this.originalRecipeDisplayName = this.elements.recipeDisplayName.value.trim() || String(this.editingRecipe.displayName ?? "");
+    this.elements.recipeEditorTitle.hidden = true;
+    this.elements.recipeRename.hidden = true;
+    this.elements.recipeDisplayName.hidden = false;
+    this.elements.recipeDisplayName.focus();
+    this.elements.recipeDisplayName.select();
+  }
+
+  private commitRecipeRename(): void {
+    const name = this.elements.recipeDisplayName.value.trim();
+    if (!name) {
+      this.elements.recipeDisplayName.value = this.originalRecipeDisplayName;
+      this.elements.recipeDisplayName.focus();
+      return;
+    }
+    this.originalRecipeDisplayName = name;
+    this.elements.recipeEditorTitle.textContent = name;
+    this.elements.recipeEditorTitle.hidden = false;
+    this.elements.recipeDisplayName.hidden = true;
+    this.elements.recipeRename.hidden = false;
+  }
+
+  private cancelRecipeRename(): void {
+    this.elements.recipeDisplayName.value = this.originalRecipeDisplayName;
+    this.elements.recipeEditorTitle.textContent = this.originalRecipeDisplayName;
+    this.elements.recipeEditorTitle.hidden = false;
+    this.elements.recipeDisplayName.hidden = true;
+    this.elements.recipeRename.hidden = false;
+    this.elements.recipeRename.focus();
+  }
+
   private renderRecipeCard(recipe: Json): HTMLElement {
     const recipeCard = document.createElement("article");
     recipeCard.className = "recipe-card";
@@ -236,6 +293,14 @@ export class PlaybookWorkspaceController {
       contextTokens: Number(recipe.contextTokens),
       capabilities: recipe.capabilities,
     }));
+    const workerCount = Number(recipe.agentTopology?.workers?.count ?? 0);
+    const workerContext = Number(recipe.agentTopology?.workers?.contextTokens ?? 0);
+    if (workerCount > 0 && workerContext > 0) {
+      const workers = document.createElement("span");
+      workers.className = "recipe-card-label recipe-agent-label";
+      workers.textContent = `${workerCount} × ${formatCompactTokens(workerContext)} workers`;
+      labels.append(workers);
+    }
     recipeDetails.append(name, labels);
     recipeCard.append(recipeDetails);
     return recipeCard;
@@ -282,6 +347,7 @@ export class PlaybookWorkspaceController {
       await this.options.api(`/api/v1/management/recipes/${encodeURIComponent(id)}`, "PUT", {
         playbookId: this.elements.recipePlaybookId.value.trim(), displayName: this.elements.recipeDisplayName.value.trim(), adapter: this.elements.recipeAdapter.value.trim(), modelId: this.elements.recipeModelId.value.trim(),
         contextTokens: Number(this.elements.recipeContextTokens.value.trim()), configuration,
+        ...(this.configurationEditor.agentTopology() ? { agentTopology: this.configurationEditor.agentTopology() } : {}),
         capabilities: this.editingRecipe?.capabilities ?? { chatCompletions: true, streaming: true, toolCalls: false, responseFormat: false, minP: false, maxConcurrentGenerations: 1 },
         lifecycle: this.editingRecipe?.lifecycle ?? { loadPolicy: "onDemand", evictionPolicy: "idle-ttl", idleTtlSeconds: 600, minimumResidencySeconds: 0 },
       });
@@ -332,4 +398,8 @@ function setFormBusy(form: HTMLFormElement, busy: boolean): void {
 
 function samePlaybook(left: unknown, right: unknown): boolean {
   return String(left ?? "").localeCompare(String(right ?? ""), undefined, { sensitivity: "accent" }) === 0;
+}
+
+function formatCompactTokens(value: number): string {
+  return value >= 1_000 ? `${Math.round(value / 1_000)}k` : String(value);
 }

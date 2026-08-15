@@ -4,10 +4,15 @@ export interface NInferRecipeConfiguration {
   executable: string;
   artifact: string;
   maxContext: number;
+  kvCapacity?: number | "auto";
+  maxConcurrency: number;
+  maxPendingRequests: number;
+  pendingTimeoutMs: number;
   kvDtype: "int8" | "bf16" | "fp16";
   speculativeMode: "mtp" | "none";
   draftTokens: number;
   lmHeadDraft: boolean;
+  vision: boolean;
   thinking: boolean;
   temperature: number;
   topP: number;
@@ -23,6 +28,10 @@ export function readNInferConfiguration(recipe: Recipe): NInferRecipeConfigurati
   const executable = stringValue(value.executable, "executable");
   const artifact = stringValue(value.artifact, "artifact");
   const maxContext = integerValue(value.maxContext ?? recipe.contextTokens, "maxContext");
+  const kvCapacity = value.kvCapacity === undefined ? undefined : kvCapacityValue(value.kvCapacity);
+  const maxConcurrency = integerValue(value.maxConcurrency ?? recipe.capabilities.maxConcurrentGenerations, "maxConcurrency");
+  const maxPendingRequests = integerValue(value.maxPendingRequests ?? 16, "maxPendingRequests");
+  const pendingTimeoutMs = integerValue(value.pendingTimeoutMs ?? 30_000, "pendingTimeoutMs");
   const kvDtype = enumValue(value.kvDtype ?? "int8", ["int8", "bf16", "fp16"], "kvDtype");
   const speculativeMode = enumValue(
     value.speculativeMode ?? "mtp",
@@ -31,6 +40,7 @@ export function readNInferConfiguration(recipe: Recipe): NInferRecipeConfigurati
   );
   const draftTokens = integerValue(value.draftTokens ?? 0, "draftTokens");
   const lmHeadDraft = booleanValue(value.lmHeadDraft ?? true, "lmHeadDraft");
+  const vision = booleanValue(value.vision ?? false, "vision");
   const thinking = booleanValue(value.thinking ?? false, "thinking");
   const temperature = numberValue(value.temperature ?? 0.4, "temperature");
   const topP = numberValue(value.topP ?? 0.9, "topP");
@@ -41,10 +51,15 @@ export function readNInferConfiguration(recipe: Recipe): NInferRecipeConfigurati
     executable,
     artifact,
     maxContext,
+    ...(kvCapacity !== undefined ? { kvCapacity } : {}),
+    maxConcurrency,
+    maxPendingRequests,
+    pendingTimeoutMs,
     kvDtype,
     speculativeMode,
     draftTokens,
     lmHeadDraft,
+    vision,
     thinking,
     temperature,
     topP,
@@ -73,6 +88,34 @@ export function validateNInferConfiguration(recipe: Recipe): ValidationIssue[] {
         message: "NInfer maxContext must be between 2048 and 262144",
       });
     }
+    if (config.kvCapacity !== undefined && config.kvCapacity !== "auto" && config.kvCapacity < config.maxContext) {
+      issues.push({
+        level: "error",
+        code: "invalid_kv_capacity",
+        message: "NInfer kvCapacity must be auto or at least maxContext",
+      });
+    }
+    if (config.maxConcurrency < 1 || config.maxConcurrency > 8) {
+      issues.push({
+        level: "error",
+        code: "invalid_concurrency",
+        message: "NInfer maxConcurrency must be between 1 and 8",
+      });
+    }
+    if (config.maxConcurrency !== recipe.capabilities.maxConcurrentGenerations) {
+      issues.push({
+        level: "error",
+        code: "concurrency_mismatch",
+        message: "NInfer maxConcurrency must match capabilities.maxConcurrentGenerations",
+      });
+    }
+    if (config.maxPendingRequests < 1 || config.pendingTimeoutMs < 1) {
+      issues.push({
+        level: "error",
+        code: "invalid_pending_queue",
+        message: "NInfer pending queue size and timeout must be positive",
+      });
+    }
     if (config.speculativeMode === "mtp" && config.draftTokens < 1) {
       issues.push({
         level: "error",
@@ -86,6 +129,11 @@ export function validateNInferConfiguration(recipe: Recipe): ValidationIssue[] {
       "--api-key",
       "--model-id",
       "--max-context",
+      "--kv-capacity",
+      "--max-concurrency",
+      "--max-pending-requests",
+      "--pending-timeout-ms",
+      "--vision",
       "--request-log-jsonl",
     ];
     if (
@@ -121,6 +169,11 @@ function stringValue(value: unknown, name: string): string {
 function integerValue(value: unknown, name: string): number {
   if (!Number.isInteger(value)) throw new TypeError(`${name} must be an integer`);
   return value as number;
+}
+
+function kvCapacityValue(value: unknown): number | "auto" {
+  if (value === "auto") return value;
+  return integerValue(value, "kvCapacity");
 }
 
 function numberValue(value: unknown, name: string): number {

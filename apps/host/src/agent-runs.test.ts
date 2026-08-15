@@ -130,16 +130,14 @@ describe("AgentRunCoordinator", () => {
 
     const first = coordinator.runSubagent({
       parentRunId: "parent",
-      role: "researcher",
-      toolCallBudget: 20,
+      role: store.getSubagentRole("researcher")!,
       ownerUserId: "owner",
       request: { model: "subagent", accessMode: "read-only", messages: [{ role: "user", content: "research-one" }] },
     });
     await waitFor(() => runtime.starts.includes("research-one"));
     const second = coordinator.runSubagent({
       parentRunId: "parent",
-      role: "worker",
-      toolCallBudget: 40,
+      role: store.getSubagentRole("implementer")!,
       ownerUserId: "owner",
       request: { model: "subagent", accessMode: "full", messages: [{ role: "user", content: "worker-two" }] },
     });
@@ -153,7 +151,7 @@ describe("AgentRunCoordinator", () => {
     expect(firstResult.run.status).toBe("completed");
     expect(firstResult.text).toBe("done:research-one");
     expect(secondResult.run.routeId).toBe("subagent");
-    expect(store.getAgentRunRequest(firstResult.run.id)?.delegation).toEqual({ role: "researcher", parentRunId: "parent", toolCallBudget: 20 });
+    expect(store.getAgentRunRequest(firstResult.run.id)?.delegation).toEqual({ role: roleSnapshot(store, "researcher"), parentRunId: "parent" });
     store.close();
   });
 
@@ -163,18 +161,22 @@ describe("AgentRunCoordinator", () => {
     const now = new Date(0).toISOString();
     store.createAgentRun(
       { id: "child-parent", routeId: "default", status: "running", createdAt: now, updatedAt: now, lastSequence: 0 },
-      { model: "default", delegation: { role: "reviewer", parentRunId: "root-parent", toolCallBudget: 16 }, messages: [{ role: "user", content: "review" }] },
+      { model: "default", delegation: { role: roleSnapshot(store, "reviewer"), parentRunId: "root-parent" }, messages: [{ role: "user", content: "review" }] },
     );
 
     await expect(coordinator.runSubagent({
       parentRunId: "child-parent",
-      role: "researcher",
-      toolCallBudget: 20,
+      role: store.getSubagentRole("researcher")!,
       request: { model: "default", messages: [{ role: "user", content: "nested" }] },
     })).rejects.toThrow("cannot delegate");
     store.close();
   });
 });
+
+function roleSnapshot(store: SqliteStore, id: string) {
+  const { enabled: _enabled, ...snapshot } = store.getSubagentRole(id)!;
+  return snapshot;
+}
 
 async function waitFor(predicate: () => boolean): Promise<void> {
   for (let attempt = 0; attempt < 200; attempt += 1) {

@@ -38,7 +38,6 @@ import { MediaJobCoordinator } from "./media-jobs.js";
 import type { AgentRuntime } from "@fitz/agent-core";
 import type { PiPackageService } from "@fitz/agent-pi";
 import { ContextManager } from "@fitz/context";
-import { TailscaleMonitor, TailscaleServeManager, WindowsStartupManager } from "@fitz/connectivity";
 import { OpenAICompatibleEngineAdapter } from "@fitz/engine-openai-compatible";
 import {
   FalProvider,
@@ -58,6 +57,8 @@ import { registerRuntimeAdministrationRoutes } from "./runtime-administration-ro
 import { registerStorageRoutes } from "./storage-routes.js";
 import { registerSecurityAdministrationRoutes } from "./security-administration-routes.js";
 import { registerSafetyAdministrationRoutes } from "./safety-administration-routes.js";
+import { registerHostingRoutes } from "./hosting-routes.js";
+import type { HostingService } from "./hosting-service.js";
 import { discardLegacyConsumerConnections, registerConsumerConnectionRoutes } from "./consumer-connection-routes.js";
 import {
   ensureMediaRoutes,
@@ -98,9 +99,7 @@ export interface CreateHostOptions {
    * conservative; tests and managed deployments may lower them explicitly. */
   schedulerOptions?: InferenceSchedulerOptions;
   contextManager?: ContextManager;
-  tailscaleMonitor?: TailscaleMonitor;
-  tailscaleServeManager?: TailscaleServeManager;
-  startupManager?: WindowsStartupManager;
+  hostingService?: HostingService;
   localPort?: number;
   engineRoot?: string;
   /** Bounded await for the synchronous image gateway (default 120 s, §5.8). */
@@ -235,9 +234,9 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   });
   const scheduler = new InferenceScheduler(routes, lifecycle, events, {
     ...options.schedulerOptions,
-    // The hosting plane owns exactly one local model and admits exactly one
-    // local generation at a time, regardless of engine batching flags.
-    gpuConcurrency: 1,
+    // One local model remains resident. Recipes opt into small batched
+    // generation through maxConcurrentGenerations; other engines stay serial.
+    gpuConcurrency: options.schedulerOptions?.gpuConcurrency ?? 3,
     recordUsage: async (record) => {
       store.recordRequestUsage(record);
       await options.schedulerOptions?.recordUsage?.(record);
@@ -255,9 +254,6 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const mediaJobs = new MediaJobCoordinator({ store, artifacts, scheduler, routes, ...(security ? { security } : {}) });
   const mediaImageTimeoutMs = options.mediaImageTimeoutMs ?? 120_000;
   const context = options.contextManager ?? new ContextManager(store);
-  const tailscale = options.tailscaleMonitor ?? new TailscaleMonitor();
-  const tailscaleServe = options.tailscaleServeManager ?? new TailscaleServeManager();
-  const startup = options.startupManager;
   const piPackages = options.piPackages;
   const modelCatalog = options.modelCatalog;
   const ninferRuntime = options.ninferRuntime;
@@ -302,15 +298,11 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     const publicPath = request.url.split("?")[0];
     const internalAgent = publicPath === "/v1/chat/completions" && validBearerToken(request.headers.authorization, options.internalAgentToken);
     const devSupervisor = publicPath === "/__fitz/dev/shutdown" && validBearerToken(request.headers.authorization, options.devSessionToken);
-    // The bundled Share Fitz gateway deliberately strips Cloudflare headers.
-    // Seeing them here means the tunnel was pointed at the privileged host port
-    // instead of the consumer gateway; reject the configuration fail-closed.
-    if (isCloudflareProxiedRequest(request)) return reply.code(403).send({ error: "Cloudflare Tunnel must target the Share Fitz gateway on port 8790" });
     if (authMode === "required" && publicPath === "/health") {
       const principal = security?.authenticate(request.headers.authorization);
       if (principal) principals.set(request, principal);
     }
-    if (authMode === "required" && !devSupervisor && publicPath !== "/health" && publicPath !== "/api/v1/pairing/redeem" && publicPath !== "/api/v1/pairing/redeem-shared" && publicPath !== "/api/v1/pairing/bootstrap") {
+    if (authMode === "required" && !devSupervisor && publicPath !== "/health" && publicPath !== "/api/v1/pairing/bootstrap") {
       const principal = security?.authenticate(request.headers.authorization);
       if (!principal && !internalAgent) return reply.code(401).send({ error: "Valid device bearer token required" });
       if (principal) principals.set(request, principal);
@@ -411,10 +403,6 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       events: store.lifecycleEventsAfter(after, limit),
     };
   });
-  app.get("/api/v1/connectivity/status", async () => ({ tailscale: await tailscale.status() }));
-  app.post("/api/v1/pairing/redeem", async (request, reply) => { try { if (!isDirectLoopbackRequest(request)) return reply.code(403).send({ error: "Private pairing is only available directly on the host; remote clients must use shared pairing" }); const body = requireRecord(request.body); const access = securityRequired(security); const redeemed = access.redeemPairingCode(requireString(body.code, "code"), requireString(body.displayName, "displayName"), requireString(body.deviceName, "deviceName")); access.setRouteGrants(redeemed.user.id, [...CHAT_ROUTE_IDS]); return reply.code(201).send({ data: redeemed }); } catch (error) { return reply.code(error instanceof SecurityPolicyError ? 403 : 400).send({ error: errorMessage(error) }); } });
-  app.post("/api/v1/pairing/redeem-shared", async (request, reply) => { try { const body = requireRecord(request.body); const access = securityRequired(security); const redeemed = access.redeemSharedPairingCode(requireString(body.code, "code"), requireString(body.displayName, "displayName"), requireString(body.deviceName, "deviceName")); access.setRouteGrants(redeemed.user.id, [...CHAT_ROUTE_IDS]); return reply.code(201).send({ data: redeemed }); } catch (error) { return reply.code(error instanceof SecurityPolicyError ? 403 : 400).send({ error: errorMessage(error) }); } });
-
   registerAgentRoutes({
     app,
     store,
@@ -488,6 +476,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         recipes: routes.listRecipes(),
         engines: store.listEngines(),
         cloudRoutes: userRoutes.configuration(ownerUserId(request)),
+        chatDefaults: options.hostingService?.configuration().defaults ?? { route: "default", effort: "normal" },
         isAdministrator: true,
         hostName: hostname(),
         engineRoot: store.getSetting<string>("engineRoot") ?? configuredEngineRoot,
@@ -513,6 +502,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     return {
       hostName: hostname(),
       isAdministrator: authMode === "disabled" || principals.get(request)?.user.role === "administrator",
+      chatDefaults: options.hostingService?.configuration().defaults ?? { route: "default", effort: "normal" },
       routes: [
         ...userRoutes.publicRoutes(owner),
         ...routes.listRoutes(true).filter((route) => (MEDIA_ROUTE_IDS as readonly string[]).includes(route.id) || ownedRecipeIds.has(route.recipeId)),
@@ -618,9 +608,10 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     },
   );
 
-  registerRuntimeAdministrationRoutes({ app, tailscale, tailscaleServe, authMode, localPort: options.localPort ?? 8787, principals, administratorGuard, ...(startup ? { startup } : {}), ...(ninferRuntime ? { ninferRuntime } : {}), ...(security ? { security } : {}) });
+  registerRuntimeAdministrationRoutes({ app, principals, administratorGuard, ...(ninferRuntime ? { ninferRuntime } : {}), ...(security ? { security } : {}) });
+  if (options.hostingService) registerHostingRoutes({ app, hosting: options.hostingService, principals, administratorGuard, ...(security ? { security } : {}) });
   registerCatalogRoutes({ app, principals, administratorGuard, reconcileLocalModels, ...(piPackages ? { piPackages } : {}), ...(modelCatalog ? { modelCatalog } : {}), ...(security ? { security } : {}) });
-  registerSecurityAdministrationRoutes({ app, store, principals, administratorGuard, ...(security ? { security } : {}) });
+  registerSecurityAdministrationRoutes({ app, store, principals, administratorGuard, ...(options.hostingService ? { hosting: options.hostingService } : {}), ...(security ? { security } : {}) });
   registerStorageRoutes({ app, store, artifacts, principals, administratorGuard, ...(storageDurability ? { storageDurability } : {}), ...(security ? { security } : {}) });
   registerSafetyAdministrationRoutes({ app, principals, administratorGuard, ...(safety ? { safety } : {}), ...(security ? { security } : {}) });
 
@@ -729,6 +720,7 @@ function sameRuntimeRecipe(left: Recipe | undefined, right: Recipe): boolean {
     && left.adapter === right.adapter
     && left.modelId === right.modelId
     && left.contextTokens === right.contextTokens
+    && isDeepStrictEqual(left.agentTopology, right.agentTopology)
     && isDeepStrictEqual(left.configuration, right.configuration);
 }
 
@@ -783,9 +775,6 @@ function toNonNegativeInteger(value: string | undefined, fallback: number): numb
 }
 
 function canAccessOwner(principal: AuthenticatedPrincipal | undefined, ownerUserId: string | undefined): boolean { return !principal || principal.user.role === "administrator" || principal.user.id === ownerUserId; }
-function isCloudflareProxiedRequest(request: FastifyRequest): boolean {
-  return request.headers["cf-connecting-ip"] !== undefined || request.headers["cf-ray"] !== undefined || request.headers["cf-visitor"] !== undefined;
-}
 function isDirectLoopbackRequest(request: FastifyRequest): boolean {
   const address = request.ip.startsWith("::ffff:") ? request.ip.slice("::ffff:".length) : request.ip;
   if (address !== "127.0.0.1" && address !== "::1") return false;
