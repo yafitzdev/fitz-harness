@@ -136,11 +136,11 @@
   --mask-solid: #000000;
   --row-outline: rgba(255,255,255,.11);
   --row-outline-hover: rgba(255,255,255,.28);
-  --shadow-chat-rest: 0 -4px 32px rgba(69,140,230,.09), 0 4px 76px rgba(69,140,230,.13), 0 14px 142px rgba(69,140,230,.08);
-  --shadow-chat-bloom: 0 2px 40px rgba(69,140,230,.14), 0 12px 96px rgba(69,140,230,.19), 0 22px 170px rgba(69,140,230,.115);
-  --shadow-new-chat: 0 -2px 34px rgba(69,140,230,.13), 0 6px 82px rgba(69,140,230,.18), 0 16px 150px rgba(69,140,230,.115);
-  --shadow-new-chat-rest: 0 -4px 32px rgba(69,140,230,.115), 0 4px 76px rgba(69,140,230,.16), 0 14px 142px rgba(69,140,230,.10);
-  --shadow-new-chat-bloom: 0 2px 40px rgba(69,140,230,.18), 0 12px 96px rgba(69,140,230,.24), 0 22px 170px rgba(69,140,230,.145);
+  --shadow-chat-rest: 0 -3px 24px rgba(69,140,230,.09), 0 4px 56px rgba(69,140,230,.13), 0 12px 104px rgba(69,140,230,.08);
+  --shadow-chat-bloom: 0 2px 32px rgba(69,140,230,.14), 0 10px 72px rgba(69,140,230,.19), 0 18px 126px rgba(69,140,230,.115);
+  --shadow-new-chat: 0 -2px 26px rgba(69,140,230,.13), 0 5px 62px rgba(69,140,230,.18), 0 14px 116px rgba(69,140,230,.115);
+  --shadow-new-chat-rest: 0 -3px 24px rgba(69,140,230,.115), 0 4px 56px rgba(69,140,230,.16), 0 12px 104px rgba(69,140,230,.10);
+  --shadow-new-chat-bloom: 0 2px 32px rgba(69,140,230,.18), 0 10px 76px rgba(69,140,230,.24), 0 18px 132px rgba(69,140,230,.145);
   --shadow-new-chat-implode: 0 0 30px rgba(69,140,230,.34), 0 0 62px rgba(69,140,230,.145);
   --shadow-new-chat-gone: 0 0 0 rgba(69,140,230,0);
 }

@@ -39,7 +39,7 @@
 .model-toggle svg { width: 14px; height: 14px; color: var(--muted); }
 .model-toggle:hover:not(:disabled) { background: var(--grey-250); }
 .model-toggle:disabled { opacity: .4; }
-.popover.model-menu { position: fixed; z-index: 100; width: 286px; }
+.popover.model-menu { position: fixed; z-index: 1001; width: 286px; }
 .settings-submenu-heading { display: block; padding: 5px 8px 3px; color: var(--subtle); font-size: 9px; font-weight: 500; }
 .setting-row, .advanced-row { width: 100%; min-height: 36px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 8px; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; font-size: 13px; }
 .setting-row:hover, .advanced-row:hover { background: var(--tint-5); }

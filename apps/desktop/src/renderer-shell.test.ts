@@ -632,7 +632,7 @@ describe("desktop renderer shell", () => {
     expect(promptSubmission).toContain("max_tokens: settings.maxTokens");
     expect(styles).toContain('.advanced-row[aria-expanded="true"] svg');
     expect(styles).toContain(".advanced-settings-panel");
-    expect(styles).toContain(".popover.model-menu { position: fixed; z-index: 100; width: 286px;");
+    expect(styles).toContain(".popover.model-menu { position: fixed; z-index: 1001; width: 286px;");
     expect(composerControls).toContain("positionFixedPopover(elements.modelMenu, elements.modelToggle, 6)");
     expect(composer).toContain("document.body.append(controlsElements.modelMenu)");
     expect(composer).toContain('id="model-menu-root"');
@@ -731,10 +731,15 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("--brand-electric-blue: #458ce6");
     expect(styles).toContain("position: relative; isolation: isolate;");
     expect(styles).toContain(".messages { position: absolute; z-index: 2;");
-    expect(composerCss).toContain(".composer-dock::after { content: \"\"; position: absolute; z-index: 1;");
+    expect(composerCss).toContain(".composer-halo { position: absolute; z-index: -1; inset: 0;");
+    expect(composerCss).not.toContain("clip-path: inset(0 -120px -120px -120px)");
+    expect(styles).toContain(".agent-plan-panel { position: relative; z-index: 31;");
+    expect(composerCss).toContain(".composer-card:has(.popover:not([hidden])) { z-index: 1000; }");
+    expect(composerCss).toContain(".composer-card .popover { z-index: 1001; }");
     expect(composerCss).toContain(".composer-card { position: relative; z-index: 30; isolation: isolate; overflow: visible; border: 1px solid var(--new-chat-outline)");
     expect(composerCss).toContain("container-type: inline-size; container-name: composer;");
     expect(composerCss).not.toContain(".composer-card::before");
+    expect(composerCss).not.toContain(".composer-dock::after");
     expect(renderer).toContain("composer.root.hidden = inert");
     expect(renderer).toContain("if (inert) {");
     expect(renderer).toContain("composer.closePopovers()");
