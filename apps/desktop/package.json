@@ -4,7 +4,7 @@
   "dependencies": { "@fitz/connectivity": "workspace:*", "@fitz/media": "workspace:*", "@fitz/protocol": "workspace:*", "electron-updater": "6.8.9", "highlight.js": "^11.11.1" },
   "devDependencies": { "electron": "43.2.0", "electron-builder": "26.15.3", "esbuild": "^0.25.0" },
   "build": { "appId": "dev.yafitz.fitzcodex", "productName": "Fitz Codex", "asar": true, "files": ["dist/**/*", "package.json"], "extraResources": [
-      { "from": "../../release/host", "to": "host" },
-      { "from": "../../release/host/node_modules", "to": "host/node_modules", "filter": ["**/*"] }
+      { "from": "../../release/Fitz-Codex-Host.asar", "to": "host.asar" },
+      { "from": "../../scripts/windows/desktop-host-start.ps1", "to": "start-host.ps1" }
     ], "directories": { "output": "release" }, "artifactName": "Fitz-Codex-${version}-${arch}.${ext}", "win": { "target": [{ "target": "nsis", "arch": ["x64"] }] }, "nsis": { "oneClick": false, "perMachine": false, "allowElevation": true, "createDesktopShortcut": true, "createStartMenuShortcut": true }, "publish": { "provider": "github", "owner": "yafitzdev", "repo": "fitz-codex" } }
 }

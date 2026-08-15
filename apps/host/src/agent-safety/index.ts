@@ -152,6 +152,10 @@ export class AgentSafetyService {
       // model and explicitly granted media APIs, but may never execute tools on
       // the host PC. Agent and administrator accounts retain the normal policy.
       if (owner?.role === "consumer") {
+        // The durable plan tool only updates this run's host-side bookkeeping.
+        // It cannot inspect or mutate the host filesystem, and blocking it makes
+        // the mandatory plan-first loop impossible for every shared chat.
+        if (request.toolName === "agent_plan") return { action: "allow" };
         // Block before constructing a run safety context: context construction
         // creates a workspace snapshot, which a remote consumer must not be able
         // to trigger merely by asking the model to call a tool.

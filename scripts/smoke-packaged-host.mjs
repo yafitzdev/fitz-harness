@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { spawn } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
 const stage = resolve("release/host");
 const executable = resolve(stage, "runtime/node.exe");
@@ -17,6 +19,18 @@ const baseUrl = `http://127.0.0.1:${port}`;
 for (const required of [executable, server, npmCli, piRuntime]) {
   if (!existsSync(required)) throw new Error(`Packaged host is missing ${required}`);
 }
+
+// Exercise the deployed dependency graph after packaging has removed the
+// deliberately unused OCR core. This catches document parsers that work in the
+// monorepo but fail only inside the installed host.
+const attachmentModule = await import(pathToFileURL(resolve(stage, "dist/attachment-content.js")));
+const samplePdf = await readFile(resolve("sample-files/sample.pdf"));
+const preparedPdf = await attachmentModule.prepareAttachment({
+  id: "packaged-pdf", sessionId: "packaged-session", name: "sample.pdf",
+  mimeType: "application/pdf", kind: "pdf", byteSize: samplePdf.byteLength,
+  sha256: "packaged-smoke", createdAt: new Date(0).toISOString(), metadata: {},
+}, samplePdf);
+if (!preparedPdf.text?.includes("Sample PDF File")) throw new Error("Packaged host could not extract PDF attachment text");
 
 const child = spawn(executable, [server], {
   cwd: stage,

@@ -591,6 +591,34 @@ describe("Fitz host", () => {
     await runtime.app.close();
   });
 
+  it("includes the recipes backing visible host media routes in remote configuration", async () => {
+    const runtime = createHost();
+    try {
+      const recipe = await runtime.app.inject({
+        method: "PUT",
+        url: "/api/v1/management/recipes/test-image",
+        payload: {
+          playbookId: "test-media",
+          displayName: "Test image",
+          adapter: "fake",
+          modelId: "test-image-v1",
+          contextTokens: 8_192,
+          capabilities: { chatCompletions: false, streaming: false, toolCalls: false, responseFormat: false, minP: false, maxConcurrentGenerations: 1, modalities: { input: ["text"], output: ["image"] } },
+          lifecycle: { loadPolicy: "onDemand", evictionPolicy: "idle-ttl", idleTtlSeconds: 300, minimumResidencySeconds: 0 },
+          configuration: {},
+        },
+      });
+      expect(recipe.statusCode, recipe.body).toBe(200);
+      const route = await runtime.app.inject({ method: "PUT", url: "/api/v1/management/routes/image", payload: { displayName: "Image", recipeId: "test-image", enabled: true, isDefault: false } });
+      expect(route.statusCode, route.body).toBe(200);
+
+      const configuration = await runtime.app.inject({ method: "GET", url: "/api/v1/configuration" });
+      expect(configuration.statusCode, configuration.body).toBe(200);
+      expect(configuration.json().routes).toContainEqual(expect.objectContaining({ id: "image", recipeId: "test-image" }));
+      expect(configuration.json().recipes).toContainEqual(expect.objectContaining({ id: "test-image" }));
+    } finally { await runtime.app.close(); }
+  });
+
   it("ignores legacy recipe topology and applies the global local-agent policy", async () => {
     const runtime = createHost();
     try {
@@ -1112,6 +1140,33 @@ describe("Fitz host", () => {
     expect(transcript.find((entry) => entry.kind === "tool-call")?.content.input).toEqual({ path: "README.md" });
     expect(transcript.find((entry) => entry.kind === "tool-result")?.content.result).toBe("ok");
     await runtime.app.close();
+  });
+
+  it("hydrates attached text, HTML, and opaque files for the model while keeping the transcript concise", async () => {
+    const seen: unknown[] = [];
+    const runtime = createHost({ agentRuntime: { id: "attachment-agent", run: (request) => {
+      seen.push(request.messages.at(-1)?.content);
+      const events = (async function* () { yield { type: "assistant.delta" as const, text: "I can read both files." }; })();
+      return Object.assign(events, { cancel: () => undefined });
+    } } });
+    try {
+      const session = await runtime.app.inject({ method: "POST", url: "/api/v1/chats", payload: { title: "Attachments" } });
+      const sessionId = session.json().data.id as string;
+      const note = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/artifacts`, payload: { name: "note.txt", mimeType: "text/plain", contentBase64: Buffer.from("the answer is 42").toString("base64") } });
+      const page = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/artifacts`, payload: { name: "page.html", mimeType: "text/html", contentBase64: Buffer.from("<main>important markup</main>").toString("base64") } });
+      const archive = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/artifacts`, payload: { name: "bundle.zip", mimeType: "application/zip", contentBase64: Buffer.from([0, 1, 2, 3]).toString("base64") } });
+      const created = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: {
+        model: "default", sessionId, messages: [{ role: "user", content: "analyse this" }],
+        attachments: [{ artifactId: note.json().data.id }, { artifactId: page.json().data.id }, { artifactId: archive.json().data.id }],
+      } });
+      expect(created.statusCode, created.body).toBe(202);
+      const runId = created.json().data.id as string;
+      for (let attempt = 0; attempt < 50 && runtime.agentRuns.get(runId)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(JSON.stringify(seen[0])).toContain("the answer is 42");
+      expect(JSON.stringify(seen[0])).toContain("<main>important markup</main>");
+      expect(JSON.stringify(seen[0])).toContain("[ATTACHMENT: bundle.zip");
+      expect(runtime.store.transcriptAfter(sessionId, 0).find((entry) => entry.role === "user")?.content.text).toBe("analyse this");
+    } finally { await runtime.app.close(); }
   });
 
   it("streams reasoning as its own event stream and persists it under its own transcript kind", async () => {

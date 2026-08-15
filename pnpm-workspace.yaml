@@ -21,3 +21,8 @@ allowBuilds:
   electron-winstaller: true
   esbuild: true
   protobufjs: true
+  # Attachment extraction deliberately disables OCR; do not run Tesseract's
+  # optional install hook in production packaging.
+  tesseract.js: false
+minimumReleaseAgeExclude:
+  - officeparser@7.6.2

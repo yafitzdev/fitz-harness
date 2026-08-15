@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { HOST_CONTRACT_VERSION, PROTOCOL_VERSION } from "@fitz/protocol";
 
 interface HostHealth {
@@ -13,8 +13,13 @@ export interface HostSupervisorOptions {
   origin: URL;
   packaged: boolean;
   resourcesPath: string;
+  logPath?: string;
   fetch?: typeof globalThis.fetch;
   wait?: (milliseconds: number) => Promise<void>;
+}
+
+interface BundledHostProcess {
+  failure(): string | undefined;
 }
 
 export class HostStartupError extends Error {
@@ -49,8 +54,12 @@ export class HostSupervisor {
     if (!isLoopback(this.#options.origin.hostname)) {
       throw new HostStartupError("The remote Fitz host is unavailable", `Check your connection to ${this.#options.origin.origin} and retry. Fitz will never start a local host as a fallback for a remote connection.`);
     }
-    this.#spawnBundledHost();
-    for (let attempt = 0; attempt < 60; attempt += 1) {
+    const hostProcess = this.#spawnBundledHost();
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      const failure = hostProcess.failure();
+      if (failure) {
+        throw new HostStartupError("The bundled Fitz host stopped during startup", this.#startupFailureDetail(failure));
+      }
       const health = await this.#probe();
       if (health) {
         this.#assertCompatible(health);
@@ -58,7 +67,7 @@ export class HostSupervisor {
       }
       await this.#wait(250);
     }
-    throw new HostStartupError("The Fitz host did not become ready", `The bundled host at ${this.#options.origin.origin} did not answer within 15 seconds.`);
+    throw new HostStartupError("The Fitz host did not become ready", this.#startupFailureDetail(`The bundled host at ${this.#options.origin.origin} did not answer within 30 seconds.`));
   }
 
   async #probe(): Promise<HostHealth | undefined> {
@@ -84,21 +93,65 @@ export class HostSupervisor {
     );
   }
 
-  #spawnBundledHost(): void {
-    const hostRoot = join(this.#options.resourcesPath, "host");
-    const executable = join(hostRoot, "runtime", "node.exe");
-    const server = join(hostRoot, "dist", "server.js");
+  #spawnBundledHost(): BundledHostProcess {
+    const legacyHostRoot = join(this.#options.resourcesPath, "host");
+    const legacyExecutable = join(legacyHostRoot, "runtime", "node.exe");
+    const legacyServer = join(legacyHostRoot, "dist", "server.js");
+    const embeddedServer = join(this.#options.resourcesPath, "host.asar", "dist", "server.js");
+    const embedded = existsSync(embeddedServer);
+    const executable = embedded ? process.execPath : legacyExecutable;
+    const server = embedded ? embeddedServer : legacyServer;
     if (!existsSync(executable) || !existsSync(server)) {
       throw new HostStartupError("The bundled Fitz host is missing", `Expected ${executable} and ${server}. Reinstall Fitz.`);
     }
-    const child = spawn(executable, [server], {
-      cwd: hostRoot,
-      detached: true,
-      windowsHide: true,
-      stdio: "ignore",
-      env: { ...process.env, FITZ_HOST: "127.0.0.1", FITZ_PORT: String(this.#options.origin.port || 8787) },
-    });
+    const logDescriptor = this.#openStartupLog();
+    const child = (() => {
+      try {
+        return spawn(executable, [server], {
+          cwd: embedded ? this.#options.resourcesPath : legacyHostRoot,
+          detached: true,
+          windowsHide: true,
+          stdio: logDescriptor === undefined ? "ignore" : ["ignore", logDescriptor, logDescriptor],
+          env: {
+            ...process.env,
+            ...(embedded ? {
+              ELECTRON_RUN_AS_NODE: "1",
+              FITZ_STARTUP_LAUNCHER: join(this.#options.resourcesPath, "start-host.ps1"),
+            } : {}),
+            FITZ_HOST: "127.0.0.1",
+            FITZ_PORT: String(this.#options.origin.port || 8787),
+          },
+        });
+      } finally {
+        if (logDescriptor !== undefined) closeSync(logDescriptor);
+      }
+    })();
+    let failure: string | undefined;
+    child.once("error", (error) => { failure = error.message; });
+    child.once("exit", (code, signal) => { failure = code === null ? `The host process exited because of ${signal ?? "an unknown signal"}.` : `The host process exited with code ${code}.`; });
     child.unref();
+    return { failure: () => failure };
+  }
+
+  #openStartupLog(): number | undefined {
+    if (!this.#options.logPath) return undefined;
+    try {
+      mkdirSync(dirname(this.#options.logPath), { recursive: true });
+      return openSync(this.#options.logPath, "w");
+    } catch {
+      return undefined;
+    }
+  }
+
+  #startupFailureDetail(reason: string): string {
+    if (!this.#options.logPath) return reason;
+    try {
+      const output = readFileSync(this.#options.logPath, "utf8").trim();
+      if (!output) return `${reason}\n\nStartup log: ${this.#options.logPath}`;
+      return `${reason}\n\nLast host output:\n${output.slice(-4_000)}\n\nStartup log: ${this.#options.logPath}`;
+    } catch {
+      return reason;
+    }
   }
 }
 

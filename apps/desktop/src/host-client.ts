@@ -15,6 +15,7 @@ export interface HostRequestOptions {
 export interface HostRequestResult { status: number; body: string }
 
 export const HOST_REQUEST_DEADLINES = {
+  connection: 5_000,
   api: 30_000,
   artifact: 120_000,
   diagnostic: 10 * 60_000,
@@ -26,6 +27,7 @@ export const HOST_REQUEST_DEADLINES = {
 export function hostRequestDeadline(path: string, responseType: HostResponseType = "text"): number {
   if (responseType === "base64") return HOST_REQUEST_DEADLINES.artifact;
   if (/^\/api\/v1\/management\/recipes\/[^/]+\/(?:test|media-test)(?:\?|$)/.test(path)) return HOST_REQUEST_DEADLINES.diagnostic;
+  if (/^\/(?:health|api\/v1\/me)(?:\?|$)/.test(path)) return HOST_REQUEST_DEADLINES.connection;
   return HOST_REQUEST_DEADLINES.api;
 }
 

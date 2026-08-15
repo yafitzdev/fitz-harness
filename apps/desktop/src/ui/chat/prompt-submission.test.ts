@@ -38,7 +38,8 @@ describe("PromptSubmissionController", () => {
       sessionId: "session-1",
       effort: "high",
       max_tokens: 8192,
-      messages: [{ role: "user", content: [{ type: "text", text: "Build a dashboard\nwith charts" }, { type: "image_url", image_url: { url: "/api/v1/artifacts/artifact-1" } }] }],
+      attachments: [{ artifactId: "artifact-1" }],
+      messages: [{ role: "user", content: "Build a dashboard\nwith charts" }],
     }));
     expect(options.appendUser).toHaveBeenCalledWith("Build a dashboard\nwith charts");
   });
@@ -85,6 +86,18 @@ describe("PromptSubmissionController", () => {
     await controller.submit();
     expect(options.startRun).not.toHaveBeenCalled();
     expect(options.submitMedia).not.toHaveBeenCalled();
+  });
+
+  it("does not silently run without an attachment whose upload failed", async () => {
+    const attachment = { kind: "file" as const, dataUrl: "data:text/plain;base64,SGVsbG8=", mimeType: "text/plain", name: "note.txt" };
+    const { controller, options } = setup({
+      consumeAttachments: () => [attachment],
+      uploadAttachment: vi.fn(async () => { throw new Error("upload failed"); }),
+    });
+    await controller.submit("analyse this");
+    expect(options.showError).toHaveBeenCalledWith("Error: upload failed");
+    expect(options.startRun).not.toHaveBeenCalled();
+    expect(options.clearDraft).not.toHaveBeenCalled();
   });
 
   it("shows the inline creation card for a bare media command with a default prompt", async () => {

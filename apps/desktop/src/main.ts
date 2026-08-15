@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { isAllowedExternalUrl, validateHostUrl } from "./security.js";
 import { readProjectResource } from "./resource-preview.js";
 import electronUpdater from "electron-updater";
-import { HostStartupError, HostSupervisor } from "./host-supervisor.js";
+import { HostSupervisor } from "./host-supervisor.js";
 import { HostClient, hostRequestDeadline } from "./host-client.js";
 import { createModelUnloadOnQuitHandler } from "./model-unload-on-quit.js";
 import { readThemeColor } from "./theme-token.js";
@@ -26,6 +26,7 @@ const storedHostUrl = readStoredHostUrl();
 const hostUrl = validateHostUrl(commandLineValue("host-url") ?? (localHostPort ? `http://127.0.0.1:${localHostPort}` : undefined) ?? process.env.FITZ_HOST_URL ?? storedHostUrl ?? "http://127.0.0.1:8787");
 let deviceToken = process.env.FITZ_DEVICE_TOKEN;
 const hostClient = new HostClient({ origin: hostUrl, getToken: () => deviceToken });
+let localHostStartup: Promise<boolean> | undefined;
 interface DesktopUpdateStatus { state: "idle" | "checking" | "available" | "downloading" | "current" | "downloaded" | "error" | "development"; percent?: number; version?: string }
 let latestUpdateStatus: DesktopUpdateStatus = { state: app.isPackaged ? "idle" : "development" };
 type InferenceExecutionClass = "self_hosted" | "metered_cloud";
@@ -80,6 +81,7 @@ ipcMain.on("fitz:agent-events-unsubscribe", (event, subscriptionId: unknown) => 
   agentEventStreams.delete(key);
 });
 ipcMain.handle("fitz:connection-info", () => ({ origin: new URL(hostUrl).origin, isLoopback: isLoopbackHost(hostUrl), explicitlyConfigured: Boolean(storedHostUrl || commandLineValue("host-url") || process.env.FITZ_HOST_URL), accessClass: isLoopbackHost(hostUrl) ? "same_device" : deviceToken ? "trusted_remote" : "public_remote" }));
+ipcMain.handle("fitz:retry-local-host", () => isLoopbackHost(hostUrl) ? ensureLocalHost() : false);
 ipcMain.handle("fitz:configure-host", (_event, value: unknown) => {
   const url = validateHostUrl(requireBoundedText(value, "Host URL", 2048));
   persistHostUrl(url.origin);
@@ -247,12 +249,15 @@ if (!primaryInstance) {
     if (process.env.FITZ_DESKTOP_SMOKE_OUTPUT) writeFileSync(process.env.FITZ_DESKTOP_SMOKE_OUTPUT, "FITZ_DESKTOP_SMOKE_OK\n", { encoding: "utf8", flag: "wx" });
     app.quit();
   } else {
-    if (isLoopbackHost(hostUrl) && !(await ensureLocalHost())) app.quit();
-    else {
-      void warmLocalDefault();
-      createWindow();
-      if (app.isPackaged) void autoUpdater.checkForUpdates().catch(() => undefined);
-    }
+    createWindow();
+    if (isLoopbackHost(hostUrl)) {
+      void ensureLocalHost().then((ready) => {
+        if (!ready) return;
+        for (const window of BrowserWindow.getAllWindows()) window.webContents.send("fitz:host-ready");
+        void warmLocalDefault();
+      });
+    } else void warmLocalDefault();
+    if (app.isPackaged) void autoUpdater.checkForUpdates().catch(() => undefined);
     app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
     app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
   }
@@ -269,18 +274,26 @@ async function warmLocalDefault(): Promise<void> {
     console.warn("Could not preload the local Default model", error);
   }
 }
-async function ensureLocalHost(): Promise<boolean> {
-  const supervisor = new HostSupervisor({ origin: hostUrl, packaged: app.isPackaged, resourcesPath: process.resourcesPath });
-  for (;;) {
+function ensureLocalHost(): Promise<boolean> {
+  if (localHostStartup) return localHostStartup;
+  const attempt = (async () => {
     try {
+      const supervisor = new HostSupervisor({
+        origin: hostUrl,
+        packaged: app.isPackaged,
+        resourcesPath: process.resourcesPath,
+        logPath: join(app.getPath("userData"), "host-startup.log"),
+      });
       await supervisor.ensureReady();
       return true;
     } catch (error) {
-      const startup = error instanceof HostStartupError ? error : new HostStartupError("Fitz could not start", error instanceof Error ? error.message : String(error));
-      const result = await dialog.showMessageBox({ type: "error", title: startup.message, message: startup.message, detail: startup.detail, buttons: ["Retry", "Quit"], defaultId: 0, cancelId: 1 });
-      if (result.response !== 0) return false;
+      console.warn("The local Fitz host is unavailable; the desktop will remain open", error);
+      return false;
     }
-  }
+  })();
+  localHostStartup = attempt;
+  void attempt.finally(() => { if (localHostStartup === attempt) localHostStartup = undefined; });
+  return attempt;
 }
 type AgentEventRelayMessage =
   | { type: "event"; event: Record<string, unknown> }
@@ -390,6 +403,6 @@ function requireModelIds(value: unknown): string[] { if (value === undefined) re
 function requireConsumerBaseUrl(value: unknown): string { const text = requireBoundedText(value, "Base URL", 2048); const url = new URL(text); if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Base URL must use HTTP or HTTPS"); if (url.username || url.password || url.search || url.hash) throw new Error("Base URL must not contain credentials, a query, or a fragment"); return url.toString().replace(/\/$/, ""); }
 async function trustedHostRequest(path: string, method: string, body?: unknown): Promise<Response> { return hostClient.fetch(path, { method, ...(body !== undefined ? { body } : {}) }); }
 async function parseHostResponse(response: Response): Promise<Record<string, unknown>> { const content = await response.text(); if (!response.ok) throw new Error(hostError(content)); const parsed = content ? JSON.parse(content) as unknown : {}; if (!isRecord(parsed)) throw new Error("The Fitz host returned an invalid response"); return parsed; }
-function hostError(content: string): string { try { const parsed = JSON.parse(content) as unknown; if (isRecord(parsed) && isRecord(parsed.error) && typeof parsed.error.message === "string") return parsed.error.message; } catch {} return "The Fitz host returned an invalid error response"; }
+function hostError(content: string): string { try { const parsed = JSON.parse(content) as unknown; if (isRecord(parsed) && typeof parsed.error === "string") return parsed.error; if (isRecord(parsed) && isRecord(parsed.error) && typeof parsed.error.message === "string") return parsed.error.message; } catch {} return "The Fitz host returned an invalid error response"; }
 async function runGit(root: string, args: string[]): Promise<string> { const result = await execFileAsync("git", ["-C", root, ...args], { windowsHide: true, maxBuffer: 1_000_000 }); return result.stdout.trim(); }
 async function gitBranchState(root: string): Promise<{ current: string; branches: string[] }> { const [current, listing] = await Promise.all([runGit(root, ["branch", "--show-current"]), runGit(root, ["branch", "--format=%(refname:short)"])]); return { current, branches: listing.split(/\r?\n/).map((value) => value.trim()).filter(Boolean) }; }

@@ -22,7 +22,8 @@ type PiEvent =
 /** Pi thinking levels. Maps to the SDK's `ThinkingLevel`; kept local so the runtime boundary stays SDK-free. */
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type ThinkingFormat = "openai" | "openrouter" | "deepseek" | "together" | "zai" | "qwen" | "chat-template" | "qwen-chat-template" | "string-thinking" | "ant-ling" | "ninfer";
-export interface PiSession { subscribe(listener: (event: PiEvent) => void): () => void; prompt(text: string): Promise<void>; steer(text: string): Promise<void>; abort(): Promise<void>; dispose(): void }
+export interface PiImageContent { type: "image"; data: string; mimeType: string }
+export interface PiSession { subscribe(listener: (event: PiEvent) => void): () => void; prompt(text: string, images?: PiImageContent[]): Promise<void>; steer(text: string): Promise<void>; abort(): Promise<void>; dispose(): void }
 type PiWorkContext = AgentRuntimeRunOptions;
 export interface PiToolCall { toolCallId: string; toolName: string; input: unknown }
 export interface PiToolApprovalResult { allowed: boolean; reason?: string }
@@ -151,6 +152,10 @@ export const TRASH_TOOL = "fitz_trash";
 export const MEDIA_TOOLS = new Set(["generate_image", "generate_video", "generate_audio"]);
 const READ_ONLY_TOOLS = new Set([
   "read", "grep", "find", "ls", SESSION_LOOKUP_TOOL,
+  // Durable plan updates mutate host bookkeeping, not the user's workspace.
+  // They must remain available in Read only mode or every planned chat loops
+  // forever trying to create the mandatory plan with a blocked tool.
+  "agent_plan",
   // Fitz's bundled research extension tools only fetch public content and are
   // safe in researcher/reviewer read-only child sessions.
   "web_search", "fetch_content", "get_search_content",
@@ -272,6 +277,14 @@ export class PiAgentRuntime implements AgentRuntime {
       let internalPlanRetry = false;
       let internalWorkerReportRetry = false;
       let workerReportCandidate = false;
+      let terminalFailure = false;
+      const failActiveSession = (error: Error) => {
+        if (terminalFailure || completedMediaHandoff || planAnswerFinalized) return;
+        terminalFailure = true;
+        controller.abort();
+        channel.fail(error);
+        queueMicrotask(() => void activeSession.abort().catch(() => undefined));
+      };
       const emitAssistant = (events: AgentRuntimeEvent[], final: boolean) => {
         for (const output of events) channel.push(output);
         if (events.length) {
@@ -302,7 +315,7 @@ export class PiAgentRuntime implements AgentRuntime {
       let sawInitialUserMessage = false;
       const unsubscribe = activeSession.subscribe((event) => {
         const failure = piFailure(event);
-        if (failure) { if (!completedMediaHandoff && !planAnswerFinalized) channel.fail(failure); return; }
+        if (failure) { failActiveSession(failure); return; }
         if (event.type === "message_start" && event.message?.role === "user") {
           if (!sawInitialUserMessage) { sawInitialUserMessage = true; return; }
           if (internalDelegationRetry) { internalDelegationRetry = false; return; }
@@ -342,8 +355,7 @@ export class PiAgentRuntime implements AgentRuntime {
                 // result. The buffered answer is already the final response.
                 queueMicrotask(() => void activeSession.abort());
               } catch (error) {
-                channel.fail(error);
-                queueMicrotask(() => void activeSession.abort());
+                failActiveSession(error instanceof Error ? error : new Error(String(error)));
               }
             }
           }
@@ -359,13 +371,13 @@ export class PiAgentRuntime implements AgentRuntime {
           queueMicrotask(() => void activeSession.abort());
         }
       }); try {
-        const prompt = async (text: string) => {
-          try { await activeSession.prompt(text); }
+        const prompt = async (text: string, images?: PiImageContent[]) => {
+          try { await activeSession.prompt(text, images); }
           catch (error) { if (!planAnswerFinalized) throw error; }
           settlePlanOutputAfterPrompt();
         };
         const initialInstructions = [runPlan?.initialInstruction, delegation.initialPromptInstruction(), workTools.initialInstruction()].filter(Boolean).join("\n");
-        await prompt(formatPrompt(request, initialInstructions || undefined));
+        await prompt(formatPrompt(request, initialInstructions || undefined), imageContentFromRequest(request));
         if (completedMediaHandoff) { channel.close(); return; }
         if (controller.signal.aborted) throw abortError();
         if (delegation.requiresInitialFanout && !delegation.initialFanoutComplete) {
@@ -625,10 +637,10 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
       : {}),
     sessionManager: sdk.SessionManager.inMemory(options.cwd),
   });
-  const session = result.session as PiSession;
+  const session = result.session;
   return {
-    subscribe: (listener) => session.subscribe(listener),
-    prompt: (text) => session.prompt(text),
+    subscribe: (listener) => session.subscribe((event) => listener(event as PiEvent)),
+    prompt: (text, images) => session.prompt(text, images?.length ? { images } : undefined),
     steer: (text) => session.steer(text),
     abort: () => session.abort(),
     dispose: () => {
@@ -805,6 +817,13 @@ function piFailure(event: PiEvent): Error | undefined { return event.type === "m
 function formatPrompt(request: AgentRunRequest, initialDelegationInstruction?: string): string {
   const transcript = request.messages.map((message) => `${message.role.toUpperCase()}: ${extractTextFromContent(message.content)}`).join("\n\n");
   return initialDelegationInstruction ? [initialDelegationInstruction, transcript].join("\n\n") : transcript;
+}
+function imageContentFromRequest(request: AgentRunRequest): PiImageContent[] {
+  return request.messages.flatMap((message) => typeof message.content === "string" ? [] : message.content.flatMap((part) => {
+    if (part.type !== "image_url" || typeof part.image_url?.url !== "string") return [];
+    const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/.exec(part.image_url.url);
+    return match ? [{ type: "image" as const, mimeType: match[1]!, data: match[2]! }] : [];
+  }));
 }
 function extractTextFromContent(content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>): string {
   if (typeof content === "string") return content;

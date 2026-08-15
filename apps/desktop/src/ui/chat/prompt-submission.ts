@@ -39,6 +39,7 @@ export interface PromptSubmissionOptions {
     temperature: number;
     sessionId: string;
     accessMode: string;
+    attachments?: Array<{ artifactId: string }>;
     messages: Array<{ role: "user"; content: PromptMessageContent }>;
   }) => Promise<void>;
   /** Submits a media job straight to the media-job pipeline, bypassing the LLM entirely. */
@@ -111,7 +112,10 @@ export class PromptSubmissionController {
       try {
         const artifact = await this.#options.uploadAttachment(sessionId, attachment);
         uploaded.push({ artifact, attachment });
-      } catch (error) { this.#options.showError(this.#options.errorMessage(error)); }
+      } catch (error) {
+        this.#options.showError(this.#options.errorMessage(error));
+        return;
+      }
     }
 
     // Media commands skip the LLM entirely: the command is sent as a normal
@@ -174,12 +178,6 @@ export class PromptSubmissionController {
     if (content && !existingUserMessage) this.#options.pushHistory(content);
     this.#options.addTokenEstimate(content);
     this.#options.refreshContext();
-    const imageParts: Array<{ type: "image_url"; image_url: { url: string } }> = uploaded
-      .filter(({ attachment }) => attachment.kind === "image")
-      .map(({ artifact }) => ({ type: "image_url", image_url: { url: `/api/v1/artifacts/${artifact.id}` } }));
-    const messageContent: PromptMessageContent = imageParts.length > 0
-      ? [{ type: "text", text: content }, ...imageParts]
-      : content;
     await this.#options.startRun({
       model: settings.routeId,
       effort: settings.effort,
@@ -187,7 +185,8 @@ export class PromptSubmissionController {
       temperature: settings.temperature,
       sessionId,
       accessMode: settings.accessMode,
-      messages: [{ role: "user", content: messageContent }],
+      ...(uploaded.length ? { attachments: uploaded.map(({ artifact }) => ({ artifactId: artifact.id })) } : {}),
+      messages: [{ role: "user", content }],
     });
   }
 

@@ -92,7 +92,7 @@ runtimePaths.engineRoot = desiredConfiguration.inference.engineRoot ?? runtimePa
 const reserveVramMiB = desiredConfiguration.inference.reserveVramMiB;
 const agentConcurrency = desiredConfiguration.inference.agentConcurrency;
 const agentConcurrencyPerOwner = desiredConfiguration.inference.agentConcurrencyPerUser;
-const startupManager = new WindowsStartupManager(resolve(moduleDirectory, "../start-host.ps1"));
+const startupManager = new WindowsStartupManager(process.env.FITZ_STARTUP_LAUNCHER ?? resolve(moduleDirectory, "../start-host.ps1"));
 const sharingGateway = new SharedHostGateway({ target: new URL(`http://127.0.0.1:${port}`), port: desiredConfiguration.hosting.gatewayPort });
 const funnelManager = new TailscaleFunnelManager({ target: new URL(sharingGateway.origin), httpsPort: desiredConfiguration.hosting.publicPort });
 const hosting = new HostingService({ config: configuration, gateway: sharingGateway, funnel: funnelManager, startup: startupManager, onError: (error) => console.warn("Hosting reconciliation failed", error) });

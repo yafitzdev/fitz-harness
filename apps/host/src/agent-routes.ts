@@ -2,9 +2,10 @@ import type { FastifyInstance } from "fastify";
 import { RouteNotFoundError, type InferenceScheduler } from "@fitz/inference-core";
 import { parseChatCompletionRequest, PROTOCOL_VERSION, type AgentRunCheckpoint, type AgentRunRequest } from "@fitz/protocol";
 import { SecurityPolicyError, type AuthenticatedPrincipal, type SecurityService } from "@fitz/security";
-import type { SqliteStore } from "@fitz/storage";
+import type { ArtifactRepository, SqliteStore } from "@fitz/storage";
 import type { ContextManager } from "@fitz/context";
 import { AgentCoordinatorClosedError, AgentQueueCapacityError, type AgentRunCoordinator } from "./agent-runs.js";
+import { prepareAttachment } from "./attachment-content.js";
 
 export interface RegisterAgentRoutesOptions {
   app: FastifyInstance;
@@ -12,6 +13,7 @@ export interface RegisterAgentRoutesOptions {
   agentRuns: AgentRunCoordinator;
   scheduler: InferenceScheduler;
   context: ContextManager;
+  artifacts: ArtifactRepository;
   principals: WeakMap<object, AuthenticatedPrincipal>;
   security?: SecurityService;
   contextTokensForRequest(request: AgentRunRequest, ownerUserId?: string): number;
@@ -20,7 +22,7 @@ export interface RegisterAgentRoutesOptions {
 /** Owns durable agent-run creation, queue visibility, steering, cancellation,
  * replay, and live SSE delivery. */
 export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
-  const { app, store, agentRuns, scheduler, context, principals, security, contextTokensForRequest } = options;
+  const { app, store, agentRuns, scheduler, context, artifacts, principals, security, contextTokensForRequest } = options;
 
   app.post("/api/v1/agent/runs", async (request, reply) => {
     try {
@@ -39,13 +41,15 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
       if (principal && !security?.authorizeRoute(principal, body.model)) {
         return reply.code(403).send({ error: "Route access denied" });
       }
+      const executionMessages = await hydrateAttachments(body, store, artifacts);
       if (principal) {
-        const promptChars = body.messages.reduce((total, message) => total + contentTextLength(message.content), 0);
+        const promptChars = executionMessages.reduce((total, message) => total + contentTextLength(message.content), 0);
         security?.enforceQuota(principal, promptChars, body.maxTokens ?? principal.quota.maxOutputTokens, agentRuns.queue(principal.user.id).length);
       }
       const executionRouteId = body.model;
       const durableRequest = { ...body, model: executionRouteId };
-      const prepared = await context.prepare(durableRequest, contextTokensForRequest(durableRequest, principal?.user.id));
+      const executionRequest = { ...durableRequest, messages: executionMessages };
+      const prepared = await context.prepare(executionRequest, contextTokensForRequest(executionRequest, principal?.user.id));
       let run;
       try { run = agentRuns.start(prepared.request, principal?.user.id, body.messages, durableRequest); }
       catch (error) {
@@ -267,9 +271,53 @@ function parseAgentRunRequest(value: unknown): AgentRunRequest {
     ...(parsed.max_tokens !== undefined ? { maxTokens: parsed.max_tokens } : {}),
     ...(parsed.temperature !== undefined ? { temperature: parsed.temperature } : {}),
     ...(typeof source.sessionId === "string" ? { sessionId: source.sessionId } : {}),
+    ...(source.attachments !== undefined ? { attachments: parseAttachmentReferences(source.attachments) } : {}),
     accessMode,
     ...(typeof source.clientRequestId === "string" && source.clientRequestId.trim() ? { clientRequestId: validateClientRequestId(source.clientRequestId) } : {}),
   };
+}
+
+function parseAttachmentReferences(value: unknown): Array<{ artifactId: string }> {
+  if (!Array.isArray(value) || value.length > 16) throw new TypeError("attachments must be an array of at most 16 artifact references");
+  return value.map((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry) || typeof (entry as { artifactId?: unknown }).artifactId !== "string") throw new TypeError(`attachments[${index}].artifactId is required`);
+    const artifactId = (entry as { artifactId: string }).artifactId.trim();
+    if (!artifactId || artifactId.length > 128) throw new TypeError(`attachments[${index}].artifactId is invalid`);
+    return { artifactId };
+  });
+}
+
+async function hydrateAttachments(request: AgentRunRequest, store: SqliteStore, artifacts: ArtifactRepository): Promise<AgentRunRequest["messages"]> {
+  if (!request.attachments?.length) return request.messages;
+  if (!request.sessionId) throw new TypeError("Attachments require a chat session");
+  const textBlocks: string[] = [];
+  const imageParts: Array<{ type: "image_url"; image_url: { url: string } }> = [];
+  let textCharacters = 0;
+  let totalBytes = 0;
+  for (const reference of request.attachments) {
+    const artifact = store.getArtifact(reference.artifactId);
+    if (!artifact || artifact.sessionId !== request.sessionId) throw new TypeError(`Attachment is unavailable: ${reference.artifactId}`);
+    const bytes = await artifacts.read(artifact.id);
+    if (!bytes) throw new TypeError(`Attachment content is unavailable: ${artifact.name}`);
+    totalBytes += bytes.byteLength;
+    if (totalBytes > 10_000_000) throw new TypeError("Attachments are too large for one chat message (maximum 10 MB total)");
+    const prepared = await prepareAttachment(artifact, bytes);
+    if (prepared.imageDataUrl) imageParts.push({ type: "image_url", image_url: { url: prepared.imageDataUrl } });
+    if (!prepared.text) continue;
+    textCharacters += prepared.text.length;
+    if (textCharacters > 160_000) throw new TypeError("The attached text is too large for one chat message (maximum 160,000 characters)");
+    textBlocks.push(prepared.text);
+  }
+  const messages = request.messages.map((message) => ({ ...message }));
+  let index = messages.length - 1;
+  while (index >= 0 && messages[index]?.role !== "user") index -= 1;
+  if (index < 0) throw new TypeError("Attachments require a user message");
+  const message = messages[index]!;
+  const existing = typeof message.content === "string" ? [{ type: "text" as const, text: message.content }] : [...message.content];
+  const attachmentText = textBlocks.join("\n\n");
+  const parts = [...existing, ...(attachmentText ? [{ type: "text" as const, text: `\n\n${attachmentText}` }] : []), ...imageParts];
+  messages[index] = { ...message, content: parts.length === 1 && parts[0]?.type === "text" ? parts[0].text : parts };
+  return messages;
 }
 
 function parseAgentEffort(value: unknown): "light" | "normal" | "high" {

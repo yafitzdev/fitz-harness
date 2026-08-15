@@ -310,7 +310,7 @@ const conversationLanding = new ConversationLanding({
   messages,
   clearActivity: () => activityTimeline.clear(),
   createProject: () => projectSidebar.beginCreateProject(),
-  retryConnection: () => initialize(),
+  retryConnection,
   updateTitles,
 });
 const agentQueue = new WorkQueueController({
@@ -806,6 +806,7 @@ const appNavigation = new AppNavigationController({
   },
 });
 void initialize();
+window.fitz.onHostReady(() => void initialize());
 
 window.fitz.onNavigationCommand((command) => void appNavigation.navigate(command === "back" ? -1 : 1));
 document.addEventListener("auxclick", (event) => {
@@ -839,7 +840,7 @@ for (const windowButton of document.querySelectorAll<HTMLButtonElement>("[data-w
       .catch((error) => showStatus(errorMessage(error), "error"));
   });
 }
-connectionStatus.addEventListener("click", () => void initialize());
+connectionStatus.addEventListener("click", () => void retryConnection());
 inspectorArtifacts.addEventListener("click", () => inspectorPanel.toggle());
 window.addEventListener("fitz:open-resource", (event) => {
   const reference = (event as CustomEvent<{ reference?: string }>).detail?.reference;
@@ -860,9 +861,9 @@ async function initialize(): Promise<void> {
   try {
     setConnection("Connecting…", "loading");
     setStatus("Connecting", "loading");
-    await connectionWorkspace.sync(false);
     const [health, connection, identity] = await Promise.all([api("/health"), window.fitz.connectionInfo(), api("/api/v1/me")]);
     assertHostContract(health);
+    await connectionWorkspace.sync(false);
     configuredHostOrigin = connection.origin; currentUserId = identity.data?.user?.id; administrator = identity.data?.authMode === "disabled" || identity.data?.user?.role === "administrator";
     appNavigation.applyAvailability();
     engineState.textContent = health.engine?.state ?? "UNLOADED";
@@ -894,11 +895,25 @@ async function initialize(): Promise<void> {
         appNavigation.showPairing(`Could not reach ${connection.origin}. Check the address or choose another host.`);
         pairingError.textContent = errorMessage(error);
         pairingError.hidden = false;
-      } else showConnectionFailure(errorMessage(error));
+      } else {
+        configuredHostOrigin = connection?.origin ?? "http://127.0.0.1:8787";
+        hostConnectionUrl.value = "";
+        administrator = false;
+        administrationButton.hidden = true;
+        appNavigation.showPairing("The local Fitz host is unavailable. Enter the public HTTPS URL and API key from the person hosting Fitz, or retry hosting on this PC.");
+        pairingError.textContent = errorMessage(error);
+        pairingError.hidden = false;
+      }
     }
   } finally {
     refreshComposerState();
   }
+}
+
+async function retryConnection(): Promise<void> {
+  const connection = await window.fitz.connectionInfo().catch(() => undefined);
+  if (connection?.isLoopback) await window.fitz.retryLocalHost().catch(() => false);
+  await initialize();
 }
 
 // Connections and chat resolve labels through one shared role formatter. Cloud
@@ -1051,10 +1066,6 @@ function showLanding(hasTask = false): void {
   conversationLanding.showHome(hasTask);
 }
 
-function showConnectionFailure(detail: string): void {
-  conversationLanding.showConnectionFailure(detail);
-}
-
 function appendMessage(role: string, text: string, createdAt?: string, runId?: string): HTMLElement {
   const content = conversationMessages.append(role, text, createdAt);
   if (role === "assistant" && runId) {
@@ -1135,4 +1146,4 @@ async function typedApi<T>(path: string, method = "GET", body?: unknown): Promis
   return await api(path, method, body) as T;
 }
 
-function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+function errorMessage(error: unknown): string { return (error instanceof Error ? error.message : String(error)).replace(/^Error invoking remote method '[^']+':\s*Error:\s*/i, ""); }

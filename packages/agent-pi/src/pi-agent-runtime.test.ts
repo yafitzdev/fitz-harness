@@ -323,6 +323,47 @@ describe("PiAgentRuntime", () => {
     expect(events).toEqual([{ type: "assistant.delta", text: "hello" }, { type: "tool.started", toolCallId: "call-1", toolName: "read", input: { path: "README.md" } }, { type: "tool.completed", toolCallId: "call-1", toolName: "read", result: "done" }]); expect(disposed).toBe(true);
   });
 
+  it("passes data-URL image attachments into the Pi vision prompt", async () => {
+    const seen: unknown[] = [];
+    let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+    const runtime = new PiAgentRuntime({ createSession: async () => ({
+      subscribe: (next) => { listener = next; return () => undefined; },
+      prompt: async (_text, images) => { seen.push(images); listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "seen" } }); },
+      steer: async () => undefined,
+      abort: async () => undefined,
+      dispose: () => undefined,
+    }) });
+    for await (const _event of runtime.run({ model: "default", messages: [{ role: "user", content: [
+      { type: "text", text: "analyse this" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,QUJD" } },
+    ] }] })) { /* consume */ }
+    expect(seen).toEqual([[{ type: "image", mimeType: "image/png", data: "QUJD" }]]);
+  });
+
+  it("aborts and disposes the Pi session after a terminal model request failure", async () => {
+    let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+    let rejectPrompt: ((error: Error) => void) | undefined;
+    const abort = vi.fn(async () => { rejectPrompt?.(new Error("terminated")); });
+    const dispose = vi.fn();
+    const runtime = new PiAgentRuntime({
+      createSession: async () => ({
+        subscribe: (next) => { listener = next; return () => undefined; },
+        prompt: async () => {
+          listener({ type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "fetch failed" } });
+          await new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
+        },
+        steer: async () => undefined,
+        abort,
+        dispose,
+      }),
+    });
+    const consume = async () => { for await (const _event of runtime.run({ model: "default", messages: [{ role: "user", content: "hello" }] })) { /* consume */ } };
+
+    await expect(consume()).rejects.toThrow("fetch failed");
+    await vi.waitFor(() => expect(abort).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce());
+  });
+
   it("forwards trusted task correlation only when the localhost gateway enables it", async () => {
     const seen: unknown[] = [];
     const createSession = async (options: Parameters<NonNullable<ConstructorParameters<typeof PiAgentRuntime>[0]["createSession"]>>[0]) => {
@@ -508,6 +549,7 @@ describe("PiAgentRuntime", () => {
       createSession: async (options) => ({ subscribe: (next) => { listener = next; return () => undefined; }, prompt: async () => {
         expect(await options.approveTool({ toolCallId: "read-1", toolName: "read", input: { path: "README.md" } })).toEqual({ allowed: true });
         expect(await options.approveTool({ toolCallId: "web-1", toolName: "web_search", input: { query: "Pi extensions" } })).toEqual({ allowed: true });
+        expect(await options.approveTool({ toolCallId: "plan-1", toolName: "agent_plan", input: { action: "set" } })).toEqual({ allowed: true });
         expect(await options.approveTool({ toolCallId: "img-1", toolName: "generate_image", input: { prompt: "a cat" } })).toEqual({ allowed: false, reason: "generate_image is blocked in Read only mode" });
         listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "blocked" } });
       }, abort: async () => undefined, dispose: () => undefined }) });

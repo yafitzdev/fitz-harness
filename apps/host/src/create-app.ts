@@ -421,6 +421,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     agentRuns,
     scheduler,
     context,
+    artifacts,
     principals,
     ...(security ? { security } : {}),
     contextTokensForRequest: (agentRequest, routeOwnerUserId) => contextTokensForAgentRequest(
@@ -518,6 +519,17 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       ...connection.mediaModels.map((model) => model.recipeId),
     ]));
     const defaultResolved = routes.resolve("default");
+    const principal = principals.get(request);
+    const sharedRoutes = routes.listRoutes(true).filter((route) => {
+      if (ownedRecipeIds.has(route.recipeId)) return true;
+      if (!(MEDIA_ROUTE_IDS as readonly string[]).includes(route.id)) return false;
+      return authMode === "disabled" || (principal !== undefined && security?.authorizeRoute(principal, route.id) === true);
+    });
+    const visibleRecipeIds = new Set([
+      defaultResolved.recipe.id,
+      ...ownedRecipeIds,
+      ...sharedRoutes.map((route) => route.recipeId),
+    ]);
     return {
       hostName: hostname(),
       isAdministrator: authMode === "disabled" || principals.get(request)?.user.role === "administrator",
@@ -525,9 +537,9 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       agentTopologies: agentTopologyPresentations(userRoutes, lifecycle, owner),
       routes: [
         ...userRoutes.publicRoutes(owner),
-        ...routes.listRoutes(true).filter((route) => (MEDIA_ROUTE_IDS as readonly string[]).includes(route.id) || ownedRecipeIds.has(route.recipeId)),
+        ...sharedRoutes,
       ],
-      recipes: routes.listRecipes().filter((recipe) => recipe.id === defaultResolved.recipe.id || ownedRecipeIds.has(recipe.id)),
+      recipes: routes.listRecipes().filter((recipe) => visibleRecipeIds.has(recipe.id)),
       cloudRoutes: userRoutes.configuration(owner),
     };
   });

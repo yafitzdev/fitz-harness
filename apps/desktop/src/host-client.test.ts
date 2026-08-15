@@ -3,7 +3,9 @@ import { HostClient, HOST_REQUEST_DEADLINES, HostRequestError, hostRequestDeadli
 
 describe("HostClient", () => {
   it("uses bounded endpoint-aware deadlines", () => {
-    expect(hostRequestDeadline("/api/v1/health")).toBe(HOST_REQUEST_DEADLINES.api);
+    expect(hostRequestDeadline("/health")).toBe(HOST_REQUEST_DEADLINES.connection);
+    expect(hostRequestDeadline("/api/v1/me")).toBe(HOST_REQUEST_DEADLINES.connection);
+    expect(hostRequestDeadline("/api/v1/projects")).toBe(HOST_REQUEST_DEADLINES.api);
     expect(hostRequestDeadline("/api/v1/artifacts/42/content", "base64")).toBe(HOST_REQUEST_DEADLINES.artifact);
     expect(hostRequestDeadline("/api/v1/management/recipes/h3-video/media-test")).toBe(HOST_REQUEST_DEADLINES.diagnostic);
     expect(hostRequestDeadline("/api/v1/management/recipes/qwen/test?force=true")).toBe(HOST_REQUEST_DEADLINES.diagnostic);

@@ -341,8 +341,25 @@ describe("desktop renderer shell", () => {
     expect(pluginCatalog).toContain('entry.links.homepage ?? entry.links.repository ?? entry.links.npm');
     expect(pluginCatalog).toContain('this.options.openExternal(website)');
     expect(pluginCatalog).toContain('Pi packages can run code with the same access as Fitz');
-    expect(main).toContain('new HostSupervisor({ origin: hostUrl');
+    expect(main).toContain('new HostSupervisor({');
+    expect(main).toContain('origin: hostUrl');
     expect(main).toContain('resourcesPath: process.resourcesPath');
+    expect(main).toContain('"host-startup.log"');
+  });
+
+  it("opens immediately and keeps host startup failures inside the app", () => {
+    expect(main).not.toContain('dialog.showMessageBox({ type: "error"');
+    expect(main).toContain("createWindow();");
+    expect(main).toContain("void ensureLocalHost().then");
+    expect(main.indexOf("let localHostStartup:")).toBeLessThan(main.indexOf("void ensureLocalHost().then"));
+    expect(main.indexOf("createWindow();")).toBeLessThan(main.indexOf("void ensureLocalHost().then"));
+    expect(main).toContain('console.warn("The local Fitz host is unavailable; the desktop will remain open"');
+    expect(preload).toContain("retryLocalHost(): Promise<boolean>");
+    expect(preload).toContain("onHostReady(listener: () => void)");
+    expect(renderer).toContain("window.fitz.onHostReady(() => void initialize())");
+    expect(renderer).toContain("window.fitz.retryLocalHost().catch(() => false)");
+    expect(renderer).toContain('appNavigation.showPairing("The local Fitz host is unavailable.');
+    expect(renderer).toContain('hostConnectionUrl.value = ""');
   });
 
   it("retires the Playbooks navigation surface in favor of Inference", () => {
@@ -1088,7 +1105,8 @@ describe("desktop renderer shell", () => {
   });
 
   it("keeps generated media out of composer attachments and animates media progress", () => {
-    expect(artifactController).toContain("if (!artifact.metadata?.mediaJobId)");
+    expect(artifactController).toContain("this.#options.stageFile(file)");
+    expect(artifactController).not.toContain("this.#options.addChip(artifact.name");
     expect(mediaJobFeed).toContain("if (wasTracked && this.#terminal(job.status)) this.#options.finishWork");
     expect(mediaJobFeed).toContain("this.#options.appendWork(row, job.startedAt ?? job.enqueuedAt)");
     expect(mediaJobFeed).toContain("this.#options.appendAssistant(this.#terminalMessage(job)");
@@ -1135,6 +1153,12 @@ describe("desktop renderer shell", () => {
     expect(main).toContain('redirect: "manual"');
     expect(styles).toContain(".pairing-page");
     expect(renderer).toContain('setConnection(configuredHostOrigin.replace');
+  });
+
+  it("surfaces actionable cloud-connection errors without Electron IPC boilerplate", () => {
+    expect(main).toContain('typeof parsed.error === "string"');
+    expect(renderer).toContain("Error invoking remote method");
+    expect(renderer).toContain(".replace(");
   });
 
   it("provides inline Hosting controls for users, API keys, usage, quotas, and tools", () => {

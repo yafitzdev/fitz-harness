@@ -73,6 +73,7 @@ describe("AgentSafetyService", () => {
     const now = new Date().toISOString();
     store.createAgentRun({ id: "shared-run", routeId: "default", status: "queued", createdAt: now, updatedAt: now, lastSequence: 0, ownerUserId: consumer.id });
     const evaluate = safety.createToolEvaluator();
+    await expect(evaluate({ toolName: "agent_plan", input: { action: "set" }, cwd: workspace, runId: "shared-run" })).resolves.toEqual({ action: "allow" });
     await expect(evaluate({ toolName: "read", input: { path: "README.md" }, cwd: workspace, runId: "shared-run" })).resolves.toEqual({ action: "block", reason: expect.stringContaining("consumer") });
     await expect(evaluate({ toolName: "bash", input: { command: "echo unsafe" }, cwd: workspace, runId: "shared-run" })).resolves.toEqual({ action: "block", reason: expect.stringContaining("consumer") });
     expect(store.getSnapshot("shared-run")).toBeUndefined();

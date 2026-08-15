@@ -16,8 +16,8 @@
     "@fitz/config": "workspace:*",
     "@fitz/connectivity": "workspace:*",
     "@fitz/context": "workspace:*",
-    "@fitz/engine-fake": "workspace:*",
     "@fitz/engine-comfyui": "workspace:*",
+    "@fitz/engine-fake": "workspace:*",
     "@fitz/engine-media-fake": "workspace:*",
     "@fitz/engine-ninfer": "workspace:*",
     "@fitz/engine-openai-compatible": "workspace:*",
@@ -30,6 +30,10 @@
     "@fitz/storage": "workspace:*",
     "fastify": "^5.11.0",
     "npm": "11.10.0",
+    "officeparser": "7.6.2",
     "typebox": "^1.3.7"
+  },
+  "devDependencies": {
+    "fflate": "0.8.3"
   }
 }

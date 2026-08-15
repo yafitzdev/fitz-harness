@@ -67,31 +67,13 @@ export class ArtifactController {
   }
 
   async uploadSelected(): Promise<void> {
-    const file = this.#options.fileInput.files?.[0];
+    const files = [...(this.#options.fileInput.files ?? [])];
     this.#options.fileInput.value = "";
-    if (!file) return;
-    if (file.size > 5_000_000) {
-      this.#options.showStatus("Artifacts are currently limited to 5 MB", "error");
-      return;
-    }
-    const sessionId = this.#options.getSessionId();
-    if (!sessionId) {
-      if (this.#options.isNewChat()) this.#options.stageFile(file);
-      else this.#options.showStatus("Create or select a task before attaching a file", "error");
-      return;
-    }
-    try {
-      await this.uploadData(sessionId, {
-        name: file.name,
-        mimeType: file.type || "application/octet-stream",
-        contentBase64: bytesToBase64(new Uint8Array(await file.arrayBuffer())),
-      });
-      await this.load();
-      this.#options.openInspector();
-      this.#options.showStatus(`Attached ${file.name}`, "success");
-    } catch (error) {
-      this.#options.showStatus(this.#options.errorMessage(error), "error");
-    }
+    if (!files.length) return;
+    // A chooser selection is context for the next message, regardless of
+    // whether the chat already exists. Prompt submission uploads it durably,
+    // references it in the run, and consumes the chip exactly once.
+    for (const file of files) this.#options.stageFile(file);
   }
 
   #renderItem(artifact: Json): HTMLElement {
@@ -105,17 +87,8 @@ export class ArtifactController {
     const preview = () => void this.#options.previewArtifact(artifact, value, this.#options.list);
     value.append(name, detail);
     value.addEventListener("click", preview);
-    // Generated media stays a durable output. Only user uploads can become
-    // composer context chips for a later turn.
-    if (!artifact.metadata?.mediaJobId) this.#options.addChip(artifact.name, detail.textContent, preview, () => undefined);
     return value;
   }
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
-  return btoa(binary);
 }
 
 function formatBytes(value: number): string {
