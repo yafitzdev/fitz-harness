@@ -1072,10 +1072,12 @@ async function regenerateAssistantResponse(article: HTMLElement): Promise<void> 
     const response = await api(`/api/v1/sessions/${sessionId}/regenerate`, "POST", { runId });
     const prompt = String(response.data?.prompt ?? "").trim();
     if (!prompt) throw new Error("The original prompt is unavailable");
+    const retainedContextTokens = Number(response.data?.estimatedContextTokens);
+    if (!Number.isFinite(retainedContextTokens) || retainedContextTokens < 0) throw new Error("The regenerated context estimate is unavailable");
     let next = userArticle.nextElementSibling;
     while (next) { const remove = next; next = next.nextElementSibling; remove.remove(); }
     agentPlanPanel.reset();
-    conversationContext.refresh();
+    conversationContext.recalibrate(retainedContextTokens);
     await sendPrompt(prompt, userArticle);
   } catch (error) { showStatus(errorMessage(error), "error"); }
 }

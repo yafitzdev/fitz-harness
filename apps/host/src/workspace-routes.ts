@@ -256,8 +256,9 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
       if (!userEntry || !text) return reply.code(409).send({ error: "The prompt for this response is unavailable" });
 
       const removed = store.deleteTranscriptFrom(session.id, userEntry.sequence);
+      const estimatedContextTokens = context.estimateSession(session.id);
       security?.audit("session.response-regenerated", principal?.user.id, "session", session.id, { runId, removedTranscriptEntries: removed });
-      return { data: { prompt: text, removedTranscriptEntries: removed } };
+      return { data: { prompt: text, removedTranscriptEntries: removed, estimatedContextTokens } };
     } catch (error) {
       return reply.code(400).send({ error: errorMessage(error) });
     }

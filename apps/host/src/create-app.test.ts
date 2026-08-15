@@ -1252,7 +1252,7 @@ describe("Fitz host", () => {
     const transcript = await runtime.app.inject({ method: "GET", url: `/api/v1/sessions/${sessionId}/transcript` }); expect(transcript.json().data).toEqual([expect.objectContaining({ sequence: 1, role: "user", content: expect.objectContaining({ text: "persist this turn" }) }), expect.objectContaining({ sequence: 2, role: "assistant", content: expect.objectContaining({ runId }) })]);
     const regenerate = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/regenerate`, payload: { runId } });
     expect(regenerate.statusCode, regenerate.body).toBe(200);
-    expect(regenerate.json().data).toEqual(expect.objectContaining({ prompt: "persist this turn", removedTranscriptEntries: 2 }));
+    expect(regenerate.json().data).toEqual(expect.objectContaining({ prompt: "persist this turn", removedTranscriptEntries: 2, estimatedContextTokens: 0 }));
     expect(runtime.store.transcriptAfter(sessionId, 0)).toEqual([]);
     await runtime.app.close();
   });
