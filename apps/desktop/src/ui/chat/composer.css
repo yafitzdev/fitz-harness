@@ -1,20 +1,18 @@
-.composer-dock { position: absolute; z-index: 4; left: var(--conversation-gutter); bottom: 20px; width: var(--conversation-width); isolation: isolate; container-type: inline-size; container-name: composer; transition: width 220ms cubic-bezier(.23,1,.32,1), left 220ms cubic-bezier(.23,1,.32,1), bottom 220ms cubic-bezier(.23,1,.32,1); }
-.new-chat-heading { display: none; position: absolute; left: 0; right: 0; bottom: calc(100% + 64px); margin: 0; color: var(--text); text-align: center; font-size: clamp(25px, 3vw, 34px); font-weight: 580; letter-spacing: -.04em; line-height: 1.15; }
+.composer-dock { position: absolute; left: var(--conversation-gutter); bottom: 20px; width: var(--conversation-width); transition: width 220ms cubic-bezier(.23,1,.32,1), left 220ms cubic-bezier(.23,1,.32,1), bottom 220ms cubic-bezier(.23,1,.32,1); }
+.new-chat-heading { display: none; position: absolute; z-index: 30; left: 0; right: 0; bottom: calc(100% + 64px); margin: 0; color: var(--text); text-align: center; font-size: clamp(25px, 3vw, 34px); font-weight: 580; letter-spacing: -.04em; line-height: 1.15; }
 .workspace.new-chat-open .composer-dock { left: max(24px, calc((var(--conversation-viewport) - min(calc(var(--conversation-width) * 1.2), calc(var(--conversation-viewport) - 48px))) / 2)); bottom: clamp(28px, calc(42% - var(--composer-height)), 300px); width: min(calc(var(--conversation-width) * 1.2), calc(var(--conversation-viewport) - 48px)); }
 .workspace.new-chat-open .composer-dock.new-chat-launching { left: var(--conversation-gutter); bottom: 20px; width: var(--conversation-width); }
 .workspace.new-chat-open .new-chat-heading { display: block; }
-.composer-dock::before { content: ""; position: absolute; z-index: -1; inset: var(--radius-3xl) 0 -20px; background: var(--bg); }
-.workspace.new-chat-open .composer-dock::before { background: var(--new-chat-base); transition: background-color 220ms cubic-bezier(.23,1,.32,1); }
-.scroll-to-bottom { position: absolute; z-index: 2; left: 50%; bottom: calc(100% + 12px); width: 40px; height: 40px; display: grid; place-items: center; padding: 0; transform: translateX(-50%); border: 1px solid var(--border); border-radius: 50%; background: var(--bg); color: var(--text); box-shadow: var(--shadow-float); cursor: pointer; }
+.composer-dock::after { content: ""; position: absolute; z-index: 1; inset: 0; border-radius: var(--radius-lg); box-shadow: var(--elevation-prominent), var(--shadow-chat-rest); animation: chat-halo-breathe 7.2s ease-in-out infinite; pointer-events: none; }
+.scroll-to-bottom { position: absolute; z-index: 30; left: 50%; bottom: calc(100% + 12px); width: 40px; height: 40px; display: grid; place-items: center; padding: 0; transform: translateX(-50%); border: 1px solid var(--border); border-radius: 50%; background: var(--bg); color: var(--text); box-shadow: var(--shadow-float); cursor: pointer; }
 .scroll-to-bottom[hidden] { display: none; }
 .scroll-to-bottom:hover { background: var(--grey-200); }
 .scroll-to-bottom svg { width: 22px; height: 22px; stroke-width: 1.6; }
-.composer-card { position: relative; z-index: 1; isolation: isolate; overflow: visible; border: 1px solid var(--new-chat-outline); border-radius: var(--radius-lg); background: var(--new-chat-base); }
-.composer-card::before { content: ""; position: absolute; z-index: -1; inset: 0; border-radius: inherit; box-shadow: var(--elevation-prominent), var(--shadow-chat-rest); animation: chat-halo-breathe 7.2s ease-in-out infinite; pointer-events: none; }
+.composer-card { position: relative; z-index: 30; isolation: isolate; overflow: visible; border: 1px solid var(--new-chat-outline); border-radius: var(--radius-lg); background: var(--new-chat-base); container-type: inline-size; container-name: composer; }
 .composer-card:focus-within { background: var(--new-chat-base); }
 .workspace.new-chat-open .composer-card, .workspace.new-chat-open .composer-card:focus-within { background: var(--new-chat-base); }
-.workspace.new-chat-open .composer-card::before { box-shadow: var(--elevation-prominent), var(--shadow-new-chat); animation-name: new-chat-halo-breathe; }
-.composer-dock.new-chat-launching .composer-card::before { animation: new-chat-halo-implode 220ms cubic-bezier(.55,0,1,.45) forwards; }
+.workspace.new-chat-open .composer-dock::after { box-shadow: var(--elevation-prominent), var(--shadow-new-chat); animation-name: new-chat-halo-breathe; }
+.composer-dock.new-chat-launching::after { animation: new-chat-halo-implode 220ms cubic-bezier(.55,0,1,.45) forwards; }
 .composer-dock.new-chat-launching .new-chat-heading, .composer-dock.new-chat-launching .new-chat-context { opacity: 0; transform: translateY(5px); transition: opacity 120ms ease-out, transform 160ms ease-out; }
 @keyframes new-chat-halo-breathe {
   0%, 100% { box-shadow: var(--elevation-prominent), var(--shadow-new-chat-rest); }
@@ -29,9 +27,9 @@
   55% { box-shadow: var(--elevation-prominent), var(--shadow-new-chat-implode); }
   100% { box-shadow: var(--elevation-prominent), var(--shadow-new-chat-gone); }
 }
-@media (prefers-reduced-motion: reduce) { .composer-card::before { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .composer-dock::after { animation: none; } }
 .composer-attachments { display: flex; gap: 9px; padding: 12px 13px 0; overflow-x: auto; }
-.new-chat-context { position: absolute; z-index: 0; left: 8px; right: 8px; bottom: calc(100% + 6px); height: 34px; display: flex; align-items: center; justify-content: flex-start; gap: 5px; padding: 0; color: var(--text); font-size: 13px; }
+.new-chat-context { position: absolute; z-index: 30; left: 8px; right: 8px; bottom: calc(100% + 6px); height: 34px; display: flex; align-items: center; justify-content: flex-start; gap: 5px; padding: 0; color: var(--text); font-size: 13px; }
 .new-chat-context-item { min-width: 0; min-height: var(--control-size); display: inline-flex; align-items: center; gap: 7px; padding: 5px 8px; border-radius: var(--radius-lg); background: transparent; color: inherit; cursor: pointer; }
 .new-chat-context-item:hover, .new-chat-context-item[aria-expanded="true"] { background: var(--tint-4); }
 .new-chat-context-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

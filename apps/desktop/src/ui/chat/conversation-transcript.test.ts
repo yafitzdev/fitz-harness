@@ -44,12 +44,11 @@ describe("ConversationTranscript", () => {
     expect(activity.completeTool).toHaveBeenCalledWith(row, "bash", undefined, "ok", false, undefined);
   });
 
-  it("restores plan revisions into one external artifact instead of the activity feed", () => {
+  it("keeps historical plan revisions out of the active composer artifact", () => {
     const messages = document.createElement("main");
     const activity = { clear: vi.fn(), appendTool: vi.fn(() => document.createElement("div")), completeTool: vi.fn(), appendReasoning: vi.fn(), appendReasoningDelta: vi.fn(), completeReasoning: vi.fn(), appendContext: vi.fn() };
     const resetPlan = vi.fn();
-    const updatePlan = vi.fn();
-    const view = new ConversationTranscript({ messages, activity, appendMessage: vi.fn(), appendCommentary: vi.fn(), rebuildHistory: vi.fn(), resetPlan, updatePlan });
+    const view = new ConversationTranscript({ messages, activity, appendMessage: vi.fn(), appendCommentary: vi.fn(), rebuildHistory: vi.fn(), resetPlan });
     const first = { details: { plan: { runId: "run-1", revision: 1, items: [] } } };
     const second = { details: { plan: { runId: "run-1", revision: 2, items: [] } } };
 
@@ -61,7 +60,6 @@ describe("ConversationTranscript", () => {
     ]);
 
     expect(resetPlan).toHaveBeenCalledOnce();
-    expect(updatePlan.mock.calls).toEqual([[first], [second]]);
     expect(activity.appendTool).not.toHaveBeenCalled();
     expect(activity.completeTool).not.toHaveBeenCalled();
   });

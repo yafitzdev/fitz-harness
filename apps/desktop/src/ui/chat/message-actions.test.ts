@@ -6,7 +6,7 @@ describe("MessageActions", () => {
   it("confirms a successful copy inline and restores the copy icon", async () => {
     vi.useFakeTimers();
     const copyText = vi.fn(async () => undefined);
-    const actions = new MessageActions({ canEdit: () => true, onEditBlocked: vi.fn(), copyText, resend: vi.fn() });
+    const actions = new MessageActions({ canEdit: () => true, onEditBlocked: vi.fn(), copyText, resend: vi.fn(), regenerate: vi.fn() });
     const article = document.createElement("article");
     const content = document.createElement("div"); content.textContent = "Copy me"; article.append(content);
     actions.attach(article, content, "assistant", "Copy me", "2026-08-03T10:00:00.000Z");
@@ -25,7 +25,7 @@ describe("MessageActions", () => {
   });
 
   it("adds compact model performance to assistant message metadata", () => {
-    const actions = new MessageActions({ canEdit: () => true, onEditBlocked: vi.fn(), copyText: vi.fn(), resend: vi.fn() });
+    const actions = new MessageActions({ canEdit: () => true, onEditBlocked: vi.fn(), copyText: vi.fn(), resend: vi.fn(), regenerate: vi.fn() });
     const article = document.createElement("article"); article.className = "message assistant";
     const content = document.createElement("div"); article.append(content);
     actions.attach(article, content, "assistant", "Hello", "2026-08-03T10:00:00.000Z");
@@ -46,7 +46,7 @@ describe("MessageActions", () => {
   });
 
   it("uses the recipe ID when provider model telemetry is unavailable", () => {
-    const actions = new MessageActions({ canEdit: () => true, onEditBlocked: vi.fn(), copyText: vi.fn(), resend: vi.fn() });
+    const actions = new MessageActions({ canEdit: () => true, onEditBlocked: vi.fn(), copyText: vi.fn(), resend: vi.fn(), regenerate: vi.fn() });
     const article = document.createElement("article"); article.className = "message assistant";
     const content = document.createElement("div"); article.append(content);
     actions.attach(article, content, "assistant", "Hello", "2026-08-03T10:00:00.000Z");
@@ -56,7 +56,7 @@ describe("MessageActions", () => {
   });
 
   it("shows locally estimated effective throughput for an atomic response without usage", () => {
-    const actions = new MessageActions({ canEdit: () => true, onEditBlocked: vi.fn(), copyText: vi.fn(), resend: vi.fn() });
+    const actions = new MessageActions({ canEdit: () => true, onEditBlocked: vi.fn(), copyText: vi.fn(), resend: vi.fn(), regenerate: vi.fn() });
     const article = document.createElement("article"); article.className = "message assistant";
     const content = document.createElement("div"); content.textContent = "a".repeat(400); article.append(content);
     actions.attach(article, content, "assistant", content.textContent, "2026-08-03T10:00:00.000Z");
@@ -75,7 +75,7 @@ describe("MessageActions", () => {
   });
 
   it("uses persisted model-ready timing for the estimated fallback", () => {
-    const actions = new MessageActions({ canEdit: () => true, onEditBlocked: vi.fn(), copyText: vi.fn(), resend: vi.fn() });
+    const actions = new MessageActions({ canEdit: () => true, onEditBlocked: vi.fn(), copyText: vi.fn(), resend: vi.fn(), regenerate: vi.fn() });
     const article = document.createElement("article"); article.className = "message assistant";
     const content = document.createElement("div"); content.textContent = "Rendered text can differ"; article.append(content);
     actions.attach(article, content, "assistant", content.textContent, "2026-08-03T10:00:00.000Z");
@@ -88,5 +88,18 @@ describe("MessageActions", () => {
     const time = article.querySelector<HTMLTimeElement>("time")!;
     expect(time.textContent).toMatch(/ · 6s response · ~150 tok\/s · Qwen 3\.6 27B NVFP4$/);
     expect(time.title).toContain("Model load: 60s");
+  });
+
+  it("places regenerate after copy on assistant messages and regenerates that article", () => {
+    const regenerate = vi.fn();
+    const actions = new MessageActions({ canEdit: () => true, onEditBlocked: vi.fn(), copyText: vi.fn(), resend: vi.fn(), regenerate });
+    const article = document.createElement("article");
+    const content = document.createElement("div"); content.textContent = "Answer"; article.append(content);
+    actions.attach(article, content, "assistant", "Answer");
+
+    const buttons = [...article.querySelectorAll<HTMLButtonElement>(".message-action")];
+    expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual(["Copy message", "Regenerate response"]);
+    buttons[1]!.click();
+    expect(regenerate).toHaveBeenCalledWith(article);
   });
 });

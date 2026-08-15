@@ -289,7 +289,6 @@ const conversationTranscript = new ConversationTranscript({
   appendCommentary,
   rebuildHistory: (history) => composer.rebuildHistory(history),
   resetPlan: () => agentPlanPanel.reset(),
-  updatePlan: (result) => { agentPlanPanel.updateFromToolResult(result); },
   loadEarlier: async (beforeSequence) => {
     const sessionId = projects.currentSessionId;
     if (!sessionId) return { data: [], page: { hasEarlier: false } };
@@ -556,6 +555,7 @@ const messageActions = new MessageActions({
   onEditBlocked: () => showStatus("Wait for the current response before editing a message.", "error"),
   copyText: (text) => window.fitz.copyText(text),
   resend: (text, article) => sendPrompt(text, article),
+  regenerate: (article) => regenerateAssistantResponse(article),
 });
 const assistantPerformance = new AssistantPerformance({
   api,
@@ -714,7 +714,10 @@ const conversationSessions = new ConversationSessionController({
   },
   recovery: { clear: () => runRecovery.clear(), show: (state) => runRecovery.show(state as Parameters<typeof runRecovery.show>[0]) },
   assistantPerformance: { reset: () => assistantPerformance.reset() },
-  plan: { reset: () => agentPlanPanel.reset() },
+  plan: {
+    reset: () => agentPlanPanel.reset(),
+    update: (plan) => agentPlanPanel.update(plan as Parameters<AgentPlanPanel["update"]>[0]),
+  },
   mediaJobs: {
     reset: () => mediaJobs.reset(),
     watch: (jobId) => mediaJobs.watch(jobId),
@@ -918,7 +921,17 @@ async function copyValue(value: string, message: string): Promise<void> {
   catch (error) { showStatus(errorMessage(error), "error"); }
 }
 
-function setConversationInert(inert: boolean): void { for (const area of [workspaceHeader, messages, composer.root]) { area.toggleAttribute("inert", inert); area.setAttribute("aria-hidden", String(inert)); } }
+function setConversationInert(inert: boolean): void {
+  if (inert) {
+    composer.closePopovers();
+    agentPlanPanel.reset();
+  }
+  composer.root.hidden = inert;
+  for (const area of [workspaceHeader, messages, composer.root]) {
+    area.toggleAttribute("inert", inert);
+    area.setAttribute("aria-hidden", String(inert));
+  }
+}
 
 async function configureRemoteHost(): Promise<void> {
   setFormBusy(hostConnectionForm, true);
@@ -1025,8 +1038,32 @@ function showConnectionFailure(detail: string): void {
 
 function appendMessage(role: string, text: string, createdAt?: string, runId?: string): HTMLElement {
   const content = conversationMessages.append(role, text, createdAt);
-  if (role === "assistant" && runId) assistantPerformance.track(content, runId, createdAt);
+  if (role === "assistant" && runId) {
+    const article = content.closest<HTMLElement>("article.message");
+    if (article) article.dataset.runId = runId;
+    assistantPerformance.track(content, runId, createdAt);
+  }
   return content;
+}
+
+async function regenerateAssistantResponse(article: HTMLElement): Promise<void> {
+  if (agentRuns.active) { showStatus("Wait for the current response before regenerating.", "error"); return; }
+  const sessionId = projects.currentSessionId;
+  const runId = article.dataset.runId;
+  if (!sessionId || !runId) { showStatus("This response cannot be regenerated.", "error"); return; }
+  let userArticle: HTMLElement | null = article.previousElementSibling as HTMLElement | null;
+  while (userArticle && !userArticle.matches("article.message.user")) userArticle = userArticle.previousElementSibling as HTMLElement | null;
+  if (!userArticle) { showStatus("Load the original prompt before regenerating this response.", "error"); return; }
+  try {
+    const response = await api(`/api/v1/sessions/${sessionId}/regenerate`, "POST", { runId });
+    const prompt = String(response.data?.prompt ?? "").trim();
+    if (!prompt) throw new Error("The original prompt is unavailable");
+    let next = userArticle.nextElementSibling;
+    while (next) { const remove = next; next = next.nextElementSibling; remove.remove(); }
+    agentPlanPanel.reset();
+    conversationContext.refresh();
+    await sendPrompt(prompt, userArticle);
+  } catch (error) { showStatus(errorMessage(error), "error"); }
 }
 
 function appendCommentary(text: string, createdAt?: string): HTMLElement {

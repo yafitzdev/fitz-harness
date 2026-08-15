@@ -70,6 +70,8 @@ describe("Composer", () => {
     expect(composer.controls).toBeInstanceOf(ComposerControls);
     expect(promptOf(composer)).toBeTruthy();
     expect(composer.root.querySelector<HTMLFormElement>("#composer")).toBeTruthy();
+    expect(composer.root.querySelector("#model-menu")).toBeNull();
+    expect(document.body.querySelector("#model-menu")).toBeTruthy();
     expect(composer.root.querySelector<HTMLElement>(".new-chat-heading")!.textContent).toBe("What should we build?");
     expect(composer.root.querySelector<HTMLElement>("#new-chat-context")!.hidden).toBe(true);
   });

@@ -1,4 +1,4 @@
-import { togglePopover } from "../primitives/popover.js";
+import { positionFixedPopover, togglePopover } from "../primitives/popover.js";
 import type { AgentEffort } from "@fitz/protocol";
 
 export type AccessMode = "full" | "ask" | "read-only";
@@ -191,7 +191,9 @@ export class ComposerControls {
     elements.modelToggle.addEventListener("click", (event) => {
       event.stopPropagation();
       this.showSettingsRoot();
+      const opening = elements.modelMenu.hidden;
       togglePopover(elements.modelMenu, elements.modelToggle, this.options.closeAllPopovers);
+      if (opening) positionFixedPopover(elements.modelMenu, elements.modelToggle, 6);
     });
     elements.modelMenu.addEventListener("click", (event) => event.stopPropagation());
     elements.contextMeter.addEventListener("click", (event) => {

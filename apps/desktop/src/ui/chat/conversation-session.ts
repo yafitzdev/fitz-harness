@@ -35,7 +35,7 @@ export interface ConversationSessionOptions {
   runs: { active: () => boolean; detach(): void; attach(state: Json, afterSequence: number): void };
   recovery: { clear(): void; show(state: Json): void };
   assistantPerformance: { reset(): void };
-  plan?: { reset(): void };
+  plan?: { reset(): void; update(plan: Json): void };
   mediaJobs: {
     reset(): void;
     watch(jobId: string): void;
@@ -156,6 +156,13 @@ export class ConversationSessionController {
       const runState = await this.#options.api(`/api/v1/sessions/${sessionId}/agent-run-state`);
       if (!isCurrent()) return;
       if (runState.data?.status === "queued" || runState.data?.status === "running") {
+        try {
+          const plan = await this.#options.api(`/api/v1/agent/runs/${runState.data.id}/plan`);
+          if (!isCurrent()) return;
+          if (plan.data?.status !== "completed") this.#options.plan?.update(plan.data);
+        } catch {
+          // A newly queued run may not have created its first durable plan yet.
+        }
         runs.attach(runState.data, this.#options.transcript.eventSequenceForRun(String(runState.data.id)));
       } else {
         this.#options.plan?.reset();

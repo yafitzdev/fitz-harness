@@ -36,7 +36,7 @@ function harness() {
     runs: { active: () => false, detach: vi.fn(), attach: vi.fn() },
     recovery: { clear: vi.fn(), show: vi.fn() },
     assistantPerformance: { reset: vi.fn() },
-    plan: { reset: vi.fn() },
+    plan: { reset: vi.fn(), update: vi.fn() },
     mediaJobs: { reset: vi.fn(), watch: vi.fn(), failureMessage: vi.fn(async () => "failed") },
     mediaFeed: { reset: vi.fn(), render: vi.fn() },
     activity: { appendApproval: vi.fn(), finishWork: vi.fn() },
@@ -75,6 +75,7 @@ describe("ConversationSessionController", () => {
       .mockResolvedValueOnce({ data: [{ kind: "message" }], page: {} })
       .mockResolvedValueOnce({ data: [{ id: "approval-1" }] })
       .mockResolvedValueOnce({ data: { id: "run-1", status: "running" } })
+      .mockResolvedValueOnce({ data: { runId: "run-1", revision: 2, status: "active", items: [] } })
       .mockResolvedValueOnce({ data: [{ id: "job-1", modality: "image", status: "completed" }] });
     vi.mocked(options.transcript.restore).mockReturnValue(42);
     options.runs.active = () => true;
@@ -83,6 +84,7 @@ describe("ConversationSessionController", () => {
 
     expect(options.context.restore).toHaveBeenCalledWith(42);
     expect(options.activity.appendApproval).toHaveBeenCalledWith({ id: "approval-1" });
+    expect(options.plan?.update).toHaveBeenCalledWith({ runId: "run-1", revision: 2, status: "active", items: [] });
     expect(options.runs.attach).toHaveBeenCalledWith({ id: "run-1", status: "running" }, 0);
     expect(options.mediaFeed.render).toHaveBeenCalledWith(expect.objectContaining({ id: "job-1" }), undefined, undefined);
     expect(options.activity.finishWork).not.toHaveBeenCalled();

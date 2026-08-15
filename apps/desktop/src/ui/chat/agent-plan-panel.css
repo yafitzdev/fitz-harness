@@ -1,4 +1,4 @@
-.agent-plan-panel { position: relative; z-index: 2; box-sizing: border-box; width: 100%; max-height: 220px; margin: 0 0 8px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-xl); background: var(--grey-200); box-shadow: var(--shadow-popover); color: var(--muted); }
+.agent-plan-panel { position: relative; z-index: 30; box-sizing: border-box; width: 100%; max-height: 220px; margin: 0 0 8px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-xl); background: var(--grey-200); box-shadow: var(--shadow-popover); color: var(--muted); }
 .agent-plan-panel[hidden] { display: none; }
 .agent-plan-panel > header { min-height: 34px; border-bottom: 1px solid var(--border-soft); }
 .agent-plan-panel-toggle { width: 100%; min-height: 34px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 7px 12px; background: transparent; color: inherit; cursor: pointer; text-align: left; }

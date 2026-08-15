@@ -8,6 +8,7 @@ export interface MessageActionsOptions {
   onEditBlocked: () => void;
   copyText: (text: string) => void | Promise<void>;
   resend: (text: string, article: HTMLElement) => void | Promise<void>;
+  regenerate: (article: HTMLElement) => void | Promise<void>;
 }
 
 /** Owns message metadata, copy actions, and in-bubble user-message editing. */
@@ -27,6 +28,7 @@ export class MessageActions {
     time.textContent = this.#formatTimestamp(createdAt);
     actions.append(time, this.#copyButton(content));
     if (role === "user") actions.append(this.#actionButton("Edit message", this.#editIcon(), () => this.#startEdit(article, content, actions, originalText)));
+    else actions.append(this.#actionButton("Regenerate response", this.#regenerateIcon(), () => void this.#options.regenerate(article)));
     article.append(actions);
   }
 
@@ -142,6 +144,7 @@ export class MessageActions {
   }
 
   #editIcon(): SVGElement { return this.#icon('<path d="m4.2 14.8.7-3.2 7.8-7.8a1.45 1.45 0 0 1 2.05 2.05L7 13.65z"></path><path d="m11.7 4.8 2.05 2.05"></path>'); }
+  #regenerateIcon(): SVGElement { return this.#icon('<path d="M15.5 7.2A6 6 0 1 0 16 11"></path><path d="M15.5 3.8v3.4h-3.4"></path>'); }
 }
 
 interface TokenRate {

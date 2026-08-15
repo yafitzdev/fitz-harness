@@ -195,7 +195,9 @@ export class Composer {
     this.addMenu = this.el<HTMLElement>("#composer-add-menu");
     this.prompt = this.el<HTMLTextAreaElement>("#prompt");
     this.mediaCommandTag = this.el<HTMLButtonElement>("#media-command-tag");
-    this.controls = new ComposerControls(this.controlsElements(), {
+    const controlsElements = this.controlsElements();
+    document.body.append(controlsElements.modelMenu);
+    this.controls = new ComposerControls(controlsElements, {
       closeAllPopovers: options.closeAllPopovers,
       onRouteChange: options.onRouteChange,
       onCompact: options.onCompact,

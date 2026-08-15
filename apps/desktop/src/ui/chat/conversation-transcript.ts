@@ -20,7 +20,6 @@ export interface ConversationTranscriptOptions {
   appendCommentary: (text: string, createdAt?: string) => HTMLElement;
   rebuildHistory: (messages: string[]) => void;
   resetPlan?: () => void;
-  updatePlan?: (result: unknown) => void;
   loadEarlier?: (beforeSequence: number) => Promise<{ data: Json[]; page?: TranscriptPageState }>;
 }
 
@@ -125,7 +124,6 @@ export class ConversationTranscript {
       const toolName = planToolCalls.has(toolCallId) ? "agent_plan" : existing?.toolName ?? String(entry.content?.toolName ?? "tool");
       if (toolName === "agent_plan") {
         planToolCalls.delete(toolCallId);
-        this.#options.updatePlan?.(entry.content?.result);
         return;
       }
       const input = existing?.input;

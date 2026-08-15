@@ -167,4 +167,15 @@ describe("ComposerControls", () => {
     expect([elements.modelMenu, elements.settingsSubmenu, elements.advancedSettingsPanel, elements.contextUsagePopover, elements.accessModeMenu].every((popover) => popover.hidden)).toBe(true);
     expect([elements.modelToggle, elements.advancedSettings, elements.contextMeter, elements.accessModeToggle].every((toggle) => toggle.getAttribute("aria-expanded") === "false")).toBe(true);
   });
+
+  it("positions the route and effort menu in the fixed top overlay", () => {
+    const { elements } = setup();
+    elements.modelToggle.getBoundingClientRect = () => ({ left: 100, right: 220, top: 300, bottom: 330, width: 120, height: 30, x: 100, y: 300, toJSON: () => ({}) });
+
+    click(elements.modelToggle);
+
+    expect(elements.modelMenu.hidden).toBe(false);
+    expect(elements.modelMenu.style.left).toBe("100px");
+    expect(elements.modelMenu.style.top).toBe("336px");
+  });
 });

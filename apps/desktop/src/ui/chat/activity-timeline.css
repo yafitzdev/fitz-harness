@@ -3,8 +3,9 @@
 @keyframes run-activity-spinner { to { transform: rotate(1turn); } }
 
 .agent-activity { width: 100%; min-width: 0; display: block; margin: 0; color: var(--muted); }
-.agent-activity-summary { width: 100%; min-width: 0; min-height: 26px; display: flex; align-items: center; gap: 6px; margin: 0; padding: 2px 0; border-radius: var(--radius-md); background: transparent; color: inherit; cursor: pointer; text-align: left; transition: background-color 150ms ease, color 150ms ease; }
+.agent-activity-summary { width: 100%; min-width: 0; min-height: 26px; display: flex; align-items: center; gap: 6px; margin: 0; padding: 2px 0; border-radius: var(--radius-md); background: transparent; color: inherit; opacity: .68; cursor: pointer; text-align: left; transition: background-color 150ms ease, color 150ms ease, opacity 150ms ease; }
 .agent-activity-summary:hover, .agent-activity.open > .agent-activity-summary { background: var(--tint-2); color: var(--text); }
+.agent-activity-summary:hover, .agent-activity-summary:focus-visible, .agent-activity.open > .agent-activity-summary { opacity: 1; }
 .agent-activity-icon { width: 18px; height: 18px; flex: 0 0 auto; display: grid; place-items: center; color: var(--muted); }
 .agent-activity-icon svg { width: 15px; height: 15px; stroke-width: 1.45; }
 .agent-activity-label, .activity-burst-label, .work-summary-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -31,8 +32,9 @@
 @keyframes activity-pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
 
 .activity-burst { width: 100%; min-width: 0; margin: 0 0 8px; color: var(--muted); }
-.activity-burst-toggle { width: 100%; min-width: 0; min-height: 28px; display: flex; align-items: center; gap: 6px; padding: 2px 0; background: transparent; color: inherit; cursor: pointer; text-align: left; }
+.activity-burst-toggle { width: 100%; min-width: 0; min-height: 28px; display: flex; align-items: center; gap: 6px; padding: 2px 0; background: transparent; color: inherit; opacity: .68; cursor: pointer; text-align: left; transition: color 150ms ease, opacity 150ms ease; }
 .activity-burst-toggle:hover, .activity-burst-toggle:focus-visible, .activity-burst.open > .activity-burst-toggle { color: var(--text); }
+.activity-burst-toggle:hover, .activity-burst-toggle:focus-visible, .activity-burst.open > .activity-burst-toggle { opacity: 1; }
 .activity-burst-chevron { width: 16px; height: 16px; flex: 0 0 auto; display: grid; place-items: center; color: var(--subtle); transition: transform 150ms cubic-bezier(.23,1,.32,1); }
 .activity-burst-chevron svg { width: 12px; height: 12px; }
 .activity-burst.open .activity-burst-chevron { transform: rotate(90deg); }
