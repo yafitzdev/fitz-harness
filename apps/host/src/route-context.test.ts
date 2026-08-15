@@ -81,7 +81,6 @@ describe("contextTokensForRoute", () => {
         ...current,
         capabilities: { ...current.capabilities, toolCalls: true, maxConcurrentGenerations: 3 },
         configuration: {},
-        agentTopology: { sharedContextTokens: 256_000, workers: { count: 2, contextTokens: 64_000 } },
       });
       store.upsertRoute({ id: "default", displayName: "Default", recipeId: "orchestrator", enabled: true, isDefault: true });
 
@@ -89,22 +88,22 @@ describe("contextTokensForRoute", () => {
         model: "default",
         effort: "high",
         messages: [{ role: "user", content: "coordinate" }],
-      })).toBe(128_000);
+      })).toBe(131_072);
       expect(contextTokensForAgentRequest(store, {
         model: "default",
         effort: "high",
         delegation: { role: roleSnapshot(store, "implementer"), parentRunId: "parent" },
         messages: [{ role: "user", content: "implement" }],
-      })).toBe(64_000);
+      })).toBe(32_768);
       expect(contextTokensForAgentRequest(store, {
         model: "default",
         effort: "light",
         messages: [{ role: "user", content: "quick answer" }],
-      })).toBe(128_000);
+      })).toBe(131_072);
       expect(contextTokensForAgentRequest(store, {
         model: "default",
         messages: [{ role: "user", content: "normal answer" }],
-      })).toBe(128_000);
+      })).toBe(131_072);
     } finally {
       store.close();
     }
@@ -117,14 +116,14 @@ describe("contextTokensForRoute", () => {
       recipe(store, "fast-recipe", 131_072);
       store.upsertRoute({ id: "default", displayName: "Default", recipeId: "default-recipe", enabled: true, isDefault: true });
       store.setSetting("consumerCloudRoutes", [{ ownerUserId: "alice", role: "fast", recipeId: "fast-recipe", updatedAt: new Date(0).toISOString() }]);
-      expect(contextTokensForAgentRequest(store, { model: "fast", effort: "light", messages: [] }, "alice")).toBe(12_000);
-      expect(contextTokensForAgentRequest(store, { model: "fast", effort: "normal", messages: [] }, "alice")).toBe(32_000);
+      expect(contextTokensForAgentRequest(store, { model: "fast", effort: "light", messages: [] }, "alice")).toBe(131_072);
+      expect(contextTokensForAgentRequest(store, { model: "fast", effort: "normal", messages: [] }, "alice")).toBe(131_072);
       expect(contextTokensForAgentRequest(store, {
         model: "fast",
         effort: "high",
         delegation: { role: roleSnapshot(store, "researcher"), parentRunId: "parent" },
         messages: [],
-      }, "alice")).toBe(64_000);
+      }, "alice")).toBe(32_768);
     } finally {
       store.close();
     }
@@ -139,7 +138,6 @@ describe("contextTokensForRoute", () => {
         ...current,
         executionClass: "self_hosted",
         capabilities: { ...current.capabilities, toolCalls: true, maxConcurrentGenerations: 3 },
-        agentTopology: { sharedContextTokens: 192_000, workers: { count: 2, contextTokens: 48_000 } },
       });
       store.setSetting("consumerConnections", [{
         ownerUserId: "alice", id: "yan-gpu", displayName: "Yan GPU", baseUrl: "https://yan.tail.test/v1",
@@ -149,10 +147,10 @@ describe("contextTokensForRoute", () => {
       }]);
       store.setSetting("consumerCloudRoutes", [{ ownerUserId: "alice", role: "smart", recipeId: "remote-gpu", updatedAt: new Date(0).toISOString() }]);
 
-      expect(contextTokensForAgentRequest(store, { model: "smart", effort: "light", messages: [] }, "alice")).toBe(96_000);
+      expect(contextTokensForAgentRequest(store, { model: "smart", effort: "light", messages: [] }, "alice")).toBe(131_072);
       expect(contextTokensForAgentRequest(store, {
         model: "smart", effort: "high", delegation: { role: roleSnapshot(store, "researcher"), parentRunId: "parent" }, messages: [],
-      }, "alice")).toBe(48_000);
+      }, "alice")).toBe(32_464);
     } finally {
       store.close();
     }

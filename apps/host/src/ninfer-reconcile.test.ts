@@ -16,16 +16,15 @@ const runtime = {
 };
 
 describe("reconcileNInferConfiguration", () => {
-  it("upgrades every NInfer model to configurable concurrent workers", () => {
+  it("upgrades every NInfer model to the global runtime policy", () => {
     const store = SqliteStore.memory();
     try {
       const current = createNInferPlaybook(runtime).recipes.find((recipe) => recipe.modelId === "qwen3.6-27b")!;
-      const { agentTopology: _topology, ...legacySerial } = current;
       store.upsertRecipe({
-        ...legacySerial,
+        ...current,
         displayName: "My renamed Qwen",
-        capabilities: { ...legacySerial.capabilities, maxConcurrentGenerations: 1 },
-        configuration: { ...legacySerial.configuration, maxConcurrency: 1 },
+        capabilities: { ...current.capabilities, maxConcurrentGenerations: 1 },
+        configuration: { ...current.configuration, maxConcurrency: 1 },
       });
 
       reconcileNInferConfiguration(store, runtime);
@@ -33,21 +32,20 @@ describe("reconcileNInferConfiguration", () => {
       expect(store.listRecipes().find((recipe) => recipe.id === current.id)).toMatchObject({
         displayName: "My renamed Qwen",
         capabilities: { maxConcurrentGenerations: 3 },
-        configuration: { maxConcurrency: 3, kvCapacity: 100_000, maxContext: 100_000, thinking: true },
-        agentTopology: { sharedContextTokens: 100_000, workers: { count: 0, contextTokens: 32_000 } },
+        configuration: { maxConcurrency: 3, kvCapacity: "auto", maxContext: 131_072, thinking: true },
       });
+      expect(store.listRecipes().find((recipe) => recipe.id === current.id)).not.toHaveProperty("agentTopology");
     } finally {
       store.close();
     }
   });
 
-  it("migrates the retired Qwen route to the recipe-owned agent pool and removes legacy fields", () => {
+  it("migrates the retired Qwen route and removes every legacy allocation field", () => {
     const store = SqliteStore.memory();
     try {
       const current = createNInferPlaybook(runtime).recipes[0]!;
-      const { agentTopology: _currentTopology, ...legacyCurrent } = current;
       store.upsertRecipe({
-        ...legacyCurrent,
+        ...current,
         id: "qwen38-27b-mtp3-16k-vision-c2",
         contextTokens: 16_384,
         capabilities: { ...current.capabilities, maxConcurrentGenerations: 2 },
@@ -75,15 +73,12 @@ describe("reconcileNInferConfiguration", () => {
         contextTokens: 262_144,
         capabilities: { maxConcurrentGenerations: 3 },
         configuration: {
-          maxContext: 128_000,
-          kvCapacity: 256_000,
+          maxContext: 131_072,
+          kvCapacity: "auto",
           maxConcurrency: 3,
         },
-        agentTopology: {
-          sharedContextTokens: 256_000,
-          workers: { count: 2, contextTokens: 64_000 },
-        },
       });
+      expect(recipe).not.toHaveProperty("agentTopology");
       expect(recipe?.configuration).not.toHaveProperty("workerContextTokens");
       expect(recipe?.configuration).not.toHaveProperty("maxLocalWorkers");
       expect(store.listRoutes().find((route) => route.id === "default")?.recipeId).toBe(QWEN38_ORCHESTRATOR_RECIPE_ID);

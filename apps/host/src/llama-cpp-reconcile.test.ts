@@ -35,7 +35,6 @@ describe("llama.cpp model reconciliation", () => {
       playbookId: "llama.cpp",
       modelId: "Model-Q5_K_M",
       capabilities: expect.objectContaining({ maxConcurrentGenerations: 3 }),
-      agentTopology: { sharedContextTokens: 32_768, workers: { count: 0, contextTokens: 15_360 } },
     })]);
     expect(store.listRecipes()[0]!.lifecycle).toMatchObject({ evictionPolicy: "never", idleTtlSeconds: 0 });
     expect(store.listRecipes()[0]!.configuration.args).toContain("/opt/fitz/llm/models/gguf/org/repo/mmproj-Model-BF16.gguf");
@@ -49,7 +48,7 @@ describe("llama.cpp model reconciliation", () => {
     store.close();
   });
 
-  it("preserves user worker allocation while refreshing managed llama.cpp settings", () => {
+  it("discards legacy worker allocation while preserving a user rename", () => {
     const { store, paths } = fixture();
     const model = join(paths.ggufModelRoot, "org", "repo", "Model-Q5_K_M.gguf");
     mkdirSync(dirname(model), { recursive: true }); writeFileSync(model, "payload");
@@ -60,15 +59,15 @@ describe("llama.cpp model reconciliation", () => {
       ...current,
       displayName: "My llama",
       agentTopology: { sharedContextTokens: 32_768, workers: { count: 1, contextTokens: 8_192 } },
-    });
+    } as Recipe & { agentTopology: unknown });
 
     reconciler.reconcile();
 
     expect(store.listRecipes()[0]).toMatchObject({
       displayName: "My llama",
       capabilities: { maxConcurrentGenerations: 3 },
-      agentTopology: { sharedContextTokens: 32_768, workers: { count: 1, contextTokens: 8_192 } },
     });
+    expect(store.listRecipes()[0]).not.toHaveProperty("agentTopology");
     expect(store.listRecipes()[0]!.configuration.args).toEqual(expect.arrayContaining(["--parallel", "3", "--ctx-size", "32768"]));
     store.close();
   });

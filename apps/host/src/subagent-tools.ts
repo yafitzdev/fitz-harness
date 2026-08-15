@@ -1,8 +1,8 @@
 import { toolResult, type SubagentRoute, type SubagentRouteBudget, type ToolDefinition } from "@fitz/agent-pi";
-import type { AgentEffort, AgentRunRequest, InferenceExecutionClass, SubagentRoleDefinition } from "@fitz/protocol";
+import type { AgentEffort, AgentRunRequest, InferenceExecutionClass, Recipe, ResolvedAgentTopology, SubagentRoleDefinition } from "@fitz/protocol";
 import type { SqliteStore } from "@fitz/storage";
 import { RouteResolver } from "@fitz/inference-core";
-import { resolveRecipeAgentTopology } from "@fitz/protocol";
+import { resolveLocalAgentTopology } from "@fitz/protocol";
 import { Type } from "typebox";
 import type { AgentRunCoordinator } from "./agent-runs.js";
 import { hasCloudRouteBinding, UserRouteResolver } from "./user-route-resolver.js";
@@ -23,14 +23,20 @@ export interface SubagentToolsOptions {
  * Local Default always delegates back to itself: Medium admits one configured
  * worker and High admits the recipe's complete anonymous pool. Missing owner-scoped cloud bindings remove the corresponding child
  * route from the selected effort's maximum. */
-export function subagentRouteBudget(store: SqliteStore, ownerUserId: string, parentRoute: string, effort: AgentEffort = "normal"): SubagentRouteBudget | undefined {
+export function subagentRouteBudget(
+  store: SqliteStore,
+  ownerUserId: string,
+  parentRoute: string,
+  effort: AgentEffort = "normal",
+  loadedLocalTopology?: (recipe: Recipe) => ResolvedAgentTopology,
+): SubagentRouteBudget | undefined {
   const configured = SUBAGENT_EFFORT_BUDGETS[effort];
   const resolver = new UserRouteResolver(store, new RouteResolver(store.listRoutes(), store.listRecipes()));
   let resolved;
   try { resolved = resolver.resolve(parentRoute, ownerUserId, parentRoute === "fast"); }
   catch { return undefined; }
   if (resolver.executionClass(parentRoute, ownerUserId, parentRoute === "fast") === "self_hosted") {
-    const topology = resolveRecipeAgentTopology(resolved.recipe);
+    const topology = loadedLocalTopology?.(resolved.recipe) ?? resolveLocalAgentTopology(resolved.recipe);
     const workers = localWorkerBudget(effort, topology.workerCount);
     if (workers === 0 || (parentRoute !== "default" && parentRoute !== "fast" && parentRoute !== "smart")) return undefined;
     return {

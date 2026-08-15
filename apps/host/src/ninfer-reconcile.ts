@@ -1,7 +1,7 @@
 import type { SqliteStore } from "@fitz/storage";
+import type { Recipe } from "@fitz/protocol";
 import { createNInferPlaybook, QWEN38_ORCHESTRATOR_RECIPE_ID } from "./ninfer-playbook.js";
 import type { NInferRuntimeLayout } from "./ninfer-runtime.js";
-import { compileRecipeAgentTopology } from "./recipe-agent-topology.js";
 
 /** Well-known media route ids created by `ensureMediaRoutes` (model-management-routes.ts).
  *  The ninfer boot reconcile deletes every route that is not a consumer route or
@@ -20,7 +20,8 @@ export function reconcileNInferConfiguration(store: SqliteStore, runtime: NInfer
   const playbook = createNInferPlaybook(runtime);
   const existingRecipes = store.listRecipes();
   for (const template of playbook.recipes) {
-    const existing = existingRecipes.find((recipe) => recipe.id === template.id);
+    const persisted = existingRecipes.find((recipe) => recipe.id === template.id);
+    const existing = persisted ? withoutLegacyAgentTopology(persisted) : undefined;
     if (!existing) {
       store.upsertRecipe(template);
       continue;
@@ -28,21 +29,11 @@ export function reconcileNInferConfiguration(store: SqliteStore, runtime: NInfer
     if (existing.adapter !== "ninfer") continue;
     const {
       runtimeDistribution: _discardedDistribution,
-      workerContextTokens: legacyWorkerContext,
-      maxLocalWorkers: legacyWorkerCount,
+      workerContextTokens: _legacyWorkerContext,
+      maxLocalWorkers: _legacyWorkerCount,
       ...currentConfiguration
     } = existing.configuration;
-    const migratedLegacyWorkers = Number.isSafeInteger(legacyWorkerCount) && Number(legacyWorkerCount) >= 0
-      && Number.isSafeInteger(legacyWorkerContext) && Number(legacyWorkerContext) > 0
-      ? { count: Number(legacyWorkerCount), contextTokens: Number(legacyWorkerContext) }
-      : undefined;
-    const agentTopology = template.agentTopology
-      ? {
-          sharedContextTokens: template.agentTopology.sharedContextTokens,
-          workers: existing.agentTopology?.workers ?? migratedLegacyWorkers ?? template.agentTopology.workers,
-        }
-      : existing.agentTopology;
-    store.upsertRecipe(compileRecipeAgentTopology({
+    store.upsertRecipe({
       ...existing,
       playbookId: template.playbookId,
       displayName: existing.displayName,
@@ -52,8 +43,7 @@ export function reconcileNInferConfiguration(store: SqliteStore, runtime: NInfer
       capabilities: template.capabilities,
       lifecycle: template.lifecycle,
       configuration: { ...currentConfiguration, ...template.configuration },
-      ...(agentTopology ? { agentTopology } : {}),
-    }));
+    });
   }
   const templates = playbook.routes;
   const existingRoutes = store.listRoutes();
@@ -72,4 +62,9 @@ export function reconcileNInferConfiguration(store: SqliteStore, runtime: NInfer
   for (const retiredRecipeId of RETIRED_NINFER_RECIPES.keys()) {
     if (!referencedRecipeIds.has(retiredRecipeId)) store.deleteRecipe(retiredRecipeId);
   }
+}
+
+function withoutLegacyAgentTopology(recipe: Recipe): Recipe {
+  const { agentTopology: _legacy, ...current } = recipe as Recipe & { agentTopology?: unknown };
+  return current;
 }

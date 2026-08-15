@@ -21,7 +21,7 @@ import type {
   Route,
   RouteKind,
 } from "@fitz/protocol";
-import { compileRecipeAgentTopology, parseRecipeAgentTopology } from "./recipe-agent-topology.js";
+import { withLocalAgentCapacity } from "./local-agent-capacity.js";
 import type { AuthenticatedPrincipal } from "@fitz/security";
 import type { SqliteStore } from "@fitz/storage";
 import {
@@ -424,7 +424,6 @@ function parseRecipe(value: unknown, recipeId: string): Recipe {
   const capabilities = requireRecord(body.capabilities);
   const lifecycle = requireRecord(body.lifecycle);
   const configuration = requireRecord(body.configuration);
-  const agentTopology = parseRecipeAgentTopology(body.agentTopology);
   const booleanCapability = (name: string): boolean => {
     const capability = capabilities[name];
     if (typeof capability !== "boolean") throw new TypeError(`capabilities.${name} must be a boolean`);
@@ -438,7 +437,7 @@ function parseRecipe(value: unknown, recipeId: string): Recipe {
   if (evictionPolicy !== "immediate" && evictionPolicy !== "idle-ttl" && evictionPolicy !== "never" && evictionPolicy !== "manual") {
     throw new TypeError("lifecycle.evictionPolicy is invalid");
   }
-  return compileRecipeAgentTopology({
+  return withLocalAgentCapacity({
     id: recipeId,
     playbookId: requireString(body.playbookId, "playbookId"),
     displayName: requireString(body.displayName, "displayName"),
@@ -461,7 +460,6 @@ function parseRecipe(value: unknown, recipeId: string): Recipe {
       minimumResidencySeconds: nonNegativeInteger(lifecycle.minimumResidencySeconds, "lifecycle.minimumResidencySeconds"),
     },
     configuration,
-    ...(agentTopology ? { agentTopology } : {}),
   });
 }
 

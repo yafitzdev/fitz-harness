@@ -1,8 +1,7 @@
 import { RouteResolver } from "@fitz/inference-core";
 import type { SqliteStore } from "@fitz/storage";
-import { resolveRecipeAgentTopology, type AgentRunRequest, type InferenceExecutionClass } from "@fitz/protocol";
+import { LOCAL_MAIN_CONTEXT_TOKENS, LOCAL_WORKER_CONTEXT_TOKENS, resolveLocalAgentTopology, type AgentRunRequest, type InferenceExecutionClass, type Recipe, type ResolvedAgentTopology } from "@fitz/protocol";
 import { UserRouteResolver } from "./user-route-resolver.js";
-import { effortContextTokens } from "./agent-effort-policy.js";
 import type { ThinkingFormat } from "@fitz/agent-pi";
 
 /** Context window of the exact owner-scoped recipe Pi will call. Fast is an
@@ -21,21 +20,28 @@ export function executionClassForRoute(store: SqliteStore, routeId: string, owne
   catch { return "self_hosted"; }
 }
 
-/** Self-hosted inference always uses the context configured on its recipe;
- * effort changes worker admission only. Metered cloud routes retain the
- * product's cost-aware effort caps. Delegated self-hosted children use the
- * recipe's configured per-worker window. */
-export function contextTokensForAgentRequest(store: SqliteStore, request: AgentRunRequest, ownerUserId = "local"): number {
+/** Context allocation is engine-independent: every main agent receives the
+ * 131k quality ceiling and delegated workers receive the derived local window
+ * (32k target with a 10% boundary tolerance). Effort affects
+ * worker admission counts, never an individual agent's context window. */
+export function contextTokensForAgentRequest(
+  store: SqliteStore,
+  request: AgentRunRequest,
+  ownerUserId = "local",
+  loadedLocalTopology?: (recipe: Recipe) => ResolvedAgentTopology,
+): number {
   try {
     const resolver = routeResolver(store);
     const resolved = resolver.resolve(request.model, ownerUserId, request.model === "fast");
-    const topology = resolveRecipeAgentTopology(resolved.recipe);
     if (resolver.executionClass(request.model, ownerUserId, request.model === "fast") === "self_hosted") {
-      return request.delegation && topology.workerCount > 0 ? topology.workerContextTokens : topology.orchestratorContextTokens;
+      const local = loadedLocalTopology?.(resolved.recipe) ?? resolveLocalAgentTopology(resolved.recipe);
+      return request.delegation && local.workerCount > 0 ? local.workerContextTokens : local.orchestratorContextTokens;
     }
-    return Math.min(topology.orchestratorContextTokens, effortContextTokens(request.effort));
+    return request.delegation
+      ? Math.min(LOCAL_WORKER_CONTEXT_TOKENS, resolved.recipe.contextTokens)
+      : Math.min(LOCAL_MAIN_CONTEXT_TOKENS, resolved.recipe.contextTokens);
   } catch {
-    return Math.min(100_000, effortContextTokens(request.effort));
+    return request.delegation ? LOCAL_WORKER_CONTEXT_TOKENS : LOCAL_MAIN_CONTEXT_TOKENS;
   }
 }
 

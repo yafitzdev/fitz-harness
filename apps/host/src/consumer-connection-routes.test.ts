@@ -132,7 +132,7 @@ describe("consumer connection routes", () => {
 
     discardLegacyConsumerConnections(store);
 
-    expect(store.listRecipes().find((candidate) => candidate.id === recipe.id)?.agentTopology).toBeUndefined();
+    expect(store.listRecipes().find((candidate) => candidate.id === recipe.id)).not.toHaveProperty("agentTopology");
     expect(store.listRecipes().find((candidate) => candidate.id === recipe.id)?.executionClass).toBe("metered_cloud");
     store.close();
   });

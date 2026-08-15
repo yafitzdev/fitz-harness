@@ -1,22 +1,14 @@
 import { buildCurrentNInferRecipe } from "@fitz/engine-ninfer";
-import type { Recipe, Route } from "@fitz/protocol";
+import { LOCAL_MAIN_CONTEXT_TOKENS, LOCAL_MAX_CONCURRENT_AGENTS, type Recipe, type Route } from "@fitz/protocol";
 import type { NInferRuntimeLayout } from "./ninfer-runtime.js";
-import { LOCAL_AGENT_MAX_CONCURRENCY } from "./local-agent-capacity.js";
 
 export const NINFER_PLAYBOOK_ID = "ninfer";
 export const QWEN38_ORCHESTRATOR_RECIPE_ID = "qwen38-27b-mtp3-agent-pool-c3";
 export const QWEN38_MODEL_CONTEXT_TOKENS = 262_144;
-export const QWEN38_SHARED_CONTEXT_TOKENS = 256_000;
-export const QWEN38_WORKER_CONTEXT_TOKENS = 64_000;
-export const QWEN38_LOCAL_WORKERS = 2;
-export const QWEN38_ORCHESTRATOR_CONTEXT_TOKENS = QWEN38_SHARED_CONTEXT_TOKENS - (QWEN38_WORKER_CONTEXT_TOKENS * QWEN38_LOCAL_WORKERS);
-export const NINFER_MAX_CONCURRENT_AGENTS = LOCAL_AGENT_MAX_CONCURRENCY;
-export const NINFER_DEFAULT_SHARED_CONTEXT_TOKENS = 100_000;
-export const NINFER_DEFAULT_WORKER_CONTEXT_TOKENS = 32_000;
+export const NINFER_MAX_CONCURRENT_AGENTS = LOCAL_MAX_CONCURRENT_AGENTS;
 
 type NInferRecipeOptions = Parameters<typeof buildCurrentNInferRecipe>[5] & {
   modelContextTokens?: number;
-  agentTopology?: Recipe["agentTopology"];
 };
 
 export interface NInferPlaybook {
@@ -39,18 +31,11 @@ export function createNInferPlaybook(runtime: NInferRuntimeLayout): NInferPlaybo
       executable,
       runtime,
       {
-        maxContext: QWEN38_ORCHESTRATOR_CONTEXT_TOKENS,
-        kvCapacity: QWEN38_SHARED_CONTEXT_TOKENS,
-        maxConcurrency: QWEN38_LOCAL_WORKERS + 1,
+        maxContext: LOCAL_MAIN_CONTEXT_TOKENS,
+        kvCapacity: "auto",
+        maxConcurrency: NINFER_MAX_CONCURRENT_AGENTS,
         vision: true,
         modelContextTokens: QWEN38_MODEL_CONTEXT_TOKENS,
-        agentTopology: {
-          sharedContextTokens: QWEN38_SHARED_CONTEXT_TOKENS,
-          workers: {
-            count: QWEN38_LOCAL_WORKERS,
-            contextTokens: QWEN38_WORKER_CONTEXT_TOKENS,
-          },
-        },
       },
     ),
     recipe(
@@ -89,12 +74,10 @@ export function createNInferPlaybook(runtime: NInferRuntimeLayout): NInferPlaybo
 
 function configurableWorkerPool(): NInferRecipeOptions {
   return {
+    maxContext: LOCAL_MAIN_CONTEXT_TOKENS,
+    modelContextTokens: 262_144,
     maxConcurrency: NINFER_MAX_CONCURRENT_AGENTS,
-    kvCapacity: NINFER_DEFAULT_SHARED_CONTEXT_TOKENS,
-    agentTopology: {
-      sharedContextTokens: NINFER_DEFAULT_SHARED_CONTEXT_TOKENS,
-      workers: { count: 0, contextTokens: NINFER_DEFAULT_WORKER_CONTEXT_TOKENS },
-    },
+    kvCapacity: "auto",
   };
 }
 
@@ -108,7 +91,7 @@ function recipe(
   runtime: NInferRuntimeLayout,
   options: NInferRecipeOptions = {},
 ): Recipe {
-  const { modelContextTokens, agentTopology, ...engineOptions } = options;
+  const { modelContextTokens, ...engineOptions } = options;
   const value = buildCurrentNInferRecipe(id, modelId, artifact, draftTokens, executable, { ...engineOptions, thinking: true });
   return {
     ...value,
@@ -124,6 +107,5 @@ function recipe(
       engineRef: "llm://engines/ninfer",
       modelRef: `llm://models/${modelId}`,
     },
-    ...(agentTopology ? { agentTopology } : {}),
   };
 }

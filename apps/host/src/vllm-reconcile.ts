@@ -196,7 +196,7 @@ export class VllmModelReconciler {
           ...(serving.persistStartupPlan ? { VLLM_ENABLE_STARTUP_PLAN: "1" } : {}),
         },
       },
-    }, existing?.agentTopology);
+    });
   }
 
   #upsertEngine(executable: string): void {

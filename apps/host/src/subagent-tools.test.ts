@@ -178,10 +178,9 @@ describe("subagent tool", () => {
     const store = SqliteStore.memory();
     store.upsertRecipe({
       id: "shared-gpu", playbookId: "remote", displayName: "Shared GPU", adapter: "openai-compatible", modelId: "shared-gpu",
-      executionClass: "self_hosted", contextTokens: 196_000,
+      executionClass: "self_hosted", contextTokens: 196_608,
       capabilities: { chatCompletions: true, streaming: true, toolCalls: true, responseFormat: false, minP: false, maxConcurrentGenerations: 3 },
       lifecycle: { loadPolicy: "onDemand", evictionPolicy: "never", idleTtlSeconds: 0, minimumResidencySeconds: 0 }, configuration: {},
-      agentTopology: { sharedContextTokens: 192_000, workers: { count: 2, contextTokens: 48_000 } },
     });
     store.setSetting("consumerConnections", [{
       ownerUserId: "owner", id: "shared", displayName: "Shared", baseUrl: "https://shared.test/v1", authType: "bearer",
@@ -223,7 +222,6 @@ function recipeWithLocalWorkers(store: SqliteStore): void {
     capabilities: { chatCompletions: true, streaming: true, toolCalls: true, responseFormat: false, minP: false, maxConcurrentGenerations: 3 },
     lifecycle: { loadPolicy: "onDemand", evictionPolicy: "never", idleTtlSeconds: 0, minimumResidencySeconds: 0 },
     configuration: {},
-    agentTopology: { sharedContextTokens: 256_000, workers: { count: 2, contextTokens: 64_000 } },
   });
   store.upsertRoute({ id: "default", displayName: "Local", recipeId: "local-orchestrator", enabled: true, isDefault: true });
 }

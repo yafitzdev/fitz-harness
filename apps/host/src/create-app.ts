@@ -23,7 +23,11 @@ import {
 } from "@fitz/inference-core";
 import {
   HOST_CONTRACT_VERSION,
+  LOCAL_MAIN_CONTEXT_TOKENS,
+  LOCAL_WORKER_CONTEXT_TOKENS,
   PROTOCOL_VERSION,
+  type AgentEffort,
+  type AgentTopologyPresentation,
   type Recipe,
   type Route,
 } from "@fitz/protocol";
@@ -66,8 +70,9 @@ import {
   registerModelManagementRoutes,
   scanEngineFolders,
 } from "./model-management-routes.js";
-import { CHAT_ROUTE_IDS, LOCAL_OWNER_ID, UserRouteResolver } from "./user-route-resolver.js";
+import { CHAT_ROUTE_IDS, hasCloudRouteBinding, LOCAL_OWNER_ID, UserRouteResolver } from "./user-route-resolver.js";
 import { contextTokensForAgentRequest } from "./route-context.js";
+import { CLOUD_SUBAGENT_EFFORT_BUDGETS } from "./agent-effort-policy.js";
 
 export { ensureMediaRoutes } from "./model-management-routes.js";
 
@@ -175,6 +180,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   ensureDefaultRoute(store, options.initialRecipes ?? DEFAULT_RECIPES, options.initialRoutes ?? DEFAULT_ROUTES);
   for (const retiredRouteId of ["fast", "smart", "subagent"]) store.deleteRoute(retiredRouteId);
   discardLegacyConsumerConnections(store);
+  discardLegacyRecipeAgentTopologies(store);
   const configuredEngineRoot = options.engineRoot ?? store.getSetting<string>("engineRoot") ?? join(homedir(), ".llm", "engines");
   store.setSetting("engineRoot", configuredEngineRoot);
   const routes = new RouteResolver(
@@ -415,7 +421,12 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     context,
     principals,
     ...(security ? { security } : {}),
-    contextTokensForRequest: (agentRequest, routeOwnerUserId) => contextTokensForAgentRequest(store, agentRequest, routeOwnerUserId ?? LOCAL_OWNER_ID),
+    contextTokensForRequest: (agentRequest, routeOwnerUserId) => contextTokensForAgentRequest(
+      store,
+      agentRequest,
+      routeOwnerUserId ?? LOCAL_OWNER_ID,
+      (recipe) => lifecycle.localAgentTopology(recipe),
+    ),
   });
 
   registerMediaRoutes({
@@ -481,6 +492,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         engines: store.listEngines(),
         cloudRoutes: userRoutes.configuration(ownerUserId(request)),
         chatDefaults: options.hostingService?.configuration().defaults ?? { route: "default", effort: "normal" },
+        agentTopologies: agentTopologyPresentations(userRoutes, lifecycle, ownerUserId(request)),
         isAdministrator: true,
         hostName: hostname(),
         engineRoot: store.getSetting<string>("engineRoot") ?? configuredEngineRoot,
@@ -507,6 +519,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       hostName: hostname(),
       isAdministrator: authMode === "disabled" || principals.get(request)?.user.role === "administrator",
       chatDefaults: options.hostingService?.configuration().defaults ?? { route: "default", effort: "normal" },
+      agentTopologies: agentTopologyPresentations(userRoutes, lifecycle, owner),
       routes: [
         ...userRoutes.publicRoutes(owner),
         ...routes.listRoutes(true).filter((route) => (MEDIA_ROUTE_IDS as readonly string[]).includes(route.id) || ownedRecipeIds.has(route.recipeId)),
@@ -649,6 +662,45 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   };
 }
 
+function agentTopologyPresentations(
+  routes: UserRouteResolver,
+  lifecycle: LifecycleManager,
+  ownerUserId: string,
+): Record<string, AgentTopologyPresentation> {
+  const result: Record<string, AgentTopologyPresentation> = {};
+  for (const route of routes.publicRoutes(ownerUserId)) {
+    try {
+      const resolved = routes.resolve(route.id, ownerUserId, route.id === "fast");
+      if (routes.executionClass(route.id, ownerUserId, route.id === "fast") === "self_hosted") {
+        const topology = lifecycle.localAgentTopology(resolved.recipe);
+        result[route.id] = {
+          orchestratorContextTokens: topology.orchestratorContextTokens,
+          workerContextTokens: topology.workerContextTokens,
+          workerCounts: effortWorkerCounts(() => topology.workerCount),
+        };
+        continue;
+      }
+      result[route.id] = {
+        orchestratorContextTokens: Math.min(LOCAL_MAIN_CONTEXT_TOKENS, resolved.recipe.contextTokens),
+        workerContextTokens: Math.min(LOCAL_WORKER_CONTEXT_TOKENS, resolved.recipe.contextTokens),
+        workerCounts: effortWorkerCounts((effort) => cloudWorkerCount(route.id, effort, hasCloudRouteBinding(routes.store, ownerUserId, "fast"))),
+      };
+    } catch { /* A transiently invalid route is omitted from the capability display. */ }
+  }
+  return result;
+}
+
+function effortWorkerCounts(resolve: (effort: AgentEffort) => number): Record<AgentEffort, number> {
+  return { light: resolve("light"), normal: resolve("normal"), high: resolve("high") };
+}
+
+function cloudWorkerCount(routeId: string, effort: AgentEffort, hasFastRoute: boolean): number {
+  const budget = CLOUD_SUBAGENT_EFFORT_BUDGETS[effort];
+  if (routeId === "fast") return budget.fast.fast;
+  if (routeId !== "smart") return 0;
+  return budget.smart.smart + (hasFastRoute ? budget.smart.fast : 0);
+}
+
 function seedDefaults(store: SqliteStore, recipes: Recipe[], routes: Route[]): void {
   if (store.listRecipes().length === 0) {
     for (const recipe of recipes) store.upsertRecipe(recipe);
@@ -724,8 +776,19 @@ function sameRuntimeRecipe(left: Recipe | undefined, right: Recipe): boolean {
     && left.adapter === right.adapter
     && left.modelId === right.modelId
     && left.contextTokens === right.contextTokens
-    && isDeepStrictEqual(left.agentTopology, right.agentTopology)
     && isDeepStrictEqual(left.configuration, right.configuration);
+}
+
+/** One-way compatibility migration. Agent allocation is runtime policy, so a
+ * legacy recipe topology must never survive long enough to affect resolution
+ * or be written back by an unrelated recipe edit. */
+function discardLegacyRecipeAgentTopologies(store: SqliteStore): void {
+  for (const recipe of store.listRecipes()) {
+    const persisted = recipe as Recipe & { agentTopology?: unknown };
+    if (!("agentTopology" in persisted)) continue;
+    const { agentTopology: _legacy, ...current } = persisted;
+    store.upsertRecipe(current);
+  }
 }
 
 function parseUsageDate(value: string): Date | undefined {

@@ -27,7 +27,6 @@ describe("vLLM model reconciliation", () => {
       modelId: "qwen3.6-35b-a3b-nvfp4",
       contextTokens: 32_768,
       capabilities: expect.objectContaining({ toolCalls: true, maxConcurrentGenerations: 3 }),
-      agentTopology: { sharedContextTokens: 32_768, workers: { count: 0, contextTokens: 15_360 } },
       configuration: expect.objectContaining({
         runtime: "linux-managed",
         runtimeId: "inference-linux",
@@ -100,15 +99,15 @@ describe("vLLM model reconciliation", () => {
       displayName: "My worker",
       agentTopology: { sharedContextTokens: 32_768, workers: { count: 1, contextTokens: 8_192 } },
       configuration: { ...recipe.configuration, command: "/stale/vllm" },
-    });
+    } as typeof recipe & { agentTopology: unknown });
 
     expect(reconciler.reconcile()).toEqual({ registered: [], unregistered: [] });
     expect(store.listRecipes()[0]).toEqual(expect.objectContaining({
       displayName: "My worker",
-      agentTopology: { sharedContextTokens: 32_768, workers: { count: 1, contextTokens: 8_192 } },
       configuration: expect.objectContaining({ command: `${layout.environmentRoot}/vllm/bin/vllm` }),
     }));
-    expect(store.listRecipes()[0]!.configuration.args).toEqual(expect.arrayContaining(["--max-num-seqs", "3", "--max-model-len", "24576"]));
+    expect(store.listRecipes()[0]).not.toHaveProperty("agentTopology");
+    expect(store.listRecipes()[0]!.configuration.args).toEqual(expect.arrayContaining(["--max-num-seqs", "3", "--max-model-len", "32768"]));
     store.close();
   });
 

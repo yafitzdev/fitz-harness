@@ -398,7 +398,7 @@ describe("Fitz host", () => {
       const consumerModel = saved.json().data.models[0];
       expect(consumerModel).toEqual({ id: "upstream-model", recipeId: expect.any(String) });
       expect(saved.json().data.models.map((model: { id: string }) => model.id)).toEqual(["upstream-model", "explicit-chat-model"]);
-      expect(runtime.routes.resolveRecipe(consumerModel.recipeId).agentTopology).toBeUndefined();
+      expect(runtime.routes.resolveRecipe(consumerModel.recipeId)).not.toHaveProperty("agentTopology");
       expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((item: { id: string }) => item.id).sort()).toEqual(["default"]);
       const models = await runtime.app.inject({ method: "GET", url: "/v1/models" });
       expect(models.json().data.map((item: { id: string }) => item.id)).toEqual(["default"]);
@@ -424,10 +424,20 @@ describe("Fitz host", () => {
       expect(fastCompletion.statusCode, fastCompletion.body).toBe(200);
       expect(fastCompletion.json().choices[0].message.content).toContain("upstream ok");
       await runtime.app.inject({ method: "PUT", url: "/api/v1/connections/test-api", payload: { displayName: "Test API", baseUrl: `http://127.0.0.1:${address.port}/v1`, authType: "none" } });
-      expect(runtime.routes.resolveRecipe(consumerModel.recipeId).agentTopology).toBeUndefined();
+      expect(runtime.routes.resolveRecipe(consumerModel.recipeId)).not.toHaveProperty("agentTopology");
       const refreshedStatus = await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" });
       expect(refreshedStatus.json().cloudRoutes.smart).toBe(consumerModel.recipeId);
       expect(refreshedStatus.json().cloudRoutes.fast).toBe(consumerModel.recipeId);
+      expect(refreshedStatus.json().agentTopologies.smart).toEqual({
+        orchestratorContextTokens: 131_072,
+        workerContextTokens: 32_768,
+        workerCounts: { light: 0, normal: 3, high: 8 },
+      });
+      expect(refreshedStatus.json().agentTopologies.fast).toEqual({
+        orchestratorContextTokens: 131_072,
+        workerContextTokens: 32_768,
+        workerCounts: { light: 0, normal: 3, high: 6 },
+      });
       await runtime.app.inject({ method: "DELETE", url: "/api/v1/connections/test-api" });
       // Removing the connection releases the global class it had claimed.
       expect((await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" })).json().cloudRoutes.smart).toBeUndefined();
@@ -581,7 +591,7 @@ describe("Fitz host", () => {
     await runtime.app.close();
   });
 
-  it("persists a recipe-owned worker pool and derives the NInfer main context", async () => {
+  it("ignores legacy recipe topology and applies the global local-agent policy", async () => {
     const runtime = createHost();
     try {
       const response = await runtime.app.inject({
@@ -602,11 +612,11 @@ describe("Fitz host", () => {
       expect(response.statusCode, response.body).toBe(200);
       expect(response.json().data).toMatchObject({
         contextTokens: 262_144,
-        configuration: { maxContext: 144_320 },
-        agentTopology: { sharedContextTokens: 272_320, workers: { count: 2, contextTokens: 64_000 } },
+        configuration: { maxContext: 131_072 },
       });
+      expect(response.json().data).not.toHaveProperty("agentTopology");
 
-      const invalid = await runtime.app.inject({
+      const second = await runtime.app.inject({
         method: "PUT",
         url: "/api/v1/management/recipes/qwen-overcommitted",
         payload: {
@@ -614,8 +624,8 @@ describe("Fitz host", () => {
           agentTopology: { sharedContextTokens: 100_000, workers: { count: 2, contextTokens: 64_000 } },
         },
       });
-      expect(invalid.statusCode).toBe(400);
-      expect(invalid.json().error.message, invalid.body).toContain("leave at least 2,048");
+      expect(second.statusCode, second.body).toBe(200);
+      expect(second.json().data).not.toHaveProperty("agentTopology");
     } finally {
       await runtime.app.close();
     }

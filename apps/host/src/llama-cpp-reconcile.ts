@@ -178,7 +178,7 @@ export class LlamaCppModelReconciler {
         workingDirectory: ".",
         preloadPaths: preloadGgufPaths(recipe.configuration.args),
       },
-    }, existing?.agentTopology);
+    });
   }
 }
 

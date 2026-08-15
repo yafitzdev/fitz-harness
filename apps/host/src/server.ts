@@ -40,6 +40,7 @@ import { LOCAL_OWNER_ID } from "./user-route-resolver.js";
 import { HostingService } from "./hosting-service.js";
 import { createAgentPlanTool, planAdmissionReason, planCompletionIssue, planPromptInstruction } from "./agent-plan-tools.js";
 import { rootAgentToolCallBudget } from "./agent-effort-policy.js";
+import type { Recipe, ResolvedAgentTopology } from "@fitz/protocol";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const runtimePaths = resolveRuntimePaths();
@@ -126,6 +127,7 @@ const safety = new AgentSafetyService({
 // runs per agent run — after host startup — so the closure reads the assigned instance.
 let mediaJobs: MediaJobCoordinator | undefined;
 let agentRuns: AgentRunCoordinator | undefined;
+let loadedLocalTopology: ((recipe: Recipe) => ResolvedAgentTopology) | undefined;
 const workspaceMutationLeases = new WorkspaceMutationLeaseManager();
 const runtime = createHost({
   store,
@@ -171,7 +173,7 @@ const runtime = createHost({
       forwardWorkContext: Boolean(internalAgentToken),
       // The pi session's context window must match the recipe the route resolves to
       // (e.g. 131072 for consumer/DeepSeek routes, 100000 for ninfer), not a fixed default.
-      contextWindow: (request, context) => contextTokensForAgentRequest(store, request, context?.ownerUserId),
+      contextWindow: (request, context) => contextTokensForAgentRequest(store, request, context?.ownerUserId, loadedLocalTopology),
       cwd: (request) => {
         if (process.env.FITZ_AGENT_CWD) return process.env.FITZ_AGENT_CWD;
         const inheritedSessionId = request.delegation
@@ -187,7 +189,7 @@ const runtime = createHost({
       toolPolicy: safety.createToolEvaluator(),
       toolLease: workspaceMutationLeases.acquire,
       redactToolResult: safety.createResultRedactor(),
-      subagentBudget: (request, context) => subagentRouteBudget(store, context?.ownerUserId ?? LOCAL_OWNER_ID, request.model, request.effort ?? "normal"),
+      subagentBudget: (request, context) => subagentRouteBudget(store, context?.ownerUserId ?? LOCAL_OWNER_ID, request.model, request.effort ?? "normal", loadedLocalTopology),
       runPlan: (_request, context) => context?.runId ? {
         initialInstruction: planPromptInstruction(),
         admissionReason: (toolCall) => planAdmissionReason(store, context.runId!, toolCall),
@@ -203,7 +205,7 @@ const runtime = createHost({
         const ownerUserId = (context.runId ? store.getAgentRun(context.runId)?.ownerUserId : undefined) ?? LOCAL_OWNER_ID;
         const parentRequest = context.request ?? (context.runId ? store.getAgentRunRequest(context.runId) : undefined);
         const parentRoute = parentRequest?.model ?? "default";
-        const subagentBudget = subagentRouteBudget(store, ownerUserId, parentRoute, parentRequest?.effort ?? "normal");
+        const subagentBudget = subagentRouteBudget(store, ownerUserId, parentRoute, parentRequest?.effort ?? "normal", loadedLocalTopology);
         return [
           ...safety.createCustomTools()(context),
           ...(!delegated ? [createAgentPlanTool({
@@ -226,6 +228,7 @@ const runtime = createHost({
     }),
   } : {}),
 });
+loadedLocalTopology = (recipe) => runtime.lifecycle.localAgentTopology(recipe);
 mediaJobs = runtime.mediaJobs;
 agentRuns = runtime.agentRuns;
 let removeSignalHandlers: () => void = () => undefined;

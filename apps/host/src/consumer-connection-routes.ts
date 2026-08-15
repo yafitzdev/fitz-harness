@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { RecipeNotFoundError, type RouteResolver } from "@fitz/inference-core";
-import type { HostAccessClass, InferenceExecutionClass, MediaModality, Recipe, Route } from "@fitz/protocol";
+import { LOCAL_MAIN_CONTEXT_TOKENS, type HostAccessClass, type InferenceExecutionClass, type MediaModality, type Recipe, type Route } from "@fitz/protocol";
 import type { AuthenticatedPrincipal, SecurityService } from "@fitz/security";
 import type { SqliteStore } from "@fitz/storage";
 import {
@@ -142,10 +142,9 @@ export function registerConsumerConnectionRoutes(options: ConsumerConnectionRout
             adapter: "openai-compatible",
             modelId: model.modelId,
             executionClass,
-            contextTokens: previousRecipe?.contextTokens ?? 131_072,
+            contextTokens: previousRecipe?.contextTokens ?? LOCAL_MAIN_CONTEXT_TOKENS,
             capabilities: { chatCompletions: true, streaming: true, toolCalls: true, responseFormat: false, minP: false, maxConcurrentGenerations: 8 },
             lifecycle: { loadPolicy: "onDemand", evictionPolicy: "never", idleTtlSeconds: 0, minimumResidencySeconds: 0 },
-            ...(executionClass === "self_hosted" && previousRecipe?.agentTopology ? { agentTopology: previousRecipe.agentTopology } : {}),
             configuration: {
               baseUrl,
               ...(authType === "bearer" ? { apiKeyEnv: credentialEnv } : {}),
@@ -227,12 +226,8 @@ export function discardLegacyConsumerConnections(store: SqliteStore): void {
         if (!isRecord(model) || typeof model.recipeId !== "string") continue;
         const recipe = store.listRecipes().find((candidate) => candidate.id === model.recipeId);
         if (!recipe) continue;
-        const keepTopology = executionClass === "self_hosted";
-        const { agentTopology: retiredTopology, ...withoutAgentTopology } = recipe;
-        store.upsertRecipe({
-          ...(keepTopology && retiredTopology ? recipe : withoutAgentTopology),
-          executionClass,
-        });
+        const { agentTopology: _legacy, ...current } = recipe as Recipe & { agentTopology?: unknown };
+        store.upsertRecipe({ ...current, executionClass });
       }
       for (const model of Array.isArray(item.mediaModels) ? item.mediaModels : []) {
         if (!isRecord(model) || typeof model.recipeId !== "string") continue;
@@ -383,7 +378,7 @@ function saveMediaRecipes(
       adapter: options.template,
       modelId: model.modelId,
       executionClass: "metered_cloud",
-      contextTokens: 131_072,
+      contextTokens: LOCAL_MAIN_CONTEXT_TOKENS,
       capabilities: {
         chatCompletions: false,
         streaming: true,
