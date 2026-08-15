@@ -378,7 +378,7 @@ const agentRuns = new AgentRunController({
   recalibrateEstimate: (tokens) => conversationContext.recalibrate(tokens),
   setStatus,
   setEngineState: (state) => { engineState.textContent = state; },
-  refreshControls: refreshComposerState,
+  refreshControls: refreshAgentRunState,
   queueVisible: () => inspectorPanel.isOpen,
   refreshQueue: () => agentQueue.refresh(),
   showStatus,
@@ -911,7 +911,10 @@ function refreshAgentTopology(): void {
 }
 
 function renderTree(): void {
-  projectSidebar.render({ projects: projects.projects, sessionsByProject: projects.sessionsByProject, chats: projects.chats, currentProjectId: projects.currentProjectId, currentSessionId: projects.currentSessionId, newChat: conversationSessions.newChat });
+  const processingSessionIds = agentRuns.active && projects.currentSessionId
+    ? new Set([projects.currentSessionId])
+    : new Set<string>();
+  projectSidebar.render({ projects: projects.projects, sessionsByProject: projects.sessionsByProject, chats: projects.chats, currentProjectId: projects.currentProjectId, currentSessionId: projects.currentSessionId, processingSessionIds, newChat: conversationSessions.newChat });
   updateTitles();
 }
 
@@ -1090,6 +1093,11 @@ function refreshComposerState(): void {
   artifactController.setEnabled(Boolean(projects.currentSessionId));
   // The attach button also unlocks in a new chat so files can be staged for the first message.
   composer.setState({ ready, running: agentRuns.active, generating: mediaJobs.active, hasSession: Boolean(projects.currentSessionId || conversationSessions.newChat) });
+}
+
+function refreshAgentRunState(): void {
+  refreshComposerState();
+  renderTree();
 }
 
 function updateTitles(): void {

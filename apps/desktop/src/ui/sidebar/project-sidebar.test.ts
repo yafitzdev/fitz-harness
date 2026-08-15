@@ -41,6 +41,7 @@ function state(): ProjectSidebarState {
     chats: [{ id: "c1", title: "Standalone chat", createdAt: "2026-08-05T00:00:00.000Z" }, { id: "c2", title: "Another chat" }],
     currentProjectId: "alpha",
     currentSessionId: "a1",
+    processingSessionIds: new Set(),
     newChat: false,
   };
 }
@@ -451,6 +452,18 @@ describe("ProjectSidebarController", () => {
     const rows = chatsTree.querySelectorAll<HTMLElement>(".chat-row");
     expect(rows[0]!.classList.contains("active")).toBe(true);
     expect(rows[1]!.classList.contains("active")).toBe(false);
+  });
+
+  it("shows processing state on the matching chat row without replacing its actions", () => {
+    const { controller, tree } = setup();
+    controller.ensureExpanded("alpha");
+    controller.render({ ...state(), processingSessionIds: new Set(["a1"]) });
+
+    const item = [...tree.querySelectorAll<HTMLElement>(".tree-item")].find((candidate) => candidate.querySelector(".task-row")?.textContent?.includes("First chat"))!;
+    expect(item.classList.contains("processing")).toBe(true);
+    expect(item.querySelector(".tree-run-spinner")?.getAttribute("aria-label")).toBe("Chat is processing");
+    expect(item.querySelector(".tree-menu-toggle")).toBeTruthy();
+    expect(item.querySelector(".tree-pin-action")).toBeTruthy();
   });
 
   it("renders pinned standalone chats in the shared Pinned section", () => {

@@ -12,6 +12,7 @@
 .project-children-inner { min-height: 0; display: grid; gap: 0; overflow: hidden; }
 .project-group.expanded > .project-children { grid-template-rows: 1fr; opacity: 1; transform: translateY(0); }
 .tree-item { position: relative; min-width: 0; }
+.tree-item.processing > .task-row, .tree-item.processing > .chat-row { padding-right: 33px; }
 .project-row, .task-row, .chat-row { width: 100%; display: flex; align-items: center; gap: 8px; min-width: 0; background: transparent; color: var(--sidebar-text); border-radius: var(--sidebar-item-radius); cursor: pointer; text-align: left; transition: padding-right 120ms ease; }
 .project-row { padding: 5px 8px; font-weight: 500; }
 .task-row { padding: 4px 9px 4px 30px; }
@@ -31,6 +32,10 @@
 .tree-pin-action { right: 31px; }
 .tree-item:has(.project-row) .tree-quick-action { right: 58px; }
 .tree-item:hover .tree-menu-toggle, .tree-item:hover .tree-quick-action, .tree-item:hover .tree-pin-action, .tree-item:focus-within .tree-menu-toggle, .tree-item:focus-within .tree-quick-action, .tree-item:focus-within .tree-pin-action, .tree-menu-toggle[aria-expanded="true"] { opacity: 1; }
+.tree-run-spinner { position: absolute; z-index: 1; top: 50%; right: 9px; width: 13px; height: 13px; transform: translateY(-50%); border: 2px solid var(--grey-450); border-top-color: var(--grey-850); border-right-color: var(--grey-850); border-radius: 50%; animation: sidebar-run-spinner 720ms linear infinite; pointer-events: none; transition: opacity 100ms ease; }
+.tree-item:hover .tree-run-spinner, .tree-item:focus-within .tree-run-spinner { opacity: 0; }
+@keyframes sidebar-run-spinner { to { transform: translateY(-50%) rotate(1turn); } }
+@media (prefers-reduced-motion: reduce) { .tree-run-spinner { animation: none; } }
 .tree-menu-toggle:hover, .tree-quick-action:hover, .tree-pin-action:hover { background: var(--tint-5); color: var(--text); }
 .tree-menu-toggle svg, .tree-quick-action svg, .tree-pin-action svg { width: 15px; height: 15px; }
 .tree-pin-action.pinned svg { fill: currentColor; }

@@ -11,6 +11,9 @@
 .composer-card { position: relative; z-index: 30; isolation: isolate; overflow: visible; border: 1px solid var(--new-chat-outline); border-radius: var(--radius-lg); background: var(--new-chat-base); container-type: inline-size; container-name: composer; }
 .composer-card:focus-within { background: var(--new-chat-base); }
 .workspace.new-chat-open .composer-card, .workspace.new-chat-open .composer-card:focus-within { background: var(--new-chat-base); }
+.workspace.new-chat-open .composer-dock::before { content: ""; position: absolute; z-index: 31; inset: -1px; padding: 1px; border-radius: var(--radius-lg); background: conic-gradient(from var(--new-chat-shine-angle, 0deg), transparent 0deg, transparent 285deg, var(--shine-medium) 315deg, var(--brand-white) 336deg, var(--shine-medium) 354deg, transparent 360deg); -webkit-mask: linear-gradient(var(--mask-solid) 0 0) content-box, linear-gradient(var(--mask-solid) 0 0); -webkit-mask-composite: xor; mask-composite: exclude; animation: new-chat-outline-shine 4.2s linear infinite; pointer-events: none; }
+@property --new-chat-shine-angle { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+@keyframes new-chat-outline-shine { to { --new-chat-shine-angle: 360deg; } }
 .workspace.new-chat-open .composer-dock::after { box-shadow: var(--elevation-prominent), var(--shadow-new-chat); animation-name: new-chat-halo-breathe; }
 .composer-dock.new-chat-launching::after { animation: new-chat-halo-implode 220ms cubic-bezier(.55,0,1,.45) forwards; }
 .composer-dock.new-chat-launching .new-chat-heading, .composer-dock.new-chat-launching .new-chat-context { opacity: 0; transform: translateY(5px); transition: opacity 120ms ease-out, transform 160ms ease-out; }
@@ -27,7 +30,7 @@
   55% { box-shadow: var(--elevation-prominent), var(--shadow-new-chat-implode); }
   100% { box-shadow: var(--elevation-prominent), var(--shadow-new-chat-gone); }
 }
-@media (prefers-reduced-motion: reduce) { .composer-dock::after { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .composer-dock::after, .workspace.new-chat-open .composer-dock::before { animation: none; } }
 .composer-attachments { display: flex; gap: 9px; padding: 12px 13px 0; overflow-x: auto; }
 .new-chat-context { position: absolute; z-index: 30; left: 8px; right: 8px; bottom: calc(100% + 6px); height: 34px; display: flex; align-items: center; justify-content: flex-start; gap: 5px; padding: 0; color: var(--text); font-size: 13px; }
 .new-chat-context-item { min-width: 0; min-height: var(--control-size); display: inline-flex; align-items: center; gap: 7px; padding: 5px 8px; border-radius: var(--radius-lg); background: transparent; color: inherit; cursor: pointer; }
@@ -90,7 +93,7 @@
 .run-status { max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
 .run-status[data-state="active"] { color: var(--status-success); }
 .run-status[data-state="error"] { color: var(--status-danger); }
-.send-button { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: var(--accent); color: var(--accent-text); cursor: pointer; }
+.send-button { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: var(--accent); color: var(--brand-white); cursor: pointer; }
 .send-button .send-icon { width: 19px; height: 19px; stroke-width: 1.85; }
 .send-button:disabled { opacity: .35; cursor: default; }
 .send-button .stop-icon { display: none; fill: currentColor; stroke: none; }

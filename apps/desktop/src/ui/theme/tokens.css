@@ -131,6 +131,9 @@
   --shadow-popover: 0 8px 16px -4px rgba(0,0,0,.12);
   --new-chat-base: var(--grey-100);
   --new-chat-outline: rgba(255,255,255,.68);
+  --shine-faint: rgba(255,255,255,.03);
+  --shine-medium: rgba(255,255,255,.18);
+  --mask-solid: #000000;
   --row-outline: rgba(255,255,255,.11);
   --row-outline-hover: rgba(255,255,255,.28);
   --shadow-chat-rest: 0 -4px 32px rgba(69,140,230,.09), 0 4px 76px rgba(69,140,230,.13), 0 14px 142px rgba(69,140,230,.08);

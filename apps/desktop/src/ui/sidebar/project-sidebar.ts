@@ -21,6 +21,7 @@ export interface ProjectSidebarState {
   chats: readonly ProjectSidebarSession[];
   currentProjectId: string | undefined;
   currentSessionId: string | undefined;
+  processingSessionIds: ReadonlySet<string>;
   newChat: boolean;
 }
 
@@ -84,7 +85,7 @@ export class ProjectSidebarController {
   readonly #pinnedProjects = this.#storedSet("fitz-pinned-projects");
   readonly #pinnedSessions = this.#storedSet("fitz-pinned-sessions");
   readonly #expandedProjects = this.#storedSet("fitz-expanded-projects");
-  #state: ProjectSidebarState = { projects: [], sessionsByProject: new Map(), chats: [], currentProjectId: undefined, currentSessionId: undefined, newChat: false };
+  #state: ProjectSidebarState = { projects: [], sessionsByProject: new Map(), chats: [], currentProjectId: undefined, currentSessionId: undefined, processingSessionIds: new Set(), newChat: false };
   #editing: SidebarEdit | undefined;
   #creatingProject: { rootPath?: string } | undefined;
   #confirmingRemoval: { projectId: string; name: string } | undefined;
@@ -229,6 +230,7 @@ export class ProjectSidebarController {
       return this.#editingRow("chat-row pinned-row", session.title, 120, (value) => this.#commitEdit(value));
     }
     const item = this.#treeItem(session.title, "chat-row pinned-row", undefined, () => this.#options.selectSession(session.id, project?.id), (toggle, event) => this.#openMenu(project ? "task" : "chat", session.id, project?.id, toggle, event));
+    this.#markProcessing(item, session.id);
     const button = item.querySelector<HTMLButtonElement>(".chat-row")!;
     button.classList.toggle("active", session.id === this.#state.currentSessionId && project?.id === this.#state.currentProjectId);
     this.#appendPinAction(item, "session", session.id);
@@ -269,6 +271,7 @@ export class ProjectSidebarController {
       return this.#editingRow("task-row", session.title, 120, (value) => this.#commitEdit(value));
     }
     const item = this.#treeItem(session.title, "task-row", undefined, () => this.#options.selectSession(session.id, project.id), (toggle, event) => this.#openMenu("task", session.id, project.id, toggle, event));
+    this.#markProcessing(item, session.id);
     const button = item.querySelector<HTMLButtonElement>(".task-row")!;
     button.classList.toggle("active", session.id === this.#state.currentSessionId);
     this.#appendPinAction(item, "session", session.id);
@@ -280,6 +283,7 @@ export class ProjectSidebarController {
       return this.#editingRow("chat-row", chat.title, 120, (value) => this.#commitEdit(value));
     }
     const item = this.#treeItem(chat.title, "chat-row", undefined, () => this.#options.selectSession(chat.id, undefined), (toggle, event) => this.#openMenu("chat", chat.id, undefined, toggle, event));
+    this.#markProcessing(item, chat.id);
     const button = item.querySelector<HTMLButtonElement>(".chat-row")!;
     button.classList.toggle("active", chat.id === this.#state.currentSessionId && !this.#state.currentProjectId);
     this.#appendPinAction(item, "session", chat.id);
@@ -303,6 +307,17 @@ export class ProjectSidebarController {
       this.#toggleStored(values, id, kind === "project" ? "fitz-pinned-projects" : "fitz-pinned-sessions");
     });
     item.insertBefore(pin, item.querySelector(".tree-quick-action, .tree-menu-toggle"));
+  }
+
+  #markProcessing(item: HTMLElement, sessionId: string): void {
+    if (!this.#state.processingSessionIds.has(sessionId)) return;
+    item.classList.add("processing");
+    const spinner = document.createElement("span");
+    spinner.className = "tree-run-spinner";
+    spinner.setAttribute("role", "status");
+    spinner.setAttribute("aria-label", "Chat is processing");
+    spinner.title = "Processing";
+    item.append(spinner);
   }
 
   #treeItem(label: string, className: string, icon: SVGElement | undefined, action: () => void, menu: (toggle: HTMLButtonElement, event: MouseEvent) => void, quickAction?: () => void): HTMLElement {
