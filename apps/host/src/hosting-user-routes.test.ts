@@ -21,4 +21,18 @@ describe("Hosting user administration", () => {
     const removed = await app.inject({ method: "DELETE", url: `/api/v1/management/users/${created.json().data.user.id}` });
     expect(removed.statusCode).toBe(200); expect(store.getUser(created.json().data.user.id)?.status).toBe("disabled"); expect(security.authenticate(`Bearer ${rotated.json().data.token}`)).toBeUndefined();
   });
+
+  it("makes an explicit media route grant usable and preserves it when text quotas are saved", async () => {
+    const app = Fastify(); const store = new SqliteStore(":memory:"); const security = new SecurityService(store, "test-pepper"); openApps.push(app); openStores.push(store);
+    registerSecurityAdministrationRoutes({ app, store, security, principals: new WeakMap(), administratorGuard: async () => undefined });
+    const user = security.createUser("Grace", "consumer");
+
+    const routes = await app.inject({ method: "PUT", url: `/api/v1/management/users/${user.id}/routes`, payload: { routeIds: ["image", "video", "audio"] } });
+    expect(routes.statusCode, routes.body).toBe(200);
+    expect(store.getUserQuota(user.id)?.media).toEqual({ maxJobsPerWindow: 20, windowHours: 24, maxConcurrentJobs: 1 });
+
+    const quota = await app.inject({ method: "PUT", url: `/api/v1/management/users/${user.id}/quota`, payload: { maxRequestsPerMinute: 9, maxPromptChars: 2_000, maxOutputTokens: 1_000, maxQueueDepth: 2 } });
+    expect(quota.statusCode, quota.body).toBe(200);
+    expect(store.getUserQuota(user.id)).toEqual(expect.objectContaining({ maxRequestsPerMinute: 9, media: { maxJobsPerWindow: 20, windowHours: 24, maxConcurrentJobs: 1 } }));
+  });
 });

@@ -2,13 +2,15 @@ import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypt
 import type { DeviceRecord, MediaModality, MediaQuota, UserQuota, UserRecord, UserRole } from "@fitz/protocol";
 import { SqliteStore } from "@fitz/storage";
 
+export const DEFAULT_MEDIA_QUOTA: Readonly<MediaQuota> = { maxJobsPerWindow: 20, windowHours: 24, maxConcurrentJobs: 1 };
+
 export const DEFAULT_QUOTAS: Readonly<Record<UserRole, UserQuota>> = {
   administrator: {
     maxRequestsPerMinute: 120,
     maxPromptChars: 1_000_000,
     maxOutputTokens: 100_000,
     maxQueueDepth: 100,
-    media: { maxJobsPerWindow: 20, windowHours: 24, maxConcurrentJobs: 1 },
+    media: DEFAULT_MEDIA_QUOTA,
   },
   agent: { maxRequestsPerMinute: 60, maxPromptChars: 500_000, maxOutputTokens: 32_768, maxQueueDepth: 20 },
   consumer: { maxRequestsPerMinute: 20, maxPromptChars: 100_000, maxOutputTokens: 8_192, maxQueueDepth: 5 },

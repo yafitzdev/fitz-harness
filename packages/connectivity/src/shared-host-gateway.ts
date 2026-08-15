@@ -150,6 +150,11 @@ export class SharedHostGateway {
 
 export function isAllowedSharedRequest(method: string, path: string): boolean {
   if (["/api/v1/me", "/api/v1/configuration", "/v1/models"].includes(path)) return method === "GET";
+  // Consumers own these records; exposing them is required for configuring
+  // cloud providers from a remote Fitz desktop.
+  if (["/api/v1/connections", "/api/v1/cloud-routes"].includes(path)) return method === "GET";
+  if (/^\/api\/v1\/connections\/[^/]+$/.test(path)) return method === "PUT" || method === "DELETE";
+  if (/^\/api\/v1\/cloud-routes\/[^/]+$/.test(path)) return method === "PUT" || method === "DELETE";
   if (path === "/api/v1/inference/warm") return method === "POST";
   if (["/v1/chat/completions", "/v1/images/generations", "/v1/videos/generations", "/v1/audio/generations"].includes(path)) return method === "POST";
   if (path === "/api/v1/chats") return method === "GET" || method === "POST";

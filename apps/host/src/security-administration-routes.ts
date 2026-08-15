@@ -1,6 +1,6 @@
 import type { FastifyInstance, preHandlerHookHandler } from "fastify";
 import type { ToolPolicyRecord } from "@fitz/protocol";
-import { DEFAULT_QUOTAS, SecurityPolicyError, type AuthenticatedPrincipal, type SecurityService } from "@fitz/security";
+import { DEFAULT_MEDIA_QUOTA, DEFAULT_QUOTAS, SecurityPolicyError, type AuthenticatedPrincipal, type SecurityService } from "@fitz/security";
 import type { SqliteStore } from "@fitz/storage";
 import type { HostingService } from "./hosting-service.js";
 
@@ -126,7 +126,12 @@ export function registerSecurityAdministrationRoutes(options: SecurityAdministra
       const userId = (request.params as { userId: string }).userId;
       const body = requireRecord(request.body);
       if (!Array.isArray(body.routeIds) || !body.routeIds.every((id) => typeof id === "string")) throw new TypeError("routeIds must be a string array");
-      securityRequired(security).setRouteGrants(userId, body.routeIds);
+      const service = securityRequired(security);
+      service.setRouteGrants(userId, body.routeIds);
+      const grantsMedia = body.routeIds.some((id) => id === "image" || id === "video" || id === "audio");
+      const user = store.getUser(userId);
+      const currentQuota = user ? store.getUserQuota(userId) ?? DEFAULT_QUOTAS[user.role] : undefined;
+      if (grantsMedia && currentQuota && !currentQuota.media) service.setQuota(userId, { ...currentQuota, media: DEFAULT_MEDIA_QUOTA });
       security?.audit("route-grants.updated", principals.get(request)?.user.id, "user", userId, { routeIds: body.routeIds });
       return { data: { userId, routeIds: store.listUserRouteGrants(userId) } };
     } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
@@ -135,11 +140,13 @@ export function registerSecurityAdministrationRoutes(options: SecurityAdministra
     try {
       const userId = (request.params as { userId: string }).userId;
       const body = requireRecord(request.body);
+      const existingMedia = store.getUserQuota(userId)?.media;
       const quota = {
         maxRequestsPerMinute: requireInteger(body.maxRequestsPerMinute),
         maxPromptChars: requireInteger(body.maxPromptChars),
         maxOutputTokens: requireInteger(body.maxOutputTokens),
         maxQueueDepth: requireInteger(body.maxQueueDepth),
+        ...(existingMedia ? { media: existingMedia } : {}),
       };
       securityRequired(security).setQuota(userId, quota);
       security?.audit("quota.updated", principals.get(request)?.user.id, "user", userId);

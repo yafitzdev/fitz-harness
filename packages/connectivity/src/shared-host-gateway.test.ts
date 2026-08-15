@@ -14,6 +14,37 @@ describe("Fitz Hosting gateway", () => {
     expect(isAllowedSharedRequest("POST", "/api/v1/projects")).toBe(false);
     expect(isAllowedSharedRequest("GET", "/api/v1/management/users")).toBe(false);
     expect(isAllowedSharedRequest("POST", "/api/v1/pairing/bootstrap")).toBe(false);
+    expect(isAllowedSharedRequest("GET", "/api/v1/connections")).toBe(true);
+    expect(isAllowedSharedRequest("PUT", "/api/v1/connections/deepseek")).toBe(true);
+    expect(isAllowedSharedRequest("DELETE", "/api/v1/connections/deepseek")).toBe(true);
+    expect(isAllowedSharedRequest("POST", "/api/v1/connections/deepseek")).toBe(false);
+    expect(isAllowedSharedRequest("GET", "/api/v1/cloud-routes")).toBe(true);
+    expect(isAllowedSharedRequest("PUT", "/api/v1/cloud-routes/smart")).toBe(true);
+    expect(isAllowedSharedRequest("DELETE", "/api/v1/cloud-routes/fast")).toBe(true);
+  });
+
+  it("proxies consumer connection setup while retaining consumer authentication", async () => {
+    const requests: Array<{ method?: string; url?: string; body: string }> = [];
+    const origin = createServer((incoming, response) => {
+      if (incoming.url === "/api/v1/me") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ data: { user: { role: "consumer" } } }));
+        return;
+      }
+      const chunks: Buffer[] = [];
+      incoming.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      incoming.on("end", () => {
+        requests.push({ method: incoming.method, url: incoming.url, body: Buffer.concat(chunks).toString("utf8") });
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ data: { id: "deepseek" } }));
+      });
+    });
+    servers.push(origin); await new Promise<void>((resolve) => origin.listen(19795, "127.0.0.1", resolve));
+    const gateway = new SharedHostGateway({ target: new URL("http://127.0.0.1:19795"), port: 19796 }); gateways.push(gateway); await gateway.start();
+
+    const result = await call("http://127.0.0.1:19796/api/v1/connections/deepseek", "PUT", "consumer", JSON.stringify({ apiKey: "test-secret" }));
+    expect(result.status).toBe(200);
+    expect(requests).toEqual([{ method: "PUT", url: "/api/v1/connections/deepseek", body: JSON.stringify({ apiKey: "test-secret" }) }]);
   });
 
   it("requires a consumer key even for its minimal health response", async () => {
@@ -56,3 +87,4 @@ describe("Fitz Hosting gateway", () => {
 });
 
 function get(url: string, token?: string, headers: Record<string, string> = {}): Promise<{ status: number; body: string; headers: IncomingHttpHeaders }> { return new Promise((resolve, reject) => { const call = request(url, { headers: { ...headers, ...(token ? { authorization: `Bearer ${token}` } : {}) } }, (response) => { const chunks: Buffer[] = []; response.on("data", (chunk) => chunks.push(Buffer.from(chunk))); response.on("end", () => resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8"), headers: response.headers })); }); call.once("error", reject); call.end(); }); }
+function call(url: string, method: string, token: string, body: string): Promise<{ status: number; body: string; headers: IncomingHttpHeaders }> { return new Promise((resolve, reject) => { const requestCall = request(url, { method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (response) => { const chunks: Buffer[] = []; response.on("data", (chunk) => chunks.push(Buffer.from(chunk))); response.on("end", () => resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8"), headers: response.headers })); }); requestCall.once("error", reject); requestCall.end(body); }); }
