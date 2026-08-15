@@ -4,6 +4,7 @@ import type { ActionFeedback } from "../primitives/action-status.js";
 import { CollapsibleSection } from "../layout/collapsible-section.js";
 import { svgIcon } from "../primitives/dom.js";
 import { recipeMetadata, type RecipeModality } from "../recipes/recipe-metadata.js";
+import { RecipeConfigurationEditor } from "../playbooks/recipe-configuration-editor.js";
 import {
   CLOUD_TEXT_ROUTE_DEFINITIONS,
   TEXT_ROUTE_DEFINITIONS,
@@ -17,7 +18,7 @@ export type MediaModality = Exclude<RecipeModality, "text">;
 
 const CONNECTION_EDITOR_TEMPLATE = `
   <div id="connection-editor" class="management-editor" hidden>
-    <button id="connection-editor-back" class="management-back" type="button"><svg viewBox="0 0 20 20"><path d="m12.5 4-6 6 6 6"></path></svg>Connections</button>
+    <button id="connection-editor-back" class="management-back" type="button"><svg viewBox="0 0 20 20"><path d="m12.5 4-6 6 6 6"></path></svg>Inference</button>
     <form id="connection-form" class="management-editor-form">
       <input id="consumer-connection-id" type="hidden">
       <div class="editor-heading"><small>API connection</small><h1 id="connection-editor-title">New connection</h1><p>Connect a provider or a model server you host yourself. Models are discovered automatically.</p></div>
@@ -31,6 +32,21 @@ const CONNECTION_EDITOR_TEMPLATE = `
       </div>
       <p id="connection-form-status" class="connection-form-status" hidden></p>
       <div class="editor-actions"><button id="cancel-connection-edit" class="quiet-button" type="button">Cancel</button><button class="primary-button" type="submit">Connect</button></div>
+    </form>
+  </div>
+`;
+
+const AGENT_EDITOR_TEMPLATE = `
+  <div id="inference-agent-editor" class="management-editor" hidden>
+    <button id="inference-agent-editor-back" class="management-back" type="button"><svg viewBox="0 0 20 20"><path d="m12.5 4-6 6 6 6"></path></svg>Inference</button>
+    <form id="inference-agent-form" class="management-editor-form">
+      <div class="editor-heading inference-agent-heading">
+        <small id="inference-agent-eyebrow">Model agents</small>
+        <div class="inference-agent-title-row"><h1 id="inference-agent-title"></h1><button id="inference-agent-rename" class="icon-button" type="button" title="Rename model" aria-label="Rename model"><svg viewBox="0 0 20 20"><path d="m13.8 3.2 3 3L7.2 15.8 3 17l1.2-4.2z"></path></svg></button></div>
+        <input id="inference-agent-display-name" class="inference-agent-name-input" maxlength="100" required hidden>
+      </div>
+      <div id="inference-agent-configuration"></div>
+      <div class="editor-actions"><button id="cancel-inference-agent-edit" class="quiet-button" type="button">Cancel</button><button class="primary-button" type="submit">Save</button></div>
     </form>
   </div>
 `;
@@ -114,6 +130,15 @@ export interface ConnectionWorkspaceElements {
   newConnection: HTMLButtonElement;
   editorBack: HTMLButtonElement;
   cancelEdit: HTMLButtonElement;
+  agentEditor: HTMLElement;
+  agentForm: HTMLFormElement;
+  agentEditorBack: HTMLButtonElement;
+  agentCancel: HTMLButtonElement;
+  agentTitle: HTMLElement;
+  agentEyebrow: HTMLElement;
+  agentRename: HTMLButtonElement;
+  agentDisplayName: HTMLInputElement;
+  agentConfiguration: HTMLElement;
 }
 
 export interface ConnectionWorkspaceOptions {
@@ -137,18 +162,22 @@ export class ConnectionWorkspaceController {
   private configuration: Json | undefined;
   private refreshGeneration = 0;
   private readonly routeAssignmentGeneration = new Map<string, number>();
+  private readonly agentConfigurationEditor: RecipeConfigurationEditor;
+  private editingRecipe: Json | undefined;
+  private editingConnectionId: string | undefined;
+  private editingHosted = false;
 
   constructor(options: ConnectionWorkspaceOptions) {
     this.options = options;
     this.root = document.createElement("section");
-    this.root.className = "management-page connections-page";
-    this.root.setAttribute("aria-label", "API connections");
+    this.root.className = "management-page connections-page inference-page";
+    this.root.setAttribute("aria-label", "Inference");
     this.root.hidden = true;
     options.mount.append(this.root);
     const layout = new ManagementPageLayout(this.root, {
       actions: [
-        { id: "new-connection", label: "New connection", className: "quiet-button compact-button" },
-        { id: "refresh-connections", icon: managementRefreshIcon, label: "Refresh connections" },
+        { id: "new-connection", label: "Connect cloud API", className: "quiet-button compact-button" },
+        { id: "refresh-connections", icon: managementRefreshIcon, label: "Refresh inference" },
       ],
     });
     const connectionsList = document.createElement("div");
@@ -156,12 +185,13 @@ export class ConnectionWorkspaceController {
     connectionsList.className = "playbook-list";
     layout.addContent({
       id: "connection-list-view",
-      title: "Connections",
-      description: "Provider and self-hosted OpenAI-compatible APIs.",
-      search: { id: "connection-search", placeholder: "Search connections" },
+      title: "Inference",
+      description: "Local engines and cloud APIs.",
+      search: { id: "connection-search", placeholder: "Search models and providers" },
       body: [connectionsList],
     });
     this.root.insertAdjacentHTML("beforeend", CONNECTION_EDITOR_TEMPLATE);
+    this.root.insertAdjacentHTML("beforeend", AGENT_EDITOR_TEMPLATE);
     this.elements = {
       form: this.require("connection-form"),
       id: this.require("consumer-connection-id"),
@@ -184,7 +214,17 @@ export class ConnectionWorkspaceController {
       newConnection: this.require("new-connection"),
       editorBack: this.require("connection-editor-back"),
       cancelEdit: this.require("cancel-connection-edit"),
+      agentEditor: this.require("inference-agent-editor"),
+      agentForm: this.require("inference-agent-form"),
+      agentEditorBack: this.require("inference-agent-editor-back"),
+      agentCancel: this.require("cancel-inference-agent-edit"),
+      agentTitle: this.require("inference-agent-title"),
+      agentEyebrow: this.require("inference-agent-eyebrow"),
+      agentRename: this.require("inference-agent-rename"),
+      agentDisplayName: this.require("inference-agent-display-name"),
+      agentConfiguration: this.require("inference-agent-configuration"),
     };
+    this.agentConfigurationEditor = new RecipeConfigurationEditor(this.elements.agentConfiguration);
     this.bind();
     this.resetForm();
   }
@@ -195,7 +235,7 @@ export class ConnectionWorkspaceController {
     return value;
   }
 
-  get editorOpen(): boolean { return !this.elements.editor.hidden; }
+  get editorOpen(): boolean { return !this.elements.editor.hidden || !this.elements.agentEditor.hidden; }
 
   setConfiguration(configuration: Json | undefined): void {
     this.configuration = configuration;
@@ -225,13 +265,28 @@ export class ConnectionWorkspaceController {
     const query = this.elements.search.value.trim().toLowerCase();
     const visible = connectionRecords.filter((connection) => !query || [connection.displayName, ...connection.availableModels.flatMap((model) => [model.id, model.displayName, model.modelId, model.engine]), ...connection.availableMediaModels.flatMap((model) => [model.modelId, model.displayName, model.engine])].some((value) => String(value ?? "").toLowerCase().includes(query)));
     if (!visible.length) {
-      this.elements.connections.append(emptyState(query ? "No matching connections" : "No APIs connected yet", query ? "panel-empty" : "connections-empty"));
+      this.elements.connections.append(emptyState(query ? "No matching models or providers" : "No inference providers available", query ? "panel-empty" : "connections-empty"));
       return;
     }
     const routes = this.configuration?.routes ?? [];
-    for (const connection of visible) {
-      this.elements.connections.append(this.connectionCard(connection, routes, connection.availableMediaModels));
-    }
+    const local = visible.filter((connection) => connection.hosted);
+    const cloud = visible.filter((connection) => !connection.hosted);
+    if (local.length) this.elements.connections.append(this.inferenceSection("Local", "Models running on this machine", local, routes));
+    if (cloud.length || !query) this.elements.connections.append(this.inferenceSection("Cloud", "Provider APIs and remote model servers", cloud, routes));
+  }
+
+  private inferenceSection(title: string, description: string, connections: ConnectionView[], routes: Json[]): HTMLElement {
+    const section = document.createElement("section");
+    section.className = "inference-section";
+    const heading = document.createElement("div");
+    heading.className = "inference-section-heading";
+    const copy = document.createElement("div");
+    const label = document.createElement("h2"); label.textContent = title;
+    const detail = document.createElement("p"); detail.textContent = description;
+    copy.append(label, detail); heading.append(copy); section.append(heading);
+    if (!connections.length) section.append(emptyState("No cloud APIs connected yet", "connections-empty"));
+    for (const connection of connections) section.append(this.connectionCard(connection, routes, connection.availableMediaModels));
+    return section;
   }
 
   private openEditor(connection?: ConsumerConnectionSummary): void {
@@ -254,8 +309,42 @@ export class ConnectionWorkspaceController {
     this.elements.name.focus();
   }
 
+  private openAgentEditor(model: ConnectionModelView, hosted: boolean, connectionId: string): void {
+    if (hosted && this.configuration?.isAdministrator !== true) return;
+    const sourceRecipe = (this.configuration?.recipes ?? []).find((candidate: Json) => candidate.id === model.recipeId);
+    if (!sourceRecipe) return;
+    const recipe = hosted ? sourceRecipe : {
+      ...sourceRecipe,
+      agentTopology: {
+        capacityMode: "independent",
+        sharedContextTokens: Number(sourceRecipe.contextTokens),
+        workers: sourceRecipe.agentTopology?.workers ?? { count: 0, contextTokens: Math.min(32_000, Number(sourceRecipe.contextTokens)) },
+      },
+    };
+    this.editingRecipe = recipe;
+    this.editingConnectionId = connectionId;
+    this.editingHosted = hosted;
+    this.elements.listView.hidden = true;
+    this.elements.editor.hidden = true;
+    this.elements.agentEditor.hidden = false;
+    this.elements.agentTitle.textContent = String(recipe.displayName ?? model.displayName ?? model.modelId ?? model.id);
+    this.elements.agentDisplayName.value = this.elements.agentTitle.textContent;
+    this.elements.agentDisplayName.hidden = true;
+    this.elements.agentTitle.parentElement!.hidden = false;
+    this.elements.agentEyebrow.textContent = hosted ? "Local model" : "Cloud model";
+    this.agentConfigurationEditor.load(String(recipe.adapter), recipe.configuration ?? {}, recipe);
+    this.options.onRouteChange?.(["model", connectionId, model.recipeId]);
+  }
+
   openRoute(path: readonly string[]): boolean {
-    const [kind, connectionId] = path;
+    const [kind, connectionId, recipeId] = path;
+    if (kind === "model" && connectionId && recipeId) {
+      const connection = this.views().find((candidate) => candidate.id === connectionId);
+      const model = connection?.availableModels.find((candidate) => candidate.recipeId === recipeId);
+      if (!connection || !model) return false;
+      this.openAgentEditor(model, connection.hosted, connectionId);
+      return true;
+    }
     if (kind === "new") {
       this.openEditor();
       return true;
@@ -271,7 +360,10 @@ export class ConnectionWorkspaceController {
     const wasOpen = this.editorOpen;
     this.resetForm();
     this.elements.editor.hidden = true;
+    this.elements.agentEditor.hidden = true;
     this.elements.listView.hidden = false;
+    this.editingRecipe = undefined;
+    this.editingConnectionId = undefined;
     if (wasOpen && remember) this.options.onRouteChange?.(undefined);
   }
 
@@ -280,6 +372,15 @@ export class ConnectionWorkspaceController {
     this.elements.newConnection.addEventListener("click", () => this.openEditor());
     this.elements.editorBack.addEventListener("click", () => this.closeEditor());
     this.elements.cancelEdit.addEventListener("click", () => this.closeEditor());
+    this.elements.agentEditorBack.addEventListener("click", () => this.closeEditor());
+    this.elements.agentCancel.addEventListener("click", () => this.closeEditor());
+    this.elements.agentRename.addEventListener("click", () => {
+      this.elements.agentTitle.parentElement!.hidden = true;
+      this.elements.agentDisplayName.hidden = false;
+      this.elements.agentDisplayName.focus();
+      this.elements.agentDisplayName.select();
+    });
+    this.elements.agentForm.addEventListener("submit", (event) => { event.preventDefault(); void this.saveAgentTopology(); });
     this.elements.search.addEventListener("input", () => this.render());
     this.elements.auth.addEventListener("change", () => this.updateAuthField());
     this.elements.template.addEventListener("change", () => this.updateTemplateFields());
@@ -298,7 +399,7 @@ export class ConnectionWorkspaceController {
       hosted: false,
       availableModels: connection.models.map((model) => {
         const recipe = recipes.find((candidate: Json) => candidate.id === model.recipeId);
-        return { ...model, engine: String(connection.template ?? recipe?.adapter ?? "openai-compatible"), maxConcurrentGenerations: Number(recipe?.capabilities?.maxConcurrentGenerations ?? 1) };
+        return { ...model, displayName: String(recipe?.displayName ?? model.id), modelId: String(recipe?.modelId ?? model.id), contextTokens: Number(recipe?.contextTokens), engine: String(connection.template ?? recipe?.adapter ?? "openai-compatible"), maxConcurrentGenerations: Number(recipe?.capabilities?.maxConcurrentGenerations ?? 1) };
       }),
       availableMediaModels: savedMediaViews(connection),
       source: connection,
@@ -324,7 +425,7 @@ export class ConnectionWorkspaceController {
     });
     if (!section.collapsed) {
       if (!connection.availableModels.length && !mediaModels.length) section.appendBody(emptyState("No models available"));
-      for (const model of connection.availableModels) section.appendBody(this.modelCard(model, routes, connection.hosted));
+      for (const model of connection.availableModels) section.appendBody(this.modelCard(model, routes, connection.hosted, connection.id));
       if (mediaModels.length) {
         for (const model of mediaModels) section.appendBody(this.mediaModelCard(model, routes));
       }
@@ -332,11 +433,15 @@ export class ConnectionWorkspaceController {
     return section.root;
   }
 
-  private modelCard(model: ConnectionModelView, routes: Json[], hosted: boolean): HTMLElement {
+  private modelCard(model: ConnectionModelView, routes: Json[], hosted: boolean, connectionId: string): HTMLElement {
     const card = document.createElement("article");
     card.className = "recipe-card";
-    const details = document.createElement("div");
+    const details = document.createElement("button");
+    details.type = "button";
     details.className = "recipe-card-details";
+    details.title = hosted && this.configuration?.isAdministrator !== true ? "Only administrators can configure local models" : "Configure agents";
+    details.disabled = hosted && this.configuration?.isAdministrator !== true;
+    details.addEventListener("click", () => this.openAgentEditor(model, hosted, connectionId));
     const name = document.createElement("span");
     name.className = "recipe-display-name";
     name.textContent = model.displayName ?? model.id;
@@ -449,6 +554,38 @@ export class ConnectionWorkspaceController {
       this.options.showStatus(updating ? "Connection updated" : "Connection added", "success");
     } catch (error) { this.setFormStatus(this.options.errorMessage(error), true); }
     finally { setFormBusy(this.elements.form, false); }
+  }
+
+  private async saveAgentTopology(): Promise<void> {
+    const recipe = this.editingRecipe;
+    const connectionId = this.editingConnectionId;
+    if (!recipe || !connectionId) return;
+    const topology = this.agentConfigurationEditor.agentTopology();
+    if (!topology) return;
+    const displayName = this.elements.agentDisplayName.value.trim();
+    setFormBusy(this.elements.agentForm, true);
+    try {
+      if (this.editingHosted) {
+        await this.options.api(`/api/v1/management/recipes/${encodeURIComponent(String(recipe.id))}`, "PUT", {
+          ...recipe,
+          displayName,
+          configuration: this.agentConfigurationEditor.value(),
+          agentTopology: topology,
+        });
+      } else {
+        await this.options.api(`/api/v1/connections/${encodeURIComponent(connectionId)}/models/${encodeURIComponent(String(recipe.id))}/agent-topology`, "PUT", {
+          displayName,
+          workers: topology.workers,
+        });
+      }
+      this.closeEditor();
+      await this.refreshRecordsAndConfiguration();
+      this.options.showStatus("Agent configuration saved", "success");
+    } catch (error) {
+      this.options.showStatus(this.options.errorMessage(error), "error");
+    } finally {
+      setFormBusy(this.elements.agentForm, false);
+    }
   }
 
   private async testConnection(connection: ConsumerConnectionSummary, button: HTMLButtonElement): Promise<void> {

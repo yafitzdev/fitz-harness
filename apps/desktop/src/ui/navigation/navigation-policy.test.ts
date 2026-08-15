@@ -9,6 +9,7 @@ describe("management navigation policy", () => {
   });
 
   it("exposes every management surface to administrators", () => {
-    expect(Object.values(managementNavigationVisibility(true)).every(Boolean)).toBe(true);
+    expect(managementNavigationVisibility(true)).toEqual({ playbooks: false, connections: true, plugins: true, models: true, administration: true });
+    expect(canOpenManagementView("playbooks", true)).toBe(false);
   });
 });

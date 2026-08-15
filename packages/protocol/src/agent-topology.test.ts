@@ -6,11 +6,23 @@ describe("recipe agent topology", () => {
   it("derives the implicit main context from the shared pool and anonymous workers", () => {
     const recipe = fixture({ sharedContextTokens: 272_320, workers: { count: 2, contextTokens: 32_000 } });
     expect(resolveRecipeAgentTopology(recipe)).toEqual({
+      capacityMode: "shared",
       sharedContextTokens: 272_320,
       orchestratorContextTokens: 208_320,
       workerCount: 2,
       workerContextTokens: 32_000,
       totalAllocatedContextTokens: 272_320,
+    });
+    expect(validateRecipeAgentTopology(recipe)).toEqual([]);
+  });
+
+  it("keeps cloud request contexts independent", () => {
+    const recipe = fixture({ capacityMode: "independent", sharedContextTokens: 262_144, workers: { count: 2, contextTokens: 64_000 } });
+    expect(resolveRecipeAgentTopology(recipe)).toMatchObject({
+      capacityMode: "independent",
+      orchestratorContextTokens: 262_144,
+      workerCount: 2,
+      totalAllocatedContextTokens: 390_144,
     });
     expect(validateRecipeAgentTopology(recipe)).toEqual([]);
   });

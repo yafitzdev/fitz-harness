@@ -375,6 +375,16 @@ describe("Fitz host", () => {
       const consumerModel = saved.json().data.models[0];
       expect(consumerModel).toEqual({ id: "upstream-model", recipeId: expect.any(String) });
       expect(saved.json().data.models.map((model: { id: string }) => model.id)).toEqual(["upstream-model", "explicit-chat-model"]);
+      const topology = await runtime.app.inject({
+        method: "PUT",
+        url: `/api/v1/connections/test-api/models/${consumerModel.recipeId}/agent-topology`,
+        payload: { displayName: "Cloud research", workers: { count: 2, contextTokens: 64_000 } },
+      });
+      expect(topology.statusCode, topology.body).toBe(200);
+      expect(topology.json().data).toMatchObject({
+        displayName: "Cloud research",
+        agentTopology: { capacityMode: "independent", sharedContextTokens: 131_072, workers: { count: 2, contextTokens: 64_000 } },
+      });
       expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((item: { id: string }) => item.id).sort()).toEqual(["default"]);
       const models = await runtime.app.inject({ method: "GET", url: "/v1/models" });
       expect(models.json().data.map((item: { id: string }) => item.id)).toEqual(["default"]);
@@ -400,6 +410,10 @@ describe("Fitz host", () => {
       expect(fastCompletion.statusCode, fastCompletion.body).toBe(200);
       expect(fastCompletion.json().choices[0].message.content).toContain("upstream ok");
       await runtime.app.inject({ method: "PUT", url: "/api/v1/connections/test-api", payload: { displayName: "Test API", baseUrl: `http://127.0.0.1:${address.port}/v1`, authType: "none" } });
+      expect(runtime.routes.resolveRecipe(consumerModel.recipeId)).toMatchObject({
+        displayName: "Cloud research",
+        agentTopology: { capacityMode: "independent", workers: { count: 2, contextTokens: 64_000 } },
+      });
       const refreshedStatus = await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" });
       expect(refreshedStatus.json().cloudRoutes.smart).toBe(consumerModel.recipeId);
       expect(refreshedStatus.json().cloudRoutes.fast).toBe(consumerModel.recipeId);

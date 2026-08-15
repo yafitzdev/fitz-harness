@@ -260,7 +260,7 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"');
   });
 
-  it("shows playbooks and securely stored OpenAI-compatible connections together", () => {
+  it("shows local and cloud inference in one securely stored workspace", () => {
     expect(html).not.toContain('data-runtime-mode="host"');
     expect(html).not.toContain('data-runtime-mode="consume"');
     expect(html).toContain('id="manage-playbooks"');
@@ -293,7 +293,10 @@ describe("desktop renderer shell", () => {
     expect(connectionWorkspace).toContain('this.assignCloudRoute(definition, model)');
     expect(connectionWorkspace).toContain('if (!connection.hosted)');
     expect(connectionWorkspace).not.toContain('url.className = "connection-url"');
-    expect(connectionWorkspace).toContain("Provider and self-hosted OpenAI-compatible APIs.");
+    expect(connectionWorkspace).toContain('title: "Inference"');
+    expect(connectionWorkspace).toContain('this.inferenceSection("Local"');
+    expect(connectionWorkspace).toContain('this.inferenceSection("Cloud"');
+    expect(connectionWorkspace).toContain("openAgentEditor(model");
     expect(connectionWorkspace).toContain("http://127.0.0.1:8000/v1");
     expect(styles).toContain('max-height: min(440px, calc(100vh - 32px)); overflow-y: auto;');
     expect(main).toContain('safeStorage.encryptString(JSON.stringify(connections))');
@@ -337,12 +340,13 @@ describe("desktop renderer shell", () => {
     expect(main).toContain('resourcesPath: process.resourcesPath');
   });
 
-  it("opens Playbooks as a first-class searchable workspace page", () => {
+  it("retires the Playbooks navigation surface in favor of Inference", () => {
     expect(html).toContain('id="playbook-page"');
     expect(html).not.toContain('data-management-view=');
     expect(renderer).toContain('search: { id: "playbook-search"');
     expect(renderer).toContain('id: "management-browser"');
-    expect(renderer).toContain('appNavigation.openManagement("playbooks")');
+    expect(renderer).toContain('appNavigation.openManagement("connections")');
+    expect(connectionWorkspace).toContain('description: "Local engines and cloud APIs."');
     expect(playbookWorkspace).toContain("render(): void");
     expect(connectionWorkspace).toContain("TEXT_ROUTE_DEFINITIONS.map(withRouteIcon)");
     expect(renderer).toContain("textRouteOptions(managementConfiguration)");

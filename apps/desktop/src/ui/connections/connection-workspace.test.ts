@@ -34,7 +34,10 @@ function setup(overrides: Partial<ConnectionWorkspaceBridge> = {}) {
   let configuration = {
     hostName: "YanPC",
     isAdministrator: true,
-    recipes: [{ id: "local-recipe", playbookId: "llama.cpp", displayName: "Local Model", modelId: "local.gguf", contextTokens: 100_000, capabilities: { chatCompletions: true } }],
+    recipes: [
+      { id: "local-recipe", playbookId: "llama.cpp", adapter: "llama-cpp", displayName: "Local Model", modelId: "local.gguf", contextTokens: 100_000, configuration: {}, capabilities: { chatCompletions: true, toolCalls: true, maxConcurrentGenerations: 3 }, agentTopology: { capacityMode: "shared", sharedContextTokens: 100_000, workers: { count: 0, contextTokens: 32_000 } } },
+      { id: "consumer-recipe--remote-model", playbookId: "consumer-remote", adapter: "openai-compatible", displayName: "Remote Model", modelId: "remote-model", contextTokens: 131_072, configuration: {}, capabilities: { chatCompletions: true, toolCalls: true, maxConcurrentGenerations: 8 }, agentTopology: { capacityMode: "independent", sharedContextTokens: 131_072, workers: { count: 0, contextTokens: 32_000 } } },
+    ],
     routes: [] as Array<Record<string, unknown>>,
     cloudRoutes: {} as Record<string, string>,
   };
@@ -155,6 +158,30 @@ describe("ConnectionWorkspaceController", () => {
     await vi.waitFor(() => expect(controller.editorOpen).toBe(false));
     expect(bridge.listConsumerConnections).toHaveBeenCalled();
     await vi.waitFor(() => expect(calls.showStatus).toHaveBeenCalledWith("Connection added", "success"));
+  });
+
+  it("edits the same worker topology for cloud models with independent context", async () => {
+    const { controller, elements, calls } = setup();
+    await controller.sync(false);
+
+    const remoteCard = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[1]!;
+    click(remoteCard.querySelector<HTMLButtonElement>(".recipe-card-details")!);
+
+    expect(elements.agentEditor.hidden).toBe(false);
+    expect(elements.agentEyebrow.textContent).toBe("Cloud model");
+    expect(elements.agentConfiguration.querySelector<HTMLElement>("[data-agent-main-context]")?.textContent).toBe("131,072 context");
+    const workers = elements.agentConfiguration.querySelector<HTMLInputElement>("[data-agent-worker-count]")!;
+    const workerContext = elements.agentConfiguration.querySelector<HTMLInputElement>("[data-agent-worker-context]")!;
+    workers.value = "2";
+    workerContext.value = "64000";
+    workers.dispatchEvent(new Event("input", { bubbles: true }));
+    elements.agentForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+
+    await vi.waitFor(() => expect(calls.api).toHaveBeenCalledWith(
+      "/api/v1/connections/remote-1/models/consumer-recipe--remote-model/agent-topology",
+      "PUT",
+      { displayName: "Remote Model", workers: { count: 2, contextTokens: 64_000 } },
+    ));
   });
 
   it("emits and restores generic nested routes without recording programmatic closes", async () => {

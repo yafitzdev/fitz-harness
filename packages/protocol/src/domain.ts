@@ -52,10 +52,10 @@ export interface RecipeLifecyclePolicy {
   minimumResidencySeconds: number;
 }
 
-/** Recipe-owned local agent capacity. The main agent is implicit; only its
- * homogeneous worker pool is user-configurable. `sharedContextTokens` is an
- * engine/runtime capability and is displayed read-only by the recipe editor. */
+/** Recipe-owned agent capacity. Local engines share one context allocation;
+ * cloud APIs give every concurrent request its own independent context. */
 export interface RecipeAgentTopology {
+  capacityMode?: "shared" | "independent";
   sharedContextTokens: number;
   workers: {
     count: number;

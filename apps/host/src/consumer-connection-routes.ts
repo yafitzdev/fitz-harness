@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { RecipeNotFoundError, type RouteResolver } from "@fitz/inference-core";
-import type { MediaModality, Recipe, Route } from "@fitz/protocol";
+import { validateRecipeAgentTopology, type MediaModality, type Recipe, type Route } from "@fitz/protocol";
 import type { AuthenticatedPrincipal, SecurityService } from "@fitz/security";
 import type { SqliteStore } from "@fitz/storage";
 import {
@@ -76,6 +76,47 @@ export function registerConsumerConnectionRoutes(options: ConsumerConnectionRout
   );
 
   app.put(
+    "/api/v1/connections/:connectionId/models/:recipeId/agent-topology",
+    async (request, reply) => {
+      const connectionId = requireIdentifier((request.params as { connectionId: string }).connectionId, "connectionId");
+      const recipeId = requireIdentifier((request.params as { recipeId: string }).recipeId, "recipeId");
+      const connectionOwnerUserId = ownerUserId(request);
+      const connection = userRoutes.connections(connectionOwnerUserId).find((item) => item.id === connectionId);
+      if (!connection || !connection.models.some((model) => model.recipeId === recipeId)) {
+        return reply.code(404).send({ error: "Connection model not found" });
+      }
+      try {
+        const current = routes.resolveRecipe(recipeId);
+        const body = requireRecord(request.body);
+        const workers = requireRecord(body.workers);
+        const recipe: Recipe = {
+          ...current,
+          ...(body.displayName === undefined ? {} : { displayName: requireString(body.displayName, "displayName") }),
+          agentTopology: {
+            capacityMode: "independent",
+            sharedContextTokens: current.contextTokens,
+            workers: {
+              count: requireNonNegativeInteger(workers.count, "workers.count"),
+              contextTokens: requirePositiveInteger(workers.contextTokens, "workers.contextTokens"),
+            },
+          },
+        };
+        const issues = validateRecipeAgentTopology(recipe).filter((issue) => issue.level === "error");
+        if (issues.length) throw new TypeError(issues[0]!.message);
+        store.upsertRecipe(recipe);
+        routes.upsertRecipe(recipe);
+        security?.audit("consumer-model.agent-topology.saved", principals.get(request)?.user.id, "recipe", recipeId, {
+          connectionId,
+          workers: recipe.agentTopology?.workers,
+        });
+        return { data: recipe };
+      } catch (error) {
+        return reply.code(error instanceof RecipeNotFoundError ? 404 : 400).send({ error: errorMessage(error) });
+      }
+    },
+  );
+
+  app.put(
     "/api/v1/connections/:connectionId",
     async (request, reply) => {
       const connectionId = requireIdentifier((request.params as { connectionId: string }).connectionId, "connectionId");
@@ -122,13 +163,18 @@ export function registerConsumerConnectionRoutes(options: ConsumerConnectionRout
         if (template === "openai-compatible" && !modelIds.length) throw new Error("The API returned no chat-completion models");
 
         const previous = userRoutes.connections(connectionOwnerUserId).find((item) => item.id === connectionId);
+        const previousRecipes = new Map((previous?.models ?? []).flatMap((model) => {
+          try { return [[model.modelId, routes.resolveRecipe(model.recipeId)] as const]; }
+          catch { return []; }
+        }));
         if (previous) removeConsumerRegistration(previous, store, routes, options.wellKnownMediaRouteIds, false);
         const models = modelIds.map((modelId) => consumerModelRegistration(connectionOwnerUserId, connectionId, modelId));
         for (const model of models) {
+          const previousRecipe = previousRecipes.get(model.modelId);
           const recipe: Recipe = {
             id: model.recipeId,
             playbookId: consumerPlaybookId(connectionOwnerUserId, connectionId),
-            displayName: model.modelId,
+            displayName: previousRecipe?.displayName ?? model.modelId,
             adapter: "openai-compatible",
             modelId: model.modelId,
             contextTokens: 131_072,
@@ -138,6 +184,15 @@ export function registerConsumerConnectionRoutes(options: ConsumerConnectionRout
               baseUrl,
               ...(authType === "bearer" ? { apiKeyEnv: credentialEnv } : {}),
               healthPath: consumerHealthPath(baseUrl),
+            },
+            agentTopology: previousRecipe?.agentTopology ? {
+              capacityMode: "independent",
+              sharedContextTokens: 131_072,
+              workers: previousRecipe.agentTopology.workers,
+            } : {
+              capacityMode: "independent",
+              sharedContextTokens: 131_072,
+              workers: { count: 0, contextTokens: 32_000 },
             },
           };
           store.upsertRecipe(recipe);
@@ -221,6 +276,16 @@ function requireIdentifier(value: unknown, name: string): string {
   const id = requireString(value, name);
   if (id.length > 100 || !/^[a-zA-Z0-9_-]+$/.test(id)) throw new TypeError(`${name} contains unsupported characters`);
   return id;
+}
+
+function requireNonNegativeInteger(value: unknown, name: string): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 0) throw new TypeError(`${name} must be a non-negative integer`);
+  return Number(value);
+}
+
+function requirePositiveInteger(value: unknown, name: string): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 1) throw new TypeError(`${name} must be a positive integer`);
+  return Number(value);
 }
 
 function normalizeConsumerBaseUrl(value: unknown): string {

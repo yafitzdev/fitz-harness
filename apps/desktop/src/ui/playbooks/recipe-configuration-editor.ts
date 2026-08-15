@@ -39,6 +39,7 @@ export class RecipeConfigurationEditor {
   #sharedContextTokens = 0;
   #modelContextTokens = 0;
   #maximumWorkers = 0;
+  #capacityMode: "shared" | "independent" = "shared";
   #agentTopologyEnabled = false;
   constructor(readonly root: HTMLElement) {}
 
@@ -78,6 +79,7 @@ export class RecipeConfigurationEditor {
   agentTopology(): Json | undefined {
     if (!this.#agentTopologyEnabled || !this.#workerCount || !this.#workerContext) return undefined;
     return {
+      capacityMode: this.#capacityMode,
       sharedContextTokens: this.#sharedContextTokens,
       workers: {
         count: Number(this.#workerCount.value),
@@ -115,6 +117,7 @@ export class RecipeConfigurationEditor {
     this.#agentTopologyEnabled = capabilities.chatCompletions === true && capabilities.toolCalls === true && this.#maximumWorkers > 0;
     this.#modelContextTokens = Number(recipe.contextTokens ?? this.#source.maxContext ?? 131_072);
     this.#sharedContextTokens = Number(recipe.agentTopology?.sharedContextTokens ?? this.#modelContextTokens);
+    this.#capacityMode = recipe.agentTopology?.capacityMode === "independent" ? "independent" : "shared";
     const configuredCount = Number(recipe.agentTopology?.workers?.count ?? 0);
     const configuredContext = Number(recipe.agentTopology?.workers?.contextTokens ?? Math.min(32_000, this.#modelContextTokens));
 
@@ -154,7 +157,9 @@ export class RecipeConfigurationEditor {
     if (!this.#workerCount || !this.#workerContext || !this.#mainContext || !this.#agentValidation) return;
     const count = Number(this.#workerCount.value);
     const workerContext = Number(this.#workerContext.value);
-    const mainContext = Math.min(this.#modelContextTokens, this.#sharedContextTokens - (count * workerContext));
+    const mainContext = this.#capacityMode === "independent"
+      ? this.#modelContextTokens
+      : Math.min(this.#modelContextTokens, this.#sharedContextTokens - (count * workerContext));
     this.#mainContext.textContent = `${formatTokens(Math.max(0, mainContext))} context`;
     if (workerSummary) workerSummary.textContent = count > 0 ? `${count} × ${formatTokens(workerContext)}` : "No workers";
     const valid = Number.isSafeInteger(count) && count >= 0 && count <= this.#maximumWorkers
