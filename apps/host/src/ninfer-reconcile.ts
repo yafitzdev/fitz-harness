@@ -45,7 +45,7 @@ export function reconcileNInferConfiguration(store: SqliteStore, runtime: NInfer
     store.upsertRecipe(compileRecipeAgentTopology({
       ...existing,
       playbookId: template.playbookId,
-      displayName: template.displayName,
+      displayName: existing.displayName,
       adapter: template.adapter,
       modelId: template.modelId,
       contextTokens: template.contextTokens,

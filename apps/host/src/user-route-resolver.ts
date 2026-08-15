@@ -1,4 +1,4 @@
-import { resolveRecipeAgentTopology, type Route } from "@fitz/protocol";
+import { resolveRecipeAgentTopology, type HostAccessClass, type InferenceExecutionClass, type Route } from "@fitz/protocol";
 import { RecipeNotFoundError, RouteNotFoundError, type ResolvedRoute, type RouteResolver } from "@fitz/inference-core";
 import type { SqliteStore } from "@fitz/storage";
 
@@ -28,6 +28,8 @@ export interface ConsumerConnectionRegistration {
   authType: "none" | "bearer";
   credentialEnv: string;
   template: string;
+  executionClass: InferenceExecutionClass;
+  accessClass: HostAccessClass;
   models: ConsumerModelRegistration[];
   mediaModels: ConsumerMediaModelRegistration[];
   updatedAt: string;
@@ -76,6 +78,13 @@ export class UserRouteResolver {
 
   contextTokens(routeId: string, ownerUserId = LOCAL_OWNER_ID, internal = false): number {
     return resolveRecipeAgentTopology(this.resolve(routeId, ownerUserId, internal).recipe).orchestratorContextTokens;
+  }
+
+  executionClass(routeId: string, ownerUserId = LOCAL_OWNER_ID, internal = false): InferenceExecutionClass {
+    const recipe = this.resolve(routeId, ownerUserId, internal).recipe;
+    const connection = this.connections(ownerUserId).find((candidate) => candidate.models.some((model) => model.recipeId === recipe.id));
+    return recipe.executionClass ?? connection?.executionClass
+      ?? (routeId === "fast" || routeId === "smart" ? "metered_cloud" : "self_hosted");
   }
 
   connections(ownerUserId: string): ConsumerConnectionRegistration[] {
@@ -162,7 +171,10 @@ export class UserRouteResolver {
     if (!Array.isArray(value)) return [];
     // Registrations without an explicit owner belong to the removed global
     // connection model and are intentionally not interpreted as user state.
-    return value.filter(isConsumerConnectionRegistration);
+    return value.flatMap((item) => {
+      const connection = parseConsumerConnectionRegistration(item);
+      return connection ? [connection] : [];
+    });
   }
 
   #allBindings(): ConsumerCloudRouteBinding[] {
@@ -171,12 +183,18 @@ export class UserRouteResolver {
   }
 }
 
-function isConsumerConnectionRegistration(value: unknown): value is ConsumerConnectionRegistration {
-  if (!value || typeof value !== "object") return false;
+function parseConsumerConnectionRegistration(value: unknown): ConsumerConnectionRegistration | undefined {
+  if (!value || typeof value !== "object") return undefined;
   const item = value as Partial<ConsumerConnectionRegistration>;
-  return typeof item.ownerUserId === "string" && item.ownerUserId.length > 0
+  const valid = typeof item.ownerUserId === "string" && item.ownerUserId.length > 0
     && typeof item.id === "string" && typeof item.credentialEnv === "string"
     && Array.isArray(item.models) && Array.isArray(item.mediaModels);
+  if (!valid) return undefined;
+  const executionClass = item.executionClass === "self_hosted" ? "self_hosted" : "metered_cloud";
+  const accessClass = item.accessClass === "same_device" || item.accessClass === "trusted_remote" || item.accessClass === "public_remote"
+    ? item.accessClass
+    : executionClass === "self_hosted" ? "trusted_remote" : "public_remote";
+  return { ...item, executionClass, accessClass } as ConsumerConnectionRegistration;
 }
 
 function isCloudRouteBinding(value: unknown): value is ConsumerCloudRouteBinding {

@@ -64,9 +64,10 @@ describe("consumer connection routes", () => {
         payload: { displayName: "Cloud", baseUrl: `http://127.0.0.1:${address.port}/v1`, authType: "none" },
       });
       expect(saved.statusCode, saved.body).toBe(200);
+      expect(saved.json().data).toMatchObject({ executionClass: "metered_cloud", accessClass: "same_device" });
       expect(saved.json().data.models).toEqual([{ id: "chat-model", recipeId: expect.any(String) }]);
       const recipeId = saved.json().data.models[0].recipeId as string;
-      expect(fixture.routes.resolveRecipe(recipeId).modelId).toBe("chat-model");
+      expect(fixture.routes.resolveRecipe(recipeId)).toMatchObject({ modelId: "chat-model", executionClass: "metered_cloud" });
 
       const assigned = await fixture.app.inject({
         method: "PUT",
@@ -110,5 +111,29 @@ describe("consumer connection routes", () => {
     expect(store.getSetting<unknown[]>("consumerConnections")).toEqual([
       expect.objectContaining({ ownerUserId: "user-1", id: "owned" }),
     ]);
+  });
+
+  it("removes retired cloud worker topology from persisted connection recipes", () => {
+    const store = SqliteStore.memory();
+    const recipe = {
+      ...DEFAULT_RECIPES[0]!,
+      id: "consumer-recipe--owned--cloud",
+      playbookId: "consumer-owned",
+      adapter: "openai-compatible",
+      agentTopology: { sharedContextTokens: 131_072, workers: { count: 2, contextTokens: 32_000 } },
+    };
+    store.upsertRecipe(recipe);
+    store.setSetting("consumerConnections", [{
+      ownerUserId: "user-1",
+      id: "cloud",
+      models: [{ modelId: "cloud-model", recipeId: recipe.id }],
+      mediaModels: [],
+    }]);
+
+    discardLegacyConsumerConnections(store);
+
+    expect(store.listRecipes().find((candidate) => candidate.id === recipe.id)?.agentTopology).toBeUndefined();
+    expect(store.listRecipes().find((candidate) => candidate.id === recipe.id)?.executionClass).toBe("metered_cloud");
+    store.close();
   });
 });

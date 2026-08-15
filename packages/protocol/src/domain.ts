@@ -2,7 +2,15 @@ export const PROTOCOL_VERSION = "1" as const;
 /** Exact desktop/host application contract. Unlike the event protocol this is
  * deliberately not backward compatible: a desktop must never drive a stale
  * local host with a different API or persistence contract. */
-export const HOST_CONTRACT_VERSION = "3" as const;
+export const HOST_CONTRACT_VERSION = "4" as const;
+
+/** How inference is funded and scheduled. This deliberately describes the
+ * backend, not where the requesting desktop happens to be running. */
+export type InferenceExecutionClass = "self_hosted" | "metered_cloud";
+
+/** Transport relationship between one desktop and its Fitz host. It controls
+ * trust and presentation only; orchestration never keys off this value. */
+export type HostAccessClass = "same_device" | "trusted_remote" | "public_remote";
 
 export const INSTANCE_STATES = [
   "UNLOADED",
@@ -52,10 +60,9 @@ export interface RecipeLifecyclePolicy {
   minimumResidencySeconds: number;
 }
 
-/** Recipe-owned agent capacity. Local engines share one context allocation;
- * cloud APIs give every concurrent request its own independent context. */
+/** Recipe-owned local agent capacity. The main agent is implicit; only its
+ * homogeneous worker pool is user-configurable. */
 export interface RecipeAgentTopology {
-  capacityMode?: "shared" | "independent";
   sharedContextTokens: number;
   workers: {
     count: number;
@@ -69,6 +76,9 @@ export interface Recipe {
   displayName: string;
   adapter: string;
   modelId: string;
+  /** Missing only on persisted pre-v4 recipes; native recipes are migrated as
+   * self-hosted before policy resolution. */
+  executionClass?: InferenceExecutionClass;
   contextTokens: number;
   capabilities: EngineCapabilities;
   lifecycle: RecipeLifecyclePolicy;

@@ -109,7 +109,7 @@ function recipe(
   options: NInferRecipeOptions = {},
 ): Recipe {
   const { modelContextTokens, agentTopology, ...engineOptions } = options;
-  const value = buildCurrentNInferRecipe(id, modelId, artifact, draftTokens, executable, engineOptions);
+  const value = buildCurrentNInferRecipe(id, modelId, artifact, draftTokens, executable, { ...engineOptions, thinking: true });
   return {
     ...value,
     contextTokens: modelContextTokens ?? value.contextTokens,

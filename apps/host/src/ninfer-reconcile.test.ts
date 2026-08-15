@@ -23,6 +23,7 @@ describe("reconcileNInferConfiguration", () => {
       const { agentTopology: _topology, ...legacySerial } = current;
       store.upsertRecipe({
         ...legacySerial,
+        displayName: "My renamed Qwen",
         capabilities: { ...legacySerial.capabilities, maxConcurrentGenerations: 1 },
         configuration: { ...legacySerial.configuration, maxConcurrency: 1 },
       });
@@ -30,8 +31,9 @@ describe("reconcileNInferConfiguration", () => {
       reconcileNInferConfiguration(store, runtime);
 
       expect(store.listRecipes().find((recipe) => recipe.id === current.id)).toMatchObject({
+        displayName: "My renamed Qwen",
         capabilities: { maxConcurrentGenerations: 3 },
-        configuration: { maxConcurrency: 3, kvCapacity: 100_000, maxContext: 100_000 },
+        configuration: { maxConcurrency: 3, kvCapacity: 100_000, maxContext: 100_000, thinking: true },
         agentTopology: { sharedContextTokens: 100_000, workers: { count: 0, contextTokens: 32_000 } },
       });
     } finally {

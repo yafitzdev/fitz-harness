@@ -25,6 +25,7 @@ describe("production NiNfer playbook", () => {
     expect(playbook.recipes.every((recipe) => recipe.lifecycle.evictionPolicy === "never" && recipe.lifecycle.idleTtlSeconds === 0)).toBe(true);
     expect(playbook.recipes.every((recipe) => recipe.capabilities.maxConcurrentGenerations === 3)).toBe(true);
     expect(playbook.recipes.every((recipe) => recipe.agentTopology !== undefined)).toBe(true);
+    expect(playbook.recipes.every((recipe) => readNInferConfiguration(recipe).thinking)).toBe(true);
     expect(playbook.recipes.map((recipe) => readNInferConfiguration(recipe).draftTokens)).toEqual([3, 4, 3]);
     expect(playbook.routes).toEqual([expect.objectContaining({ id: "default", recipeId: playbook.recipes[0]!.id, isDefault: true })]);
   });

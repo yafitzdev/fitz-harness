@@ -149,7 +149,9 @@ export function registerModelManagementRoutes(options: ModelManagementRouteOptio
     async (request, reply) => {
       const recipeId = (request.params as { recipeId: string }).recipeId;
       try {
-        const recipe = parseRecipe(request.body, recipeId);
+        const parsed = parseRecipe(request.body, recipeId);
+        const existing = routes.listRecipes().find((candidate) => candidate.id === recipeId);
+        const recipe = { ...parsed, executionClass: existing?.executionClass ?? "self_hosted" };
         store.upsertRecipe(recipe);
         routes.upsertRecipe(recipe);
         ensureMediaRoutes(store, routes);

@@ -1,7 +1,6 @@
 import type { Recipe, RecipeAgentTopology, ValidationIssue } from "./domain.js";
 
 export interface ResolvedRecipeAgentTopology {
-  capacityMode: "shared" | "independent";
   sharedContextTokens: number;
   orchestratorContextTokens: number;
   workerCount: number;
@@ -15,7 +14,6 @@ export function resolveRecipeAgentTopology(recipe: Recipe): ResolvedRecipeAgentT
   const topology = recipe.agentTopology;
   if (!topology) {
     return {
-      capacityMode: "shared",
       sharedContextTokens: recipe.contextTokens,
       orchestratorContextTokens: recipe.contextTokens,
       workerCount: 0,
@@ -24,12 +22,8 @@ export function resolveRecipeAgentTopology(recipe: Recipe): ResolvedRecipeAgentT
     };
   }
   const workers = topology.workers.count * topology.workers.contextTokens;
-  const capacityMode = topology.capacityMode ?? "shared";
-  const orchestratorContextTokens = capacityMode === "independent"
-    ? recipe.contextTokens
-    : Math.min(recipe.contextTokens, topology.sharedContextTokens - workers);
+  const orchestratorContextTokens = Math.min(recipe.contextTokens, topology.sharedContextTokens - workers);
   return {
-    capacityMode,
     sharedContextTokens: topology.sharedContextTokens,
     orchestratorContextTokens,
     workerCount: topology.workers.count,
@@ -66,7 +60,7 @@ export function validateRecipeAgentTopology(recipe: Recipe): ValidationIssue[] {
     issues.push({ level: "error", code: "worker_context_exceeded", message: "Worker context cannot exceed the model's per-agent context limit" });
   }
   const resolved = resolveRecipeAgentTopology(recipe);
-  if (resolved.capacityMode === "shared" && resolved.orchestratorContextTokens < 2_048) {
+  if (resolved.orchestratorContextTokens < 2_048) {
     issues.push({ level: "error", code: "orchestrator_context_exhausted", message: "The worker pool must leave at least 2,048 context tokens for the main agent" });
   }
   return issues;

@@ -64,12 +64,7 @@ export function parseRecipeAgentTopology(value: unknown): RecipeAgentTopology | 
   const workers = topology.workers;
   if (!workers || typeof workers !== "object" || Array.isArray(workers)) throw new TypeError("agentTopology.workers must be an object");
   const workerPool = workers as Record<string, unknown>;
-  const capacityMode = topology.capacityMode === undefined ? "shared" : topology.capacityMode;
-  if (capacityMode !== "shared" && capacityMode !== "independent") {
-    throw new TypeError("agentTopology.capacityMode must be shared or independent");
-  }
   return {
-    capacityMode,
     sharedContextTokens: integer(topology.sharedContextTokens, "agentTopology.sharedContextTokens"),
     workers: {
       count: integer(workerPool.count, "agentTopology.workers.count", true),

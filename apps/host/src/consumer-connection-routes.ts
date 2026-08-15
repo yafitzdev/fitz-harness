@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { RecipeNotFoundError, type RouteResolver } from "@fitz/inference-core";
-import { validateRecipeAgentTopology, type MediaModality, type Recipe, type Route } from "@fitz/protocol";
+import type { HostAccessClass, InferenceExecutionClass, MediaModality, Recipe, Route } from "@fitz/protocol";
 import type { AuthenticatedPrincipal, SecurityService } from "@fitz/security";
 import type { SqliteStore } from "@fitz/storage";
 import {
@@ -76,47 +76,6 @@ export function registerConsumerConnectionRoutes(options: ConsumerConnectionRout
   );
 
   app.put(
-    "/api/v1/connections/:connectionId/models/:recipeId/agent-topology",
-    async (request, reply) => {
-      const connectionId = requireIdentifier((request.params as { connectionId: string }).connectionId, "connectionId");
-      const recipeId = requireIdentifier((request.params as { recipeId: string }).recipeId, "recipeId");
-      const connectionOwnerUserId = ownerUserId(request);
-      const connection = userRoutes.connections(connectionOwnerUserId).find((item) => item.id === connectionId);
-      if (!connection || !connection.models.some((model) => model.recipeId === recipeId)) {
-        return reply.code(404).send({ error: "Connection model not found" });
-      }
-      try {
-        const current = routes.resolveRecipe(recipeId);
-        const body = requireRecord(request.body);
-        const workers = requireRecord(body.workers);
-        const recipe: Recipe = {
-          ...current,
-          ...(body.displayName === undefined ? {} : { displayName: requireString(body.displayName, "displayName") }),
-          agentTopology: {
-            capacityMode: "independent",
-            sharedContextTokens: current.contextTokens,
-            workers: {
-              count: requireNonNegativeInteger(workers.count, "workers.count"),
-              contextTokens: requirePositiveInteger(workers.contextTokens, "workers.contextTokens"),
-            },
-          },
-        };
-        const issues = validateRecipeAgentTopology(recipe).filter((issue) => issue.level === "error");
-        if (issues.length) throw new TypeError(issues[0]!.message);
-        store.upsertRecipe(recipe);
-        routes.upsertRecipe(recipe);
-        security?.audit("consumer-model.agent-topology.saved", principals.get(request)?.user.id, "recipe", recipeId, {
-          connectionId,
-          workers: recipe.agentTopology?.workers,
-        });
-        return { data: recipe };
-      } catch (error) {
-        return reply.code(error instanceof RecipeNotFoundError ? 404 : 400).send({ error: errorMessage(error) });
-      }
-    },
-  );
-
-  app.put(
     "/api/v1/connections/:connectionId",
     async (request, reply) => {
       const connectionId = requireIdentifier((request.params as { connectionId: string }).connectionId, "connectionId");
@@ -136,6 +95,11 @@ export function registerConsumerConnectionRoutes(options: ConsumerConnectionRout
         else delete process.env[credentialEnv];
         const costCentsPerJob = parseCostCentsPerJob(body.costCentsPerJob);
         const requestedModelIds = body.modelIds === undefined ? undefined : requireStringArray(body.modelIds, "modelIds");
+        const executionClass = parseExecutionClass(body.executionClass ?? userRoutes.connections(connectionOwnerUserId).find((item) => item.id === connectionId)?.executionClass);
+        if (template !== "openai-compatible" && executionClass !== "metered_cloud") {
+          throw new TypeError("Media provider connections must use metered cloud execution");
+        }
+        const accessClass = accessClassFor(baseUrl, executionClass);
 
         const client = new OpenAICompatibleClient({ ...(apiKey ? { apiKey } : {}) });
         let discovered: OpenAICompatibleModel[] = [];
@@ -177,22 +141,15 @@ export function registerConsumerConnectionRoutes(options: ConsumerConnectionRout
             displayName: previousRecipe?.displayName ?? model.modelId,
             adapter: "openai-compatible",
             modelId: model.modelId,
-            contextTokens: 131_072,
+            executionClass,
+            contextTokens: previousRecipe?.contextTokens ?? 131_072,
             capabilities: { chatCompletions: true, streaming: true, toolCalls: true, responseFormat: false, minP: false, maxConcurrentGenerations: 8 },
             lifecycle: { loadPolicy: "onDemand", evictionPolicy: "never", idleTtlSeconds: 0, minimumResidencySeconds: 0 },
+            ...(executionClass === "self_hosted" && previousRecipe?.agentTopology ? { agentTopology: previousRecipe.agentTopology } : {}),
             configuration: {
               baseUrl,
               ...(authType === "bearer" ? { apiKeyEnv: credentialEnv } : {}),
               healthPath: consumerHealthPath(baseUrl),
-            },
-            agentTopology: previousRecipe?.agentTopology ? {
-              capacityMode: "independent",
-              sharedContextTokens: 131_072,
-              workers: previousRecipe.agentTopology.workers,
-            } : {
-              capacityMode: "independent",
-              sharedContextTokens: 131_072,
-              workers: { count: 0, contextTokens: 32_000 },
             },
           };
           store.upsertRecipe(recipe);
@@ -216,6 +173,8 @@ export function registerConsumerConnectionRoutes(options: ConsumerConnectionRout
           displayName,
           baseUrl,
           template,
+          executionClass,
+          accessClass,
           authType,
           credentialEnv,
           models,
@@ -258,7 +217,29 @@ export function discardLegacyConsumerConnections(store: SqliteStore): void {
   const owned: unknown[] = [];
   for (const item of value) {
     if (isRecord(item) && typeof item.ownerUserId === "string" && item.ownerUserId) {
-      owned.push(item);
+      const executionClass = item.executionClass === "self_hosted" || item.executionClass === "metered_cloud"
+        ? item.executionClass
+        : "metered_cloud";
+      const accessClass = item.accessClass === "same_device" || item.accessClass === "trusted_remote" || item.accessClass === "public_remote"
+        ? item.accessClass
+        : accessClassFor(typeof item.baseUrl === "string" ? item.baseUrl : "https://invalid.example", executionClass);
+      for (const model of Array.isArray(item.models) ? item.models : []) {
+        if (!isRecord(model) || typeof model.recipeId !== "string") continue;
+        const recipe = store.listRecipes().find((candidate) => candidate.id === model.recipeId);
+        if (!recipe) continue;
+        const keepTopology = executionClass === "self_hosted";
+        const { agentTopology: retiredTopology, ...withoutAgentTopology } = recipe;
+        store.upsertRecipe({
+          ...(keepTopology && retiredTopology ? recipe : withoutAgentTopology),
+          executionClass,
+        });
+      }
+      for (const model of Array.isArray(item.mediaModels) ? item.mediaModels : []) {
+        if (!isRecord(model) || typeof model.recipeId !== "string") continue;
+        const recipe = store.listRecipes().find((candidate) => candidate.id === model.recipeId);
+        if (recipe) store.upsertRecipe({ ...recipe, executionClass: "metered_cloud" });
+      }
+      owned.push({ ...item, executionClass, accessClass });
       continue;
     }
     if (!isRecord(item)) continue;
@@ -270,22 +251,33 @@ export function discardLegacyConsumerConnections(store: SqliteStore): void {
     }
   }
   store.setSetting("consumerConnections", owned);
+  ensureRecipeExecutionClasses(store);
+}
+
+/** Materializes the v4 classification on every recipe, including native
+ * recipes discovered by an engine reconciler after the legacy migration ran. */
+export function ensureRecipeExecutionClasses(store: SqliteStore): void {
+  const classes = new Map<string, InferenceExecutionClass>();
+  const value = store.getSetting<unknown>("consumerConnections");
+  for (const item of Array.isArray(value) ? value : []) {
+    if (!isRecord(item)) continue;
+    const executionClass: InferenceExecutionClass = item.executionClass === "self_hosted" ? "self_hosted" : "metered_cloud";
+    for (const model of Array.isArray(item.models) ? item.models : []) {
+      if (isRecord(model) && typeof model.recipeId === "string") classes.set(model.recipeId, executionClass);
+    }
+    for (const model of Array.isArray(item.mediaModels) ? item.mediaModels : []) {
+      if (isRecord(model) && typeof model.recipeId === "string") classes.set(model.recipeId, "metered_cloud");
+    }
+  }
+  for (const recipe of store.listRecipes()) {
+    if (!recipe.executionClass) store.upsertRecipe({ ...recipe, executionClass: classes.get(recipe.id) ?? "self_hosted" });
+  }
 }
 
 function requireIdentifier(value: unknown, name: string): string {
   const id = requireString(value, name);
   if (id.length > 100 || !/^[a-zA-Z0-9_-]+$/.test(id)) throw new TypeError(`${name} contains unsupported characters`);
   return id;
-}
-
-function requireNonNegativeInteger(value: unknown, name: string): number {
-  if (!Number.isSafeInteger(value) || Number(value) < 0) throw new TypeError(`${name} must be a non-negative integer`);
-  return Number(value);
-}
-
-function requirePositiveInteger(value: unknown, name: string): number {
-  if (!Number.isSafeInteger(value) || Number(value) < 1) throw new TypeError(`${name} must be a positive integer`);
-  return Number(value);
 }
 
 function normalizeConsumerBaseUrl(value: unknown): string {
@@ -342,6 +334,18 @@ function parseConsumerTemplate(value: unknown): string {
   throw new TypeError("template must be openai-compatible, openai-media, fal, or replicate");
 }
 
+function parseExecutionClass(value: unknown): InferenceExecutionClass {
+  if (value === undefined || value === "metered_cloud") return "metered_cloud";
+  if (value === "self_hosted") return value;
+  throw new TypeError("executionClass must be self_hosted or metered_cloud");
+}
+
+function accessClassFor(baseUrl: string, executionClass: InferenceExecutionClass): HostAccessClass {
+  const hostname = new URL(baseUrl).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") return "same_device";
+  return executionClass === "self_hosted" ? "trusted_remote" : "public_remote";
+}
+
 function parseCostCentsPerJob(value: unknown): number | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
@@ -378,6 +382,7 @@ function saveMediaRecipes(
       displayName: model.modelId,
       adapter: options.template,
       modelId: model.modelId,
+      executionClass: "metered_cloud",
       contextTokens: 131_072,
       capabilities: {
         chatCompletions: false,
@@ -471,6 +476,8 @@ function publicConsumerConnection(connection: ConsumerConnectionRegistration): R
     authType: connection.authType,
     hasCredential: connection.authType === "bearer",
     template: connection.template ?? "openai-compatible",
+    executionClass: connection.executionClass,
+    accessClass: connection.accessClass,
     models: connection.models.map((model) => ({ id: model.modelId, recipeId: model.recipeId })),
     mediaModels: (connection.mediaModels ?? []).map((model) => ({
       id: model.modelId,
