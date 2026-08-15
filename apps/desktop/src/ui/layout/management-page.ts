@@ -50,9 +50,12 @@ export class ManagementPageLayout {
   readonly tabs: HTMLElement;
   readonly actions: HTMLElement;
   readonly #tabButtons = new Map<string, HTMLButtonElement>();
+  readonly #tabLabels = new Map<string, string>();
   readonly #actionButtons = new Map<string, HTMLButtonElement>();
   #tabListener: ((id: string) => void) | undefined;
   #lastContent: HTMLElement | undefined;
+  #primaryTitle: HTMLElement | undefined;
+  #activeTabId: string | undefined;
 
   constructor(root: HTMLElement, options: { tabs?: ManagementPageTab[]; actions?: ManagementPageAction[] } = {}) {
     this.header = document.createElement("header");
@@ -73,6 +76,8 @@ export class ManagementPageLayout {
         this.#tabListener?.(tab.id);
       });
       this.#tabButtons.set(tab.id, button);
+      this.#tabLabels.set(tab.id, tab.label);
+      if (tab.active || this.#activeTabId === undefined) this.#activeTabId = tab.id;
       this.tabs.append(button);
     }
     for (const action of options.actions ?? []) {
@@ -120,6 +125,10 @@ export class ManagementPageLayout {
     const title = document.createElement("h1");
     if (options.titleId) title.id = options.titleId;
     title.textContent = options.title;
+    if (!this.#primaryTitle) {
+      this.#primaryTitle = title;
+      this.#syncTitleToActiveTab();
+    }
     column.append(title);
     if (options.description) {
       const description = document.createElement("p");
@@ -138,6 +147,8 @@ export class ManagementPageLayout {
 
   setActiveTab(id: string): void {
     for (const [tabId, button] of this.#tabButtons) button.classList.toggle("active", tabId === id);
+    if (this.#tabLabels.has(id)) this.#activeTabId = id;
+    this.#syncTitleToActiveTab();
   }
 
   onTabSelect(listener: (id: string) => void): void {
@@ -150,5 +161,10 @@ export class ManagementPageLayout {
 
   getAction(id: string): HTMLButtonElement | undefined {
     return this.#actionButtons.get(id);
+  }
+
+  #syncTitleToActiveTab(): void {
+    const label = this.#activeTabId ? this.#tabLabels.get(this.#activeTabId) : undefined;
+    if (this.#primaryTitle && label) this.#primaryTitle.textContent = label;
   }
 }

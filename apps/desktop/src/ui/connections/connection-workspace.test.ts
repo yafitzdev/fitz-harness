@@ -35,8 +35,8 @@ function setup(overrides: Partial<ConnectionWorkspaceBridge> = {}) {
     hostName: "YanPC",
     isAdministrator: true,
     recipes: [
-      { id: "local-recipe", playbookId: "llama.cpp", adapter: "llama-cpp", displayName: "Local Model", modelId: "local.gguf", contextTokens: 100_000, configuration: {}, capabilities: { chatCompletions: true, toolCalls: true, maxConcurrentGenerations: 3 }, agentTopology: { capacityMode: "shared", sharedContextTokens: 100_000, workers: { count: 0, contextTokens: 32_000 } } },
-      { id: "consumer-recipe--remote-model", playbookId: "consumer-remote", adapter: "openai-compatible", displayName: "Remote Model", modelId: "remote-model", contextTokens: 131_072, configuration: {}, capabilities: { chatCompletions: true, toolCalls: true, maxConcurrentGenerations: 8 }, agentTopology: { capacityMode: "independent", sharedContextTokens: 131_072, workers: { count: 0, contextTokens: 32_000 } } },
+      { id: "local-recipe", playbookId: "llama.cpp", adapter: "llama-cpp", displayName: "Local Model", modelId: "local.gguf", contextTokens: 100_000, configuration: {}, capabilities: { chatCompletions: true, toolCalls: true, maxConcurrentGenerations: 3 }, agentTopology: { sharedContextTokens: 100_000, workers: { count: 0, contextTokens: 32_000 } } },
+      { id: "consumer-recipe--remote-model", playbookId: "consumer-remote", adapter: "openai-compatible", displayName: "Remote Model", modelId: "remote-model", contextTokens: 131_072, configuration: {}, capabilities: { chatCompletions: true, toolCalls: true, maxConcurrentGenerations: 8 } },
     ],
     routes: [] as Array<Record<string, unknown>>,
     cloudRoutes: {} as Record<string, string>,
@@ -74,6 +74,9 @@ function setup(overrides: Partial<ConnectionWorkspaceBridge> = {}) {
 }
 
 function click(target: Element): void { target.dispatchEvent(new MouseEvent("click", { bubbles: true })); }
+function selectInferenceTab(elements: { listView: HTMLElement }, tab: "cloud" | "local"): void {
+  click(elements.listView.closest(".inference-page")!.querySelector(`#inference-${tab}-tab`)!);
+}
 
 beforeEach(() => {
   // happy-dom ships an empty localStorage stub without a working clear(); install a real one.
@@ -88,18 +91,47 @@ describe("ConnectionWorkspaceController", () => {
 
     await controller.sync(true);
 
-    expect(elements.connections.querySelectorAll(".consumer-playbook-card")).toHaveLength(2);
-    expect(elements.connections.textContent).toContain("YanPC");
-    expect(elements.connections.textContent).toContain("Local Model");
+    expect(elements.listView.closest(".inference-page")?.querySelector(".management-page-tabs")?.textContent).toBe("CloudLocal");
+    expect(elements.listView.querySelector(":scope > h1")?.textContent).toBe("Cloud");
+    expect(elements.newConnection.hidden).toBe(false);
+    expect(elements.connections.querySelectorAll(".consumer-playbook-card")).toHaveLength(1);
     expect(elements.connections.textContent).toContain("Remote API");
     expect(elements.connections.querySelector(".media-text")?.textContent).toBe("Text");
-    expect([...elements.connections.querySelectorAll(".recipe-card")].map((card) => card.querySelector(".recipe-card-label")?.textContent)).toEqual(["llama.cpp", "OpenAI-compatible"]);
+    expect([...elements.connections.querySelectorAll(".recipe-card")].map((card) => card.querySelector(".recipe-card-label")?.textContent)).toEqual(["remote-model"]);
+    expect(elements.connections.querySelector(".recipe-engine-label")).toBeNull();
     expect(calls.showStatus).toHaveBeenCalledWith("Remote unavailable", "error");
 
+    selectInferenceTab(elements, "local");
+    expect(elements.listView.querySelector(":scope > h1")?.textContent).toBe("Local");
+    expect(elements.newConnection.hidden).toBe(true);
+    expect(elements.connections.textContent).toContain("llama.cpp");
+    expect(elements.connections.textContent).toContain("Local Model");
     elements.search.value = "local.gguf";
     elements.search.dispatchEvent(new Event("input", { bubbles: true }));
     expect(elements.connections.querySelectorAll(".consumer-playbook-card")).toHaveLength(1);
-    expect(elements.connections.textContent).toContain("YanPC");
+    expect(elements.connections.textContent).toContain("llama.cpp");
+  });
+
+  it("clusters local recipes by engine and omits redundant engine badges", async () => {
+    const { controller, elements } = setup();
+    await controller.sync(false);
+    controller.setConfiguration({
+      isAdministrator: true,
+      recipes: [
+        { id: "llama", playbookId: "llama.cpp", displayName: "Llama", modelId: "llama.gguf", contextTokens: 32_768, capabilities: { chatCompletions: true, toolCalls: true, maxConcurrentGenerations: 3 } },
+        { id: "ninfer", playbookId: "ninfer", displayName: "Qwen", modelId: "qwen", contextTokens: 100_000, capabilities: { chatCompletions: true, toolCalls: true, maxConcurrentGenerations: 3 } },
+        { id: "consumer-recipe--remote-model", playbookId: "consumer-remote", displayName: "Remote", modelId: "remote-model", contextTokens: 131_072, capabilities: { chatCompletions: true, toolCalls: true, maxConcurrentGenerations: 8 } },
+      ],
+      routes: [],
+      cloudRoutes: {},
+    });
+    controller.render();
+
+    selectInferenceTab(elements, "local");
+    const local = elements.connections;
+    expect([...local.querySelectorAll<HTMLElement>(".collapsible-title")].map((title) => title.textContent)).toEqual(["llama.cpp", "NInfer"]);
+    expect(local.querySelectorAll(".consumer-playbook-card")).toHaveLength(2);
+    expect(elements.connections.querySelector(".recipe-engine-label")).toBeNull();
   });
 
   it("does not let an obsolete connection sync replace the latest snapshot", async () => {
@@ -148,40 +180,31 @@ describe("ConnectionWorkspaceController", () => {
 
     elements.name.value = "Self hosted";
     elements.url.value = "http://127.0.0.1:8000/v1";
+    elements.execution.value = "self_hosted";
     elements.auth.value = "none";
     elements.auth.dispatchEvent(new Event("change", { bubbles: true }));
     expect(elements.apiKeyField.hidden).toBe(true);
     expect(elements.apiKey.required).toBe(false);
 
     elements.form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    await vi.waitFor(() => expect(bridge.saveConsumerConnection).toHaveBeenCalledWith({ displayName: "Self hosted", baseUrl: "http://127.0.0.1:8000/v1", authType: "none", template: "openai-compatible" }));
+    await vi.waitFor(() => expect(bridge.saveConsumerConnection).toHaveBeenCalledWith({ displayName: "Self hosted", baseUrl: "http://127.0.0.1:8000/v1", authType: "none", template: "openai-compatible", executionClass: "self_hosted" }));
     await vi.waitFor(() => expect(controller.editorOpen).toBe(false));
     expect(bridge.listConsumerConnections).toHaveBeenCalled();
     await vi.waitFor(() => expect(calls.showStatus).toHaveBeenCalledWith("Connection added", "success"));
   });
 
-  it("edits the same worker topology for cloud models with independent context", async () => {
+  it("does not expose agent configuration or concurrency claims for cloud models", async () => {
     const { controller, elements, calls } = setup();
     await controller.sync(false);
+    const remoteCard = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[0]!;
+    const details = remoteCard.querySelector<HTMLElement>(".recipe-card-details")!;
 
-    const remoteCard = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[1]!;
-    click(remoteCard.querySelector<HTMLButtonElement>(".recipe-card-details")!);
-
-    expect(elements.agentEditor.hidden).toBe(false);
-    expect(elements.agentEyebrow.textContent).toBe("Cloud model");
-    expect(elements.agentConfiguration.querySelector<HTMLElement>("[data-agent-main-context]")?.textContent).toBe("131,072 context");
-    const workers = elements.agentConfiguration.querySelector<HTMLInputElement>("[data-agent-worker-count]")!;
-    const workerContext = elements.agentConfiguration.querySelector<HTMLInputElement>("[data-agent-worker-context]")!;
-    workers.value = "2";
-    workerContext.value = "64000";
-    workers.dispatchEvent(new Event("input", { bubbles: true }));
-    elements.agentForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-
-    await vi.waitFor(() => expect(calls.api).toHaveBeenCalledWith(
-      "/api/v1/connections/remote-1/models/consumer-recipe--remote-model/agent-topology",
-      "PUT",
-      { displayName: "Remote Model", workers: { count: 2, contextTokens: 64_000 } },
-    ));
+    expect(details).not.toBeInstanceOf(HTMLButtonElement);
+    expect(remoteCard.textContent).not.toContain("concurrent");
+    expect(remoteCard.textContent).not.toContain("Sequential");
+    click(details);
+    expect(elements.agentEditor.hidden).toBe(true);
+    expect(calls.api).not.toHaveBeenCalledWith(expect.stringContaining("agent-topology"), expect.anything(), expect.anything());
   });
 
   it("emits and restores generic nested routes without recording programmatic closes", async () => {
@@ -205,12 +228,12 @@ describe("ConnectionWorkspaceController", () => {
   it("assigns user-owned cloud roles without rendering recipe test actions", async () => {
     const { controller, elements, calls } = setup();
     await controller.sync(false);
-    const cards = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card");
-    const remoteCard = cards[1]!;
+    let cards = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card");
+    const remoteCard = cards[0]!;
     const fast = remoteCard.querySelector<HTMLButtonElement>(".route-fast")!;
     click(fast);
     await vi.waitFor(() => expect(calls.api).toHaveBeenCalledWith("/api/v1/cloud-routes/fast", "PUT", { recipeId: "consumer-recipe--remote-model" }));
-    await vi.waitFor(() => expect(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[1]?.querySelector(".route-fast")?.classList.contains("active")).toBe(true));
+    await vi.waitFor(() => expect(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[0]?.querySelector(".route-fast")?.classList.contains("active")).toBe(true));
     expect(calls.showStatus).not.toHaveBeenCalledWith("Fast route updated", "success");
 
     expect(elements.connections.querySelector(".recipe-test-button")).toBeNull();
@@ -225,9 +248,9 @@ describe("ConnectionWorkspaceController", () => {
     calls.api.mockImplementationOnce(async () => pending);
     const reloadsBeforeClick = calls.reloadConfiguration.mock.calls.length;
 
-    click(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[1]!.querySelector<HTMLButtonElement>(".route-smart")!);
+    click(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[0]!.querySelector<HTMLButtonElement>(".route-smart")!);
 
-    const active = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[1]!.querySelector<HTMLButtonElement>(".route-smart")!;
+    const active = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[0]!.querySelector<HTMLButtonElement>(".route-smart")!;
     expect(active.classList.contains("active")).toBe(true);
     expect(active.disabled).toBe(false);
     expect(calls.reloadConfiguration).toHaveBeenCalledTimes(reloadsBeforeClick);
@@ -238,7 +261,7 @@ describe("ConnectionWorkspaceController", () => {
   it("uses the canonical Default, Fast, Smart chat order and Fast, Smart cloud-button order", async () => {
     const { controller, elements, calls } = setup();
     await controller.sync(false);
-    const remoteCard = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[1]!;
+    const remoteCard = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[0]!;
     expect(FIXED_ROUTES.map((route) => route.id)).toEqual(["default", "fast", "smart"]);
     expect(CLOUD_ROUTES.map((route) => route.id)).toEqual(["fast", "smart"]);
     expect([...remoteCard.querySelectorAll(".recipe-route-toggle .route-symbol")].map((button) => button.className)).toEqual(expect.arrayContaining([expect.stringContaining("route-fast"), expect.stringContaining("route-smart")]));
@@ -252,11 +275,11 @@ describe("ConnectionWorkspaceController", () => {
       "PUT",
       { recipeId: "consumer-recipe--remote-model" },
     ));
-    expect(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[1]?.querySelector(".route-fast")?.classList.contains("active")).toBe(true);
+    expect(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[0]?.querySelector(".route-fast")?.classList.contains("active")).toBe(true);
 
-    click(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[1]!.querySelector<HTMLButtonElement>(".route-fast")!);
+    click(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[0]!.querySelector<HTMLButtonElement>(".route-fast")!);
     await vi.waitFor(() => expect(calls.api).toHaveBeenCalledWith("/api/v1/cloud-routes/fast", "DELETE"));
-    expect(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[1]?.querySelector(".route-fast")?.classList.contains("active")).toBe(false);
+    expect(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[0]?.querySelector(".route-fast")?.classList.contains("active")).toBe(false);
   });
 
   it("removes a connection and its cards from the workspace", async () => {
@@ -265,14 +288,14 @@ describe("ConnectionWorkspaceController", () => {
       .mockResolvedValue([]);
     const { controller, elements, bridge, calls } = setup({ listConsumerConnections });
     await controller.sync(false);
-    expect(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")).toHaveLength(2);
-    const remoteCard = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[1]!;
+    expect(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")).toHaveLength(1);
+    const remoteCard = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[0]!;
     const remove = [...remoteCard.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Remove")!;
     click(remove);
     expect(remove.textContent).toBe("Confirm");
     click(remove);
     await vi.waitFor(() => expect(bridge.removeConsumerConnection).toHaveBeenCalledWith("remote-1"));
-    await vi.waitFor(() => expect(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")).toHaveLength(1));
+    await vi.waitFor(() => expect(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")).toHaveLength(0));
     expect(calls.showStatus).toHaveBeenCalledWith("Connection removed", "success");
   });
 
@@ -280,16 +303,16 @@ describe("ConnectionWorkspaceController", () => {
     const { controller, elements } = setup();
     await controller.sync(false);
     let cards = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card");
-    expect(cards).toHaveLength(2);
-    const remoteToggle = cards[1]!.querySelector<HTMLButtonElement>(".collapsible-toggle")!;
+    expect(cards).toHaveLength(1);
+    const remoteToggle = cards[0]!.querySelector<HTMLButtonElement>(".collapsible-toggle")!;
     expect(remoteToggle.getAttribute("aria-expanded")).toBe("true");
-    expect(cards[1]!.querySelectorAll(".recipe-card").length).toBeGreaterThan(0);
+    expect(cards[0]!.querySelectorAll(".recipe-card").length).toBeGreaterThan(0);
 
     click(remoteToggle);
     cards = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card");
-    expect(cards[1]!.classList.contains("collapsed")).toBe(true);
-    expect(cards[1]!.querySelectorAll(".recipe-card")).toHaveLength(0);
-    expect(cards[1]!.querySelector<HTMLButtonElement>(".collapsible-toggle")!.getAttribute("aria-expanded")).toBe("false");
+    expect(cards[0]!.classList.contains("collapsed")).toBe(true);
+    expect(cards[0]!.querySelectorAll(".recipe-card")).toHaveLength(0);
+    expect(cards[0]!.querySelector<HTMLButtonElement>(".collapsible-toggle")!.getAttribute("aria-expanded")).toBe("false");
 
     // A re-render (search filtering) keeps the collapsed connection collapsed.
     elements.search.value = "remote";
@@ -308,15 +331,17 @@ describe("ConnectionWorkspaceController", () => {
   it("persists collapsed connections across syncs and leaves route actions untouched", async () => {
     const { controller, elements, calls } = setup();
     await controller.sync(false);
-    const remoteCard = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[1]!;
+    const remoteCard = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[0]!;
     click(remoteCard.querySelector<HTMLButtonElement>(".collapsible-toggle")!);
     expect(JSON.parse(localStorage.getItem("fitz-collapsed-connections") ?? "[]")).toContain("remote-1");
 
     await controller.sync(false);
-    const cards = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card");
-    expect(cards[1]!.classList.contains("collapsed")).toBe(true);
+    let cards = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card");
+    expect(cards[0]!.classList.contains("collapsed")).toBe(true);
 
     // Route assignment still works on an expanded card without collapsing it.
+    selectInferenceTab(elements, "local");
+    cards = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card");
     click(cards[0]!.querySelector<HTMLButtonElement>(".route-default")!);
     await vi.waitFor(() => expect(calls.api).toHaveBeenCalledWith("/api/v1/management/routes/default", "PUT", expect.objectContaining({ recipeId: "local-recipe" })));
     expect(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[0]!.classList.contains("collapsed")).toBe(false);
@@ -335,12 +360,12 @@ describe("ConnectionWorkspaceController", () => {
     const { controller, elements } = setup({ listConsumerConnections: vi.fn(async () => [mediaRemote]) });
     await controller.sync(false);
 
-    const card = [...elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")][1]!;
+    const card = [...elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")][0]!;
     expect(card.textContent).not.toContain("Media generation");
     const mediaCards = [...card.querySelectorAll<HTMLElement>(".media-recipe-card")];
     expect(mediaCards).toHaveLength(2);
     expect(mediaCards[0]!.querySelector(".recipe-display-name")?.textContent).toBe("fal-ai/flux/dev");
-    expect(mediaCards[0]!.querySelector(".recipe-card-label")?.textContent).toBe("Fal");
+    expect(mediaCards[0]!.querySelector(".recipe-card-label")?.textContent).toBe("fal-ai/flux/dev");
     expect(mediaCards[0]!.querySelectorAll(".media-modality-badge")).toHaveLength(1);
     expect(mediaCards[0]!.querySelector(".media-modality-badge")?.textContent).toBe("Image");
 
@@ -353,6 +378,46 @@ describe("ConnectionWorkspaceController", () => {
     expect(imageToggles[1]!.title).toContain("does not generate video");
     expect(MEDIA_ROUTES.find((route) => route.id === "video")?.icon).toContain("route-icon-negative");
     expect(MEDIA_ROUTES.find((route) => route.id === "audio")?.icon).toContain("route-icon-wave");
+  });
+
+  it("opens and renames local ComfyUI recipes without exposing agent settings", async () => {
+    const { controller, elements, calls } = setup();
+    await controller.sync(false);
+    controller.setConfiguration({
+      isAdministrator: true,
+      recipes: [{
+        id: "h3-video",
+        playbookId: "comfyui",
+        adapter: "comfyui",
+        displayName: "MiniMax H3",
+        modelId: "minimax-h3-fl2va-int8",
+        configuration: { comfyuiWorkflow: { output: "video" } },
+        capabilities: { chatCompletions: false, modalities: { output: ["video"] } },
+      }],
+      routes: [],
+      cloudRoutes: {},
+    });
+    selectInferenceTab(elements, "local");
+
+    const details = elements.connections.querySelector<HTMLElement>(".media-recipe-card .recipe-card-details")!;
+    expect(details).toBeInstanceOf(HTMLButtonElement);
+    click(details);
+
+    expect(elements.agentEditor.hidden).toBe(false);
+    expect(elements.agentEyebrow.textContent).toBe("Self-hosted media model");
+    expect(elements.agentConfiguration.childElementCount).toBe(0);
+    click(elements.agentRename);
+    elements.agentDisplayName.value = "H3 Video";
+    elements.agentForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+
+    await vi.waitFor(() => expect(calls.api).toHaveBeenCalledWith(
+      "/api/v1/management/recipes/h3-video",
+      "PUT",
+      expect.objectContaining({ displayName: "H3 Video", configuration: { comfyuiWorkflow: { output: "video" } } }),
+    ));
+    const payload = calls.api.mock.calls.find(([path]) => path === "/api/v1/management/recipes/h3-video")?.[2] as Record<string, unknown>;
+    expect(payload).not.toHaveProperty("agentTopology");
+    await vi.waitFor(() => expect(calls.showStatus).toHaveBeenCalledWith("Model configuration saved", "success"));
   });
 
   it("assigns a well-known media route", async () => {
@@ -398,6 +463,6 @@ describe("ConnectionWorkspaceController", () => {
     elements.auth.value = "none";
     elements.auth.dispatchEvent(new Event("change", { bubbles: true }));
     elements.form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    await vi.waitFor(() => expect(bridge.saveConsumerConnection).toHaveBeenCalledWith({ displayName: "Fal", template: "fal", authType: "none", modelIds: ["fal-ai/flux/dev", "fal-ai/minimax-video"] }));
+    await vi.waitFor(() => expect(bridge.saveConsumerConnection).toHaveBeenCalledWith({ displayName: "Fal", template: "fal", authType: "none", executionClass: "metered_cloud", modelIds: ["fal-ai/flux/dev", "fal-ai/minimax-video"] }));
   });
 });

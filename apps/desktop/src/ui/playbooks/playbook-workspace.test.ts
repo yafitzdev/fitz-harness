@@ -300,7 +300,7 @@ describe("PlaybookWorkspaceController", () => {
     submit(elements.recipeForm);
     await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/recipes/qwen-team", "PUT", expect.objectContaining({
       contextTokens: 262_144,
-      agentTopology: { capacityMode: "shared", sharedContextTokens: 272_320, workers: { count: 1, contextTokens: 32_000 } },
+      agentTopology: { sharedContextTokens: 272_320, workers: { count: 1, contextTokens: 32_000 } },
       configuration: expect.objectContaining({ maxContext: 144_320 }),
     })));
   });
@@ -354,7 +354,7 @@ describe("PlaybookWorkspaceController", () => {
     expect(workers?.disabled).toBe(false);
     expect(workers?.max).toBe("2");
     expect(workerContext?.disabled).toBe(false);
-    expect(editor.agentTopology()).toEqual({ capacityMode: "shared", sharedContextTokens: 32_768, workers: { count: 0, contextTokens: 8_192 } });
+    expect(editor.agentTopology()).toEqual({ sharedContextTokens: 32_768, workers: { count: 0, contextTokens: 8_192 } });
   });
 
   it("refreshes from the page header and closes the editor with the back surface", () => {

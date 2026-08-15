@@ -13,6 +13,7 @@ export interface RecipeMetadataOptions {
   engine?: string;
   modelId: string;
   contextTokens?: number;
+  showConcurrency?: boolean;
   capabilities?: {
     chatCompletions?: boolean;
     maxConcurrentGenerations?: number;
@@ -41,7 +42,7 @@ export function recipeMetadata(options: RecipeMetadataOptions): HTMLElement[] {
   if (modalities.includes("text") && Number.isFinite(options.contextTokens) && Number(options.contextTokens) > 0) {
     labels.push(label(`${formatTokenCount(Number(options.contextTokens))} ctx`, "recipe-context-label"));
   }
-  if (modalities.includes("text")) {
+  if (modalities.includes("text") && options.showConcurrency !== false) {
     const concurrency = Math.max(1, Math.floor(Number(options.capabilities?.maxConcurrentGenerations ?? 1)));
     labels.push(label(concurrency === 1 ? "Sequential" : `${concurrency} concurrent`, "recipe-concurrency-label", concurrency === 1 ? "Runs one generation at a time" : `Runs up to ${concurrency} generations concurrently`));
   }

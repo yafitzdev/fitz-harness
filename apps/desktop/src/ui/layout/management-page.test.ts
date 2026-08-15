@@ -39,11 +39,14 @@ describe("ManagementPageLayout", () => {
       tabs: [{ id: "a", label: "A", active: true }, { id: "b", label: "B" }],
     });
     const listener = vi.fn();
+    const content = layout.addContent({ title: "Stale heading" });
+    expect(content.querySelector("h1")?.textContent).toBe("A");
     layout.onTabSelect(listener);
     layout.getTab("b")!.click();
     expect(listener).toHaveBeenCalledWith("b");
     expect(layout.getTab("a")!.classList.contains("active")).toBe(false);
     expect(layout.getTab("b")!.classList.contains("active")).toBe(true);
+    expect(content.querySelector("h1")?.textContent).toBe("B");
   });
 
   it("renders content columns with direct-child heading, description, and search", () => {
