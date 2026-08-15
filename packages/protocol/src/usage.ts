@@ -79,3 +79,13 @@ export interface UsageReport {
   recipes: UsageBreakdownRow[];
   modalities: UsageBreakdownRow[];
 }
+
+export interface UserUsageSummary {
+  ownerUserId: string;
+  requests: number;
+  failed: number;
+  mediaJobs: number;
+  totalTokens: number;
+  averageDurationMs?: number;
+  lastActiveAt: string;
+}

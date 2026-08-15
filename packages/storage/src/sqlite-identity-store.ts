@@ -3,7 +3,6 @@ import type {
   AuditEventRecord,
   DeviceAuthenticationRecord,
   DeviceRecord,
-  PairingCodeRecord,
   ToolApprovalRecord,
   ToolPolicyRecord,
   UserQuota,
@@ -54,9 +53,6 @@ export class SqliteIdentityStore {
     const rows = this.database.prepare(`SELECT id, timestamp, actor_user_id, action, target_type, target_id, detail_json FROM audit_events ORDER BY timestamp DESC LIMIT ?`).all(limit) as unknown as AuditRow[];
     return rows.map((row) => ({ id: row.id, timestamp: row.timestamp, action: row.action, detail: JSON.parse(row.detail_json) as Record<string, unknown>, ...(row.actor_user_id ? { actorUserId: row.actor_user_id } : {}), ...(row.target_type ? { targetType: row.target_type } : {}), ...(row.target_id ? { targetId: row.target_id } : {}) }));
   }
-  createPairingCode(record: PairingCodeRecord, codeHash: string): void { this.database.prepare(`INSERT INTO pairing_codes (id, code_hash, intended_role, expires_at, consumed_at, created_at) VALUES (?, ?, ?, ?, ?, ?)`).run(record.id, codeHash, record.intendedRole, record.expiresAt, record.consumedAt ?? null, record.createdAt); }
-  consumePairingCode(codeHash: string, timestamp: string): UserRecord["role"] | undefined { const row = this.database.prepare(`UPDATE pairing_codes SET consumed_at = ? WHERE code_hash = ? AND consumed_at IS NULL AND expires_at > ? RETURNING intended_role`).get(timestamp, codeHash, timestamp) as { intended_role: UserRecord["role"] } | undefined; return row?.intended_role; }
-
   upsertToolPolicy(policy: ToolPolicyRecord): void { this.database.prepare(`INSERT INTO tool_policies (subject_type, subject_id, tool_name, decision, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(subject_type, subject_id, tool_name) DO UPDATE SET decision = excluded.decision, updated_at = excluded.updated_at`).run(policy.subjectType, policy.subjectId, policy.toolName, policy.decision, policy.updatedAt); }
   listToolPolicies(subjectType?: ToolPolicyRecord["subjectType"], subjectId?: string): ToolPolicyRecord[] { const rows = (subjectType && subjectId ? this.database.prepare(`SELECT subject_type, subject_id, tool_name, decision, updated_at FROM tool_policies WHERE subject_type = ? AND subject_id = ? ORDER BY tool_name`).all(subjectType, subjectId) : this.database.prepare(`SELECT subject_type, subject_id, tool_name, decision, updated_at FROM tool_policies ORDER BY subject_type, subject_id, tool_name`).all()) as unknown as ToolPolicyRow[]; return rows.map((row) => ({ subjectType: row.subject_type, subjectId: row.subject_id, toolName: row.tool_name, decision: row.decision, updatedAt: row.updated_at })); }
   resolveToolPolicy(userId: string | undefined, role: UserRecord["role"] | undefined, toolName: string): ToolPolicyRecord["decision"] { if (userId) { const row = this.database.prepare(`SELECT decision FROM tool_policies WHERE subject_type = 'user' AND subject_id = ? AND tool_name = ?`).get(userId, toolName) as { decision: ToolPolicyRecord["decision"] } | undefined; if (row) return row.decision; } if (role) { const row = this.database.prepare(`SELECT decision FROM tool_policies WHERE subject_type = 'role' AND subject_id = ? AND tool_name = ?`).get(role, toolName) as { decision: ToolPolicyRecord["decision"] } | undefined; if (row) return row.decision; } return "ask"; }

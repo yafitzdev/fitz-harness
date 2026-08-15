@@ -19,8 +19,10 @@ import { createComfyUIPlaybook } from "./comfyui-playbook.js";
 import { reconcileNInferConfiguration } from "./ninfer-reconcile.js";
 import { createToolApprovalRequester } from "./tool-approval-gate.js";
 import { createSessionReader } from "./session-reader.js";
-import { contextTokensForRoute } from "./route-context.js";
+import { contextTokensForAgentRequest, contextTokensForRoute } from "./route-context.js";
 import { WindowsStartupManager } from "@fitz/connectivity";
+import { SharedHostGateway, TailscaleFunnelManager } from "@fitz/connectivity";
+import { FitzConfigService } from "@fitz/config";
 import { resolveRuntimePaths } from "./runtime-paths.js";
 import { NInferRuntimeManager } from "./ninfer-runtime.js";
 import { managedLinuxRuntimeLayout, managedLinuxRuntimeMap, terminateManagedLinuxRuntime } from "./managed-linux-runtime.js";
@@ -35,6 +37,7 @@ import { VllmModelReconciler } from "./vllm-reconcile.js";
 import { createSubagentTool, isDelegatedToolContext, subagentRouteBudget } from "./subagent-tools.js";
 import type { AgentRunCoordinator } from "./agent-runs.js";
 import { LOCAL_OWNER_ID } from "./user-route-resolver.js";
+import { HostingService } from "./hosting-service.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const runtimePaths = resolveRuntimePaths();
@@ -44,14 +47,8 @@ const databasePath = runtimePaths.databasePath;
 const host = process.env.FITZ_HOST ?? "127.0.0.1";
 const port = parsePort(process.env.FITZ_PORT ?? "8787");
 const engineMode = process.env.FITZ_ENGINE_MODE ?? "ninfer";
-const reserveVramMiB = parseNonNegativeInteger(
-  process.env.FITZ_RESERVE_VRAM_MIB ?? "2048",
-  "FITZ_RESERVE_VRAM_MIB",
-);
 const authMode = process.env.FITZ_AUTH_MODE === "disabled" ? "disabled" : "required";
 const agentRuntimeMode = process.env.FITZ_AGENT_RUNTIME ?? "pi";
-const agentConcurrency = parsePositiveInteger(process.env.FITZ_AGENT_CONCURRENCY ?? "4", "FITZ_AGENT_CONCURRENCY");
-const agentConcurrencyPerOwner = parsePositiveInteger(process.env.FITZ_AGENT_CONCURRENCY_PER_USER ?? "1", "FITZ_AGENT_CONCURRENCY_PER_USER");
 const agentBaseUrl = process.env.FITZ_AGENT_BASE_URL ?? `http://127.0.0.1:${port}/v1`;
 const internalAgentToken = agentRuntimeMode === "pi" && !process.env.FITZ_AGENT_BASE_URL ? randomBytes(32).toString("base64url") : undefined;
 
@@ -69,6 +66,33 @@ const ninferRuntime = engineMode === "ninfer" && process.platform === "win32"
   : undefined;
 const engineOptions = engineModeOptions(engineMode);
 const store = new SqliteStore(databasePath);
+const configuration = new FitzConfigService({
+  path: join(runtimePaths.dataRoot, "fitz.config.json"),
+  defaults: {
+    inference: {
+      engineRoot: runtimePaths.engineRoot,
+      reserveVramMiB: parseNonNegativeInteger(process.env.FITZ_RESERVE_VRAM_MIB ?? "2048", "FITZ_RESERVE_VRAM_MIB"),
+      agentConcurrency: parsePositiveInteger(process.env.FITZ_AGENT_CONCURRENCY ?? "4", "FITZ_AGENT_CONCURRENCY"),
+      agentConcurrencyPerUser: parsePositiveInteger(process.env.FITZ_AGENT_CONCURRENCY_PER_USER ?? "1", "FITZ_AGENT_CONCURRENCY_PER_USER"),
+    },
+  },
+});
+const legacySettings = store.listLegacySettings();
+configuration.migrateLegacySettings(Object.fromEntries(Object.entries(legacySettings).filter(([key]) => key !== "consumerConnections" && key !== "consumerCloudRoutes")));
+// Remove duplicates written by development builds that briefly treated
+// provider connection records as settings. SQLite remains authoritative.
+configuration.delete("consumerConnections");
+configuration.delete("consumerCloudRoutes");
+store.useSettingsBackend(configuration);
+const desiredConfiguration = configuration.read();
+runtimePaths.engineRoot = desiredConfiguration.inference.engineRoot ?? runtimePaths.engineRoot;
+const reserveVramMiB = desiredConfiguration.inference.reserveVramMiB;
+const agentConcurrency = desiredConfiguration.inference.agentConcurrency;
+const agentConcurrencyPerOwner = desiredConfiguration.inference.agentConcurrencyPerUser;
+const startupManager = new WindowsStartupManager(resolve(moduleDirectory, "../start-host.ps1"));
+const sharingGateway = new SharedHostGateway({ target: new URL(`http://127.0.0.1:${port}`), port: desiredConfiguration.hosting.gatewayPort });
+const funnelManager = new TailscaleFunnelManager({ target: new URL(sharingGateway.origin), httpsPort: desiredConfiguration.hosting.publicPort });
+const hosting = new HostingService({ config: configuration, gateway: sharingGateway, funnel: funnelManager, startup: startupManager, onError: (error) => console.warn("Hosting reconciliation failed", error) });
 const llamaCppModels = new LlamaCppModelReconciler(store, runtimePaths);
 const vllmModels = new VllmModelReconciler(store, runtimePaths, linuxRuntimeLayout);
 const artifacts = new ArtifactRepository(store, new LocalBlobStore(runtimePaths.artifactsDir), { quotaBytes: () => store.getSetting<number>("artifactStorageQuotaBytes") });
@@ -116,7 +140,7 @@ const runtime = createHost({
   ...(internalAgentToken ? { internalAgentToken } : {}),
   ...(process.env.FITZ_DEV_SESSION_TOKEN ? { devSessionToken: process.env.FITZ_DEV_SESSION_TOKEN } : {}),
   localPort: port,
-  startupManager: new WindowsStartupManager(resolve(moduleDirectory, "../start-host.ps1")),
+  hostingService: hosting,
   engineRoot: runtimePaths.engineRoot,
   piPackages: new PiPackageService({
     agentDir: runtimePaths.piAgentDir,
@@ -142,7 +166,7 @@ const runtime = createHost({
       forwardWorkContext: Boolean(internalAgentToken),
       // The pi session's context window must match the recipe the route resolves to
       // (e.g. 131072 for consumer/DeepSeek routes, 100000 for ninfer), not a fixed default.
-      contextWindow: (request, context) => contextTokensForRoute(store, request.model, context?.ownerUserId),
+      contextWindow: (request, context) => contextTokensForAgentRequest(store, request, context?.ownerUserId),
       cwd: (request) => {
         if (process.env.FITZ_AGENT_CWD) return process.env.FITZ_AGENT_CWD;
         const inheritedSessionId = request.delegation
@@ -184,6 +208,7 @@ agentRuns = runtime.agentRuns;
 let removeSignalHandlers: () => void = () => undefined;
 runtime.app.addHook("onClose", async () => {
   removeSignalHandlers();
+  await hosting.close();
   await hostInstanceLock.release();
 });
 // On a fresh database createHost seeds the complete engine-mode recipe set first;
@@ -194,6 +219,8 @@ if (storeInitiallyEmpty) reconcileLocalComfyUIConfiguration(store, runtimePaths)
 if (storeInitiallyEmpty) enforceModelResidency(store);
 
 await runtime.app.listen({ host, port });
+try { await hosting.initialize(); }
+catch (error) { runtime.app.log.error({ error }, "Fitz Hosting could not initialize"); }
 removeSignalHandlers = installGracefulShutdown(
   () => runtime.app.close(),
   { onError: (error) => runtime.app.log.error({ error }, "Graceful shutdown failed") },

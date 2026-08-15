@@ -6,6 +6,7 @@ import type {
   QueueUpdatedEvent,
   RequestUsageRecord,
   UsageReport,
+  UserUsageSummary,
 } from "@fitz/protocol";
 
 interface EventRow { event_json: string }
@@ -124,6 +125,11 @@ export class SqliteInferenceTelemetryStore {
       recipes: breakdown("COALESCE(recipe_id,'unknown')", "COALESCE(model_id,recipe_id,'Unknown recipe')"),
       modalities: breakdown("kind", "CASE kind WHEN 'chat' THEN 'Text' WHEN 'image' THEN 'Images' WHEN 'video' THEN 'Videos' ELSE 'Audio' END"),
     };
+  }
+
+  userUsageSummaries(options: { from: string; to: string }): UserUsageSummary[] {
+    const rows = this.database.prepare(`SELECT owner_user_id, COUNT(*) requests, SUM(status='failed') failed, SUM(kind!='chat') media_jobs, COALESCE(SUM(prompt_tokens),0)+COALESCE(SUM(completion_tokens),0) total_tokens, AVG(duration_ms) average_duration_ms, MAX(completed_at) last_active_at FROM request_usage WHERE owner_user_id IS NOT NULL AND completed_at >= ? AND completed_at < ? GROUP BY owner_user_id ORDER BY last_active_at DESC`).all(options.from, options.to) as unknown as Array<{ owner_user_id: string; requests: number; failed: number; media_jobs: number; total_tokens: number; average_duration_ms: number | null; last_active_at: string }>;
+    return rows.map((row) => ({ ownerUserId: row.owner_user_id, requests: Number(row.requests), failed: Number(row.failed), mediaJobs: Number(row.media_jobs), totalTokens: Number(row.total_tokens), ...(row.average_duration_ms !== null ? { averageDurationMs: Number(row.average_duration_ms) } : {}), lastActiveAt: row.last_active_at }));
   }
 }
 

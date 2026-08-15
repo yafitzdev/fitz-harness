@@ -22,9 +22,6 @@ describe("SecurityService", () => {
     expect(() => security.enforceQuota(principal, 5, 2, 0)).toThrow(SecurityPolicyError); store.close();
   });
 
-  it("redeems a hashed one-time pairing code", () => { const store = SqliteStore.memory(); const security = new SecurityService(store, "pepper"); const pairing = security.issuePairingCode("agent", 60); expect(store.consumePairingCode(pairing.code, new Date().toISOString())).toBeUndefined(); const redeemed = security.redeemPairingCode(pairing.code, "Remote", "Phone"); expect(redeemed.user.role).toBe("agent"); expect(security.authenticate(`Bearer ${redeemed.token}`)?.device?.id).toBe(redeemed.device.id); expect(() => security.redeemPairingCode(pairing.code, "Again", "Again")).toThrow("already used"); store.close(); });
-  it("allows only consumer codes through public shared pairing", () => { const store = SqliteStore.memory(); const security = new SecurityService(store, "pepper"); const privileged = security.issuePairingCode("administrator", 60); expect(() => security.redeemSharedPairingCode(privileged.code, "Remote", "PC")).toThrow("consumer code"); const consumer = security.issuePairingCode("consumer", 60); expect(security.redeemSharedPairingCode(consumer.code, "Friend", "PC").user.role).toBe("consumer"); store.close(); });
-
   it("normalizes and bounds externally supplied user and device names", () => {
     const store = SqliteStore.memory(); const security = new SecurityService(store, "pepper");
     const user = security.createUser("  Friend  ");
@@ -35,15 +32,12 @@ describe("SecurityService", () => {
     store.close();
   });
 
-  it("rejects expired pairing codes, disabled users, and malformed bearer credentials", () => {
+  it("rejects disabled users and malformed bearer credentials", () => {
     const store = SqliteStore.memory(); const security = new SecurityService(store, "pepper");
     const user = security.createUser("Disabled"); const { token } = security.issueDevice(user.id, "Old device");
     security.updateUser(user.id, { status: "disabled" });
     expect(security.authenticate(`Bearer ${token}`)).toBeUndefined();
     expect(security.authenticate(token)).toBeUndefined();
-    const expiredCode = "fitz_pair_expired";
-    store.createPairingCode({ id: "expired", intendedRole: "consumer", createdAt: new Date(0).toISOString(), expiresAt: new Date(1).toISOString() }, security.hash(expiredCode));
-    expect(() => security.redeemPairingCode(expiredCode, "Late", "Phone")).toThrow("invalid, expired, or already used");
     store.close();
   });
 

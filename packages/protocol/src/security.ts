@@ -50,5 +50,3 @@ export interface AuditEventRecord {
   targetId?: string;
   detail: Readonly<Record<string, unknown>>;
 }
-
-export interface PairingCodeRecord { id: string; intendedRole: UserRole; expiresAt: string; createdAt: string; consumedAt?: string }

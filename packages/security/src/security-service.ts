@@ -36,11 +36,6 @@ export class SecurityService {
     this.requireUser(userId); const raw = token ?? `fitz_${randomBytes(32).toString("base64url")}`; const device: DeviceRecord = { id: randomUUID(), userId, name: normalizeName(name, "Device name"), createdAt: new Date().toISOString() };
     this.store.createDevice(device, this.hash(raw)); return { device, token: raw };
   }
-  issuePairingCode(intendedRole: UserRole = "consumer", ttlSeconds = 600): { id: string; code: string; intendedRole: UserRole; expiresAt: string } { if (!Number.isInteger(ttlSeconds) || ttlSeconds < 30 || ttlSeconds > 86_400) throw new SecurityPolicyError("Pairing TTL must be between 30 and 86400 seconds"); const code = `fitz_pair_${randomBytes(24).toString("base64url")}`; const createdAt = new Date().toISOString(); const record = { id: randomUUID(), intendedRole, createdAt, expiresAt: new Date(Date.now() + ttlSeconds * 1000).toISOString() }; this.store.createPairingCode(record, this.hash(code)); return { id: record.id, code, intendedRole, expiresAt: record.expiresAt }; }
-  redeemPairingCode(code: string, displayName: string, deviceName: string): { user: UserRecord; device: DeviceRecord; token: string } { return this.redeemPairing(code, displayName, deviceName); }
-  /** Public Share Fitz redemption is consumer-only even if an administrator
-   * accidentally sends a more privileged one-time code across that boundary. */
-  redeemSharedPairingCode(code: string, displayName: string, deviceName: string): { user: UserRecord; device: DeviceRecord; token: string } { return this.redeemPairing(code, displayName, deviceName, "consumer"); }
   authenticate(header: string | string[] | undefined): AuthenticatedPrincipal | undefined {
     const token = bearer(header); if (!token) return undefined;
     const record = this.store.findDeviceByTokenHash(this.hash(token)); if (!record || record.revokedAt || record.user.status !== "active") return undefined;
@@ -100,15 +95,6 @@ export class SecurityService {
   hash(value: string): string { return createHmac("sha256", this.pepper).update(value).digest("hex"); }
   matches(value: string, hash: string): boolean { const actual = Buffer.from(this.hash(value), "hex"); const expected = Buffer.from(hash, "hex"); return actual.length === expected.length && timingSafeEqual(actual, expected); }
   private requireUser(id: string): UserRecord { const user = this.store.getUser(id); if (!user) throw new SecurityPolicyError(`User not found: ${id}`); return user; }
-  private redeemPairing(code: string, displayName: string, deviceName: string, requiredRole?: UserRole): { user: UserRecord; device: DeviceRecord; token: string } {
-    const role = this.store.consumePairingCode(this.hash(code), new Date().toISOString());
-    if (!role) throw new SecurityPolicyError("Pairing code is invalid, expired, or already used");
-    if (requiredRole && role !== requiredRole) throw new SecurityPolicyError(`Shared pairing requires a ${requiredRole} code`);
-    const user = this.createUser(displayName, role);
-    const issued = this.issueDevice(user.id, deviceName);
-    this.audit("pairing.redeemed", user.id, "device", issued.device.id, { channel: requiredRole ? "shared" : "private" });
-    return { user, ...issued };
-  }
 }
 
 export class SecurityPolicyError extends Error {}

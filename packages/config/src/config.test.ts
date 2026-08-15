@@ -1,0 +1,54 @@
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { FitzConfigService, parseFitzConfig } from "./index.js";
+
+describe("FitzConfigService", () => {
+  it("creates, validates, patches, and reloads the canonical document", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "fitz-config-")), "fitz.config.json");
+    const service = new FitzConfigService({ path });
+    expect(service.read().defaults).toEqual({ route: "default", effort: "normal" });
+    service.update({ hosting: { enabled: true }, defaults: { effort: "high" } });
+    expect(parseFitzConfig(readFileSync(path, "utf8"))).toMatchObject({ hosting: { enabled: true }, defaults: { effort: "high" } });
+    expect(new FitzConfigService({ path }).read().hosting.enabled).toBe(true);
+  });
+
+  it("keeps secrets out and migrates only non-secret legacy settings", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "fitz-config-")), "fitz.config.json");
+    const service = new FitzConfigService({ path });
+    expect(() => service.update({ settings: { apiKey: "secret" } })).toThrow(/Secrets are not allowed/);
+    expect(() => service.update({ interface: { panels: [{ apiToken: "secret" }] } })).toThrow(/Secrets are not allowed/);
+    expect(() => service.set("security.authPepper", "secret")).toThrow(/Sensitive setting/);
+  });
+
+  it("accepts a full canonical document but rejects unknown schema fields", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "fitz-config-")), "fitz.config.json");
+    const service = new FitzConfigService({ path });
+    expect(service.preview(service.read() as never)).toEqual(service.read());
+    expect(() => service.preview({ hosting: { mysteryPort: 42 } } as never)).toThrow(/Unknown hosting setting/);
+    expect(() => parseFitzConfig(JSON.stringify({ ...service.read(), mystery: true }))).toThrow(/Unknown configuration setting/);
+  });
+
+  it("maps the existing scalar settings to typed configuration", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "fitz-config-")), "fitz.config.json");
+    const service = new FitzConfigService({ path });
+    service.set("artifactStorageQuotaBytes", 1024);
+    service.set("mediaArtifactLimits", { image: 100 });
+    service.set("engineRoot", "D:\\engines");
+    expect(service.read()).toMatchObject({ storage: { artifactQuotaBytes: 1024, mediaArtifactLimits: { image: 100 } }, inference: { engineRoot: "D:\\engines" } });
+    expect(service.get("artifactStorageQuotaBytes")).toBe(1024);
+  });
+
+  it("observes validated external edits", async () => {
+    const path = join(mkdtempSync(join(tmpdir(), "fitz-config-")), "fitz.config.json");
+    const service = new FitzConfigService({ path });
+    const changed = new Promise<string>((resolve) => {
+      const stop = service.watch((document) => { stop(); resolve(document.defaults.effort); });
+    });
+    const document = service.read();
+    document.defaults.effort = "high";
+    writeFileSync(path, `${JSON.stringify(document, null, 2)}\n`);
+    await expect(changed).resolves.toBe("high");
+  });
+});

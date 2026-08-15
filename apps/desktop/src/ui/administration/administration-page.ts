@@ -1,10 +1,8 @@
 import { CollapsibleSection } from "../layout/collapsible-section.js";
-import { createCopyButton } from "../primitives/copy-button.js";
 import { textBlock } from "../primitives/dom.js";
 import type { ActionFeedback } from "../primitives/action-status.js";
 import { DesktopUpdateController, type DesktopUpdateBridge } from "./desktop-update-controller.js";
 import { DiagnosticsController, type DiagnosticsBridge } from "./diagnostics-controller.js";
-import { HostLifecycleController } from "./host-lifecycle-controller.js";
 import { SafetyRecoveryController } from "./safety-recovery-controller.js";
 import { StorageDurabilityController } from "./storage-durability-controller.js";
 
@@ -25,20 +23,10 @@ export interface AdministrationPageElements {
   refresh: HTMLButtonElement;
   /** Root that owns every collapsible admin section; toggles are resolved from it. */
   sections: HTMLElement;
-  refreshRemoteAccess: HTMLButtonElement;
-  cancelRemoteAccess: HTMLButtonElement;
-  refreshHostStartup: HTMLButtonElement;
-  cancelHostStartup: HTMLButtonElement;
-  pairingCodeForm: HTMLFormElement;
-  pairingCodeRole: HTMLSelectElement;
-  pairingCodeTtl: HTMLSelectElement;
-  pairingCodeResult: HTMLElement;
-  issuedPairingCode: HTMLElement;
-  issuedPairingExpiry: HTMLElement;
-  copyPairingCode: HTMLButtonElement;
   createUserForm: HTMLFormElement;
   createUserName: HTMLInputElement;
-  createUserRole: HTMLSelectElement;
+  createUserKeyName: HTMLInputElement;
+  hostedUserResult: HTMLElement;
   adminUsers: HTMLElement;
   toolPolicyForm: HTMLFormElement;
   toolPolicySubjectType: HTMLSelectElement;
@@ -62,18 +50,6 @@ export interface AdministrationPageElements {
   diagnosticFailures: HTMLElement;
   diagnosticExportStatus: HTMLElement;
   exportDiagnostics: HTMLButtonElement;
-  remoteAccessStatus: HTMLElement;
-  remoteAccessConfirmation: HTMLElement;
-  remoteAccessConfirmationText: HTMLElement;
-  enableRemoteAccess: HTMLButtonElement;
-  disableRemoteAccess: HTMLButtonElement;
-  confirmRemoteAccess: HTMLButtonElement;
-  hostStartupStatus: HTMLElement;
-  hostStartupConfirmation: HTMLElement;
-  hostStartupConfirmationText: HTMLElement;
-  installHostStartup: HTMLButtonElement;
-  removeHostStartup: HTMLButtonElement;
-  confirmHostStartup: HTMLButtonElement;
   checkDesktopUpdate: HTMLButtonElement;
   installDesktopUpdate: HTMLButtonElement;
   desktopUpdateLabel: HTMLElement;
@@ -108,7 +84,7 @@ export class AdministrationPageController {
   private readonly options: AdministrationPageOptions;
   private users: Json[] = [];
   private policies: Json[] = [];
-  private readonly hostLifecycle: HostLifecycleController;
+  private userUsage = new Map<string, Json>();
   private readonly diagnostics: DiagnosticsController;
   private readonly safetyRecovery: SafetyRecoveryController;
   private readonly storageDurability: StorageDurabilityController;
@@ -117,28 +93,6 @@ export class AdministrationPageController {
     this.elements = elements;
     this.options = options;
     CollapsibleSection.adoptAll(this.elements.sections, { storageKey: "fitz-collapsed-admin-sections" });
-    this.hostLifecycle = new HostLifecycleController({
-      refreshRemote: elements.refreshRemoteAccess,
-      cancelRemote: elements.cancelRemoteAccess,
-      remoteStatus: elements.remoteAccessStatus,
-      remoteConfirmation: elements.remoteAccessConfirmation,
-      remoteConfirmationText: elements.remoteAccessConfirmationText,
-      enableRemote: elements.enableRemoteAccess,
-      disableRemote: elements.disableRemoteAccess,
-      confirmRemote: elements.confirmRemoteAccess,
-      refreshStartup: elements.refreshHostStartup,
-      cancelStartup: elements.cancelHostStartup,
-      startupStatus: elements.hostStartupStatus,
-      startupConfirmation: elements.hostStartupConfirmation,
-      startupConfirmationText: elements.hostStartupConfirmationText,
-      installStartup: elements.installHostStartup,
-      removeStartup: elements.removeHostStartup,
-      confirmStartup: elements.confirmHostStartup,
-    }, {
-      api: options.api,
-      reload: () => this.load(),
-      errorMessage: options.errorMessage,
-    });
     new DesktopUpdateController({
       check: elements.checkDesktopUpdate,
       install: elements.installDesktopUpdate,
@@ -203,19 +157,19 @@ export class AdministrationPageController {
   async load(): Promise<void> {
     if (!this.options.isAdministrator()) return;
     try {
-      const [users, policies, audit, diagnostics, remote, startup, trash, snapshots, toolActions, storage] = await Promise.all([
+      const [users, userUsage, policies, audit, diagnostics, trash, snapshots, toolActions, storage] = await Promise.all([
         this.options.api("/api/v1/management/users"),
+        this.options.api("/api/v1/management/user-usage"),
         this.options.api("/api/v1/management/tool-policies"),
         this.options.api("/api/v1/management/audit-events?limit=50"),
         this.options.api("/api/v1/management/diagnostics"),
-        this.options.api("/api/v1/management/connectivity/status"),
-        this.options.api("/api/v1/management/startup"),
         this.options.api("/api/v1/management/trash"),
         this.options.api("/api/v1/management/snapshots"),
         this.options.api("/api/v1/management/tool-actions?limit=100"),
         this.options.api("/api/v1/management/storage").catch((error) => ({ data: { error: this.options.errorMessage(error), report: {}, backups: [], available: false } })),
       ]);
       this.users = users.data ?? [];
+      this.userUsage = new Map((userUsage.data ?? []).map((entry: Json) => [entry.ownerUserId, entry]));
       this.policies = policies.data ?? [];
       const access = await Promise.all(this.users.map((user) =>
         this.options.api(`/api/v1/management/users/${user.id}/access`).then((response) => response.data),
@@ -229,8 +183,6 @@ export class AdministrationPageController {
       this.safetyRecovery.renderSnapshots(snapshots.data ?? []);
       this.safetyRecovery.renderToolActions(toolActions.data ?? []);
       this.diagnostics.render(diagnostics);
-      this.hostLifecycle.renderRemote(remote.data);
-      this.hostLifecycle.renderStartup(startup.data);
       this.storageDurability.render(storage.data ?? {});
     } catch (error) {
       this.elements.adminUsers.replaceChildren(emptyState(`Administration unavailable: ${this.options.errorMessage(error)}`));
@@ -239,46 +191,36 @@ export class AdministrationPageController {
 
   private bind(): void {
     this.elements.refresh.addEventListener("click", () => void this.load());
-    this.elements.pairingCodeForm.addEventListener("submit", (event) => { event.preventDefault(); void this.issuePairingCode(); });
-    const copyPairingCode = createCopyButton({
-      copyText: (text) => this.options.bridge.copyText(text),
-      value: () => this.elements.issuedPairingCode.textContent ?? "",
-      title: "Copy pairing code",
-      className: "pairing-code-copy",
-      text: true,
-    });
-    copyPairingCode.id = "copy-pairing-code";
-    this.elements.copyPairingCode.replaceWith(copyPairingCode);
-    this.elements.copyPairingCode = copyPairingCode;
     this.elements.createUserForm.addEventListener("submit", (event) => { event.preventDefault(); void this.createAdminUser(); });
     this.elements.toolPolicySubjectType.addEventListener("change", () => this.renderToolPolicySubjects());
     this.elements.toolPolicyForm.addEventListener("submit", (event) => { event.preventDefault(); void this.saveToolPolicy(); });
   }
 
-  private async issuePairingCode(): Promise<void> {
-    setFormBusy(this.elements.pairingCodeForm, true);
-    try {
-      const response = await this.options.api("/api/v1/management/pairing-codes", "POST", {
-        intendedRole: this.elements.pairingCodeRole.value,
-        ttlSeconds: Number(this.elements.pairingCodeTtl.value),
-      });
-      this.elements.issuedPairingCode.textContent = response.data.code;
-      this.elements.issuedPairingExpiry.textContent = `Expires ${new Date(response.data.expiresAt).toLocaleString()}`;
-      this.elements.pairingCodeResult.hidden = false;
-    } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
-    finally { setFormBusy(this.elements.pairingCodeForm, false); }
-  }
-
   private async createAdminUser(): Promise<void> {
     setFormBusy(this.elements.createUserForm, true);
     try {
-      await this.options.api("/api/v1/management/users", "POST", {
+      const response = await this.options.api("/api/v1/management/hosting/users", "POST", {
         displayName: this.elements.createUserName.value.trim(),
-        role: this.elements.createUserRole.value,
+        ...(this.elements.createUserKeyName.value.trim() ? { keyName: this.elements.createUserKeyName.value.trim() } : {}),
       });
+      const url = String(response.data.url ?? "Hosting is currently offline");
+      const apiKey = String(response.data.apiKey ?? "");
+      const connection = `${url}\n${apiKey}`;
+      const copy = document.createElement("button");
+      copy.type = "button"; copy.textContent = "Copy connection";
+      copy.addEventListener("click", () => void this.options.bridge.copyText(connection));
+      this.elements.hostedUserResult.replaceChildren(
+        Object.assign(document.createElement("strong"), { textContent: `${response.data.user?.displayName ?? "User"} is ready` }),
+        Object.assign(document.createElement("span"), { textContent: "Send both values below. The API key cannot be shown again." }),
+        Object.assign(document.createElement("code"), { textContent: url }),
+        Object.assign(document.createElement("code"), { textContent: apiKey }),
+        copy,
+      );
+      this.elements.hostedUserResult.hidden = false;
       this.elements.createUserName.value = "";
+      this.elements.createUserKeyName.value = "";
       await this.load();
-      this.options.showStatus("User created", "success");
+      this.options.showStatus("User and API key created", "success");
     } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
     finally { setFormBusy(this.elements.createUserForm, false); }
   }
@@ -286,6 +228,7 @@ export class AdministrationPageController {
   private renderAdminUser(access: Json): HTMLElement {
     const user = access.user as Json;
     const activeDevices = (access.devices ?? []).filter((device: Json) => !device.revokedAt).length;
+    const usage = this.userUsage.get(user.id);
     const details = document.createElement("details");
     details.className = "admin-user";
 
@@ -294,7 +237,7 @@ export class AdministrationPageController {
     title.className = "admin-user-title";
     title.append(
       Object.assign(document.createElement("strong"), { textContent: user.displayName }),
-      Object.assign(document.createElement("small"), { textContent: `${activeDevices} active device${activeDevices === 1 ? "" : "s"}` }),
+      Object.assign(document.createElement("small"), { textContent: usage ? `${formatCompact(usage.requests)} requests · ${formatCompact(usage.totalTokens)} tokens · active ${formatRelativeTime(usage.lastActiveAt)}` : `${activeDevices} active device${activeDevices === 1 ? "" : "s"} · no usage in 30 days` }),
     );
     const role = document.createElement("select");
     role.setAttribute("aria-label", `Role for ${user.displayName}`);
@@ -312,6 +255,17 @@ export class AdministrationPageController {
 
     const body = document.createElement("div");
     body.className = "admin-user-body";
+    const activityHeading = document.createElement("h3");
+    activityHeading.textContent = "30-day activity by time of day";
+    const activity = document.createElement("div");
+    activity.className = "admin-user-activity";
+    activity.append(emptyState("Open this user to load activity"));
+    let activityLoaded = false;
+    details.addEventListener("toggle", () => {
+      if (!details.open || activityLoaded) return;
+      activityLoaded = true;
+      void this.loadUserActivity(user.id, activity);
+    });
     const routesHeading = document.createElement("h3");
     routesHeading.textContent = "Model access";
     const routeList = document.createElement("p");
@@ -367,13 +321,20 @@ export class AdministrationPageController {
         textContent: `${device.name}${current ? " · current" : ""}${device.revokedAt ? " · revoked" : ""}`,
       }));
       if (!device.revokedAt && !current) {
+        const rotate = document.createElement("button");
+        rotate.type = "button";
+        rotate.setAttribute("aria-label", `Rotate ${device.name} API key`);
+        rotate.textContent = "Rotate";
+        const rotatedKey = document.createElement("span");
+        rotatedKey.className = "admin-api-key-result";
+        rotatedKey.hidden = true;
+        rotate.addEventListener("click", () => void this.rotateAdminDevice(device.id, rotatedKey));
         const revoke = document.createElement("button");
         revoke.type = "button";
-        revoke.title = `Revoke ${device.name}`;
-        revoke.setAttribute("aria-label", revoke.title);
-        revoke.textContent = "×";
+        revoke.setAttribute("aria-label", `Revoke ${device.name}`);
+        revoke.textContent = "Revoke";
         revoke.addEventListener("click", () => void this.revokeAdminDevice(device.id));
-        item.append(revoke);
+        item.append(rotate, revoke, rotatedKey);
       }
       devices.append(item);
     }
@@ -406,13 +367,37 @@ export class AdministrationPageController {
       const toggle = document.createElement("button");
       toggle.type = "button";
       toggle.className = user.status === "active" ? "danger" : "";
-      toggle.textContent = user.status === "active" ? "Disable user" : "Enable user";
-      toggle.addEventListener("click", () => void this.updateAdminUser(user.id, { status: user.status === "active" ? "disabled" : "active" }));
+      toggle.textContent = user.status === "active" ? "Remove user" : "Restore user";
+      toggle.addEventListener("click", () => user.status === "active" ? void this.removeAdminUser(user.id) : void this.updateAdminUser(user.id, { status: "active" }));
       actions.append(toggle);
     }
-    body.append(routesHeading, routeList, mediaHeading, mediaRoutes, quotaHeading, quota, devicesHeading, devices, issueKey, keyResult, actions);
+    body.append(activityHeading, activity, routesHeading, routeList, mediaHeading, mediaRoutes, quotaHeading, quota, devicesHeading, devices, issueKey, keyResult, actions);
     details.append(summary, body);
     return details;
+  }
+
+  private async loadUserActivity(userId: string, target: HTMLElement): Promise<void> {
+    try {
+      const to = new Date();
+      const from = new Date(to.getTime() - 30 * 86_400_000);
+      const query = new URLSearchParams({ from: from.toISOString(), to: to.toISOString(), bucket: "hour", ownerUserId: userId });
+      const response = await this.options.api(`/api/v1/management/usage?${query}`);
+      const hours = Array.from({ length: 24 }, () => 0);
+      for (const bucket of response.data?.timeline ?? []) hours[new Date(bucket.timestamp).getHours()]! += Number(bucket.requests ?? 0);
+      const maximum = Math.max(1, ...hours);
+      const chart = document.createElement("div");
+      chart.className = "admin-hour-chart";
+      hours.forEach((requests, hour) => {
+        const bar = document.createElement("span");
+        bar.style.height = `${Math.max(requests ? 4 : 1, requests / maximum * 100)}%`;
+        bar.title = `${String(hour).padStart(2, "0")}:00 · ${requests} request${requests === 1 ? "" : "s"}`;
+        chart.append(bar);
+      });
+      const axis = document.createElement("div");
+      axis.className = "admin-hour-axis";
+      axis.append(...["00", "06", "12", "18", "24"].map((label) => Object.assign(document.createElement("span"), { textContent: label })));
+      target.replaceChildren(chart, axis);
+    } catch (error) { target.replaceChildren(emptyState(this.options.errorMessage(error))); }
   }
 
   private renderToolPolicySubjects(): void {
@@ -495,6 +480,29 @@ export class AdministrationPageController {
     } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
   }
 
+  private async rotateAdminDevice(deviceId: string, result: HTMLElement): Promise<void> {
+    try {
+      const response = await this.options.api(`/api/v1/management/devices/${deviceId}/rotate`, "POST", {});
+      const token = String(response.data?.token ?? "");
+      if (!token) throw new Error("The host did not return the rotated API key");
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.textContent = "Copy";
+      copy.addEventListener("click", () => void this.options.bridge.copyText(token));
+      result.replaceChildren(Object.assign(document.createElement("code"), { textContent: token }), copy);
+      result.hidden = false;
+      this.options.showStatus("API key rotated", "success");
+    } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
+  }
+
+  private async removeAdminUser(userId: string): Promise<void> {
+    try {
+      await this.options.api(`/api/v1/management/users/${userId}`, "DELETE");
+      await this.load();
+      this.options.showStatus("User removed and API keys revoked", "success");
+    } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
+  }
+
   private async issueAdminDevice(userId: string, name: string, form: HTMLFormElement, result: HTMLElement): Promise<void> {
     setFormBusy(form, true);
     try {
@@ -538,4 +546,16 @@ function emptyState(message: string): HTMLElement {
 
 function setFormBusy(form: HTMLFormElement, busy: boolean): void {
   for (const control of form.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>("input,button,select")) control.disabled = busy;
+}
+
+function formatCompact(value: unknown): string { return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(Number(value ?? 0)); }
+function formatRelativeTime(value: unknown): string {
+  const timestamp = typeof value === "string" ? new Date(value).getTime() : Number.NaN;
+  if (!Number.isFinite(timestamp)) return "never";
+  const minutes = Math.max(0, Math.round((Date.now() - timestamp) / 60_000));
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
 }

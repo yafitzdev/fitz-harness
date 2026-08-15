@@ -2,6 +2,7 @@ import type { FastifyInstance, preHandlerHookHandler } from "fastify";
 import type { ToolPolicyRecord } from "@fitz/protocol";
 import { DEFAULT_QUOTAS, SecurityPolicyError, type AuthenticatedPrincipal, type SecurityService } from "@fitz/security";
 import type { SqliteStore } from "@fitz/storage";
+import type { HostingService } from "./hosting-service.js";
 
 export interface SecurityAdministrationRouteOptions {
   app: FastifyInstance;
@@ -9,22 +10,12 @@ export interface SecurityAdministrationRouteOptions {
   security?: SecurityService;
   principals: WeakMap<object, AuthenticatedPrincipal>;
   administratorGuard: preHandlerHookHandler;
+  hosting?: HostingService;
 }
 
 /** Registers identity, device, quota, grant, and tool-policy administration. */
 export function registerSecurityAdministrationRoutes(options: SecurityAdministrationRouteOptions): void {
   const { app, store, security, principals, administratorGuard: preHandler } = options;
-
-  app.post("/api/v1/management/pairing-codes", { preHandler }, async (request, reply) => {
-    try {
-      const body = requireRecord(request.body);
-      const role = parseRole(body.intendedRole);
-      const ttlSeconds = body.ttlSeconds === undefined ? 600 : requireInteger(body.ttlSeconds);
-      const pairing = securityRequired(security).issuePairingCode(role, ttlSeconds);
-      security?.audit("pairing-code.issued", principals.get(request)?.user.id, "pairing-code", pairing.id, { intendedRole: role, expiresAt: pairing.expiresAt });
-      return reply.code(201).send({ data: pairing });
-    } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
-  });
 
   app.get("/api/v1/management/tool-policies", { preHandler }, async () => ({ data: store.listToolPolicies() }));
   app.put("/api/v1/management/tool-policies/:subjectType/:subjectId/:toolName", { preHandler }, async (request, reply) => {
@@ -41,6 +32,28 @@ export function registerSecurityAdministrationRoutes(options: SecurityAdministra
   });
 
   app.get("/api/v1/management/users", { preHandler }, async () => ({ data: store.listUsers() }));
+  app.get("/api/v1/management/user-usage", { preHandler }, async (request, reply) => {
+    const query = request.query as { from?: string; to?: string };
+    const to = query.to ? validDate(query.to) : new Date();
+    const from = query.from ? validDate(query.from) : new Date(to.getTime() - 30 * 86_400_000);
+    if (!Number.isFinite(to.getTime()) || !Number.isFinite(from.getTime()) || from >= to) return reply.code(400).send({ error: "Invalid usage date range" });
+    return { data: store.userUsageSummaries({ from: from.toISOString(), to: to.toISOString() }) };
+  });
+  app.post("/api/v1/management/hosting/users", { preHandler }, async (request, reply) => {
+    try {
+      const body = requireRecord(request.body);
+      const displayName = requireString(body.displayName, "displayName");
+      const keyName = body.keyName === undefined ? `${displayName} device` : requireString(body.keyName, "keyName");
+      const service = securityRequired(security);
+      const hostingStatus = options.hosting ? await options.hosting.status() : undefined;
+      const user = service.createUser(displayName, "consumer");
+      const defaults = options.hosting?.configuration().users.defaultQuota;
+      if (defaults) service.setQuota(user.id, { maxRequestsPerMinute: defaults.requestsPerMinute, maxPromptChars: defaults.promptCharacters, maxOutputTokens: defaults.outputTokens, maxQueueDepth: defaults.queueDepth });
+      const issued = service.issueDevice(user.id, keyName);
+      security?.audit("hosting.user-created", principals.get(request)?.user.id, "user", user.id, { deviceId: issued.device.id });
+      return reply.code(201).send({ data: { user, device: issued.device, apiKey: issued.token, ...(hostingStatus?.publicUrl ? { url: hostingStatus.publicUrl } : {}) } });
+    } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
+  });
   app.get("/api/v1/management/users/:userId/access", { preHandler }, async (request, reply) => {
     const userId = (request.params as { userId: string }).userId;
     const user = store.getUser(userId);
@@ -83,6 +96,31 @@ export function registerSecurityAdministrationRoutes(options: SecurityAdministra
     security?.audit("device.revoked", principals.get(request)?.user.id, "device", deviceId);
     return reply.code(204).send();
   });
+  app.post("/api/v1/management/devices/:deviceId/rotate", { preHandler }, async (request, reply) => {
+    const deviceId = (request.params as { deviceId: string }).deviceId;
+    const located = store.listUsers().flatMap((user) => store.listDevices(user.id).map((device) => ({ user, device }))).find((entry) => entry.device.id === deviceId && !entry.device.revokedAt);
+    if (!located) return reply.code(404).send({ error: "Active API key not found" });
+    try {
+      const issued = securityRequired(security).issueDevice(located.user.id, located.device.name);
+      if (!store.revokeDevice(deviceId, new Date().toISOString())) {
+        store.revokeDevice(issued.device.id, new Date().toISOString());
+        return reply.code(409).send({ error: "The API key changed while it was being rotated" });
+      }
+      security?.audit("device.rotated", principals.get(request)?.user.id, "device", deviceId, { replacementDeviceId: issued.device.id, userId: located.user.id });
+      return reply.code(201).send({ data: issued });
+    } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
+  });
+  app.delete("/api/v1/management/users/:userId", { preHandler }, async (request, reply) => {
+    const userId = (request.params as { userId: string }).userId;
+    if (principals.get(request)?.user.id === userId) return reply.code(409).send({ error: "You cannot remove your current administrator account" });
+    const user = store.getUser(userId);
+    if (!user) return reply.code(404).send({ error: "User not found" });
+    const removedAt = new Date().toISOString();
+    const updated = securityRequired(security).updateUser(userId, { status: "disabled" });
+    for (const device of store.listDevices(userId)) if (!device.revokedAt) store.revokeDevice(device.id, removedAt);
+    security?.audit("hosting.user-removed", principals.get(request)?.user.id, "user", userId);
+    return { data: updated };
+  });
   app.put("/api/v1/management/users/:userId/routes", { preHandler }, async (request, reply) => {
     try {
       const userId = (request.params as { userId: string }).userId;
@@ -122,3 +160,4 @@ function parseRole(value: unknown): "administrator" | "agent" | "consumer" { if 
 function toNonNegativeInteger(value: string | undefined, fallback: number): number { if (value === undefined) return fallback; const number = Number.parseInt(value, 10); return Number.isFinite(number) && number >= 0 ? number : fallback; }
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+function validDate(value: string): Date { return new Date(value); }

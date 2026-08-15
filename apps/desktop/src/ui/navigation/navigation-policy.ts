@@ -1,6 +1,6 @@
-export type ManagementView = "playbooks" | "connections" | "plugins" | "models" | "usage" | "administration";
+export type ManagementView = "playbooks" | "connections" | "plugins" | "models" | "administration";
 
-const ADMINISTRATOR_VIEWS = new Set<ManagementView>(["playbooks", "plugins", "models", "usage", "administration"]);
+const ADMINISTRATOR_VIEWS = new Set<ManagementView>(["playbooks", "plugins", "models", "administration"]);
 
 /** Central product capability policy for management navigation and deep links. */
 export function canOpenManagementView(view: ManagementView, administrator: boolean): boolean {
@@ -13,7 +13,6 @@ export function managementNavigationVisibility(administrator: boolean): Record<M
     connections: true,
     plugins: canOpenManagementView("plugins", administrator),
     models: canOpenManagementView("models", administrator),
-    usage: canOpenManagementView("usage", administrator),
     administration: canOpenManagementView("administration", administrator),
   };
 }

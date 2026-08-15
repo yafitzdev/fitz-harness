@@ -13,5 +13,10 @@ export class SqliteSettingsStore {
     return row ? JSON.parse(row.value_json) as T : undefined;
   }
 
+  list(): Record<string, unknown> {
+    const rows = this.database.prepare("SELECT key, value_json FROM settings ORDER BY key").all() as unknown as Array<{ key: string; value_json: string }>;
+    return Object.fromEntries(rows.map((row) => [row.key, JSON.parse(row.value_json) as unknown]));
+  }
+
   delete(key: string): boolean { return this.database.prepare("DELETE FROM settings WHERE key = ?").run(key).changes > 0; }
 }

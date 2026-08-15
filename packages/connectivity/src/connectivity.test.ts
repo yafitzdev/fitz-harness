@@ -1,8 +1,26 @@
 import { describe, expect, it } from "vitest";
 import { reconnectDelay } from "./reconnect.js";
-import { TailscaleMonitor, TailscaleServeManager } from "./tailscale.js";
+import { TailscaleFunnelManager } from "./tailscale.js";
 import { WindowsStartupManager } from "./windows-startup.js";
-describe("connectivity", () => { it("normalizes Tailscale JSON status", async () => { const monitor = new TailscaleMonitor(async () => ({ stdout: JSON.stringify({ BackendState: "Running", Self: { DNSName: "fitz.tail.test.", TailscaleIPs: ["100.64.0.1", "fd7a::1"] } }) })); await expect(monitor.status()).resolves.toEqual({ state: "connected", backendState: "Running", dnsName: "fitz.tail.test", addresses: ["100.64.0.1", "fd7a::1"] }); }); it("renders private HTTPS Serve commands without exposing the host directly", async () => { const calls: readonly string[][] = []; const manager = new TailscaleServeManager(async (args) => { (calls as string[][]).push([...args]); return { stdout: "{}" }; }); await manager.enable(8787); await manager.disable(); expect(calls).toEqual([["serve", "--https=443", "--bg", "--yes", "http://127.0.0.1:8787"], ["serve", "--https=443", "off"]]); }); it("uses bounded exponential reconnect delays", () => { expect(reconnectDelay(0, () => 0.5)).toBe(500); expect(reconnectDelay(100, () => 0.5)).toBe(15_000); }); });
+describe("connectivity", () => { it("uses bounded exponential reconnect delays", () => { expect(reconnectDelay(0, () => 0.5)).toBe(500); expect(reconnectDelay(100, () => 0.5)).toBe(15_000); }); });
+
+describe("TailscaleFunnelManager", () => {
+  it("enables and disables only a Funnel targeting the protected gateway", async () => {
+    const calls: string[][] = [];
+    let enabled = false;
+    const manager = new TailscaleFunnelManager({ target: new URL("http://127.0.0.1:8790"), runner: async (args) => {
+      calls.push([...args]);
+      if (args[0] === "status") return { stdout: JSON.stringify({ BackendState: "Running", Version: "1.102.2", Self: { DNSName: "fitz.tail.test." } }) };
+      if (args[0] === "funnel" && args.at(-1) === "off") { enabled = false; return { stdout: "" }; }
+      if (args[0] === "funnel" && args[1] === "--https=443") { enabled = true; return { stdout: "" }; }
+      return { stdout: enabled ? JSON.stringify({ Web: { "fitz.tail.test:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:8790" } } } }, AllowFunnel: { "fitz.tail.test:443": true } }) : "{}" };
+    } });
+    await expect(manager.enable()).resolves.toMatchObject({ state: "online", publicUrl: "https://fitz.tail.test" });
+    await expect(manager.disable()).resolves.toMatchObject({ state: "off", enabled: false });
+    expect(calls).toContainEqual(["funnel", "--https=443", "--bg", "--yes", "http://127.0.0.1:8790"]);
+    expect(calls).toContainEqual(["funnel", "--https=443", "http://127.0.0.1:8790", "off"]);
+  });
+});
 
 describe("Windows startup", () => {
   it("installs and removes a per-user hidden host launcher", async () => {

@@ -12,6 +12,7 @@
     { "path": "../../packages/agent-core" },
     { "path": "../../packages/agent-pi" },
     { "path": "../../packages/context" },
+    { "path": "../../packages/config" },
     { "path": "../../packages/connectivity" },
     { "path": "../../packages/media" },
     { "path": "../../packages/protocol" },

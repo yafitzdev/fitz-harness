@@ -32,7 +32,7 @@ import { ResizablePane } from "./ui/primitives/resizable-pane.js";
 import { PluginsPageController } from "./ui/plugins/plugins-page.js";
 import { ModelsPageController } from "./ui/models/models-page.js";
 import { AdministrationPageController } from "./ui/administration/administration-page.js";
-import { ShareFitzController } from "./ui/administration/share-fitz-controller.js";
+import { HostingPageController } from "./ui/administration/hosting-page-controller.js";
 import { UsagePageController } from "./ui/usage/usage-page.js";
 import { PlaybookWorkspaceController } from "./ui/playbooks/playbook-workspace.js";
 import { ProjectsController } from "./ui/projects/projects.js";
@@ -74,19 +74,14 @@ const pluginsButton = element("manage-plugins") as HTMLButtonElement;
 const modelsPage = element("models-page");
 const modelsButton = element("manage-models") as HTMLButtonElement;
 const pairingPage = element("pairing-page");
-const pairingForm = element("pairing-form") as HTMLFormElement;
 const hostConnectionForm = element("host-connection-form") as HTMLFormElement;
 const hostConnectionUrl = element("host-connection-url") as HTMLInputElement;
+const hostConnectionApiKey = element("host-connection-api-key") as HTMLInputElement;
 const setupLocalHost = element("setup-local-host") as HTMLButtonElement;
-const pairingCode = element("pairing-code") as HTMLInputElement;
-const pairingDisplayName = element("pairing-display-name") as HTMLInputElement;
-const pairingDeviceName = element("pairing-device-name") as HTMLInputElement;
 const pairingDescription = element("pairing-description");
 const pairingError = element("pairing-error");
 const administrationPage = element("administration-page");
 const administrationButton = element("manage-administration") as HTMLButtonElement;
-const usagePage = element("usage-page");
-const usageButton = element("manage-usage") as HTMLButtonElement;
 
 // Every management tab is built from the same layout component: a header with
 // tabs and actions plus one or more content columns, so switching between
@@ -136,22 +131,19 @@ modelsLayout.addContent({
   body: [element("models-downloaded-section"), element("models-discover-section")],
 });
 const administrationLayout = new ManagementPageLayout(administrationPage, {
+  tabs: [
+    { id: "hosting-overview-tab", label: "Overview", active: true },
+    { id: "hosting-users-tab", label: "Users" },
+    { id: "hosting-usage-tab", label: "Usage" },
+    { id: "hosting-advanced-tab", label: "Advanced" },
+  ],
   actions: [{ id: "refresh-administration", icon: managementRefreshIcon, label: "Refresh administration" }],
 });
 administrationLayout.addContent({
-  title: "Administration",
-  description: "Pair devices, manage users, and control their access.",
+  title: "Hosting",
+  description: "Host your models, manage people, and understand how the service is used.",
   body: [element("administration-sections")],
 });
-const usageLayout = new ManagementPageLayout(usagePage, {
-  actions: [{ id: "refresh-usage", icon: managementRefreshIcon, label: "Refresh usage" }],
-});
-usageLayout.addContent({
-  title: "Usage",
-  description: "Requests, latency, tokens, and media activity across this host.",
-  body: [element("usage-dashboard")],
-});
-
 let conversationLayout: ConversationLayout | undefined;
 let adaptiveWorkspace: AdaptiveWorkspace | undefined;
 let closeBrowserPreview = (): void => {};
@@ -496,6 +488,10 @@ const playbookWorkspace = new PlaybookWorkspaceController({
   recipeContextTokens: element("recipe-context-tokens") as HTMLInputElement,
   recipeConfiguration: element("recipe-configuration"),
   recipeEditorTitle: element("recipe-editor-title"),
+  recipeEditorEyebrow: element("recipe-editor-eyebrow"),
+  recipeEditorDescription: element("recipe-editor-description"),
+  recipeRename: element("recipe-rename") as HTMLButtonElement,
+  recipeIdentityFields: element("recipe-identity-fields"),
 }, {
   api,
   reloadConfiguration: () => loadManagementConfiguration(true),
@@ -521,7 +517,6 @@ const workspacePages = new WorkspacePageController({
     connections: connectionWorkspace.root,
     plugins: pluginsPage,
     models: modelsPage,
-    usage: usagePage,
     administration: administrationPage,
     pairing: pairingPage,
   },
@@ -530,7 +525,6 @@ const workspacePages = new WorkspacePageController({
     connections: connectionsButton,
     plugins: pluginsButton,
     models: modelsButton,
-    usage: usageButton,
     administration: administrationButton,
   },
   setConversationInert,
@@ -567,33 +561,13 @@ const conversationMessages = new ConversationMessageFeed({
   runActive: () => agentRuns.active,
   projectRoot: () => projects.activeProject()?.rootPath ?? "",
 });
-new ShareFitzController({
-  form: element("share-fitz-form") as HTMLFormElement,
-  publicUrl: element("share-fitz-public-url") as HTMLInputElement,
-  tunnelToken: element("share-fitz-token") as HTMLInputElement,
-  status: element("share-fitz-status"),
-  refresh: element("refresh-share-fitz") as HTMLButtonElement,
-  disable: element("disable-share-fitz") as HTMLButtonElement,
-  forget: element("forget-share-fitz") as HTMLButtonElement,
-  origin: element("share-fitz-origin"),
-}, window.fitz);
 const administrationPageController = new AdministrationPageController({
   refresh: element("refresh-administration") as HTMLButtonElement,
   sections: administrationPage,
-  refreshRemoteAccess: element("refresh-remote-access") as HTMLButtonElement,
-  cancelRemoteAccess: element("cancel-remote-access") as HTMLButtonElement,
-  refreshHostStartup: element("refresh-host-startup") as HTMLButtonElement,
-  cancelHostStartup: element("cancel-host-startup") as HTMLButtonElement,
-  pairingCodeForm: element("pairing-code-form") as HTMLFormElement,
-  pairingCodeRole: element("pairing-code-role") as HTMLSelectElement,
-  pairingCodeTtl: element("pairing-code-ttl") as HTMLSelectElement,
-  pairingCodeResult: element("pairing-code-result"),
-  issuedPairingCode: element("issued-pairing-code"),
-  issuedPairingExpiry: element("issued-pairing-expiry"),
-  copyPairingCode: element("copy-pairing-code") as HTMLButtonElement,
   createUserForm: element("create-user-form") as HTMLFormElement,
   createUserName: element("create-user-name") as HTMLInputElement,
-  createUserRole: element("create-user-role") as HTMLSelectElement,
+  createUserKeyName: element("create-user-key-name") as HTMLInputElement,
+  hostedUserResult: element("hosted-user-result"),
   adminUsers: element("admin-users"),
   toolPolicyForm: element("tool-policy-form") as HTMLFormElement,
   toolPolicySubjectType: element("tool-policy-subject-type") as HTMLSelectElement,
@@ -617,18 +591,6 @@ const administrationPageController = new AdministrationPageController({
   diagnosticFailures: element("diagnostic-failures"),
   diagnosticExportStatus: element("diagnostic-export-status"),
   exportDiagnostics: element("export-diagnostics") as HTMLButtonElement,
-  remoteAccessStatus: element("remote-access-status"),
-  remoteAccessConfirmation: element("remote-access-confirmation"),
-  remoteAccessConfirmationText: element("remote-access-confirmation-text"),
-  enableRemoteAccess: element("enable-remote-access") as HTMLButtonElement,
-  disableRemoteAccess: element("disable-remote-access") as HTMLButtonElement,
-  confirmRemoteAccess: element("confirm-remote-access") as HTMLButtonElement,
-  hostStartupStatus: element("host-startup-status"),
-  hostStartupConfirmation: element("host-startup-confirmation"),
-  hostStartupConfirmationText: element("host-startup-confirmation-text"),
-  installHostStartup: element("install-host-startup") as HTMLButtonElement,
-  removeHostStartup: element("remove-host-startup") as HTMLButtonElement,
-  confirmHostStartup: element("confirm-host-startup") as HTMLButtonElement,
   checkDesktopUpdate: element("check-desktop-update") as HTMLButtonElement,
   installDesktopUpdate: element("install-desktop-update") as HTMLButtonElement,
   desktopUpdateLabel: element("desktop-update-label"),
@@ -655,12 +617,48 @@ const administrationPageController = new AdministrationPageController({
   showStatus,
   errorMessage,
 });
+const hostingPageController = new HostingPageController({
+  enabled: element("hosting-enabled") as HTMLInputElement,
+  stateLabel: element("hosting-state-label"),
+  stateMessage: element("hosting-state-message"),
+  publicUrl: element("hosting-public-url"),
+  copyUrl: element("copy-hosting-url") as HTMLButtonElement,
+  statusCards: element("hosting-status-cards"),
+  repair: element("repair-hosting") as HTMLButtonElement,
+  advancedStatus: element("hosting-advanced-status"),
+  startAtLogin: element("hosting-start-at-login") as HTMLInputElement,
+  configPath: element("hosting-config-path"),
+  copyConfigPath: element("copy-config-path") as HTMLButtonElement,
+  configJson: element("hosting-config-json") as HTMLTextAreaElement,
+  reloadConfig: element("reload-hosting-config") as HTMLButtonElement,
+  validateConfig: element("validate-hosting-config") as HTMLButtonElement,
+  saveConfig: element("save-hosting-config") as HTMLButtonElement,
+  configStatus: element("hosting-config-status"),
+}, {
+  api,
+  copyText: (value) => window.fitz.copyText(value),
+  showStatus: (message, tone = "neutral") => showStatus(message, tone),
+  errorMessage,
+  onConfiguration: (configuration) => applyChatDefaults(configuration?.defaults),
+});
 const usagePageController = new UsagePageController({
   root: element("usage-dashboard"),
-  refresh: element("refresh-usage") as HTMLButtonElement,
+  refresh: element("refresh-administration") as HTMLButtonElement,
   api,
   errorMessage,
 });
+const hostingPanels: Record<string, HTMLElement> = {
+  "hosting-overview-tab": element("hosting-overview-panel"),
+  "hosting-users-tab": element("hosting-users-panel"),
+  "hosting-usage-tab": element("hosting-usage-panel"),
+  "hosting-advanced-tab": element("hosting-advanced-panel"),
+};
+administrationLayout.onTabSelect((id) => {
+  for (const [panelId, panel] of Object.entries(hostingPanels)) panel.hidden = panelId !== id;
+  if (id === "hosting-usage-tab") void usagePageController.load();
+  if (id === "hosting-overview-tab" || id === "hosting-advanced-tab") void hostingPageController.load();
+});
+element("refresh-administration").addEventListener("click", () => { void hostingPageController.load(); });
 const conversationSessions = new ConversationSessionController({
   api,
   projects: {
@@ -737,7 +735,7 @@ const appNavigation = new AppNavigationController({
   administrator: () => administrator,
   blocked: () => agentRuns.active,
   pairingActive: () => !pairingPage.hidden,
-  focusPairing: () => pairingCode.focus(),
+  focusPairing: () => (hostConnectionUrl.value ? hostConnectionApiKey : hostConnectionUrl).focus(),
   closePopovers,
   closeInspector: () => { inAppBrowser.close(); inspectorPanel.close(); },
   closeEditors: () => {
@@ -750,7 +748,6 @@ const appNavigation = new AppNavigationController({
     connections: connectionsButton,
     plugins: pluginsButton,
     models: modelsButton,
-    usage: usageButton,
     administration: administrationButton,
   },
   management: {
@@ -768,9 +765,8 @@ const appNavigation = new AppNavigationController({
     models: {
       load: async () => { modelsPageController.showLoading(); await modelsPageController.load(false); },
     },
-    usage: { load: () => usagePageController.load() },
     administration: {
-      load: async () => { administrationPageController.showLoading(); await administrationPageController.load(); },
+      load: async () => { administrationPageController.showLoading(); await Promise.all([administrationPageController.load(), hostingPageController.load()]); },
     },
   },
   replayConversation: async (location) => {
@@ -782,7 +778,7 @@ const appNavigation = new AppNavigationController({
     else if (kind === "project" && id) await projects.selectProject(id);
   },
   renderPairing: (message) => {
-    pairingDescription.textContent = message || "Enter a one-time code from your Fitz host.";
+    pairingDescription.textContent = message || "Enter the server URL and API key from your Fitz host.";
     pairingError.hidden = true;
     pairingError.textContent = "";
   },
@@ -811,7 +807,6 @@ element("manage-playbooks").addEventListener("click", () => void appNavigation.o
 connectionsButton.addEventListener("click", () => void appNavigation.openManagement("connections"));
 pluginsButton.addEventListener("click", () => void appNavigation.openManagement("plugins"));
 modelsButton.addEventListener("click", () => void appNavigation.openManagement("models"));
-usageButton.addEventListener("click", () => void appNavigation.openManagement("usage"));
 administrationButton.addEventListener("click", () => void appNavigation.openManagement("administration"));
 element("sidebar-menu").addEventListener("click", toggleSidebar);
 element("navigate-back").addEventListener("click", () => void appNavigation.navigate(-1));
@@ -835,7 +830,6 @@ window.addEventListener("fitz:resource-appeared", (event) => {
   if (reference) inspectorPanel.registerReference(reference);
 });
 element("context-add").addEventListener("click", () => artifactController.choose());
-pairingForm.addEventListener("submit", (event) => { event.preventDefault(); void pairDevice(); });
 hostConnectionForm.addEventListener("submit", (event) => { event.preventDefault(); void configureRemoteHost(); });
 setupLocalHost.addEventListener("click", () => void window.fitz.configureHost("http://127.0.0.1:8787"));
 document.addEventListener("click", closePopovers);
@@ -865,7 +859,7 @@ async function initialize(): Promise<void> {
       const connection = await window.fitz.connectionInfo();
       const bootstrapped = connection.isLoopback && connection.explicitlyConfigured ? await window.fitz.bootstrapLocalDevice().catch(() => false) : false;
       if (bootstrapped) { await initialize(); return; }
-      currentUserId = undefined; administrator = false; administrationButton.hidden = true; configuredHostOrigin = connection.origin; hostConnectionUrl.value = connection.isLoopback && !connection.explicitlyConfigured ? "" : configuredHostOrigin; setConnection("Pair device", "error"); setStatus("Pairing required", "error"); appNavigation.showPairing(connection.isLoopback && !connection.explicitlyConfigured ? "Host models on this PC, or connect to someone else's Fitz host." : `Enter a one-time code to connect to ${configuredHostOrigin}.`);
+      currentUserId = undefined; administrator = false; administrationButton.hidden = true; configuredHostOrigin = connection.origin; hostConnectionUrl.value = connection.isLoopback && !connection.explicitlyConfigured ? "" : configuredHostOrigin; setConnection("Connect", "error"); setStatus("API key required", "error"); appNavigation.showPairing(connection.isLoopback && !connection.explicitlyConfigured ? "Host models on this PC, or connect to someone else's Fitz host." : `Enter the API key for ${configuredHostOrigin}.`);
     }
     else {
       const connection = await window.fitz.connectionInfo().catch(() => undefined);
@@ -918,37 +912,37 @@ async function copyValue(value: string, message: string): Promise<void> {
 
 function setConversationInert(inert: boolean): void { for (const area of [workspaceHeader, messages, composer.root]) { area.toggleAttribute("inert", inert); area.setAttribute("aria-hidden", String(inert)); } }
 
-async function pairDevice(): Promise<void> {
-  setFormBusy(pairingForm, true); pairingError.hidden = true; pairingError.textContent = "";
-  try {
-    const response = await window.fitz.pairDevice({ code: pairingCode.value.trim(), displayName: pairingDisplayName.value.trim(), deviceName: pairingDeviceName.value.trim() }); let parsed: Json;
-    try { parsed = JSON.parse(response.body) as Json; } catch { parsed = { error: response.body }; }
-    if (response.status >= 400) throw parseHostError(parsed, response.status);
-    pairingCode.value = ""; await initialize();
-  } catch (error) { pairingError.textContent = errorMessage(error); pairingError.hidden = false; }
-  finally { setFormBusy(pairingForm, false); }
-}
-
 async function configureRemoteHost(): Promise<void> {
   setFormBusy(hostConnectionForm, true);
   pairingError.hidden = true;
-  try { await window.fitz.configureHost(hostConnectionUrl.value.trim()); }
+  try {
+    await window.fitz.connectRemote({ origin: hostConnectionUrl.value.trim(), apiKey: hostConnectionApiKey.value.trim() });
+  }
   catch (error) { pairingError.textContent = errorMessage(error); pairingError.hidden = false; }
   finally { setFormBusy(hostConnectionForm, false); }
 }
 
 async function loadManagementConfiguration(renderPage: boolean): Promise<Json | undefined> {
   try {
+    const firstConfiguration = !managementConfiguration;
     managementConfiguration = await api(administrator ? "/api/v1/management/status" : "/api/v1/configuration");
+    applyChatDefaults(managementConfiguration.chatDefaults);
     conversationContext.refresh();
     connectionWorkspace.setConfiguration(managementConfiguration);
     rebuildRouteLabels();
+    if (firstConfiguration && conversationSessions.newChat) composer.controls.resetForNewChat();
     playbookWorkspace.setConfiguration(managementConfiguration);
     if (renderPage) playbookWorkspace.render();
   } catch (error) {
     if (renderPage) playbookWorkspace.showUnavailable(errorMessage(error));
   }
   return managementConfiguration;
+}
+
+function applyChatDefaults(defaults: Json | undefined): void {
+  const route = typeof defaults?.route === "string" ? defaults.route : "default";
+  const effort = defaults?.effort === "light" || defaults?.effort === "high" ? defaults.effort : "normal";
+  composer.controls.setDefaults(route, effort);
 }
 
 function applyManagementRoute(routeId: string, route: Json | undefined): void {

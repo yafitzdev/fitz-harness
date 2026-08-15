@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { RouteNotFoundError, type RouteResolver } from "@fitz/inference-core";
 import { classifyArtifact, normalizeMimeType } from "@fitz/media";
-import type { SessionRecord } from "@fitz/protocol";
+import { resolveRecipeAgentTopology, type SessionRecord } from "@fitz/protocol";
 import type { AuthenticatedPrincipal, SecurityService } from "@fitz/security";
 import type { ArtifactRepository, SqliteStore } from "@fitz/storage";
 import type { ContextManager } from "@fitz/context";
@@ -242,7 +242,7 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
       const publicRouteId = typeof body.model === "string" ? requireString(body.model, "model") : session.routeId ?? "default";
       const routeId = publicRouteId;
       const resolved = routes.resolve(routeId);
-      const result = await context.compactSession(session.id, resolved.recipe.contextTokens);
+      const result = await context.compactSession(session.id, resolveRecipeAgentTopology(resolved.recipe).orchestratorContextTokens);
       security?.audit("session.compacted", principal?.user.id, "session", session.id, {
         routeId,
         throughSequence: result.entry.content.throughSequence,

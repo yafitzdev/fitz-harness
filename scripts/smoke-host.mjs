@@ -35,7 +35,7 @@ try {
 
   if (
     result.health !== "ok" ||
-    result.initialEngineState !== "UNLOADED" ||
+    result.initialEngineState !== "READY" ||
     !result.models.includes("default") ||
     !result.completion.includes("compiled smoke test")
   ) {

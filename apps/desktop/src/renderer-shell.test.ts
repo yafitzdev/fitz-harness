@@ -36,7 +36,7 @@ const pluginCatalog = readFileSync(new URL("./ui/plugins/plugin-catalog.ts", imp
 const administrationPage = readFileSync(new URL("./ui/administration/administration-page.ts", import.meta.url), "utf8");
 const desktopUpdateController = readFileSync(new URL("./ui/administration/desktop-update-controller.ts", import.meta.url), "utf8");
 const diagnosticsController = readFileSync(new URL("./ui/administration/diagnostics-controller.ts", import.meta.url), "utf8");
-const hostLifecycleController = readFileSync(new URL("./ui/administration/host-lifecycle-controller.ts", import.meta.url), "utf8");
+const hostingPageController = readFileSync(new URL("./ui/administration/hosting-page-controller.ts", import.meta.url), "utf8");
 const safetyRecoveryController = readFileSync(new URL("./ui/administration/safety-recovery-controller.ts", import.meta.url), "utf8");
 const playbookWorkspace = readFileSync(new URL("./ui/playbooks/playbook-workspace.ts", import.meta.url), "utf8");
 const resourceInspector = readFileSync(new URL("./ui/inspector/resource-inspector.ts", import.meta.url), "utf8");
@@ -105,8 +105,9 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("initialNavigationPending = false");
     expect(renderer).toContain("openNewChat()");
     expect(conversationSession).toContain("this.#options.composer.resetForNewChat()");
-    expect(composerControls).toContain('this.setRoute("default")');
-    expect(composerControls).toContain('this.elements.effort.value = "normal"');
+    expect(composerControls).toContain('private defaultRoute = "default"');
+    expect(composerControls).toContain('private defaultEffort: AgentEffort = "normal"');
+    expect(renderer).toContain("applyChatDefaults(managementConfiguration.chatDefaults)");
     expect(textRoutePresentation).toContain('{ id: "default", label: "Local", ownership: "host" }');
   });
 
@@ -1055,16 +1056,16 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("mediaJobs.watch(jobId)");
   });
 
-  it("pairs a desktop without exposing its durable bearer credential to the renderer", () => {
-    for (const id of ["pairing-page", "pairing-form", "pairing-code", "pairing-display-name", "pairing-device-name", "pairing-error"]) expect(html).toContain(`id="${id}"`);
+  it("connects a desktop with only a URL and API key without exposing the durable credential to the renderer", () => {
+    for (const id of ["pairing-page", "host-connection-form", "host-connection-url", "host-connection-api-key", "setup-local-host", "pairing-error"]) expect(html).toContain(`id="${id}"`);
     expect(renderer).toContain("appNavigation.showPairing(connection.isLoopback && !connection.explicitlyConfigured");
-    expect(renderer).toContain("window.fitz.configureHost(hostConnectionUrl.value.trim())");
-    expect(renderer).toContain("window.fitz.pairDevice");
+    expect(renderer).toContain('window.fitz.configureHost("http://127.0.0.1:8787")');
+    expect(renderer).toContain("window.fitz.connectRemote");
     expect(renderer).toContain("window.fitz.bootstrapLocalDevice()");
     expect(preload).toContain('ipcRenderer.invoke("fitz:bootstrap-local-device"');
-    expect(preload).toContain('ipcRenderer.invoke("fitz:pair-device"');
+    expect(preload).toContain('ipcRenderer.invoke("fitz:connect-remote"');
     expect(preload).toContain('ipcRenderer.invoke("fitz:connection-info"');
-    expect(main).toContain('ipcMain.handle("fitz:pair-device"');
+    expect(main).toContain('ipcMain.handle("fitz:connect-remote"');
     expect(main).toContain('ipcMain.handle("fitz:bootstrap-local-device"');
     expect(main).toContain("!isLoopbackHost(hostUrl)");
     expect(main).toContain('ipcMain.handle("fitz:connection-info"');
@@ -1073,17 +1074,18 @@ describe("desktop renderer shell", () => {
     expect(main).toContain('createHash("sha256").update(new URL(hostUrl).origin)');
     expect(main).toContain("legacyConsumerConnectionsPath");
     expect(main).toContain('renameSync(legacyPath, `${legacyPath}.migrated`)');
-    expect(main).toContain("const { token: _token, ...safeData } = data");
+    expect(main).toContain('redirect: "manual"');
     expect(styles).toContain(".pairing-page");
     expect(renderer).toContain('setConnection(configuredHostOrigin.replace');
   });
 
-  it("provides inline administrator controls for pairing, users, devices, routes, quotas, and tools", () => {
-    for (const id of ["administration-page", "pairing-code-form", "create-user-form", "admin-users", "tool-policy-form", "tool-policies", "admin-audit-events", "admin-trash", "admin-snapshots", "admin-tool-actions", "empty-trash-button", "gc-retention-button"]) {
+  it("provides inline Hosting controls for users, API keys, usage, quotas, and tools", () => {
+    for (const id of ["administration-page", "hosting-enabled", "create-user-form", "hosted-user-result", "admin-users", "usage-dashboard", "tool-policy-form", "tool-policies", "admin-audit-events", "admin-trash", "admin-snapshots", "admin-tool-actions", "empty-trash-button", "gc-retention-button"]) {
       expect(html).toContain(`id="${id}"`);
     }
-    expect(administrationPage).toContain('api("/api/v1/management/pairing-codes", "POST"');
+    expect(administrationPage).toContain('api("/api/v1/management/hosting/users", "POST"');
     expect(administrationPage).toContain('api("/api/v1/management/users")');
+    expect(administrationPage).toContain('api("/api/v1/management/user-usage")');
     expect(administrationPage).toContain('api("/api/v1/management/tool-policies")');
     expect(administrationPage).toContain('api("/api/v1/management/audit-events?limit=50")');
     expect(administrationPage).toContain('api("/api/v1/management/trash")');
@@ -1109,17 +1111,16 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("background-position: right 9px center");
   });
 
-  it("lets the administration sections collapse to their headers", () => {
+  it("keeps advanced Hosting sections collapsible", () => {
     expect(html).toContain('class="collapsible-toggle"');
-    expect(html).toContain('data-collapsible-key="pairing"');
-    expect(html).toContain('data-collapsible-key="remote"');
-    expect(html).toContain('data-collapsible-key="startup"');
-    expect(html).toContain('data-collapsible-key="users"');
+    expect(html).toContain('data-collapsible-key="hosting-advanced"');
     expect(html).toContain('data-collapsible-key="policies"');
+    expect(html).toContain('data-collapsible-key="safety"');
+    expect(html).toContain('data-collapsible-key="storage"');
     expect(html).toContain('data-collapsible-key="diagnostics"');
     expect(html).toContain('data-collapsible-key="updates"');
     expect(html).toContain('data-collapsible-key="activity"');
-    expect(html).toContain('id="admin-remote-body"');
+    expect(html).toContain('id="hosting-advanced-body"');
     expect(administrationPage).toContain('fitz-collapsed-admin-sections');
     expect(administrationPage).toContain('CollapsibleSection.adoptAll(this.elements.sections, { storageKey: "fitz-collapsed-admin-sections" })');
     expect(administrationPage).toContain('import { CollapsibleSection } from "../layout/collapsible-section.js"');
@@ -1188,15 +1189,14 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".diagnostic-row");
   });
 
-  it("onboards private Tailscale HTTPS inline without configuration dialogs", () => {
-    for (const id of ["remote-access-status", "enable-remote-access", "disable-remote-access", "remote-access-confirmation", "confirm-remote-access"]) {
+  it("owns Tailscale Funnel behind one Hosting switch", () => {
+    for (const id of ["hosting-enabled", "hosting-state-label", "hosting-public-url", "repair-hosting", "hosting-advanced-status"]) {
       expect(html).toContain(`id="${id}"`);
     }
-    expect(hostLifecycleController).toContain('api("/api/v1/management/connectivity/status")');
-    expect(hostLifecycleController).toContain('#showRemoteConfirmation("enable")');
-    expect(hostLifecycleController).toContain('api("/api/v1/management/connectivity/tailscale-serve", "POST", {})');
-    expect(hostLifecycleController).toContain('api("/api/v1/management/connectivity/tailscale-serve", "DELETE")');
-    expect(styles).toContain(".remote-access-confirmation[hidden]");
+    expect(hostingPageController).toContain('api("/api/v1/management/hosting", "PUT", { enabled })');
+    expect(hostingPageController).toContain('api("/api/v1/management/hosting/repair", "POST", {})');
+    expect(hostingPageController).not.toContain("tailscale-serve");
+    expect(styles).toContain(".hosting-switch");
   });
 
   it("shows desktop update state, progress, checks, and restart installation inline", () => {
@@ -1212,13 +1212,12 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".desktop-update-track");
   });
 
-  it("manages packaged host startup inline with staged confirmation", () => {
-    for (const id of ["host-startup-status", "install-host-startup", "remove-host-startup", "host-startup-confirmation", "confirm-host-startup"]) {
+  it("keeps startup and canonical JSON in Hosting advanced settings", () => {
+    for (const id of ["hosting-start-at-login", "hosting-config-path", "hosting-config-json", "validate-hosting-config", "save-hosting-config"]) {
       expect(html).toContain(`id="${id}"`);
     }
-    expect(hostLifecycleController).toContain('api("/api/v1/management/startup")');
-    expect(hostLifecycleController).toContain('#showStartupConfirmation("install")');
-    expect(hostLifecycleController).toContain('action === "install" ? "POST" : "DELETE"');
-    expect(styles).toContain(".host-startup-status");
+    expect(hostingPageController).toContain('api("/api/v1/management/config", "PATCH", { hosting: { startAtLogin } })');
+    expect(hostingPageController).toContain('api("/api/v1/management/config/validate", "POST", parsed)');
+    expect(styles).toContain(".hosting-config-editor");
   });
 });
