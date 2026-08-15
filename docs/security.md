@@ -1,37 +1,25 @@
-# Security bootstrap
+# Security bootstrap and remote access
 
 The real host requires device authentication by default. On the first direct loopback connection,
-the Fitz desktop calls `POST /api/v1/pairing/bootstrap`, creates the sole initial administrator, and
-stores the returned device credential with Electron `safeStorage`. The endpoint is single-use and
-rejects forwarded requests, so it cannot be used through the private HTTPS proxy.
+the bundled desktop calls the single-use `POST /api/v1/pairing/bootstrap`, creates the initial
+administrator, and stores the returned credential with Electron `safeStorage`. The endpoint rejects
+forwarded requests and is not exposed by the public gateway.
 
-- `FITZ_AUTH_MODE=disabled` explicitly disables authentication for isolated development only.
-- `FITZ_AUTH_PEPPER=<long random server secret>` optionally overrides the randomly generated,
-  database-persisted host secret.
+- `FITZ_AUTH_MODE=disabled` is isolated-development mode only.
+- `FITZ_AUTH_PEPPER=<long random server secret>` may override the generated database-persisted HMAC
+  key.
 
-Device tokens are returned once, HMAC-SHA-256 hashed before persistence, and never exposed to the
-desktop renderer. Use `Authorization: Bearer <token>` for direct API access. Revocation takes effect
-on the next request.
+API keys are returned once, HMAC-SHA-256 hashed before persistence, and accepted as
+`Authorization: Bearer <key>`. Revocation and user disabling take effect on the next request.
+Administrators add remote people with `POST /api/v1/management/hosting/users`, which always creates
+a consumer and applies the canonical default quota. There is no remote pairing-code onboarding API.
 
-The public Share Fitz gateway accepts consumer credentials only. Its separate shared pairing route
-rejects agent and administrator codes, and consumer-owned agent runs cannot execute host tools.
-Creating or editing host-path projects, administration, global events, model configuration, and
-private bootstrap are not present on the gateway allowlist. The public URL is therefore an
-authenticated model-consumption boundary, not remote host administration.
+The public gateway accepts consumer credentials only and has no unauthenticated endpoint. Host administration, connections, model and
+recipe editing, local bootstrap, and host tools are unavailable through it. Consumer-owned agent
+runs cannot execute host tools. Public rate limits are bounded globally and per credential, and the
+gateway derives limiter identities from a one-way credential hash rather than spoofable proxy
+headers.
 
-Administrators can access every inference route. Agent and consumer users only see and use routes
-listed in their explicit route grants. Their role default or custom quota limits request rate,
-prompt size, output tokens, and queue depth.
-
-`FITZ_ADMIN_TOKEN` remains a development-only compatibility guard when authentication is explicitly
-disabled. Fitz refuses to enable Tailscale Serve in this mode.
-
-Administrators can issue short-lived, one-use pairing codes through
-`POST /api/v1/management/pairing-codes`. A new client redeems the code without prior authentication
-at `POST /api/v1/pairing/redeem` and receives its device token once. Only the keyed code and token
-hashes are stored. Reusing or redeeming an expired code fails, and device revocation applies on the
-next authenticated request.
-
-For API clients, an administrator can create a named user and issue a named device/API key. The raw
-key is displayed once. Issue consumer keys for Share Fitz; privileged credentials are deliberately
-rejected by the public gateway.
+Users retain isolated projects, sessions, cloud connections, route bindings, quotas, and usage.
+Removing a user is a soft removal: the account is disabled and every active key is revoked, while
+usage/audit history remains available to the administrator.

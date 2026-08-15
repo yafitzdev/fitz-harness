@@ -19,7 +19,7 @@ The first inference engine is NInfer because it is highly optimized for the vali
 
 The first agent engine is based on Pi’s embeddable SDK. Pi is used to avoid reimplementing the basic agent loop, streaming, tool execution, cancellation, extensions, and model communication. Fitz Codex owns the product policy around Pi: context construction, Codex-derived compaction, session persistence, permissions, model routing, and the entire user interface.
 
-The host application exposes a stable OpenAI-compatible API as well as a richer application-native agent protocol. Individual inference engines remain bound to loopback and may start on temporary ports. Remote access is private by default and integrated with Tailscale. NInfer is never exposed directly to the public Internet.
+The host application exposes a stable OpenAI-compatible API as well as a richer application-native agent protocol. Individual inference engines remain bound to loopback and may start on temporary ports. Remote access is off by default and uses a protected API-key consumer gateway published through Tailscale Funnel. NInfer and host administration are never exposed directly to the public Internet.
 
 The desktop application is expected to use Electron and a React/TypeScript renderer. A lightweight host service runs independently of the visible window so remote users can submit requests while the desktop UI is closed. Models remain unloaded until needed.
 
@@ -49,7 +49,7 @@ The desktop application is expected to use Electron and a React/TypeScript rende
 ### 2.4 Polished for nontechnical consumers
 
 - A consumer should not need to understand NInfer, llama.cpp, WSL, CUDA, ports, API keys, playbooks, or recipes.
-- A remote user installs the application, completes a guided connection/pairing flow, and chats.
+- A remote user installs the application, enters the host URL plus API key, and chats.
 - Technical controls are role-gated and absent from the consumer UI.
 
 ### 2.5 Inspectable and recoverable
@@ -737,7 +737,7 @@ Unsupported fields should normally produce a clear 400 response rather than bein
 
 The native API covers concepts absent from Chat Completions:
 
-- Users/devices and pairing.
+- Users, API keys/devices, and usage.
 - Projects and sessions.
 - Turns and resumable streams.
 - Tool calls and approvals.
@@ -777,12 +777,12 @@ A permitted user can use the host’s agent and LLM from another PC, an iPhone, 
 ### 14.2 Connectivity architecture
 
 ```text
-Remote client
-    ↓ encrypted private connection
-Tailscale identity/network
-    ↓ HTTPS/WSS
-Fitz connectivity endpoint
-    ↓ loopback proxy
+Remote client (no Tailscale installation)
+    ↓ public TLS
+Tailscale Funnel on the owner PC
+    ↓ loopback-only proxy
+Fitz consumer gateway (API-key required)
+    ↓ loopback
 Fitz Host API
     ↓ loopback
 Managed engine instance
@@ -793,47 +793,38 @@ Managed engine instance
 Tailscale is a first-class product feature, not a README-only prerequisite. Host settings must provide:
 
 - Enable/disable remote access.
-- Sign-in/setup flow.
-- Service/device name.
-- Private HTTPS URL.
+- Installed-daemon detection and status.
+- Public HTTPS URL.
 - Connectivity status.
-- Copy/share invitation flow.
+- Copy URL and one-time API-key flow.
 - Authorized-user list.
 - Connection test.
 - Clear diagnostics.
 - Revoke access.
 
-The connectivity package should define an adapter so implementation can evolve:
-
-- `SystemTailscaleAdapter`: integrates with the installed Tailscale daemon/CLI and Tailscale Serve.
-- `TsnetSidecarAdapter`: bundles a small Go service using `tsnet`, giving Fitz an application-owned tailnet identity.
-
-The preferred desktop-host end state is a bundled `tsnet` sidecar where it improves onboarding and isolation. Do not maintain a fork of Tailscale unless an actual missing upstream capability forces it.
+The connectivity package integrates with the installed Tailscale daemon/CLI and owns only Fitz's
+Funnel listener. It must never reset unrelated Funnel configuration. A bundled transport may be
+evaluated later, subject to licensing and update/security ownership.
 
 ### 14.4 Mobile reality
 
-Embedding a VPN/tailnet implementation inside iOS and Android apps involves platform networking APIs, signing, entitlements, and lifecycle behavior. The first mobile experience may depend on the official Tailscale mobile app while making onboarding part of Fitz:
-
-- Detect reachability.
-- Link to install/open Tailscale.
-- Explain the single sign-in step.
-- Retry automatically.
-- Require no manual hostnames if pairing data supplies them.
-
-Literal in-app mobile tunneling is a later enhancement, not a prerequisite for private remote access.
+Recipients use ordinary HTTPS, so desktop and future mobile clients require no VPN entitlement,
+Tailscale account, or Tailscale application. They need only the URL and API key supplied by the host.
 
 ### 14.5 Tailscale identity and application identity
 
 Use defense in depth:
 
-1. Tailscale determines whether a device/user can reach the private service.
-2. Fitz authenticates a paired device and maps it to an application user/role.
+1. Tailscale Funnel supplies Internet transport and TLS on the owner PC.
+2. Fitz authenticates every request with a revocable API key and maps it to a consumer.
+3. The loopback gateway exposes only consumer operations and rejects privileged credentials.
 
-If Tailscale Serve identity headers are used, the backend must listen on loopback and trust those headers only from the controlled local proxy. Incoming spoofable copies must be removed or ignored.
+Rate-limit identities must never trust caller-supplied forwarding headers.
 
-### 14.6 No Funnel by default
+### 14.6 Funnel is explicit and off by default
 
-Tailscale Funnel or any equivalent public tunnel is out of scope by default. Enabling public exposure would require a separate threat model, stronger Internet-facing controls, and explicit administrator action.
+The Hosting switch is the only normal control that creates public exposure. It targets the protected
+gateway, requires application API keys, is auditable and revocable, and is disabled by default.
 
 ## 15. Identity, roles, and permissions
 
@@ -1345,12 +1336,12 @@ Administrators can export a redacted bundle containing:
 - Context meter and compaction events.
 - Long-session tests.
 
-### Milestone 5 — private remote access
+### Milestone 5 — protected remote access
 
 - Connectivity adapter.
 - Tailscale host setup/status UI.
-- HTTPS/WSS private endpoint.
-- User/device pairing.
+- Protected HTTPS consumer endpoint.
+- Users and revocable API keys.
 - Roles and allowed routes.
 - Remote reconnect/resume.
 - Girlfriend consumer profile.
@@ -1367,7 +1358,7 @@ Administrators can export a redacted bundle containing:
 ### Milestone 7 — consumer installer pilot
 
 - Client-only Windows installer.
-- Guided Tailscale/pairing onboarding.
+- URL plus API-key onboarding.
 - Auto-update plan.
 - Code-signing decision.
 - Install and usability test on another PC.
@@ -1398,8 +1389,8 @@ The first meaningful host release is acceptable when:
 
 The first remote-consumer release is acceptable when:
 
-1. A nontechnical user can install the client and complete guided pairing.
-2. The user can connect away from home Wi-Fi through Tailscale.
+1. A nontechnical user can install the client and enter a URL plus API key.
+2. The user can connect away from home Wi-Fi without installing Tailscale.
 3. The user sees only permitted routes and consumer features.
 4. The user can trigger on-demand loading without knowing it is NInfer.
 5. Conversation streams survive an ordinary transient reconnect.

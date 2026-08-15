@@ -33,12 +33,14 @@ The host administrator assigns one local text recipe to **Default**. That recipe
 Local scheduling is deliberately engine-agnostic:
 
 - one model-bearing local engine active at a time;
-- one local generation at a time;
+- up to three local calls in the host lane, capped further by the active recipe's `maxConcurrentGenerations`;
 - no parked secondary engines or configurable preload set;
 - local media may temporarily displace Default and must restore it afterward;
 - changing the chat choice does not start or test an engine.
 
-Consequently, vLLM launches with `--max-num-seqs 1`, and llama.cpp recipes use one server slot. Engine-level continuous batching is not needed for the supported multi-user pattern: independent Pi state machines overlap, while their brief local inference phases wait in an owner-fair queue.
+Consequently, vLLM launches with `--max-num-seqs 1`, and llama.cpp recipes use one server slot. NInfer recipes may opt into small continuous batches. The Qwen 3.8 27B C3 recipe has a 256,000-token shared context pool: two 64K local workers leave 128,000 tokens for its implicit main agent against one shared model and KV pool.
+
+An agent-capable recipe owns only capacity: a shared context pool and a homogeneous worker count/context. Every such recipe has one implicit main agent, whose context is the model limit capped by the context left after worker allocation. Recipe configuration never stores a main-agent prompt, worker roles, or worker instructions. At dispatch time the main agent selects a role identifier; the host resolves it deterministically from the global versioned role registry and snapshots that definition into the child run.
 
 ## Cloud connections
 
@@ -47,7 +49,7 @@ OpenAI-compatible connections belong to the authenticated consumer who created t
 - **Smart**: an optional cloud model selected for a main-agent turn and for its single optional concurrent Smart peer.
 - **Fast workers**: an optional cloud model selected for a main-agent turn and used by its Fast children.
 
-Smart and Fast execute in the bounded cloud lane and may overlap. Delegation is effort-dependent and separate from output tokens. Light launches no children. At Normal, Fast can launch two Fast children and Smart can launch three Fast children. At High, Fast can launch three Fast children and Smart can launch three Fast children plus one optional Smart peer. That peer is reserved for a separate Smart-tier task that the main Smart agent wants to run concurrently with its own substantive work; the runtime requires the parent to start an allowed tool task before admitting it. It is never used as a Fast researcher or automatically spent on project familiarization. Local Default turns never receive the delegation tool.
+Smart and Fast execute in the bounded cloud lane and may overlap. Cloud delegation is effort-dependent and separate from output tokens. Light launches no cloud children. At Normal, Fast can launch two Fast children and Smart can launch three Fast children. At High, Fast can launch three Fast children and Smart can launch three Fast children plus one optional Smart peer. That peer is reserved for a separate Smart-tier task that the main Smart agent wants to run concurrently with its own substantive work; the runtime requires the parent to start an allowed tool task before admitting it. It is never used as a Fast researcher or automatically spent on project familiarization. A local Default turn receives the same delegation tool whenever its recipe declares local worker capacity, independently of effort; those children stay on Default and use the recipe's worker context.
 
 Credentials are stored by the desktop using Electron safe storage and are registered on the host under owner-and-connection-scoped environment variable names. One user cannot bind another user's discovered recipe.
 

@@ -7,7 +7,7 @@
  *   - source/test file counts
  *   - live vitest results (cached to scripts/.overview-tests.json on failure)
  *   - git branch, commit count, last commit date
- *   - HTTP routes extracted from apps/host/src/server/create-app.ts
+ *   - HTTP routes extracted from the host's modular route files
  *   - route ids extracted from engine playbook files
  *   - model families in the canonical managed-Linux registry
  *   - desktop UI controllers
@@ -130,13 +130,17 @@ const gitDate = tryExec("git", ["log", "-1", "--format=%ad", "--date=short"]) ??
 /* ---------------- 5. HTTP routes from the host ---------------- */
 
 const routes = [];
-const createAppPath = join(root, "apps", "host", "src", "create-app.ts");
-if (existsSync(createAppPath)) {
-  const src = readFileSync(createAppPath, "utf8");
+const hostRouteFiles = listFiles(
+  [join(root, "apps", "host", "src")],
+  (file) => file.endsWith(".ts") && !file.endsWith(".test.ts") && !file.endsWith(".d.ts"),
+);
+for (const file of hostRouteFiles) {
+  const src = readFileSync(join(root, file), "utf8");
   const re = /app\.(get|post|put|delete|patch)\("([^"]+)"/g;
   let m;
   while ((m = re.exec(src))) routes.push({ method: m[1].toUpperCase(), path: m[2] });
 }
+routes.sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method));
 
 /* ---------------- 6. inference route ids from playbooks ---------------- */
 
@@ -193,8 +197,8 @@ const ROLES = {
   "@fitz/agent-pi": "Opt-in Pi SDK 0.83.0 adapter behind the agent boundary",
   "@fitz/context": "Codex-style token budgeting, canonical reconstruction, transcript compaction",
   "@fitz/storage": "SQLite (node:sqlite, WAL) migrations and repositories",
-  "@fitz/security": "HMAC device auth, roles, grants, quotas, audit log, pairing",
-  "@fitz/connectivity": "Tailscale detection and private HTTPS Serve management",
+  "@fitz/security": "HMAC API-key auth, roles, grants, quotas, revocation, and audit log",
+  "@fitz/connectivity": "Protected loopback gateway plus Tailscale Funnel and startup management",
   "@fitz/media": "Artifact metadata, strict MIME classification, SHA-256 integrity",
   "@fitz/observability": "Structured logging, secret redaction, metrics, diagnostics",
   "@fitz/host": "Long-running Fastify control plane — engines, routing, queueing, security, agents, storage",
@@ -424,7 +428,7 @@ ${pkgRows}
 
   <section id="api">
     <h3 class="section-title">API surface</h3>
-    <div class="section-sub">${routes.length} endpoints extracted from <span class="chip">apps/host/src/server/create-app.ts</span> — Fastify on <span class="chip">127.0.0.1:8787</span>.</div>
+    <div class="section-sub">${routes.length} endpoints extracted from the modular host routes — Fastify on <span class="chip">127.0.0.1:8787</span>.</div>
     <table>
       <thead><tr><th>method</th><th>path</th></tr></thead>
       <tbody>

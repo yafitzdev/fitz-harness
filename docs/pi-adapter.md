@@ -14,8 +14,9 @@ All Fitz-owned Pi code lives in `packages/agent-pi`. Its main components are:
   gating, the `fitz_session` lookup tool), translates Pi events into the Fitz run protocol, forwards
   steering messages, and propagates cancellation and failures.
 - `PiDelegationPolicy` (`pi-delegation-policy.ts`) — internal per-run delegation state for required
-  Fast-worker fan-out, Smart concurrent-peer admission, delegated tool budgets, retry enforcement,
-  and pre-fan-out output suppression. The runtime's approval paths share this one policy instance.
+  local/Fast-worker fan-out, Smart concurrent-peer admission, delegated tool budgets, retry
+  enforcement, and pre-fan-out output suppression. The runtime's approval paths share this one
+  policy instance.
 - `PiPackageService` (`pi-packages.ts`) — the registry-backed extension manager. Fitz owns the
   extension layout: `{agentDir}/extensions/registry.json` plus one directory per enabled package.
   Upstream Pi's `npm/` + `settings.json` layout and auto-discovery are disabled (`noExtensions`), so
@@ -25,6 +26,13 @@ All Fitz-owned Pi code lives in `packages/agent-pi`. Its main components are:
 `apps/host` is only a thin wiring layer: it constructs `PiAgentRuntime` with the resolved runtime
 paths, the store-backed tool approval gate, and the store-backed session reader. `apps/host` has no
 Pi logic of its own.
+
+Worker capacity comes from the selected recipe's agent topology. Workers are not named or assigned
+persistent roles in that recipe. For each `subagent` call, the main agent selects a role identifier;
+the host resolves it from the global versioned SQLite role registry and creates the child with that
+definition's system instructions, access mode, tool-call budget, output limit, and output contract.
+The exact role definition is snapshotted in the durable child request. Pi enforces that snapshot's
+tool budget, and delegated children are not given the delegation tool.
 
 ## Sessions and the store
 

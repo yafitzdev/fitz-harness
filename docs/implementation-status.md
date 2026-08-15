@@ -62,8 +62,12 @@
   estimation, and compaction.
 - Initial desktop UI with project/task sidebar, transcript view, composer, route selector, lifecycle
   feedback, native run polling/replay, and project/session creation.
-- Tailscale state detection and opt-in private HTTPS Serve management, one-time hashed pairing codes,
-  pairing redemption into revocable device credentials, and bounded desktop reconnect/backoff.
+- Unified Hosting with a host-owned consumer gateway, opt-in Tailscale Funnel lifecycle, one-step
+  consumer/API-key creation, rotation/revocation/removal, per-user usage summaries and time-of-day
+  activity, and bounded desktop reconnect/backoff. Recipients enter only URL plus API key.
+- Versioned canonical `fitz.config.json` for non-secret operational settings, with validation,
+  atomic writes, external-edit watching, legacy migration, secret rejection, an Advanced editor,
+  and new-chat route/effort defaults. Runtime records and credentials remain SQLite/OS-secured.
 - Owner-scoped artifact metadata and content storage with SHA-256 integrity metadata and size bounds,
   strict MIME classification, defensive content headers, and a desktop artifact panel with inert text,
   allowlisted media, sandboxed PDF preview, upload, and binary fallback.
@@ -130,15 +134,17 @@
   - native agent run submission, history, cancellation, event replay, and SSE endpoints
   - basic management status, route update, and instance stop endpoints
   - administrator user, device, grant, quota, revocation, and audit endpoints
-- Required-by-default production device authentication with a single-use local bootstrap, encrypted
-  desktop credentials, remote pairing, and an optional development-only administrator-token guard.
+- Required-by-default production device authentication with a single-use local administrator
+  bootstrap, encrypted desktop credentials, revocable remote API keys, and an optional
+  development-only administrator-token guard.
 
 ## Intentionally deferred for refinement or later milestones
 
 - Full JSON Schema/OpenAPI generation and exhaustive request compatibility.
 - Persistent/distributed rate windows.
 - Model-assisted summary quality (the summarizer is an injectable interface; the shipped default is deterministic).
-- Tailscale installation/onboarding on the target machine and live tailnet validation.
+- Bundling/licensing Tailscale on the host PC. The current product controls an installed, signed-in
+  daemon entirely from Hosting; recipients never install Tailscale.
 - Live paid-provider media validation with a user-owned fal or Replicate credential, and a real local
   MiniMax H3/ComfyUI generation after the engine, weights, and required custom nodes are provisioned.
 - Desktop UX refinement, richer event rendering, and accessibility polish.
