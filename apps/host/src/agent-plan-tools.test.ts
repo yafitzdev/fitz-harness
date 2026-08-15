@@ -1,10 +1,22 @@
 import { SqliteStore } from "@fitz/storage";
 import { describe, expect, it } from "vitest";
-import { assignPlanItemToWorker, completePlanAfterAnswer, createAgentPlanTool, planAdmissionReason, planCompletionIssue, reconcileAgentPlan } from "./agent-plan-tools.js";
+import { assignPlanItemToWorker, completePlanAfterAnswer, createAgentPlanTool, createAgentRunPlanPolicy, planAdmissionReason, planCompletionIssue, planPromptInstruction, reconcileAgentPlan } from "./agent-plan-tools.js";
 
 const NOW = new Date(0).toISOString();
 
 describe("durable agent plans", () => {
+  it("allows direct answers and activates planning only when tool work is attempted", () => {
+    const store = harness();
+    const direct = createAgentRunPlanPolicy(store, "parent");
+    expect(planPromptInstruction()).toContain("answered directly without tools");
+    expect(direct.required?.()).toBe(false);
+    expect(direct.completionIssue()).toBeUndefined();
+    expect(direct.admissionReason({ toolCallId: "read", toolName: "read", input: { path: "README.md" } })).toContain("plan");
+    expect(direct.required?.()).toBe(true);
+    expect(direct.completionIssue()).toContain("no execution plan exists");
+    store.close();
+  });
+
   it("ships evidence-priority instructions for research workers", () => {
     const store = harness();
     expect(store.getSubagentRole("researcher")?.systemInstructions).toContain("executable source and package manifests outrank design documents");

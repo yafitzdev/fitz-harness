@@ -1,4 +1,4 @@
-import { toolResult, type ToolDefinition } from "@fitz/agent-pi";
+import { toolResult, type PiRunPlanPolicy, type ToolDefinition } from "@fitz/agent-pi";
 import type { AgentPlanItem, AgentRunPlan } from "@fitz/protocol";
 import type { SqliteStore } from "@fitz/storage";
 import { Type } from "typebox";
@@ -86,7 +86,7 @@ export function createAgentPlanTool(options: AgentPlanToolsOptions, context: { r
 
 export function planPromptInstruction(): string {
   return [
-    "SYSTEM: EXECUTION PLAN REQUIRED. Before any research, edits, shell commands, or delegation, call agent_plan with action=set.",
+    "SYSTEM: TOOL-WORK PLANNING. If the request can be answered directly without tools, answer normally and do not create a plan. Before any research, edits, shell commands, or delegation, call agent_plan with action=set.",
     "List every concrete prerequisite work item required to answer the request, with dependencies. Never add final synthesis, final-answer, or respond-to-user as an item; final synthesis is implicit and runtime-owned.",
     "Mark only independent, bounded tasks that can safely run alongside the main work as worker_eligible=true.",
     "The main agent must continue its own work after launching workers; workers are accelerators, never a blocking substitute for the main agent.",
@@ -96,6 +96,25 @@ export function planPromptInstruction(): string {
     "For claims about the current implementation, executable source and package manifests outrank design documents. Never claim a framework, runtime, test count, or architecture detail unless inspected code or a manifest supports it; label aspirational documentation as intended design.",
     "The final answer must be standalone. Never say that the answer appears above, was already delivered, or merely summarize an earlier hidden draft.",
   ].join(" ");
+}
+
+/** Makes durable planning conditional on actual tool work. A direct answer has
+ * no fake plan; the first attempted tool call flips the policy to mandatory and
+ * is held behind the normal plan-first admission gate. */
+export function createAgentRunPlanPolicy(store: SqliteStore, runId: string): PiRunPlanPolicy {
+  let required = Boolean(store.getAgentRunPlan(runId));
+  return {
+    initialInstruction: planPromptInstruction(),
+    required: () => required || Boolean(store.getAgentRunPlan(runId)),
+    admissionReason: (toolCall) => {
+      if (!store.getAgentRunPlan(runId) && toolCall.toolName !== AGENT_PLAN_TOOL) required = true;
+      if (toolCall.toolName === AGENT_PLAN_TOOL) required = true;
+      return planAdmissionReason(store, runId, toolCall);
+    },
+    completionIssue: () => required || store.getAgentRunPlan(runId) ? planCompletionIssue(store, runId) : undefined,
+    phase: () => store.getAgentRunPlan(runId)?.status ?? "missing",
+    completeAfterAnswer: () => undefined,
+  };
 }
 
 /** Runtime admission for the durable plan protocol. This is deliberately

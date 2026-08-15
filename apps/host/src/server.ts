@@ -38,7 +38,7 @@ import { createSubagentTool, isDelegatedToolContext, subagentRouteBudget } from 
 import type { AgentRunCoordinator } from "./agent-runs.js";
 import { LOCAL_OWNER_ID } from "./user-route-resolver.js";
 import { HostingService } from "./hosting-service.js";
-import { createAgentPlanTool, planAdmissionReason, planCompletionIssue, planPromptInstruction } from "./agent-plan-tools.js";
+import { createAgentPlanTool, createAgentRunPlanPolicy } from "./agent-plan-tools.js";
 import { rootAgentToolCallBudget } from "./agent-effort-policy.js";
 import type { Recipe, ResolvedAgentTopology } from "@fitz/protocol";
 
@@ -190,16 +190,7 @@ const runtime = createHost({
       toolLease: workspaceMutationLeases.acquire,
       redactToolResult: safety.createResultRedactor(),
       subagentBudget: (request, context) => subagentRouteBudget(store, context?.ownerUserId ?? LOCAL_OWNER_ID, request.model, request.effort ?? "normal", loadedLocalTopology),
-      runPlan: (_request, context) => context?.runId ? {
-        initialInstruction: planPromptInstruction(),
-        admissionReason: (toolCall) => planAdmissionReason(store, context.runId!, toolCall),
-        completionIssue: () => planCompletionIssue(store, context.runId!),
-        phase: () => store.getAgentRunPlan(context.runId!)?.status ?? "missing",
-        // Older in-memory agent-pi builds called this hook. Keep a no-op while
-        // dev processes roll between builds; AgentRunCoordinator owns the real
-        // post-persistence transition to `completed`.
-        completeAfterAnswer: () => undefined,
-      } : undefined,
+      runPlan: (_request, context) => context?.runId ? createAgentRunPlanPolicy(store, context.runId) : undefined,
       customTools: (context) => {
         const delegated = isDelegatedToolContext(store, context);
         const ownerUserId = (context.runId ? store.getAgentRun(context.runId)?.ownerUserId : undefined) ?? LOCAL_OWNER_ID;

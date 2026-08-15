@@ -21,6 +21,30 @@ describe("PiAgentRuntime", () => {
     expect(events).toEqual([{ type: "assistant.delta", text: "ready" }]);
   });
 
+  it("answers a direct conversational request without manufacturing a plan", async () => {
+    const prompts: string[] = [];
+    const runtime = new PiAgentRuntime({
+      runPlan: () => ({
+        initialInstruction: "PLAN ONLY BEFORE TOOL WORK",
+        required: () => false,
+        admissionReason: () => undefined,
+        completionIssue: () => undefined,
+        phase: () => "missing",
+      }),
+      createSession: async () => ({
+        subscribe: (listener) => { listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Hi!" } }); return () => undefined; },
+        prompt: async (prompt) => { prompts.push(prompt); },
+        steer: async () => undefined,
+        abort: async () => undefined,
+        dispose: () => undefined,
+      }),
+    });
+
+    const events = []; for await (const event of runtime.run({ model: "default", messages: [{ role: "user", content: "hi" }] })) events.push(event);
+    expect(prompts).toHaveLength(1);
+    expect(events).toEqual([{ type: "assistant.delta", text: "Hi!" }]);
+  });
+
   it("enforces plan-first tools and continues the model until the durable plan is complete", async () => {
     let planned = false; let ready = false; const prompts: string[] = [];
     const runtime = new PiAgentRuntime({

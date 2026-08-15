@@ -58,6 +58,8 @@ export type SubagentRoute = "default" | "fast" | "smart";
 export type SubagentRouteBudget = Readonly<Record<SubagentRoute, number>>;
 export interface PiRunPlanPolicy {
   initialInstruction: string;
+  /** False while a run can still answer directly without tool work. */
+  required?(): boolean;
   admissionReason(toolCall: PiToolCall): string | undefined;
   completionIssue(): string | undefined;
   phase(): "missing" | "active" | "ready_for_answer" | "completed";
@@ -211,6 +213,7 @@ export class PiAgentRuntime implements AgentRuntime {
     const parentSubagentBudget = request.delegation ? undefined : this.#subagentBudget?.(request, options);
     const delegation = new PiDelegationPolicy(request, parentSubagentBudget);
     const runPlan = request.delegation ? undefined : this.#runPlan?.(request, options);
+    const planRequired = () => runPlan ? (runPlan.required?.() ?? true) : false;
     const cancel = () => { controller.abort(); void session?.abort(); }; if (signal) { if (signal.aborted) cancel(); else signal.addEventListener("abort", cancel, { once: true }); }
     const cwd = typeof this.#cwd === "function" ? this.#cwd(request) : this.#cwd;
     const contextWindow = typeof this.#contextWindow === "function" ? this.#contextWindow(request, options) : this.#contextWindow;
@@ -298,6 +301,12 @@ export class PiAgentRuntime implements AgentRuntime {
       };
       const settlePlanOutputAfterPrompt = () => {
         if (!runPlan || planAnswerFinalized) return;
+        if (!planRequired() && runPlan.phase() === "missing") {
+          emitAssistant(bufferedAssistant, true);
+          bufferedAssistant = [];
+          finalizePlanAnswer();
+          return;
+        }
         if (runPlan.phase() === "ready_for_answer") {
           emitAssistant(bufferedAssistant, true);
           bufferedAssistant = [];
