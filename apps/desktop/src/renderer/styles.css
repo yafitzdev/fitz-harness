@@ -1,5 +1,6 @@
 @import "../ui/theme/tokens.css";
 @import "../ui/primitives/scroll-surface.css";
+@import "../ui/primitives/overlay-host.css";
 @import "../ui/primitives/action-menu.css";
 @import "../ui/chat/message-actions.css";
 @import "../ui/chat/activity-timeline.css";
@@ -81,7 +82,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .workspace-title svg { color: var(--muted); }
 .workspace-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 #task-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
-.popover { position: absolute; z-index: 18; padding: 4px; border: 0; border-radius: var(--radius-lg); background: var(--floating-surface); box-shadow: var(--elevation-stroke), var(--shadow-popover); backdrop-filter: blur(16px); }
+.popover { position: absolute; padding: 4px; border: 0; border-radius: var(--radius-lg); background: var(--floating-surface); box-shadow: var(--elevation-stroke), var(--shadow-popover); backdrop-filter: blur(16px); }
 .copy-button-text { display: inline-flex; align-items: center; gap: 5px; }
 .markdown-copy.copied { color: var(--text); }
 .menu-surface button { width: 100%; min-height: 32px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 8px; border-radius: 8px; outline: 0; background: transparent; color: var(--text); cursor: pointer; text-align: left; font-size: 13px; }
@@ -94,7 +95,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .menu-surface svg { width: 16px; height: 16px; flex: 0 0 auto; color: var(--muted); }
 .menu-label { flex: 1; }
 .menu-surface kbd { color: var(--subtle); font-family: inherit; font-size: 11px; line-height: 1.2; }
-.select-popover { position: fixed; z-index: 70; max-height: min(300px, calc(100vh - 16px)); overflow-y: auto; overscroll-behavior: contain; scrollbar-color: var(--grey-450) transparent; scrollbar-width: thin; }
+.select-popover { max-height: min(300px, calc(100vh - 16px)); overflow-y: auto; overscroll-behavior: contain; scrollbar-color: var(--grey-450) transparent; scrollbar-width: thin; }
 .select-popover .select-option { justify-content: flex-start; }
 .select-popover .select-option.selected::after { content: "✓"; margin-left: auto; color: var(--grey-850); font-size: 13px; }
 .select-group-label { display: block; padding: 5px 8px 3px; color: var(--subtle); font-size: 9px; }

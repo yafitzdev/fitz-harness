@@ -1,5 +1,6 @@
 import { ContextMenu } from "../primitives/context-menu.js";
 import { requiredElement, svgIcon } from "../primitives/dom.js";
+import type { OverlayHost } from "../primitives/overlay-host.js";
 
 export interface ProjectSidebarProject {
   id: string;
@@ -42,6 +43,7 @@ export interface ProjectSidebarOptions {
   /** The sidebar tree the controller renders standalone chats into. */
   chatsMount: HTMLElement;
   closePopovers: () => void;
+  overlayHost: OverlayHost;
   selectProject: (projectId: string) => void;
   selectSession: (sessionId: string, projectId?: string) => void;
   newChat: (projectId: string) => void;
@@ -97,7 +99,7 @@ export class ProjectSidebarController {
     const elements: ProjectSidebarElements = { pinnedTree: options.pinnedMount, pinnedSection: options.pinnedSection, tree: options.mount, chatsTree: options.chatsMount };
     this.#elements = elements;
     this.#menuElement = requiredElement("sidebar-context-menu");
-    this.#menu = new ContextMenu(this.#menuElement, options.closePopovers);
+    this.#menu = new ContextMenu(this.#menuElement, options.overlayHost, options.closePopovers, () => this.resetMenuToggles());
     this.#menuElement.addEventListener("click", (event) => event.stopPropagation());
     this.#createDialog = this.#buildCreateDialog();
     document.body.append(this.#createDialog.backdrop);
@@ -168,7 +170,7 @@ export class ProjectSidebarController {
     this.#saveSet("fitz-expanded-projects", this.#expandedProjects);
   }
 
-  hideMenu(): void { this.#menuElement.hidden = true; }
+  hideMenu(): void { this.#menu.close(); }
 
   resetMenuToggles(): void {
     for (const toggle of this.#elements.pinnedTree.querySelectorAll(".tree-menu-toggle")) toggle.setAttribute("aria-expanded", "false");

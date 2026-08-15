@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { OverlayHost } from "../primitives/overlay-host.js";
 import { ProjectSidebarController, type ProjectSidebarOptions, type ProjectSidebarState } from "./project-sidebar.js";
 
 function element<T extends HTMLElement>(tag: string, id?: string): T {
@@ -24,11 +25,12 @@ function setup() {
   pinnedSection.append(pinnedTree);
   const menuElement = element<HTMLElement>("div", "sidebar-context-menu");
   menuElement.hidden = true;
+  const overlayHost = new OverlayHost(document);
   const calls = {
     selectProject: vi.fn(), selectSession: vi.fn(), newChat: vi.fn(), openProjectPath: vi.fn(), createWorktree: vi.fn(), archiveProjectChats: vi.fn(), removeProject: vi.fn(), renameSession: vi.fn(), renameProject: vi.fn(), createProject: vi.fn(), chooseFolder: vi.fn(async () => undefined), onError: vi.fn(), archiveSession: vi.fn(), removeSession: vi.fn(), copyValue: vi.fn(), continueSession: vi.fn(), closePopovers: vi.fn(),
   };
-  const controller = new ProjectSidebarController({ mount: tree, pinnedMount: pinnedTree, pinnedSection, chatsMount: chatsTree, ...calls });
-  return { controller, tree, chatsTree, pinnedTree, pinnedSection, menuElement, calls };
+  const controller = new ProjectSidebarController({ mount: tree, pinnedMount: pinnedTree, pinnedSection, chatsMount: chatsTree, overlayHost, ...calls });
+  return { controller, tree, chatsTree, pinnedTree, pinnedSection, menuElement, calls, overlayHost };
 }
 
 function state(): ProjectSidebarState {
@@ -421,6 +423,7 @@ describe("ProjectSidebarController", () => {
       pinnedMount: element<HTMLElement>("nav", "pinned"),
       pinnedSection: element<HTMLElement>("section", "pinned-section"),
       chatsMount: element<HTMLElement>("nav", "chats"),
+      overlayHost: new OverlayHost(document),
       selectProject: vi.fn(), selectSession: vi.fn(), newChat: vi.fn(), openProjectPath: vi.fn(), createWorktree: vi.fn(), archiveProjectChats: vi.fn(), removeProject: vi.fn(), renameSession: vi.fn(), renameProject: vi.fn(), createProject: vi.fn(), chooseFolder: vi.fn(async () => undefined), onError: vi.fn(), archiveSession: vi.fn(), removeSession: vi.fn(), copyValue: vi.fn(), continueSession: vi.fn(), closePopovers: vi.fn(),
     };
     expect(() => new ProjectSidebarController(options)).toThrow("Missing #sidebar-context-menu");

@@ -12,6 +12,8 @@ const collapsibleSection = readFileSync(new URL("./ui/layout/collapsible-section
 const resizablePane = readFileSync(new URL("./ui/primitives/resizable-pane.ts", import.meta.url), "utf8");
 const customSelect = readFileSync(new URL("./ui/primitives/custom-select.ts", import.meta.url), "utf8");
 const contextMenu = readFileSync(new URL("./ui/primitives/context-menu.ts", import.meta.url), "utf8");
+const overlayHost = readFileSync(new URL("./ui/primitives/overlay-host.ts", import.meta.url), "utf8");
+const overlayHostCss = readFileSync(new URL("./ui/primitives/overlay-host.css", import.meta.url), "utf8");
 const messageActions = readFileSync(new URL("./ui/chat/message-actions.ts", import.meta.url), "utf8");
 const activityTimeline = readFileSync(new URL("./ui/chat/activity-timeline.ts", import.meta.url), "utf8");
 const toolActivity = readFileSync(new URL("./ui/chat/tool-activity.ts", import.meta.url), "utf8");
@@ -53,6 +55,7 @@ const tokensCss = readFileSync(new URL("./ui/theme/tokens.css", import.meta.url)
 const styles = [
   readFileSync(new URL("./renderer/styles.css", import.meta.url), "utf8"),
   tokensCss,
+  overlayHostCss,
   readFileSync(new URL("./ui/primitives/scroll-surface.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/message-actions.css", import.meta.url), "utf8"),
   readFileSync(new URL("./ui/chat/activity-timeline.css", import.meta.url), "utf8"),
@@ -638,9 +641,10 @@ describe("desktop renderer shell", () => {
     expect(promptSubmission).toContain("max_tokens: settings.maxTokens");
     expect(styles).toContain('.advanced-row[aria-expanded="true"] svg');
     expect(styles).toContain(".advanced-settings-panel");
-    expect(styles).toContain(".popover.model-menu { position: fixed; z-index: 1001; width: 286px;");
-    expect(composerControls).toContain("positionFixedPopover(elements.modelMenu, elements.modelToggle, 6)");
-    expect(composer).toContain("document.body.append(controlsElements.modelMenu)");
+    expect(styles).toContain(".popover.model-menu { width: 286px;");
+    expect(composerControls).toContain('placement: "auto-end"');
+    expect(composer).toContain("options.overlayHost.register");
+    expect(overlayHost).toContain("this.root.append(element)");
     expect(composer).toContain('id="model-menu-root"');
     expect(composerControls).toContain("this.elements.modelMenuRoot.hidden = true");
     expect(composerControls).toContain("this.showSettingsRoot()");
@@ -685,10 +689,10 @@ describe("desktop renderer shell", () => {
   });
 
   it("keeps every dropdown and overflow surface at the compact Codex menu density", () => {
-    expect(styles).toContain(".popover { position: absolute; z-index: 18; padding: 4px;");
+    expect(styles).toContain(".popover { position: absolute; padding: 4px;");
     expect(styles).toContain(".menu-surface button { width: 100%; min-height: 32px;");
     expect(styles).not.toContain(".app-menu-popover");
-    expect(styles).toContain(".sidebar-context-menu { position: fixed; z-index: 40; width: 242px;");
+    expect(styles).toContain(".sidebar-context-menu { width: 242px;");
     expect(styles).toContain(".access-mode-menu { left: 0; bottom: 34px; width: 250px;");
     expect(styles).toContain(".settings-submenu { width: 100%;");
     expect(styles).toContain(".composer-add-menu { left: 0; bottom: 36px; width: 250px;");
@@ -740,8 +744,10 @@ describe("desktop renderer shell", () => {
     expect(composerCss).toContain(".composer-halo { position: absolute; z-index: -1; inset: 0;");
     expect(composerCss).not.toContain("clip-path: inset(0 -120px -120px -120px)");
     expect(styles).toContain(".agent-plan-panel { position: relative; z-index: 31;");
-    expect(composerCss).toContain(".composer-card:has(.popover:not([hidden])) { z-index: 1000; }");
-    expect(composerCss).toContain(".composer-card .popover { z-index: 1001; }");
+    expect(composerCss).not.toContain(":has(.popover");
+    expect(overlayHostCss).toContain("z-index: var(--layer-overlay)");
+    expect(overlayHostCss).toContain("position: fixed !important");
+    expect(tokensCss).toContain("--layer-overlay: 1000");
     expect(composerCss).toContain(".composer-card { position: relative; z-index: 30; isolation: isolate; overflow: visible; border: 1px solid var(--new-chat-outline)");
     expect(composerCss).toContain("container-type: inline-size; container-name: composer;");
     expect(composerCss).not.toContain(".composer-card::before");
@@ -1156,7 +1162,7 @@ describe("desktop renderer shell", () => {
     expect(html).toContain('id="administration-sections"');
     expect(styles).toContain(".tool-policy");
     expect(html).toContain('id="select-popover"');
-    expect(renderer).toContain("new CustomSelectController(selectPopover, closePopovers)");
+    expect(renderer).toContain("new CustomSelectController(overlayHost, selectPopover, closePopovers)");
     expect(customSelect).toContain('document.querySelectorAll<HTMLSelectElement>("select").forEach(this.enhance)');
     expect(customSelect).toContain("open(select: HTMLSelectElement");
     expect(styles).toContain(".select-popover .select-option.selected::after");

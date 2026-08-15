@@ -1,3 +1,5 @@
+import type { OverlayHost } from "./overlay-host.js";
+
 export interface ContextMenuItem {
   label: string;
   action: () => void;
@@ -11,12 +13,14 @@ export class ContextMenu {
   readonly #element: HTMLElement;
   readonly #beforeAction: () => void;
 
-  constructor(element: HTMLElement, beforeAction: () => void) {
+  constructor(element: HTMLElement, private readonly overlayHost: OverlayHost, beforeAction: () => void, onClose?: () => void) {
     this.#element = element;
     this.#beforeAction = beforeAction;
+    overlayHost.register(element, onClose);
   }
 
   reset(): void { this.#element.replaceChildren(); }
+  close(): void { this.overlayHost.close(this.#element); }
 
   add(item: ContextMenuItem): HTMLButtonElement {
     const button = document.createElement("button");
@@ -36,11 +40,7 @@ export class ContextMenu {
   separator(): void { this.#element.append(document.createElement("hr")); }
 
   openBeside(anchor: HTMLElement, gap = 4): void {
-    const anchorRect = anchor.getBoundingClientRect();
-    this.#element.hidden = false;
-    const bounds = this.#element.getBoundingClientRect();
-    this.#element.style.left = `${Math.max(8, Math.min(anchorRect.right + gap, window.innerWidth - bounds.width - 8))}px`;
-    this.#element.style.top = `${Math.max(8, Math.min(anchorRect.top, window.innerHeight - bounds.height - 8))}px`;
+    this.overlayHost.open(this.#element, { anchor, placement: "beside-end", gap });
   }
 
   #icon(markup: string): SVGElement {

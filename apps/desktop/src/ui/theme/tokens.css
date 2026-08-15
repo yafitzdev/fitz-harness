@@ -136,6 +136,8 @@
   --mask-solid: #000000;
   --row-outline: rgba(255,255,255,.11);
   --row-outline-hover: rgba(255,255,255,.28);
+  --layer-overlay: 1000;
+  --layer-overlay-surface: 1;
   --shadow-chat-rest: 0 -3px 24px rgba(69,140,230,.09), 0 4px 56px rgba(69,140,230,.13), 0 12px 104px rgba(69,140,230,.08);
   --shadow-chat-bloom: 0 2px 32px rgba(69,140,230,.14), 0 10px 72px rgba(69,140,230,.19), 0 18px 126px rgba(69,140,230,.115);
   --shadow-new-chat: 0 -2px 26px rgba(69,140,230,.13), 0 5px 62px rgba(69,140,230,.18), 0 14px 116px rgba(69,140,230,.115);

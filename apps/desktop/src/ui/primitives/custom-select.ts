@@ -1,11 +1,17 @@
+import type { OverlayHost } from "./overlay-host.js";
+
 export class CustomSelectController {
   readonly #popover: HTMLElement;
   readonly #beforeOpen: () => void;
   #active: HTMLSelectElement | undefined;
 
-  constructor(popover: HTMLElement, beforeOpen: () => void) {
+  constructor(private readonly overlayHost: OverlayHost, popover: HTMLElement, beforeOpen: () => void) {
     this.#popover = popover;
     this.#beforeOpen = beforeOpen;
+    overlayHost.register(popover, () => {
+      this.#active?.setAttribute("aria-expanded", "false");
+      this.#active = undefined;
+    });
     document.querySelectorAll<HTMLSelectElement>("select").forEach(this.enhance);
     new MutationObserver((records) => {
       for (const record of records) for (const node of record.addedNodes) {
@@ -35,7 +41,7 @@ export class CustomSelectController {
   };
 
   open(select: HTMLSelectElement, focusSelection = false): void {
-    const reopening = this.#active === select && !this.#popover.hidden;
+    const reopening = this.#active === select && this.overlayHost.isOpen(this.#popover);
     this.#beforeOpen();
     if (reopening) return;
     this.#active = select;
@@ -53,21 +59,14 @@ export class CustomSelectController {
       button.addEventListener("click", (event) => { event.stopPropagation(); select.value = option.value; select.dispatchEvent(new Event("change", { bubbles: true })); this.close(); select.focus(); });
       this.#popover.append(button);
     }
-    const rect = select.getBoundingClientRect();
-    const width = Math.max(150, rect.width);
+    const width = Math.max(150, select.getBoundingClientRect().width);
     this.#popover.style.width = `${width}px`;
-    this.#popover.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
-    this.#popover.style.top = `${rect.bottom + 5}px`;
-    this.#popover.hidden = false;
-    const menuRect = this.#popover.getBoundingClientRect();
-    if (menuRect.bottom > window.innerHeight - 8 && rect.top > menuRect.height + 12) this.#popover.style.top = `${Math.max(8, rect.top - menuRect.height - 5)}px`;
+    this.overlayHost.open(this.#popover, { anchor: select, placement: "auto-start", gap: 5 });
     if (focusSelection) queueMicrotask(() => (selectedButton ?? this.#popover.querySelector<HTMLButtonElement>("button:not(:disabled)"))?.focus());
   }
 
   close(): void {
-    this.#active?.setAttribute("aria-expanded", "false");
-    this.#active = undefined;
-    this.#popover.hidden = true;
+    this.overlayHost.close(this.#popover);
   }
 
   readonly #handleMenuKeydown = (event: KeyboardEvent): void => {

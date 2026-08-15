@@ -1,0 +1,2 @@
+.overlay-host { position: fixed; z-index: var(--layer-overlay); inset: 0; overflow: visible; pointer-events: none; isolation: isolate; }
+.overlay-host > .overlay-surface { position: fixed !important; z-index: var(--layer-overlay-surface) !important; right: auto !important; bottom: auto !important; transform: none !important; pointer-events: auto; }

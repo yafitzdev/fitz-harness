@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { OverlayHost } from "../primitives/overlay-host.js";
 import { Composer, type ComposerOptions } from "./composer.js";
 import { ComposerControls } from "./composer-controls.js";
 
@@ -14,7 +15,9 @@ function setup(overrides: Partial<ComposerOptions> = {}) {
   globalThis.localStorage = memoryStorage() as unknown as Storage;
   const mount = document.createElement("div");
   document.body.append(mount);
+  const overlayHost = new OverlayHost(document);
   const calls = {
+    overlayHost,
     getProjectRoot: () => "/repo",
     bridge: {
       gitBranches: vi.fn(async () => ({ current: "main", branches: ["main", "dev"] })),
@@ -37,7 +40,7 @@ function setup(overrides: Partial<ComposerOptions> = {}) {
     ...overrides,
   };
   const composer = new Composer({ mount, ...calls });
-  return { composer, calls, mount };
+  return { composer, calls, mount, overlayHost };
 }
 
 function promptOf(composer: Composer): HTMLTextAreaElement {
@@ -63,7 +66,7 @@ beforeEach(() => document.body.replaceChildren());
 
 describe("Composer", () => {
   it("renders the composer template into its mount and owns its controls", () => {
-    const { composer, mount } = setup();
+    const { composer, mount, overlayHost } = setup();
     expect(composer.root.className).toBe("composer-dock");
     expect(mount.contains(composer.root)).toBe(true);
     expect(composer.scrollButton.id).toBe("scroll-to-bottom");
@@ -71,7 +74,7 @@ describe("Composer", () => {
     expect(promptOf(composer)).toBeTruthy();
     expect(composer.root.querySelector<HTMLFormElement>("#composer")).toBeTruthy();
     expect(composer.root.querySelector("#model-menu")).toBeNull();
-    expect(document.body.querySelector("#model-menu")).toBeTruthy();
+    expect(overlayHost.root.querySelector("#model-menu")).toBeTruthy();
     expect(composer.root.querySelector<HTMLElement>(".new-chat-heading")!.textContent).toBe("What should we build?");
     expect(composer.root.querySelector("#composer > .composer-halo")).toBeTruthy();
     expect(composer.root.querySelector("#composer > .composer-outline-shine")).toBeTruthy();
@@ -279,9 +282,9 @@ describe("Composer", () => {
     const { composer, calls } = setup();
     composer.setState({ ready: true, running: false, hasSession: true });
     click(composer.root.querySelector<HTMLButtonElement>("#attach")!);
-    expect(composer.root.querySelector<HTMLElement>("#composer-add-menu")!.hidden).toBe(false);
+    expect(document.querySelector<HTMLElement>("#composer-add-menu")!.hidden).toBe(false);
     expect(calls.onAttach).not.toHaveBeenCalled();
-    click(composer.root.querySelector<HTMLButtonElement>("#upload-file")!);
+    click(document.querySelector<HTMLButtonElement>("#upload-file")!);
     expect(calls.onAttach).toHaveBeenCalled();
   });
 
@@ -289,8 +292,8 @@ describe("Composer", () => {
     const { composer, calls } = setup();
     composer.setState({ ready: true, running: false, hasSession: true });
     click(composer.root.querySelector<HTMLButtonElement>("#attach")!);
-    expect([...composer.root.querySelectorAll<HTMLElement>("[data-composer-command]")].map((item) => item.dataset.composerCommand)).toEqual(["image", "video", "audio"]);
-    click(composer.root.querySelector<HTMLButtonElement>('[data-composer-command="audio"]')!);
+    expect([...document.querySelectorAll<HTMLElement>("[data-composer-command]")].map((item) => item.dataset.composerCommand)).toEqual(["image", "video", "audio"]);
+    click(document.querySelector<HTMLButtonElement>('[data-composer-command="audio"]')!);
     expect(composer.submission).toEqual({ content: "", mediaCommand: "audio" });
     expect(composer.root.querySelector<HTMLElement>("#media-command-tag")!.textContent).toBe("audio");
     expect(calls.onValueChange).toHaveBeenCalledWith("");
@@ -388,7 +391,7 @@ describe("Composer", () => {
     const branchControl = composer.root.querySelector<HTMLButtonElement>("#new-chat-branch-control")!;
     click(branchControl);
     await vi.waitFor(() => expect(calls.bridge.gitBranches).toHaveBeenCalledWith("/repo"));
-    const list = composer.root.querySelector<HTMLElement>("#branch-list")!;
+    const list = document.querySelector<HTMLElement>("#branch-list")!;
     await vi.waitFor(() => expect(list.querySelectorAll("button").length).toBe(2));
     const labels = [...list.querySelectorAll("button span")].map((node) => node.textContent);
     expect(labels).toEqual(["main", "dev"]);
@@ -399,38 +402,38 @@ describe("Composer", () => {
     click(devButton);
     await vi.waitFor(() => expect(calls.bridge.checkoutBranch).toHaveBeenCalledWith("/repo", "dev"));
     await vi.waitFor(() => expect(label.textContent).toBe("dev"));
-    expect(composer.root.querySelector<HTMLElement>("#new-chat-branch-menu")!.hidden).toBe(true);
+    expect(document.querySelector<HTMLElement>("#new-chat-branch-menu")!.hidden).toBe(true);
   });
 
   it("creates and checkouts a new branch from the branch menu", async () => {
     const { composer, calls } = setup();
     click(composer.root.querySelector<HTMLButtonElement>("#new-chat-branch-control")!);
     await vi.waitFor(() => expect(calls.bridge.gitBranches).toHaveBeenCalled());
-    click(composer.root.querySelector<HTMLButtonElement>("#show-create-branch")!);
-    type(composer.root.querySelector<HTMLInputElement>("#new-branch-name")!, "feature/foo");
-    click(composer.root.querySelector<HTMLButtonElement>("#create-branch-submit")!);
+    click(document.querySelector<HTMLButtonElement>("#show-create-branch")!);
+    type(document.querySelector<HTMLInputElement>("#new-branch-name")!, "feature/foo");
+    click(document.querySelector<HTMLButtonElement>("#create-branch-submit")!);
     await vi.waitFor(() => expect(calls.bridge.createBranch).toHaveBeenCalledWith("/repo", "feature/foo"));
     expect(composer.root.querySelector<HTMLElement>("#new-chat-branch-label")!.textContent).toBe("feature");
-    expect(composer.root.querySelector<HTMLElement>("#new-chat-branch-menu")!.hidden).toBe(true);
+    expect(document.querySelector<HTMLElement>("#new-chat-branch-menu")!.hidden).toBe(true);
   });
 
   it("creates a worktree and reports the new root back to the renderer", async () => {
     const { composer, calls } = setup();
     composer.openWorktreeSetup();
-    expect(composer.root.querySelector<HTMLElement>("#create-worktree-form")!.hidden).toBe(false);
-    type(composer.root.querySelector<HTMLInputElement>("#new-worktree-branch")!, "wt/isolated");
-    click(composer.root.querySelector<HTMLButtonElement>("#create-worktree-submit")!);
+    expect(document.querySelector<HTMLElement>("#create-worktree-form")!.hidden).toBe(false);
+    type(document.querySelector<HTMLInputElement>("#new-worktree-branch")!, "wt/isolated");
+    click(document.querySelector<HTMLButtonElement>("#create-worktree-submit")!);
     await vi.waitFor(() => expect(calls.bridge.createWorktree).toHaveBeenCalledWith("/repo", "wt/isolated"));
     await vi.waitFor(() => expect(calls.onWorktreeCreated).toHaveBeenCalledWith("/repo-wt", "wt-branch"));
     expect(composer.root.querySelector<HTMLElement>("#new-chat-branch-label")!.textContent).toBe("wt-branch");
-    expect(composer.root.querySelector<HTMLElement>("#new-chat-environment-menu")!.hidden).toBe(true);
+    expect(document.querySelector<HTMLElement>("#new-chat-environment-menu")!.hidden).toBe(true);
   });
 
   it("reveals the worktree form from the environment menu", () => {
     const { composer } = setup();
     click(composer.root.querySelector<HTMLButtonElement>("#new-chat-environment-control")!);
-    click(composer.root.querySelector<HTMLButtonElement>('[data-environment-choice="worktree"]')!);
-    expect(composer.root.querySelector<HTMLElement>("#create-worktree-form")!.hidden).toBe(false);
+    click(document.querySelector<HTMLButtonElement>('[data-environment-choice="worktree"]')!);
+    expect(document.querySelector<HTMLElement>("#create-worktree-form")!.hidden).toBe(false);
   });
 
   it("shows and hides the new-chat context strip", () => {
@@ -483,13 +486,13 @@ describe("Composer", () => {
   it("closes every composer-owned popover", () => {
     const { composer } = setup();
     click(composer.root.querySelector<HTMLButtonElement>("#new-chat-environment-control")!);
-    expect(composer.root.querySelector<HTMLElement>("#new-chat-environment-menu")!.hidden).toBe(false);
+    expect(document.querySelector<HTMLElement>("#new-chat-environment-menu")!.hidden).toBe(false);
     click(composer.root.querySelector<HTMLButtonElement>("#new-chat-branch-control")!);
-    expect(composer.root.querySelector<HTMLElement>("#new-chat-branch-menu")!.hidden).toBe(false);
+    expect(document.querySelector<HTMLElement>("#new-chat-branch-menu")!.hidden).toBe(false);
 
     composer.closePopovers();
-    expect(composer.root.querySelector<HTMLElement>("#new-chat-environment-menu")!.hidden).toBe(true);
-    expect(composer.root.querySelector<HTMLElement>("#new-chat-branch-menu")!.hidden).toBe(true);
+    expect(document.querySelector<HTMLElement>("#new-chat-environment-menu")!.hidden).toBe(true);
+    expect(document.querySelector<HTMLElement>("#new-chat-branch-menu")!.hidden).toBe(true);
     expect(composer.root.querySelector<HTMLButtonElement>("#new-chat-environment-control")!.getAttribute("aria-expanded")).toBe("false");
     expect(composer.root.querySelector<HTMLButtonElement>("#new-chat-branch-control")!.getAttribute("aria-expanded")).toBe("false");
   });

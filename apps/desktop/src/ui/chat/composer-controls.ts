@@ -1,4 +1,4 @@
-import { positionFixedPopover, togglePopover } from "../primitives/popover.js";
+import type { OverlayHost } from "../primitives/overlay-host.js";
 import type { AgentEffort, AgentTopologyPresentation } from "@fitz/protocol";
 
 export type AccessMode = "full" | "ask" | "read-only";
@@ -48,6 +48,7 @@ export interface ComposerControlsOptions {
   onRouteChange: (routeId: string) => void;
   onEffortChange?: (effort: AgentEffort) => void;
   onCompact: () => void | Promise<void>;
+  overlayHost: OverlayHost;
   storage?: Pick<Storage, "getItem" | "setItem">;
 }
 
@@ -75,6 +76,9 @@ export class ComposerControls {
     this.options = options;
     this.storage = options.storage ?? localStorage;
     this.mode = this.storedAccessMode();
+    options.overlayHost.register(elements.modelMenu, () => elements.modelToggle.setAttribute("aria-expanded", "false"));
+    options.overlayHost.register(elements.contextUsagePopover, () => elements.contextMeter.setAttribute("aria-expanded", "false"));
+    options.overlayHost.register(elements.accessModeMenu, () => elements.accessModeToggle.setAttribute("aria-expanded", "false"));
     this.bind();
     this.restoreTemperature();
     this.renderAccessMode();
@@ -171,8 +175,7 @@ export class ComposerControls {
   }
 
   openContextUsage(): void {
-    this.options.closeAllPopovers();
-    this.elements.contextUsagePopover.hidden = false;
+    this.options.overlayHost.open(this.elements.contextUsagePopover, { anchor: this.elements.contextMeter, placement: "above-center", gap: 10 });
     this.elements.contextMeter.setAttribute("aria-expanded", "true");
   }
 
@@ -188,12 +191,12 @@ export class ComposerControls {
   }
 
   closePopovers(): void {
-    this.elements.modelMenu.hidden = true;
+    this.options.overlayHost.close(this.elements.modelMenu);
     this.elements.settingsSubmenu.hidden = true;
     this.elements.modelMenuRoot.hidden = false;
     this.elements.advancedSettingsPanel.hidden = true;
-    this.elements.contextUsagePopover.hidden = true;
-    this.elements.accessModeMenu.hidden = true;
+    this.options.overlayHost.close(this.elements.contextUsagePopover);
+    this.options.overlayHost.close(this.elements.accessModeMenu);
     this.elements.modelToggle.setAttribute("aria-expanded", "false");
     this.elements.advancedSettings.setAttribute("aria-expanded", "false");
     this.elements.contextMeter.setAttribute("aria-expanded", "false");
@@ -211,20 +214,21 @@ export class ComposerControls {
     elements.modelToggle.addEventListener("click", (event) => {
       event.stopPropagation();
       this.showSettingsRoot();
-      const opening = elements.modelMenu.hidden;
-      togglePopover(elements.modelMenu, elements.modelToggle, this.options.closeAllPopovers);
-      if (opening) positionFixedPopover(elements.modelMenu, elements.modelToggle, 6);
+      const opening = this.options.overlayHost.toggle(elements.modelMenu, { anchor: elements.modelToggle, placement: "auto-end", gap: 6 });
+      elements.modelToggle.setAttribute("aria-expanded", String(opening));
     });
     elements.modelMenu.addEventListener("click", (event) => event.stopPropagation());
     elements.contextMeter.addEventListener("click", (event) => {
       event.stopPropagation();
-      togglePopover(elements.contextUsagePopover, elements.contextMeter, this.options.closeAllPopovers);
+      if (this.options.overlayHost.isOpen(elements.contextUsagePopover)) this.options.overlayHost.close(elements.contextUsagePopover);
+      else this.openContextUsage();
     });
     elements.contextUsagePopover.addEventListener("click", (event) => event.stopPropagation());
     elements.contextCompactButton.addEventListener("click", () => void this.options.onCompact());
     elements.accessModeToggle.addEventListener("click", (event) => {
       event.stopPropagation();
-      togglePopover(elements.accessModeMenu, elements.accessModeToggle, this.options.closeAllPopovers);
+      const opening = this.options.overlayHost.toggle(elements.accessModeMenu, { anchor: elements.accessModeToggle, placement: "above-start", gap: 6 });
+      elements.accessModeToggle.setAttribute("aria-expanded", String(opening));
     });
     elements.accessModeMenu.addEventListener("click", (event) => event.stopPropagation());
     for (const choice of elements.accessModeChoices) choice.addEventListener("click", () => this.setAccessMode(choice.dataset.accessMode as AccessMode));

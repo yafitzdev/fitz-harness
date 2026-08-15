@@ -30,6 +30,7 @@ import type { ActionStatusTone } from "./ui/primitives/action-status.js";
 import { requiredElement as element, requiredQuery as query, svgIcon as svg, textBlock } from "./ui/primitives/dom.js";
 import { suppressNativeTooltips } from "./ui/primitives/native-tooltip-policy.js";
 import { ResizablePane } from "./ui/primitives/resizable-pane.js";
+import { OverlayHost } from "./ui/primitives/overlay-host.js";
 import { PluginsPageController } from "./ui/plugins/plugins-page.js";
 import { ModelsPageController } from "./ui/models/models-page.js";
 import { AdministrationPageController } from "./ui/administration/administration-page.js";
@@ -83,6 +84,7 @@ const hostConnectionApiKey = element("host-connection-api-key") as HTMLInputElem
 const setupLocalHost = element("setup-local-host") as HTMLButtonElement;
 const pairingDescription = element("pairing-description");
 const pairingError = element("pairing-error");
+const overlayHost = new OverlayHost(document);
 const administrationPage = element("administration-page");
 const administrationButton = element("manage-administration") as HTMLButtonElement;
 
@@ -172,6 +174,7 @@ closeBrowserPreview = () => inAppBrowser.close();
 syncBrowserPreview = () => inAppBrowser.syncBounds();
 const composer = new Composer({
   mount: workspace,
+  overlayHost,
   getProjectRoot: () => String(projects?.activeProject()?.rootPath ?? "") || undefined,
   bridge: window.fitz,
   closeAllPopovers: closePopovers,
@@ -235,12 +238,13 @@ const conversationContext = new ConversationContextController({
 });
 conversationLayout = new ConversationLayout({ workspace, messages, composer: composer.root, scrollButton: composer.scrollButton, inspectorWidth: () => inspectorPanel.width() });
 adaptiveWorkspace = new AdaptiveWorkspace({ shell, workspace, onLayoutChange: () => conversationLayout?.sync() });
-const customSelects = new CustomSelectController(selectPopover, closePopovers);
+new CustomSelectController(overlayHost, selectPopover, closePopovers);
 const projectSidebar = new ProjectSidebarController({
   mount: element("projects"),
   pinnedMount: element("pinned"),
   pinnedSection: element("pinned-section"),
   chatsMount: element("chats"),
+  overlayHost,
   closePopovers,
   selectProject: (projectId) => void projects.selectProject(projectId),
   selectSession: (sessionId, projectId) => void projects.selectSession(sessionId, true, projectId),
@@ -1019,9 +1023,8 @@ function handleRouteChange(): void {
 }
 
 function closePopovers(): void {
-  customSelects.close();
+  overlayHost.closeAll();
   composer.closePopovers();
-  projectSidebar.hideMenu();
   projectSidebar.resetMenuToggles();
 }
 

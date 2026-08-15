@@ -51,7 +51,7 @@
 .tree-form-danger { background: var(--status-danger-strong); color: var(--text); font-weight: 600; }
 .tree-confirm-row { display: grid; gap: 6px; padding: 8px; border-radius: var(--radius-lg); background: var(--tint-2); }
 .tree-confirm-copy { color: var(--text); font-size: 12.5px; line-height: 1.4; }
-.sidebar-context-menu { position: fixed; z-index: 40; width: 242px; }
+.sidebar-context-menu { width: 242px; }
 .create-project-backdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px; background: var(--backdrop); backdrop-filter: blur(4px); }
 .create-project-dialog { width: min(400px, 100%); display: grid; gap: 14px; padding: 22px; border: 0; border-radius: var(--radius-2xl); background: var(--floating-surface); box-shadow: var(--elevation-stroke), var(--shadow-popover); }
 .create-project-dialog h2 { margin: 0; color: var(--text); font-size: 16px; font-weight: 650; }

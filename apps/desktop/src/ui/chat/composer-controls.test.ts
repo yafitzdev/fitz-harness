@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { OverlayHost } from "../primitives/overlay-host.js";
 import { ComposerControls, type ComposerControlsElements } from "./composer-controls.js";
 
 function node<T extends HTMLElement>(tag: string): T {
@@ -54,8 +55,9 @@ function setup(storage = memoryStorage()) {
   elements.temperature.max = "2";
   elements.temperature.step = "0.1";
   const calls = { closeAllPopovers: vi.fn(), onRouteChange: vi.fn(), onEffortChange: vi.fn(), onCompact: vi.fn() };
-  const controls = new ComposerControls(elements, { ...calls, storage });
-  return { controls, elements, calls };
+  const overlayHost = new OverlayHost(document);
+  const controls = new ComposerControls(elements, { ...calls, storage, overlayHost });
+  return { controls, elements, calls, overlayHost };
 }
 
 function click(target: Element): void { target.dispatchEvent(new MouseEvent("click", { bubbles: true })); }
@@ -190,12 +192,13 @@ describe("ComposerControls", () => {
 
   it("positions the route and effort menu in the fixed top overlay", () => {
     const { elements } = setup();
-    elements.modelToggle.getBoundingClientRect = () => ({ left: 100, right: 220, top: 300, bottom: 330, width: 120, height: 30, x: 100, y: 300, toJSON: () => ({}) });
+    elements.modelToggle.getBoundingClientRect = () => ({ left: 500, right: 620, top: 300, bottom: 330, width: 120, height: 30, x: 500, y: 300, toJSON: () => ({}) });
+    elements.modelMenu.getBoundingClientRect = () => ({ left: 0, right: 286, top: 0, bottom: 180, width: 286, height: 180, x: 0, y: 0, toJSON: () => ({}) });
 
     click(elements.modelToggle);
 
     expect(elements.modelMenu.hidden).toBe(false);
-    expect(elements.modelMenu.style.left).toBe("100px");
+    expect(elements.modelMenu.style.left).toBe("334px");
     expect(elements.modelMenu.style.top).toBe("336px");
   });
 });

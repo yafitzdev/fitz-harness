@@ -1,6 +1,6 @@
 import { ComposerControls, type ComposerControlsElements } from "./composer-controls.js";
 import { svgIcon as svg, textBlock } from "../primitives/dom.js";
-import { togglePopover } from "../primitives/popover.js";
+import type { OverlayHost } from "../primitives/overlay-host.js";
 import type { DesktopBridge } from "../../preload.js";
 import type { MediaModality } from "@fitz/protocol";
 
@@ -12,6 +12,7 @@ export interface ComposerOptions {
   getProjectRoot: () => string | undefined;
   bridge: Pick<DesktopBridge, "gitBranches" | "checkoutBranch" | "createBranch" | "createWorktree">;
   closeAllPopovers: () => void;
+  overlayHost: OverlayHost;
   onRouteChange: () => void;
   onEffortChange?: () => void;
   onCompact: () => void | Promise<void>;
@@ -200,14 +201,17 @@ export class Composer {
     this.prompt = this.el<HTMLTextAreaElement>("#prompt");
     this.mediaCommandTag = this.el<HTMLButtonElement>("#media-command-tag");
     const controlsElements = this.controlsElements();
-    document.body.append(controlsElements.modelMenu);
     this.controls = new ComposerControls(controlsElements, {
       closeAllPopovers: options.closeAllPopovers,
       onRouteChange: options.onRouteChange,
       onEffortChange: () => options.onEffortChange?.(),
       onCompact: options.onCompact,
+      overlayHost: options.overlayHost,
     });
     this.bind();
+    options.overlayHost.register(this.addMenu, () => this.attachButton.setAttribute("aria-expanded", "false"));
+    options.overlayHost.register(this.newChatEnvironmentMenu, () => this.newChatEnvironmentControl.setAttribute("aria-expanded", "false"));
+    options.overlayHost.register(this.newChatBranchMenu, () => this.newChatBranchControl.setAttribute("aria-expanded", "false"));
   }
 
   get value(): string { return this.prompt.value; }
@@ -302,7 +306,7 @@ export class Composer {
   }
 
   openWorktreeSetup(): void {
-    this.newChatEnvironmentMenu.hidden = false;
+    this.options.overlayHost.open(this.newChatEnvironmentMenu, { anchor: this.newChatEnvironmentControl, placement: "above-start", gap: 8 });
     this.newChatEnvironmentControl.setAttribute("aria-expanded", "true");
     this.createWorktreeForm.hidden = false;
     this.newWorktreeBranch.focus();
@@ -368,10 +372,10 @@ export class Composer {
 
   closePopovers(): void {
     this.controls.closePopovers();
-    this.addMenu.hidden = true;
+    this.options.overlayHost.close(this.addMenu);
     this.attachButton.setAttribute("aria-expanded", "false");
-    this.newChatEnvironmentMenu.hidden = true;
-    this.newChatBranchMenu.hidden = true;
+    this.options.overlayHost.close(this.newChatEnvironmentMenu);
+    this.options.overlayHost.close(this.newChatBranchMenu);
     this.newChatEnvironmentControl.setAttribute("aria-expanded", "false");
     this.newChatBranchControl.setAttribute("aria-expanded", "false");
   }
@@ -453,7 +457,8 @@ export class Composer {
     });
     this.attachButton.addEventListener("click", (event) => {
       event.stopPropagation();
-      togglePopover(this.addMenu, this.attachButton, this.options.closeAllPopovers);
+      const opening = this.options.overlayHost.toggle(this.addMenu, { anchor: this.attachButton, placement: "above-start", gap: 6 });
+      this.attachButton.setAttribute("aria-expanded", String(opening));
     });
     this.addMenu.addEventListener("click", (event) => event.stopPropagation());
     for (const command of this.root.querySelectorAll<HTMLButtonElement>("[data-composer-command]")) command.addEventListener("click", () => {
@@ -478,7 +483,8 @@ export class Composer {
     });
     this.newChatEnvironmentControl.addEventListener("click", (event) => {
       event.stopPropagation();
-      togglePopover(this.newChatEnvironmentMenu, this.newChatEnvironmentControl, this.options.closeAllPopovers);
+      const opening = this.options.overlayHost.toggle(this.newChatEnvironmentMenu, { anchor: this.newChatEnvironmentControl, placement: "above-start", gap: 8 });
+      this.newChatEnvironmentControl.setAttribute("aria-expanded", String(opening));
     });
     this.newChatBranchControl.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -665,10 +671,10 @@ export class Composer {
   }
 
   private async openBranchMenu(): Promise<void> {
-    const opening = this.newChatBranchMenu.hidden;
+    const opening = !this.options.overlayHost.isOpen(this.newChatBranchMenu);
     this.closePopovers();
     if (!opening) return;
-    this.newChatBranchMenu.hidden = false;
+    this.options.overlayHost.open(this.newChatBranchMenu, { anchor: this.newChatBranchControl, placement: "above-center", gap: 8 });
     this.newChatBranchControl.setAttribute("aria-expanded", "true");
     this.branchSearch.value = "";
     this.showCreateBranch.hidden = false;
