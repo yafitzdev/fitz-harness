@@ -68,6 +68,50 @@ describe("NInferEngineAdapter launch contract", () => {
     expect(spec.args).not.toContain("--no-thinking");
   });
 
+  it("reports the KV capacity selected by the loaded engine", async () => {
+    const recipe = buildCurrentNInferRecipe(
+      "qwen38-vision",
+      "qwen3.8-27b",
+      "/models/ninfer/qwen3_8_27b.ninfer",
+      3,
+      "/engines/ninfer/ninfer-serve",
+      { maxContext: 131_072, kvCapacity: "auto", maxConcurrency: 3 },
+    );
+    const adapter = new NInferEngineAdapter({
+      validatePaths: false,
+      fetch: async () => new Response(JSON.stringify({ engine: { kv_capacity: 272_320 } }), { status: 200 }),
+    });
+    const instance = {
+      baseUrl: "http://127.0.0.1:19001",
+      apiKey: "secret",
+      logs: [],
+    } as unknown as NInferInstanceHandle;
+
+    await expect(adapter.contextCapacity(instance, recipe)).resolves.toBe(272_320);
+  });
+
+  it("falls back to the engine startup record when health omits capacity", async () => {
+    const recipe = buildCurrentNInferRecipe(
+      "qwen38-vision",
+      "qwen3.8-27b",
+      "/models/ninfer/qwen3_8_27b.ninfer",
+      3,
+      "/engines/ninfer/ninfer-serve",
+      { maxContext: 131_072, kvCapacity: "auto", maxConcurrency: 3 },
+    );
+    const adapter = new NInferEngineAdapter({
+      validatePaths: false,
+      fetch: async () => new Response(JSON.stringify({ status: "ok" }), { status: 200 }),
+    });
+    const instance = {
+      baseUrl: "http://127.0.0.1:19001",
+      apiKey: "secret",
+      logs: ['stdout: {"event":"server_start","engine":{"kv_capacity":272320,"kv_capacity_mode":"auto"}}'],
+    } as unknown as NInferInstanceHandle;
+
+    await expect(adapter.contextCapacity(instance, recipe)).resolves.toBe(272_320);
+  });
+
   it("rejects extra arguments that override Fitz-owned process controls", () => {
     const recipe = buildCurrentNInferRecipe("bad", "bad", "/model.ninfer", 4, "/ninfer-serve");
     recipe.configuration = { ...recipe.configuration, extraArgs: ["--api-key=leak"] };

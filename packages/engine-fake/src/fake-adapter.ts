@@ -119,6 +119,10 @@ export class FakeEngineAdapter implements EngineAdapter<FakeInstanceHandle> {
     return { modelId: instance.modelId, baseUrl: instance.baseUrl };
   }
 
+  async contextCapacity(_instance: FakeInstanceHandle, recipe: Recipe): Promise<number> {
+    return recipe.contextTokens;
+  }
+
   async *streamChat(
     instance: FakeInstanceHandle,
     request: InferenceRequest,

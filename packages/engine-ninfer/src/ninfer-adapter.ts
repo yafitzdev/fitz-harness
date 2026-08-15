@@ -229,6 +229,19 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
     );
   }
 
+  async contextCapacity(instance: NInferInstanceHandle, recipe: Recipe): Promise<number | undefined> {
+    const configured = readNInferConfiguration(recipe).kvCapacity;
+    if (typeof configured === "number") return configured;
+    try {
+      const response = await this.#fetch(`${instance.baseUrl}/health`, { headers: authorization(instance.apiKey) });
+      if (response.ok) {
+        const reported = findContextCapacity(await response.json());
+        if (reported !== undefined) return reported;
+      }
+    } catch { /* Older NInfer health payloads do not expose capacity. */ }
+    return capacityFromLogs(instance.logs);
+  }
+
   async *streamChat(
     instance: NInferInstanceHandle,
     request: InferenceRequest,
@@ -372,6 +385,27 @@ export function buildCurrentNInferRecipe(
 
 function authorization(apiKey: string): Record<string, string> {
   return { authorization: `Bearer ${apiKey}` };
+}
+
+function findContextCapacity(value: unknown): number | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (/^(?:kv_?capacity|kv_?cache_?(?:capacity|tokens)|shared_?context_?tokens)$/i.test(key)
+      && Number.isSafeInteger(item) && Number(item) > 0) return Number(item);
+    const nested = findContextCapacity(item);
+    if (nested !== undefined) return nested;
+  }
+  return undefined;
+}
+
+function capacityFromLogs(logs: string[]): number | undefined {
+  for (const line of [...logs].reverse()) {
+    const match = /(?:kv[ _-]?(?:cache[ _-]?)?capacity|shared[ _-]?context)[^0-9]{0,32}([0-9][0-9,]*)\s*(?:tokens?)?/i.exec(line);
+    if (!match) continue;
+    const value = Number.parseInt(match[1]!.replaceAll(",", ""), 10);
+    if (Number.isSafeInteger(value) && value > 0) return value;
+  }
+  return undefined;
 }
 
 function captureLines(stream: Readable, logs: string[], source: string, onLine?: (line: string) => void): void {

@@ -154,6 +154,10 @@ export class LlamaCppEngineAdapter implements EngineAdapter<LlamaCppHandle> {
     throw new Error(`Timed out waiting for llama.cpp at ${instance.baseUrl}`);
   }
 
+  async contextCapacity(_instance: LlamaCppHandle, recipe: Recipe): Promise<number> {
+    return readLlamaCppConfiguration(recipe).contextTokens;
+  }
+
   streamChat(instance: LlamaCppHandle, request: InferenceRequest, signal: AbortSignal): AsyncIterable<InferenceDelta> {
     return instance.client.streamChat(instance.baseUrl, instance.modelId, request, signal);
   }

@@ -118,6 +118,10 @@ export class ManagedOpenAIEngineAdapter implements EngineAdapter<ManagedOpenAIHa
     throw new Error(`Timed out waiting for the OpenAI-compatible API at ${instance.baseUrl}`);
   }
 
+  async contextCapacity(instance: ManagedOpenAIHandle, recipe: Recipe): Promise<number> {
+    return detectedContextCapacity(instance.logs) ?? recipe.contextTokens;
+  }
+
   streamChat(instance: ManagedOpenAIHandle, request: InferenceRequest, signal: AbortSignal): AsyncIterable<InferenceDelta> {
     return instance.client.streamChat(instance.baseUrl, instance.modelId, request, signal);
   }
@@ -141,6 +145,26 @@ export class ManagedOpenAIEngineAdapter implements EngineAdapter<ManagedOpenAIHa
     try { return { healthy: await instance.client.healthy(instance.baseUrl, instance.healthPath), modelId: instance.modelId }; }
     catch (error) { return { healthy: false, modelId: instance.modelId, detail: errorMessage(error) }; }
   }
+}
+
+/** Managed servers report their realized shared cache in startup output. This
+ * is runtime telemetry, not recipe configuration, and is intentionally parsed
+ * behind the adapter boundary. */
+function detectedContextCapacity(logs: readonly string[]): number | undefined {
+  const patterns = [
+    /GPU KV cache size:\s*([0-9][0-9,]*)\s*tokens/i,
+    /["']?kv[_ -]?capacity["']?\s*[:=]\s*([0-9][0-9,]*)/i,
+    /shared[_ -]?context(?:[_ -]?tokens)?\s*[:=]\s*([0-9][0-9,]*)/i,
+  ];
+  for (const line of [...logs].reverse()) {
+    for (const pattern of patterns) {
+      const match = pattern.exec(line);
+      if (!match) continue;
+      const value = Number.parseInt(match[1]!.replaceAll(",", ""), 10);
+      if (Number.isSafeInteger(value) && value > 0) return value;
+    }
+  }
+  return undefined;
 }
 
 export function readManagedOpenAIConfiguration(recipe: Recipe): ManagedOpenAIConfiguration {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Recipe } from "@fitz/protocol";
-import { ManagedOpenAIEngineAdapter } from "./managed-openai-adapter.js";
+import { ManagedOpenAIEngineAdapter, type ManagedOpenAIHandle } from "./managed-openai-adapter.js";
 
 describe("ManagedOpenAIEngineAdapter", () => {
   it("builds an engine-agnostic launch inside the managed inference runtime", async () => {
@@ -81,6 +81,15 @@ describe("ManagedOpenAIEngineAdapter", () => {
       enginePath: "/opt/fitz/llm/engines/private-fork", runtime: "linux-managed", runtimeId: "inference-linux", command: "../outside",
       args: [], workingDirectory: ".", healthPath: "/v1/models", readinessTimeoutMs: 30_000,
     }))).resolves.toMatchObject({ valid: false, issues: [expect.objectContaining({ code: "invalid_command_path" })] });
+  });
+
+  it("reports loaded shared capacity from engine logs with a recipe-limit fallback", async () => {
+    const adapter = new ManagedOpenAIEngineAdapter();
+    const recipe = managedRecipe({});
+    const handle = (logs: string[]) => ({ logs } as ManagedOpenAIHandle);
+
+    await expect(adapter.contextCapacity(handle(["GPU KV cache size: 637,486 tokens"]), recipe)).resolves.toBe(637_486);
+    await expect(adapter.contextCapacity(handle(["server ready"]), recipe)).resolves.toBe(32_768);
   });
 });
 

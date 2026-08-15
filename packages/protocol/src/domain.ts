@@ -60,16 +60,6 @@ export interface RecipeLifecyclePolicy {
   minimumResidencySeconds: number;
 }
 
-/** Recipe-owned local agent capacity. The main agent is implicit; only its
- * homogeneous worker pool is user-configurable. */
-export interface RecipeAgentTopology {
-  sharedContextTokens: number;
-  workers: {
-    count: number;
-    contextTokens: number;
-  };
-}
-
 export interface Recipe {
   id: string;
   playbookId: string;
@@ -79,11 +69,12 @@ export interface Recipe {
   /** Missing only on persisted pre-v4 recipes; native recipes are migrated as
    * self-hosted before policy resolution. */
   executionClass?: InferenceExecutionClass;
+  /** Technical context limit exposed by the model/recipe. Runtime agent policy
+   * may deliberately use a smaller working window. */
   contextTokens: number;
   capabilities: EngineCapabilities;
   lifecycle: RecipeLifecyclePolicy;
   configuration: Readonly<Record<string, unknown>>;
-  agentTopology?: RecipeAgentTopology;
 }
 
 export type EngineConnectionMode = "managed" | "external";
@@ -151,6 +142,14 @@ export interface InstanceSnapshot {
   lastActivityAt?: string;
   activeLeases: number;
   failureReason?: string;
+  /** Resolved product topology for the currently loaded self-hosted model. */
+  localAgentTopology?: {
+    sharedContextTokens: number;
+    orchestratorContextTokens: number;
+    workerCount: number;
+    workerContextTokens: number;
+    totalAllocatedContextTokens: number;
+  };
 }
 
 export type InferenceRequestStatus =

@@ -1,6 +1,7 @@
-import type { Recipe, RecipeAgentTopology, ValidationIssue } from "./domain.js";
+import type { AgentEffort } from "./agent.js";
+import type { Recipe } from "./domain.js";
 
-export interface ResolvedRecipeAgentTopology {
+export interface ResolvedAgentTopology {
   sharedContextTokens: number;
   orchestratorContextTokens: number;
   workerCount: number;
@@ -8,75 +9,67 @@ export interface ResolvedRecipeAgentTopology {
   totalAllocatedContextTokens: number;
 }
 
-/** Every chat recipe has an implicit main agent. Recipes without an explicit
- * worker pool resolve to the historical single-agent context contract. */
-export function resolveRecipeAgentTopology(recipe: Recipe): ResolvedRecipeAgentTopology {
-  const topology = recipe.agentTopology;
-  if (!topology) {
-    return {
-      sharedContextTokens: recipe.contextTokens,
-      orchestratorContextTokens: recipe.contextTokens,
-      workerCount: 0,
-      workerContextTokens: 0,
-      totalAllocatedContextTokens: recipe.contextTokens,
-    };
-  }
-  const workers = topology.workers.count * topology.workers.contextTokens;
-  const orchestratorContextTokens = Math.min(recipe.contextTokens, topology.sharedContextTokens - workers);
+/** UI-facing policy for the selected route. Worker counts vary by effort;
+ * local worker context may shrink within the product tolerance. */
+export interface AgentTopologyPresentation {
+  orchestratorContextTokens: number;
+  workerContextTokens: number;
+  workerCounts: Readonly<Record<AgentEffort, number>>;
+}
+
+/** Product-level quality envelope for every self-hosted text engine. Engines
+ * may advertise or allocate more context, but Fitz keeps the main agent inside
+ * the range where long-horizon agent behavior remains dependable. */
+export const LOCAL_MAIN_CONTEXT_TOKENS = 131_072;
+export const LOCAL_WORKER_CONTEXT_TOKENS = 32_768;
+export const LOCAL_MIN_WORKER_CONTEXT_TOKENS = Math.ceil(LOCAL_WORKER_CONTEXT_TOKENS * 0.9);
+export const LOCAL_MAX_CONCURRENT_AGENTS = 3;
+
+/** Resolve a homogeneous local pool from the capacity the loaded engine made
+ * available. The adapter owns capacity discovery; this policy is deliberately
+ * engine-independent. A recipe's concurrency remains the hard process limit. */
+export function resolveLocalAgentTopology(
+  recipe: Recipe,
+  loadedSharedContextTokens = recipe.contextTokens,
+): ResolvedAgentTopology {
+  const sharedContextTokens = positiveInteger(loadedSharedContextTokens)
+    ? loadedSharedContextTokens
+    : recipe.contextTokens;
+  const orchestratorContextTokens = Math.min(
+    LOCAL_MAIN_CONTEXT_TOKENS,
+    recipe.contextTokens,
+    sharedContextTokens,
+  );
+  const remainingContextTokens = Math.max(0, sharedContextTokens - orchestratorContextTokens);
+  const maximumWorkerCount = Math.min(
+    LOCAL_MAX_CONCURRENT_AGENTS - 1,
+    Math.max(0, recipe.capabilities.maxConcurrentGenerations - 1),
+  );
+  const workerCount = largestWorkerCount(
+    remainingContextTokens,
+    maximumWorkerCount,
+    recipe.contextTokens,
+  );
+  const workerContextTokens = workerCount > 0
+    ? Math.min(LOCAL_WORKER_CONTEXT_TOKENS, Math.floor(remainingContextTokens / workerCount))
+    : LOCAL_WORKER_CONTEXT_TOKENS;
   return {
-    sharedContextTokens: topology.sharedContextTokens,
+    sharedContextTokens,
     orchestratorContextTokens,
-    workerCount: topology.workers.count,
-    workerContextTokens: topology.workers.contextTokens,
-    totalAllocatedContextTokens: orchestratorContextTokens + workers,
+    workerCount,
+    workerContextTokens,
+    totalAllocatedContextTokens: orchestratorContextTokens + (workerCount * workerContextTokens),
   };
 }
 
-export function validateRecipeAgentTopology(recipe: Recipe): ValidationIssue[] {
-  const topology = recipe.agentTopology;
-  if (!topology) return [];
-  const issues: ValidationIssue[] = [];
-  if (!recipe.capabilities.chatCompletions || !recipe.capabilities.toolCalls) {
-    issues.push({ level: "error", code: "agent_topology_unsupported", message: "Worker pools require chat completions and tool calls" });
+function largestWorkerCount(remainingContextTokens: number, maximumWorkerCount: number, modelContextTokens: number): number {
+  if (modelContextTokens < LOCAL_MIN_WORKER_CONTEXT_TOKENS) return 0;
+  for (let count = maximumWorkerCount; count > 0; count -= 1) {
+    if (Math.floor(remainingContextTokens / count) >= LOCAL_MIN_WORKER_CONTEXT_TOKENS) return count;
   }
-  if (!positiveInteger(topology.sharedContextTokens)) {
-    issues.push({ level: "error", code: "invalid_shared_context", message: "Shared context tokens must be a positive integer" });
-  }
-  if (!nonNegativeInteger(topology.workers.count)) {
-    issues.push({ level: "error", code: "invalid_worker_count", message: "Worker count must be a non-negative integer" });
-  }
-  if (!positiveInteger(topology.workers.contextTokens)) {
-    issues.push({ level: "error", code: "invalid_worker_context", message: "Worker context tokens must be a positive integer" });
-  }
-  if (issues.length) return issues;
-  if (topology.workers.count + 1 > recipe.capabilities.maxConcurrentGenerations) {
-    issues.push({
-      level: "error",
-      code: "worker_concurrency_exceeded",
-      message: `The recipe supports ${recipe.capabilities.maxConcurrentGenerations} concurrent agents, so it can configure at most ${Math.max(0, recipe.capabilities.maxConcurrentGenerations - 1)} workers`,
-    });
-  }
-  if (topology.workers.contextTokens > recipe.contextTokens) {
-    issues.push({ level: "error", code: "worker_context_exceeded", message: "Worker context cannot exceed the model's per-agent context limit" });
-  }
-  const resolved = resolveRecipeAgentTopology(recipe);
-  if (resolved.orchestratorContextTokens < 2_048) {
-    issues.push({ level: "error", code: "orchestrator_context_exhausted", message: "The worker pool must leave at least 2,048 context tokens for the main agent" });
-  }
-  return issues;
-}
-
-export function recipeWithAgentTopology(
-  recipe: Recipe,
-  topology: RecipeAgentTopology | undefined,
-): Recipe {
-  return topology ? { ...recipe, agentTopology: topology } : recipe;
+  return 0;
 }
 
 function positiveInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && Number(value) > 0;
-}
-
-function nonNegativeInteger(value: unknown): value is number {
-  return Number.isSafeInteger(value) && Number(value) >= 0;
 }

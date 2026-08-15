@@ -66,6 +66,10 @@ export interface EngineAdapter<THandle extends EngineInstanceHandle = EngineInst
   buildLaunchSpec(recipe: Recipe, allocation: PortAllocation): Promise<LaunchSpec>;
   start(recipe: Recipe, spec: LaunchSpec, signal: AbortSignal): Promise<THandle>;
   waitUntilReady(instance: THandle, signal: AbortSignal): Promise<ReadyInfo>;
+  /** Shared KV capacity available after the engine has loaded. Engines should
+   * report their measured allocation; omitting this uses the recipe's declared
+   * capacity without leaking engine-specific probing into the scheduler. */
+  contextCapacity?(instance: THandle, recipe: Recipe): Promise<number | undefined>;
   streamChat(
     instance: THandle,
     request: InferenceRequest,

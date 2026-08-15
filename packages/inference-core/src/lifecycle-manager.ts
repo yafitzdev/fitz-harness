@@ -8,7 +8,9 @@ import type {
   MediaGenerationRequest,
   MediaJobEvent,
   Recipe,
+  ResolvedAgentTopology,
 } from "@fitz/protocol";
+import { resolveLocalAgentTopology } from "@fitz/protocol";
 import type { EngineAdapter, EngineInstanceHandle, MediaEngineAdapter, MediaJobHandle } from "./adapter.js";
 import { EngineAdapterRegistry, InferenceRequestRejectedError, isMediaEngineAdapter } from "./adapter.js";
 import type { Clock, ScheduledTask } from "./clock.js";
@@ -50,6 +52,7 @@ export class LifecycleManager {
   #lastActivityAt: number | undefined;
   #activeLeases = 0;
   #failureReason: string | undefined;
+  #loadedSharedContextTokens: number | undefined;
   #pinnedRecipe: Recipe | undefined;
   #evictionTask: ScheduledTask | undefined;
   #admissionTail: Promise<void> = Promise.resolve();
@@ -78,7 +81,20 @@ export class LifecycleManager {
         ? { lastActivityAt: new Date(this.#lastActivityAt).toISOString() }
         : {}),
       ...(this.#failureReason ? { failureReason: this.#failureReason } : {}),
+      ...(this.#recipe && this.#adapter && !isMediaEngineAdapter(this.#adapter)
+        ? { localAgentTopology: this.localAgentTopology(this.#recipe) }
+        : {}),
     };
+  }
+
+  /** Resolved local topology for UI, context preparation, and worker admission.
+   * Loaded engine capacity wins; before load the recipe declaration provides a
+   * stable preview of the topology that will be requested. */
+  localAgentTopology(recipe: Recipe): ResolvedAgentTopology {
+    const loadedCapacity = this.#recipe && sameRuntimeRecipe(this.#recipe, recipe)
+      ? this.#loadedSharedContextTokens
+      : undefined;
+    return resolveLocalAgentTopology(recipe, loadedCapacity);
   }
 
   residencySnapshot(): Record<string, unknown> {
@@ -387,6 +403,12 @@ export class LifecycleManager {
       this.#transition("LOADING", "launching-engine");
       this.#handle = await this.#adapter.start(recipe, spec, signal);
       await this.#adapter.waitUntilReady(this.#handle, signal);
+      const reportedCapacity = isMediaEngineAdapter(this.#adapter)
+        ? undefined
+        : await this.#adapter.contextCapacity?.(this.#handle, recipe);
+      this.#loadedSharedContextTokens = Number.isSafeInteger(reportedCapacity) && Number(reportedCapacity) > 0
+        ? reportedCapacity
+        : recipe.contextTokens;
       this.#startedAt = this.#clock.now();
       this.#lastActivityAt = this.#startedAt;
       this.#transition("READY", "engine-ready");
@@ -488,6 +510,7 @@ export class LifecycleManager {
     this.#adapter = undefined;
     this.#recipe = undefined;
     this.#instanceId = undefined;
+    this.#loadedSharedContextTokens = undefined;
     this.#startedAt = undefined;
     this.#lastActivityAt = undefined;
     this.#activeLeases = 0;
