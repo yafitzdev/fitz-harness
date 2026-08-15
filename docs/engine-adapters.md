@@ -38,9 +38,9 @@ Local scheduling is deliberately engine-agnostic:
 - local media may temporarily displace Default and must restore it afterward;
 - changing the chat choice does not start or test an engine.
 
-Consequently, vLLM launches with `--max-num-seqs 1`, and llama.cpp recipes use one server slot. NInfer recipes may opt into small continuous batches. The Qwen 3.8 27B C3 recipe has a 256,000-token shared context pool: two 64K local workers leave 128,000 tokens for its implicit main agent against one shared model and KV pool.
+Consequently, tool-capable vLLM, llama.cpp, and NInfer recipes launch with three generation slots: one main call and up to two same-model workers. The global policy gives the main agent at most 131,072 tokens and targets 32,768 tokens per worker. Near a capacity boundary, local workers may shrink uniformly to no less than 29,492 tokens so an otherwise viable worker is not lost. Adapters report loaded context capacity through the same contract, regardless of engine implementation.
 
-An agent-capable recipe owns only capacity: a shared context pool and a homogeneous worker count/context. Every such recipe has one implicit main agent, whose context is the model limit capped by the context left after worker allocation. Recipe configuration never stores a main-agent prompt, worker roles, or worker instructions. At dispatch time the main agent selects a role identifier; the host resolves it deterministically from the global versioned role registry and snapshots that definition into the child run.
+An agent-capable recipe does not own topology. It describes the model and its launch; the adapter reports the loaded engine's capacity; the global policy derives main and worker allocation. Recipe configuration never stores a main-agent prompt, worker count, worker context, worker roles, or worker instructions. At dispatch time the main agent selects a role identifier; the host resolves it deterministically from the global versioned role registry and snapshots that definition into the child run.
 
 ## Cloud connections
 
@@ -49,7 +49,7 @@ OpenAI-compatible connections belong to the authenticated consumer who created t
 - **Smart**: an optional cloud model selected for a main-agent turn and for its single optional concurrent Smart peer.
 - **Fast workers**: an optional cloud model selected for a main-agent turn and used by its Fast children.
 
-Smart and Fast execute in the bounded cloud lane and may overlap. Cloud delegation is effort-dependent and separate from output tokens. Light launches no cloud children. At Normal, Fast can launch two Fast children and Smart can launch three Fast children. At High, Fast can launch three Fast children and Smart can launch three Fast children plus one optional Smart peer. That peer is reserved for a separate Smart-tier task that the main Smart agent wants to run concurrently with its own substantive work; the runtime requires the parent to start an allowed tool task before admitting it. It is never used as a Fast researcher or automatically spent on project familiarization. A local Default turn receives the same delegation tool whenever its recipe declares local worker capacity, independently of effort; those children stay on Default and use the recipe's worker context.
+Smart and Fast execute in the bounded cloud lane and may overlap. Cloud delegation is effort-dependent and separate from output tokens. Light launches no cloud children. At Normal, either route can launch up to three Fast children. At High, either route can launch up to six Fast children; Smart may additionally launch two Smart peers for crucial independent work. Those peers are not overflow capacity for routine Fast work. Cloud main agents use 131,072-token working windows and workers use 32,768-token windows. A local Default turn uses the same-model local policy: no workers at Light, one at Normal, and all capacity-derived workers at High.
 
 Credentials are stored by the desktop using Electron safe storage and are registered on the host under owner-and-connection-scoped environment variable names. One user cannot bind another user's discovered recipe.
 

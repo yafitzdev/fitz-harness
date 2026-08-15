@@ -1,5 +1,5 @@
 import { positionFixedPopover, togglePopover } from "../primitives/popover.js";
-import type { AgentEffort } from "@fitz/protocol";
+import type { AgentEffort, AgentTopologyPresentation } from "@fitz/protocol";
 
 export type AccessMode = "full" | "ask" | "read-only";
 export type ComposerSetting = "model" | "effort";
@@ -29,6 +29,7 @@ export interface ComposerControlsElements {
   advancedSettingsPanel: HTMLElement;
   temperature: HTMLInputElement;
   temperatureValue: HTMLElement;
+  agentTopologySummary: HTMLElement;
   contextMeter: HTMLButtonElement;
   contextUsagePopover: HTMLElement;
   contextPercent: HTMLElement;
@@ -45,6 +46,7 @@ export interface ComposerControlsElements {
 export interface ComposerControlsOptions {
   closeAllPopovers: () => void;
   onRouteChange: (routeId: string) => void;
+  onEffortChange?: (effort: AgentEffort) => void;
   onCompact: () => void | Promise<void>;
   storage?: Pick<Storage, "getItem" | "setItem">;
 }
@@ -118,6 +120,7 @@ export class ComposerControls {
     if (!this.setRoute(this.defaultRoute)) this.setRoute("default");
     this.elements.effort.value = [...this.elements.effort.options].some((option) => option.value === this.defaultEffort) ? this.defaultEffort : "normal";
     this.refreshLabels();
+    this.options.onEffortChange?.(this.effort);
   }
 
   refreshLabels(): void {
@@ -140,6 +143,20 @@ export class ComposerControls {
     this.elements.contextPercent.textContent = `${rounded}% full`;
     this.elements.contextTokens.textContent = `≈${formatTokenCount(usedTokens)} / ${formatTokenCount(tokenLimit)} tokens used`;
     this.elements.contextMeter.setAttribute("aria-label", `Context window ${rounded}% full, approximately ${formatTokenCount(usedTokens)} of ${formatTokenCount(tokenLimit)} tokens used`);
+  }
+
+  setAgentTopology(topology?: AgentTopologyPresentation): void {
+    if (!topology || topology.orchestratorContextTokens < 1) {
+      this.elements.agentTopologySummary.hidden = true;
+      this.elements.agentTopologySummary.textContent = "";
+      return;
+    }
+    const workerCount = topology.workerCounts[this.effort] ?? 0;
+    const workers = workerCount === 1 ? "1 worker" : `${workerCount} workers`;
+    this.elements.agentTopologySummary.textContent = workerCount > 0
+      ? `${formatTopologyTokens(topology.orchestratorContextTokens)} context · ${workers} at ${formatTopologyTokens(topology.workerContextTokens)}`
+      : `${formatTopologyTokens(topology.orchestratorContextTokens)} context · no workers`;
+    this.elements.agentTopologySummary.hidden = false;
   }
 
   updateState(state: ComposerControlState): void {
@@ -187,7 +204,10 @@ export class ComposerControls {
   private bind(): void {
     const elements = this.elements;
     elements.model.addEventListener("change", () => this.selectRoute());
-    elements.effort.addEventListener("change", () => this.refreshLabels());
+    elements.effort.addEventListener("change", () => {
+      this.refreshLabels();
+      this.options.onEffortChange?.(this.effort);
+    });
     elements.modelToggle.addEventListener("click", (event) => {
       event.stopPropagation();
       this.showSettingsRoot();
@@ -312,4 +332,10 @@ function formatTokenCount(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}m`;
   if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
   return String(Math.max(0, Math.round(value)));
+}
+
+function formatTopologyTokens(value: number): string {
+  if (value >= 1_000_000) return `${Math.floor(value / 1_000_000)}m`;
+  if (value >= 1_000) return `${Math.floor(value / 1_000)}k`;
+  return String(Math.max(0, Math.floor(value)));
 }

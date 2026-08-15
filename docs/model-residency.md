@@ -6,7 +6,7 @@ Fitz has one deterministic local-text policy: the host owns one **Default** reci
 
 | Role | Owner | Execution | Visibility |
 | --- | --- | --- | --- |
-| `default` | Host administrator | One local engine/model, optionally with recipe-declared local workers | Chat picker |
+| `default` | Host administrator | One local engine/model with policy-derived local workers when capacity permits | Chat picker |
 | `smart` | Each consumer | That consumer's cloud API | Chat picker and the optional concurrent Smart peer, only when configured |
 | `fast` | Each consumer | That consumer's cloud API | Chat picker and subagent workers, only when configured |
 
@@ -20,21 +20,21 @@ Choosing Default, Fast, or Smart in the chat composer is an instant request sett
 4. Every local model call enters the local GPU lane. The lane admits at most three calls, while the active recipe's `maxConcurrentGenerations` supplies the stricter per-model limit.
 5. Up to four Pi agent state machines may make progress concurrently, with one active state machine per owner by default. Only their local model calls serialize.
 
-Cloud Smart and Fast calls use the independent cloud lane. They create no local lifecycle lease, consume no host VRAM, and cannot displace Default. A Default turn receives the delegation tool only when its selected recipe declares a non-empty worker pool. The local pool belongs to the recipe and is available at every effort level. Cloud delegation ceilings remain effort-dependent and are independent from the request's `maxTokens` output allowance:
+Cloud Smart and Fast calls use the independent cloud lane. They create no local lifecycle lease, consume no host VRAM, and cannot displace Default. A Default turn receives the delegation tool when the loaded engine has capacity for workers. Cloud delegation ceilings remain effort-dependent and are independent from the request's `maxTokens` output allowance:
 
 | Effort | Default parent | Fast parent | Smart parent |
 | --- | --- | --- | --- |
-| Light | Up to the recipe's local-worker limit | No children | No children |
-| Normal | Up to the recipe's local-worker limit | Up to 2 Fast children | Up to 3 Fast children |
-| High | Up to the recipe's local-worker limit | Up to 3 Fast children | Up to 3 Fast children plus 1 optional Smart peer |
+| Light | No children | No children | No children |
+| Normal | One local worker | Up to 3 Fast children | Up to 3 Fast children |
+| High | All available local workers | Up to 6 Fast children | Up to 6 Fast children plus 2 optional Smart peers |
 
-The built-in Qwen 3.8 27B NInfer recipe declares a 256,000-token shared context pool, two local workers with 64,000 tokens each, and three concurrent generations. Its implicit main agent receives the remaining 128,000 tokens. NInfer C3 uses one shared model and KV pool; the fixed capacity provides the requested topology while leaving more than 1 GiB of VRAM free on the target GPU at warm idle.
+For every local text engine, Fitz gives the main agent at most 131,072 tokens and targets 32,768 tokens per worker. The adapter reports the capacity actually made available by the loaded engine. Fitz admits the largest worker count, capped at two and by engine concurrency, that fits after the main window. To avoid losing a complete worker near a capacity boundary, all local worker windows may shrink uniformly by at most 10%, to a minimum of 29,492 tokens. When an adapter cannot detect loaded capacity, the recipe's technical model limit is the conservative fallback.
 
 ## Agent topology and runtime roles
 
-Agent topology is part of each recipe, not an independent route or model process. Every agent-capable recipe has one implicit main agent. In the Playbooks recipe editor, the administrator configures only the worker count and context per worker; the main agent's context is derived as `min(model context limit, shared context pool - worker allocation)`. The editor displays that result but does not expose a main-agent name, role, or prompt.
+Agent allocation is runtime policy, not recipe state. Recipes describe model identity, technical limits, and engine launch configuration. Every agent-capable route has one implicit main agent. Worker count is derived from loaded capacity and effort, and the resulting read-only allocation is shown in the chat context popover. Persisted legacy `agentTopology` fields are discarded during migration and ignored by management writes.
 
-Recipe workers are anonymous capacity. A recipe never stores worker roles or instructions. When the main agent delegates a task, it chooses a role identifier such as `researcher`, `reviewer`, or `implementer`. The host resolves that identifier through the global, versioned SQLite role registry and injects the exact registered system instructions, access mode, tool budget, output limit, and output contract. The durable child run snapshots the resolved role version so later registry edits cannot change the meaning of an existing run. Workers cannot delegate again.
+Workers are anonymous capacity. A recipe never stores worker topology, roles, or instructions. When the main agent delegates a task, it chooses a role identifier such as `researcher`, `reviewer`, or `implementer`. The host resolves that identifier through the global, versioned SQLite role registry and injects the exact registered system instructions, access mode, tool budget, output limit, and output contract. The durable child run snapshots the resolved role version so later registry edits cannot change the meaning of an existing run. Workers cannot delegate again.
 
 The Smart peer is reserved for an independent Smart-tier task that runs concurrently with substantive work by the Smart parent; it is not overflow capacity for Fast research. The runtime admits that peer only after the parent has started an allowed tool task, allowing both calls to execute in the same parallel batch. Broad repository familiarization proactively dispatches only the available Fast children, then the Smart parent performs the overarching analysis and synthesis itself.
 
@@ -63,7 +63,7 @@ Remote media uses the cloud lane and does not affect Default.
 - At most the active recipe's declared generation limit may execute, bounded by the host's three-call local lane.
 - Default is the only host-owned text route and must resolve to a local text recipe.
 - Smart and Fast bindings are scoped to the authenticated owner and can reference only recipes discovered from that owner's connection.
-- Default can spawn only its recipe-declared local workers, at any effort level. Fast can spawn only Fast children. Smart can use Fast children for delegated slices and, at High effort only, the Smart child as a concurrent peer for separate Smart-tier work, within the per-turn maximums above.
+- Default can spawn only same-model workers admitted by loaded capacity and effort. Fast can spawn only Fast children. Smart can use Fast children for delegated slices and, at High effort only, Smart peers for crucial concurrent work, within the per-turn maximums above.
 - Route selection never starts a model.
 - Local media restores Default before later local text work starts.
 - Desktop shutdown ends with no Fitz-owned model in VRAM and no running Fitz inference distribution.

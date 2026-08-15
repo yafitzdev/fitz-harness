@@ -256,7 +256,7 @@ describe("PlaybookWorkspaceController", () => {
     expect(elements.recipeConfiguration.querySelector("textarea:not([data-field-type])")).toBeNull();
   });
 
-  it("edits only the anonymous worker pool and derives the main agent context", async () => {
+  it("does not expose policy-owned agent allocation in recipe configuration", async () => {
     const configuration = sampleConfiguration();
     configuration.recipes[0] = {
       id: "qwen-team", playbookId: "ninfer", displayName: "Qwen Team", adapter: "ninfer", modelId: "qwen3.8-27b", contextTokens: 262_144,
@@ -285,24 +285,16 @@ describe("PlaybookWorkspaceController", () => {
     expect(elements.recipeConfiguration.textContent).not.toContain("Shared context pool");
     expect(elements.recipeConfiguration.textContent).not.toContain("Concurrency:");
     expect(elements.recipeConfiguration.textContent).not.toContain("144,320 + 2 × 64,000");
-    expect(elements.recipeConfiguration.querySelector<HTMLElement>("[data-agent-main-context]")?.textContent).toBe("144,320 context");
-    const count = elements.recipeConfiguration.querySelector<HTMLInputElement>("[data-agent-worker-count]")!;
-    const workerContext = elements.recipeConfiguration.querySelector<HTMLInputElement>("[data-agent-worker-context]")!;
-    expect(count.value).toBe("2");
-    expect(workerContext.value).toBe("64000");
-    expect(workerContext.step).toBe("1");
-    expect(workerContext.checkValidity()).toBe(true);
-
-    count.value = "1"; count.dispatchEvent(new Event("input", { bubbles: true }));
-    workerContext.value = "32000"; workerContext.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(elements.recipeConfiguration.querySelector<HTMLElement>("[data-agent-main-context]")?.textContent).toBe("240,320 context");
+    expect(elements.recipeConfiguration.querySelector("[data-agent-main-context]")).toBeNull();
+    expect(elements.recipeConfiguration.querySelector("[data-agent-worker-count]")).toBeNull();
+    expect(elements.recipeConfiguration.querySelector("[data-agent-worker-context]")).toBeNull();
 
     submit(elements.recipeForm);
     await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/recipes/qwen-team", "PUT", expect.objectContaining({
       contextTokens: 262_144,
-      agentTopology: { sharedContextTokens: 272_320, workers: { count: 1, contextTokens: 32_000 } },
       configuration: expect.objectContaining({ maxContext: 144_320 }),
     })));
+    expect(api.mock.calls.find(([path]) => path === "/api/v1/management/recipes/qwen-team")?.[2]).not.toHaveProperty("agentTopology");
   });
 
   it("renames an existing recipe inline from the header pen", () => {
@@ -339,7 +331,7 @@ describe("PlaybookWorkspaceController", () => {
     expect(editor.value().temperature).toBe(0.4);
   });
 
-  it.each(["llama.cpp", "vllm"])("configures anonymous workers for %s recipes", (playbookId) => {
+  it.each(["llama.cpp", "vllm"])("keeps policy-owned workers out of %s recipe forms", (playbookId) => {
     const root = document.createElement("section");
     const editor = new RecipeConfigurationEditor(root);
     editor.load("openai-managed", {}, {
@@ -349,12 +341,8 @@ describe("PlaybookWorkspaceController", () => {
       agentTopology: { sharedContextTokens: 32_768, workers: { count: 0, contextTokens: 8_192 } },
     });
 
-    const workers = root.querySelector<HTMLInputElement>("[data-agent-worker-count]");
-    const workerContext = root.querySelector<HTMLInputElement>("[data-agent-worker-context]");
-    expect(workers?.disabled).toBe(false);
-    expect(workers?.max).toBe("2");
-    expect(workerContext?.disabled).toBe(false);
-    expect(editor.agentTopology()).toEqual({ sharedContextTokens: 32_768, workers: { count: 0, contextTokens: 8_192 } });
+    expect(root.querySelector("[data-agent-worker-count]")).toBeNull();
+    expect(root.querySelector("[data-agent-worker-context]")).toBeNull();
   });
 
   it("refreshes from the page header and closes the editor with the back surface", () => {

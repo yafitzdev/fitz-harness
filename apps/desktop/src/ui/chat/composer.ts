@@ -13,6 +13,7 @@ export interface ComposerOptions {
   bridge: Pick<DesktopBridge, "gitBranches" | "checkoutBranch" | "createBranch" | "createWorktree">;
   closeAllPopovers: () => void;
   onRouteChange: () => void;
+  onEffortChange?: () => void;
   onCompact: () => void | Promise<void>;
   onSubmit: (submission: ComposerSubmission) => void | Promise<void>;
   onInput: (text: string) => void;
@@ -97,6 +98,7 @@ const COMPOSER_TEMPLATE = `
           <button id="context-meter" class="context-meter" type="button" title="Context window usage" aria-label="Context window usage"></button>
           <div id="context-usage-popover" class="popover context-usage-popover" hidden>
             <span>Context window:</span><strong id="context-percent">0% full</strong><b id="context-tokens">0 / 128k tokens used</b>
+            <small id="agent-topology-summary" class="context-topology-summary" hidden></small>
             <button id="context-compact" type="button">Compact now</button><small id="context-compact-status" hidden></small>
           </div>
         </div>
@@ -200,6 +202,7 @@ export class Composer {
     this.controls = new ComposerControls(controlsElements, {
       closeAllPopovers: options.closeAllPopovers,
       onRouteChange: options.onRouteChange,
+      onEffortChange: () => options.onEffortChange?.(),
       onCompact: options.onCompact,
     });
     this.bind();
@@ -395,6 +398,7 @@ export class Composer {
       advancedSettingsPanel: this.el<HTMLElement>("#advanced-settings-panel"),
       temperature: this.el<HTMLInputElement>("#temperature"),
       temperatureValue: this.el<HTMLElement>("#temperature-value"),
+      agentTopologySummary: this.el<HTMLElement>("#agent-topology-summary"),
       contextMeter: this.el<HTMLButtonElement>("#context-meter"),
       contextUsagePopover: this.el<HTMLElement>("#context-usage-popover"),
       contextPercent: this.el<HTMLElement>("#context-percent"),

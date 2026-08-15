@@ -317,9 +317,9 @@ export class ConnectionWorkspaceController {
     this.elements.agentDisplayName.value = this.elements.agentTitle.textContent;
     this.elements.agentDisplayName.hidden = true;
     this.elements.agentTitle.parentElement!.hidden = false;
-    const supportsAgents = recipe.capabilities?.chatCompletions === true;
-    this.elements.agentEyebrow.textContent = supportsAgents ? "Self-hosted model" : "Self-hosted media model";
-    this.agentConfigurationEditor.load(String(recipe.adapter), recipe.configuration ?? {}, recipe, { showAgentTopology: supportsAgents });
+    const supportsChat = recipe.capabilities?.chatCompletions === true;
+    this.elements.agentEyebrow.textContent = supportsChat ? "Self-hosted model" : "Self-hosted media model";
+    this.agentConfigurationEditor.load(String(recipe.adapter), recipe.configuration ?? {}, recipe);
     this.options.onRouteChange?.(["model", connectionId, model.recipeId]);
   }
 
@@ -590,7 +590,6 @@ export class ConnectionWorkspaceController {
   private async saveRecipeConfiguration(): Promise<void> {
     const recipe = this.editingRecipe;
     if (!recipe) return;
-    const topology = this.agentConfigurationEditor.agentTopology();
     const displayName = this.elements.agentDisplayName.value.trim();
     setFormBusy(this.elements.agentForm, true);
     try {
@@ -598,7 +597,6 @@ export class ConnectionWorkspaceController {
         ...recipe,
         displayName,
         configuration: this.agentConfigurationEditor.value(),
-        ...(topology ? { agentTopology: topology } : {}),
       });
       this.closeEditor();
       await this.refreshRecordsAndConfiguration();

@@ -64,6 +64,8 @@ export interface AgentRunControllerOptions {
   updatePlan: (result: unknown) => void;
   /** Remove the plan after the run has emitted its terminal answer/state. */
   clearPlan: () => void;
+  /** Refresh runtime-derived capabilities after a run may have loaded a model. */
+  onRunSettled?: () => void | Promise<void>;
   refreshAssistantPerformance?: (runId: string) => void | Promise<void>;
   /** Start following an asynchronous image/audio/video job submitted by an agent tool. */
   onMediaJobSubmitted?: (jobId: string, toolName: string) => void;
@@ -444,7 +446,10 @@ export class AgentRunController {
     } finally {
       unsubscribeEventStream?.();
     }
-    if (done) await this.#options.refreshAssistantPerformance?.(runId);
+    if (done) {
+      await this.#options.onRunSettled?.();
+      await this.#options.refreshAssistantPerformance?.(runId);
+    }
   }
 
   #yieldToPaint(): Promise<void> {

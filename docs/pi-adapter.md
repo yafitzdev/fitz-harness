@@ -27,8 +27,9 @@ All Fitz-owned Pi code lives in `packages/agent-pi`. Its main components are:
 paths, the store-backed tool approval gate, and the store-backed session reader. `apps/host` has no
 Pi logic of its own.
 
-Worker capacity comes from the selected recipe's agent topology. Workers are not named or assigned
-persistent roles in that recipe. For each `subagent` call, the main agent selects a role identifier;
+Worker capacity comes from the runtime allocation policy and the loaded engine's reported capacity.
+It is never persisted in a recipe. Workers are not named or assigned persistent roles. For each
+`subagent` call, the main agent selects a role identifier;
 the host resolves it from the global versioned SQLite role registry and creates the child with that
 definition's system instructions, access mode, tool-call budget, output limit, and output contract.
 The exact role definition is snapshotted in the durable child request. Pi enforces that snapshot's

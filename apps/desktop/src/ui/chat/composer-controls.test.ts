@@ -42,7 +42,7 @@ function setup(storage = memoryStorage()) {
     model: node("select"), effort,
     modelToggle: node("button"), modelMenu: node("div"), modelMenuRoot: node("div"), modelSummary, modelRoute, modelEffort, modelValue: node("span"), effortValue: node("span"),
     settingsSubmenu: node("div"), settingRows: [modelRow, effortRow], advancedSettings: node("button"), advancedSettingsPanel: node("div"),
-    temperature: node("input"), temperatureValue: node("output"), contextMeter: node("button"), contextUsagePopover: node("div"),
+    temperature: node("input"), temperatureValue: node("output"), agentTopologySummary: node("span"), contextMeter: node("button"), contextUsagePopover: node("div"),
     contextPercent: node("strong"), contextTokens: node("b"), contextCompactButton: node("button"), contextCompactStatus: node("small"),
     accessModeToggle: node("button"), accessModeMenu: node("div"), accessModeLabel: node("span"), accessModeIcon: document.createElementNS("http://www.w3.org/2000/svg", "svg"),
     accessModeChoices: [accessFull, accessAsk, accessReadOnly],
@@ -53,7 +53,7 @@ function setup(storage = memoryStorage()) {
   elements.temperature.min = "0";
   elements.temperature.max = "2";
   elements.temperature.step = "0.1";
-  const calls = { closeAllPopovers: vi.fn(), onRouteChange: vi.fn(), onCompact: vi.fn() };
+  const calls = { closeAllPopovers: vi.fn(), onRouteChange: vi.fn(), onEffortChange: vi.fn(), onCompact: vi.fn() };
   const controls = new ComposerControls(elements, { ...calls, storage });
   return { controls, elements, calls };
 }
@@ -89,7 +89,7 @@ describe("ComposerControls", () => {
   });
 
   it("keeps the composer route-based while retaining resolved model details in settings", () => {
-    const { controls, elements } = setup();
+    const { controls, elements, calls } = setup();
     controls.setRoutes([
       { id: "smart", label: "Smart · ninfer-1.5b", displayName: "Smart", group: "Routes" },
     ], "smart");
@@ -155,6 +155,26 @@ describe("ComposerControls", () => {
     expect(elements.contextCompactButton.disabled).toBe(false);
     click(elements.contextCompactButton);
     expect(calls.onCompact).toHaveBeenCalledOnce();
+  });
+
+  it("shows the resolved main and worker context in the context popover", () => {
+    const { controls, elements, calls } = setup();
+
+    controls.setAgentTopology({
+      orchestratorContextTokens: 131_072,
+      workerContextTokens: 32_768,
+      workerCounts: { light: 0, normal: 3, high: 8 },
+    });
+
+    expect(elements.agentTopologySummary.hidden).toBe(false);
+    expect(elements.agentTopologySummary.textContent).toBe("131k context · 3 workers at 32k");
+    elements.effort.value = "light";
+    elements.effort.dispatchEvent(new Event("change", { bubbles: true }));
+    controls.setAgentTopology({ orchestratorContextTokens: 131_072, workerContextTokens: 32_768, workerCounts: { light: 0, normal: 3, high: 8 } });
+    expect(elements.agentTopologySummary.textContent).toBe("131k context · no workers");
+    expect(calls.onEffortChange).toHaveBeenCalledWith("light");
+    controls.setAgentTopology();
+    expect(elements.agentTopologySummary.hidden).toBe(true);
   });
 
   it("closes every composer-owned popover and resets ARIA state", () => {

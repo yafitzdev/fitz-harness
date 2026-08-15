@@ -32,23 +32,13 @@ const FIELDS: Record<string, Field[]> = {
 export class RecipeConfigurationEditor {
   readonly #controls = new Map<string, HTMLInputElement | HTMLTextAreaElement>();
   #source: Json = {};
-  #workerCount: HTMLInputElement | undefined;
-  #workerContext: HTMLInputElement | undefined;
-  #mainContext: HTMLElement | undefined;
-  #agentValidation: HTMLElement | undefined;
-  #sharedContextTokens = 0;
-  #modelContextTokens = 0;
-  #maximumWorkers = 0;
-  #agentTopologyEnabled = false;
   constructor(readonly root: HTMLElement) {}
 
-  load(adapter: string, configuration: Json, recipe: Json = {}, options: { showRuntimeSettings?: boolean; showAgentTopology?: boolean } = {}): void {
+  load(adapter: string, configuration: Json, _recipe: Json = {}, options: { showRuntimeSettings?: boolean } = {}): void {
     this.#source = structuredClone(configuration ?? {});
     this.#controls.clear(); this.root.replaceChildren();
     const fields = FIELDS[adapter];
     if (!fields) throw new TypeError(`Unsupported recipe adapter: ${adapter}`);
-    this.#modelContextTokens = Number(recipe.contextTokens ?? this.#source.maxContext ?? 131_072);
-    this.#sharedContextTokens = Number(recipe.agentTopology?.sharedContextTokens ?? this.#modelContextTokens);
     if (options.showRuntimeSettings) {
       const heading = document.createElement("div"); heading.className = "configuration-section-heading";
       const title = document.createElement("strong"); title.textContent = "Runtime setup";
@@ -58,8 +48,6 @@ export class RecipeConfigurationEditor {
       for (const field of fields) grid.append(this.#field(field, configuration[field.key]));
       this.root.append(heading, grid);
     }
-    if (options.showAgentTopology !== false) this.#loadAgentTopology(recipe);
-    else this.#agentTopologyEnabled = false;
   }
 
   value(): Json {
@@ -76,23 +64,6 @@ export class RecipeConfigurationEditor {
     return result;
   }
 
-  agentTopology(): Json | undefined {
-    if (!this.#agentTopologyEnabled || !this.#workerCount || !this.#workerContext) return undefined;
-    return {
-      sharedContextTokens: this.#sharedContextTokens,
-      workers: {
-        count: Number(this.#workerCount.value),
-        contextTokens: Number(this.#workerContext.value),
-      },
-    };
-  }
-
-  setModelContextTokens(value: number): void {
-    if (!Number.isSafeInteger(value) || value < 1) return;
-    this.#modelContextTokens = value;
-    this.#updateAgentSummary();
-  }
-
   #field(field: Field, value: unknown): HTMLElement {
     const label = document.createElement("label"); if (field.type === "lines") label.classList.add("wide-field"); if (field.advanced) label.classList.add("advanced-field");
     label.append(document.createTextNode(field.label));
@@ -106,74 +77,4 @@ export class RecipeConfigurationEditor {
     this.#controls.set(field.key, control); return label;
   }
 
-  #loadAgentTopology(recipe: Json): void {
-    this.#workerCount = undefined;
-    this.#workerContext = undefined;
-    this.#mainContext = undefined;
-    this.#agentValidation = undefined;
-    const capabilities = recipe.capabilities ?? {};
-    this.#maximumWorkers = Math.max(0, Number(capabilities.maxConcurrentGenerations ?? 1) - 1);
-    this.#agentTopologyEnabled = capabilities.chatCompletions === true && capabilities.toolCalls === true && this.#maximumWorkers > 0;
-    this.#modelContextTokens = Number(recipe.contextTokens ?? this.#source.maxContext ?? 131_072);
-    this.#sharedContextTokens = Number(recipe.agentTopology?.sharedContextTokens ?? this.#modelContextTokens);
-    const configuredCount = Number(recipe.agentTopology?.workers?.count ?? 0);
-    const configuredContext = Number(recipe.agentTopology?.workers?.contextTokens ?? Math.min(32_000, this.#modelContextTokens));
-
-    const topology = document.createElement("section"); topology.className = "agent-topology-editor";
-    const summary = document.createElement("div"); summary.className = "agent-topology-summary";
-    const main = document.createElement("div"); main.className = "agent-topology-member";
-    const mainLabel = document.createElement("strong"); mainLabel.textContent = "Main agent";
-    const mainRole = document.createElement("small"); mainRole.textContent = "Orchestration, delegation, and synthesis";
-    this.#mainContext = document.createElement("b"); this.#mainContext.dataset.agentMainContext = "";
-    main.append(mainLabel, mainRole, this.#mainContext);
-    const pool = document.createElement("div"); pool.className = "agent-topology-member";
-    const poolLabel = document.createElement("strong"); poolLabel.textContent = "Worker pool";
-    const poolRole = document.createElement("small"); poolRole.textContent = "The orchestrator assigns roles at dispatch";
-    const poolValue = document.createElement("b"); poolValue.dataset.agentWorkerSummary = "";
-    pool.append(poolLabel, poolRole, poolValue);
-    summary.append(main, pool);
-
-    const fields = document.createElement("div"); fields.className = "configuration-grid agent-topology-fields";
-    const countLabel = document.createElement("label"); countLabel.append(document.createTextNode("Workers"));
-    this.#workerCount = document.createElement("input"); this.#workerCount.type = "number"; this.#workerCount.min = "0"; this.#workerCount.max = String(this.#maximumWorkers); this.#workerCount.step = "1"; this.#workerCount.value = String(Math.min(configuredCount, this.#maximumWorkers)); this.#workerCount.disabled = !this.#agentTopologyEnabled; this.#workerCount.dataset.agentWorkerCount = "";
-    countLabel.append(this.#workerCount);
-    const contextLabel = document.createElement("label"); contextLabel.append(document.createTextNode("Context per worker"));
-    this.#workerContext = document.createElement("input"); this.#workerContext.type = "number"; this.#workerContext.min = "2048"; this.#workerContext.max = String(this.#modelContextTokens); this.#workerContext.step = "1"; this.#workerContext.value = String(configuredContext); this.#workerContext.disabled = !this.#agentTopologyEnabled; this.#workerContext.dataset.agentWorkerContext = "";
-    contextLabel.append(this.#workerContext);
-    fields.append(countLabel, contextLabel);
-
-    this.#agentValidation = document.createElement("small"); this.#agentValidation.className = "agent-topology-validation";
-
-    topology.append(summary, ...(this.#agentTopologyEnabled ? [fields] : []), this.#agentValidation);
-    this.root.append(topology);
-    this.#workerCount.addEventListener("input", () => this.#updateAgentSummary());
-    this.#workerContext.addEventListener("input", () => this.#updateAgentSummary());
-    this.#updateAgentSummary(poolValue);
-  }
-
-  #updateAgentSummary(workerSummary = this.root.querySelector<HTMLElement>("[data-agent-worker-summary]")): void {
-    if (!this.#workerCount || !this.#workerContext || !this.#mainContext || !this.#agentValidation) return;
-    const count = Number(this.#workerCount.value);
-    const workerContext = Number(this.#workerContext.value);
-    const mainContext = Math.min(this.#modelContextTokens, this.#sharedContextTokens - (count * workerContext));
-    this.#mainContext.textContent = `${formatTokens(Math.max(0, mainContext))} context`;
-    if (workerSummary) workerSummary.textContent = count > 0 ? `${count} × ${formatTokens(workerContext)}` : "No workers";
-    const valid = Number.isSafeInteger(count) && count >= 0 && count <= this.#maximumWorkers
-      && Number.isSafeInteger(workerContext) && workerContext >= 2_048 && workerContext <= this.#modelContextTokens
-      && mainContext >= 2_048;
-    this.#agentValidation.textContent = valid ? "" : "The worker pool exceeds this recipe's context or concurrency capacity.";
-    this.#agentValidation.classList.toggle("is-error", !valid);
-    this.#workerCount.setCustomValidity(valid ? "" : "Invalid worker pool");
-    this.#workerContext.setCustomValidity(valid ? "" : "Invalid worker pool");
-    const maxContext = this.#controls.get("maxContext");
-    if (maxContext instanceof HTMLInputElement && this.#agentTopologyEnabled) {
-      maxContext.value = String(Math.max(0, mainContext));
-      maxContext.readOnly = true;
-      maxContext.dataset.derivedAgentContext = "";
-    }
-  }
-}
-
-function formatTokens(value: number): string {
-  return Number.isFinite(value) ? Math.round(value).toLocaleString("en-US") : "—";
 }

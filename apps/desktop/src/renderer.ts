@@ -174,6 +174,7 @@ const composer = new Composer({
   bridge: window.fitz,
   closeAllPopovers: closePopovers,
   onRouteChange: () => handleRouteChange(),
+  onEffortChange: () => { refreshAgentTopology(); conversationContext.refresh(); },
   onCompact: () => conversationContext.compact(),
   onSubmit: (submission) => {
     // Media commands submit straight to the media-job pipeline, which runs on
@@ -213,6 +214,9 @@ const conversationContext = new ConversationContextController({
   draft: () => composer.value,
   estimateTokens,
   configuredLimit: () => {
+    const topology = managementConfiguration?.agentTopologies?.[composer.controls.routeId];
+    const resolved = Number(topology?.orchestratorContextTokens);
+    if (Number.isFinite(resolved) && resolved > 0) return resolved;
     const recipe = textRouteRecipe(managementConfiguration, composer.controls.routeId as FixedRouteId);
     const value = Number(recipe?.contextTokens);
     return Number.isFinite(value) && value > 0 ? value : undefined;
@@ -382,6 +386,7 @@ const agentRuns = new AgentRunController({
   terminalReplayError: (error) => error instanceof HostRequestError,
   updatePlan: (result) => { agentPlanPanel.updateFromToolResult(result); },
   clearPlan: () => agentPlanPanel.reset(),
+  onRunSettled: async () => { await loadManagementConfiguration(false); },
   refreshAssistantPerformance: (runId) => assistantPerformance.refresh(runId),
   onMediaJobSubmitted: (jobId, toolName) => {
     const modality = toolName === "generate_image" ? "image" : toolName === "generate_audio" ? "audio" : "video";
@@ -897,7 +902,12 @@ function rebuildRouteLabels(preferredRoute?: string): void {
   if (!options.length) return;
   composer.controls.setRoutes(options, preferredRoute);
   routeState.textContent = composer.controls.routeLabel;
+  refreshAgentTopology();
   conversationContext.refresh();
+}
+
+function refreshAgentTopology(): void {
+  composer.controls.setAgentTopology(managementConfiguration?.agentTopologies?.[composer.controls.routeId]);
 }
 
 function renderTree(): void {
@@ -997,6 +1007,7 @@ async function updateSessionBinding(): Promise<void> {
 
 function handleRouteChange(): void {
   routeState.textContent = composer.controls.routeLabel;
+  refreshAgentTopology();
   agentRuns.resetWarmup();
   if (projects.currentSessionId) void updateSessionBinding();
   conversationContext.refresh();
