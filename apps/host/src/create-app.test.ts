@@ -1239,7 +1239,12 @@ describe("Fitz host", () => {
     const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${projectId}/sessions`, payload: { title: "Infrastructure" } }); const sessionId = session.json().data.id;
     const run = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", sessionId, messages: [{ role: "user", content: "persist this turn" }] } }); const runId = run.json().data.id; for (let attempt = 0; attempt < 400 && runtime.agentRuns.get(runId)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
     expect(runtime.agentRuns.get(runId)?.status).toBe("completed");
-    const transcript = await runtime.app.inject({ method: "GET", url: `/api/v1/sessions/${sessionId}/transcript` }); expect(transcript.json().data).toEqual([expect.objectContaining({ sequence: 1, role: "user", content: expect.objectContaining({ text: "persist this turn" }) }), expect.objectContaining({ sequence: 2, role: "assistant", content: expect.objectContaining({ runId }) })]); await runtime.app.close();
+    const transcript = await runtime.app.inject({ method: "GET", url: `/api/v1/sessions/${sessionId}/transcript` }); expect(transcript.json().data).toEqual([expect.objectContaining({ sequence: 1, role: "user", content: expect.objectContaining({ text: "persist this turn" }) }), expect.objectContaining({ sequence: 2, role: "assistant", content: expect.objectContaining({ runId }) })]);
+    const regenerate = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/regenerate`, payload: { runId } });
+    expect(regenerate.statusCode, regenerate.body).toBe(200);
+    expect(regenerate.json().data).toEqual(expect.objectContaining({ prompt: "persist this turn", removedTranscriptEntries: 2 }));
+    expect(runtime.store.transcriptAfter(sessionId, 0)).toEqual([]);
+    await runtime.app.close();
   });
 
   it("persists direct client messages idempotently in the canonical transcript", async () => {

@@ -154,6 +154,8 @@ describe("SqliteStore", () => {
     expect(store.transcriptBefore("session-1", second.sequence, 1)).toEqual([first]);
     expect(store.hasTranscriptBefore("session-1", second.sequence)).toBe(true);
     expect(store.hasTranscriptBefore("session-1", first.sequence)).toBe(false);
+    expect(store.deleteTranscriptFrom("session-1", 2)).toBe(1);
+    expect(store.transcriptAfter("session-1", 0)).toEqual([first]);
     store.upsertToolPolicy({ subjectType: "role", subjectId: "consumer", toolName: "bash", decision: "deny", updatedAt: now }); expect(store.resolveToolPolicy(undefined, "consumer", "bash")).toBe("deny"); expect(store.resolveToolPolicy(undefined, "consumer", "read")).toBe("ask");
     store.createToolApproval({ id: "approval-1", sessionId: "session-1", toolCallId: "call-1", toolName: "read", status: "pending", request: { path: "README.md" }, requestedAt: now }); expect(store.resolveToolApproval("approval-1", "approved", "user-1")).toBe(true); expect(store.getToolApproval("approval-1")?.status).toBe("approved"); store.createToolApproval({ id: "approval-2", sessionId: "session-1", toolCallId: "call-2", toolName: "bash", status: "pending", request: {}, requestedAt: now }); expect(store.cancelToolApproval("approval-2", "cancelled")).toBe(true); expect(store.getToolApproval("approval-2")?.status).toBe("cancelled"); store.close();
   });

@@ -232,6 +232,37 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
     }
   });
 
+  app.post("/api/v1/sessions/:sessionId/regenerate", async (request, reply) => {
+    try {
+      const session = sessionFor((request.params as { sessionId: string }).sessionId);
+      if (!session) return reply.code(404).send({ error: "Session not found" });
+      const principal = principalFor(request);
+      if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" });
+      const runId = requireString(requireRecord(request.body).runId, "runId");
+      const run = store.getAgentRun(runId);
+      if (!run || run.sessionId !== session.id) return reply.code(404).send({ error: "Assistant response not found" });
+      const active = store.latestSessionAgentRun(session.id);
+      if (active?.status === "running" || active?.status === "queued") return reply.code(409).send({ error: "Wait for the current response before regenerating" });
+
+      const entries = allTranscriptEntries(store, session.id);
+      const latestAnswer = entries.findLast((entry) => entry.kind === "message" && entry.role === "assistant" && entry.content.phase === "final");
+      if (latestAnswer?.content.runId !== runId) return reply.code(409).send({ error: "Only the latest assistant response can be regenerated" });
+      const firstRunEntry = entries.findIndex((entry) => entry.content.runId === runId);
+      if (firstRunEntry < 0) return reply.code(404).send({ error: "Assistant response transcript not found" });
+      let userIndex = firstRunEntry - 1;
+      while (userIndex >= 0 && !(entries[userIndex]!.kind === "message" && entries[userIndex]!.role === "user")) userIndex -= 1;
+      const userEntry = entries[userIndex];
+      const text = typeof userEntry?.content.text === "string" ? userEntry.content.text.trim() : "";
+      if (!userEntry || !text) return reply.code(409).send({ error: "The prompt for this response is unavailable" });
+
+      const removed = store.deleteTranscriptFrom(session.id, userEntry.sequence);
+      security?.audit("session.response-regenerated", principal?.user.id, "session", session.id, { runId, removedTranscriptEntries: removed });
+      return { data: { prompt: text, removedTranscriptEntries: removed } };
+    } catch (error) {
+      return reply.code(400).send({ error: errorMessage(error) });
+    }
+  });
+
   app.post("/api/v1/sessions/:sessionId/compact", async (request, reply) => {
     try {
       const session = sessionFor((request.params as { sessionId: string }).sessionId);
@@ -399,6 +430,17 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
       updatedAt: now,
       ...(principal ? { ownerUserId: principal.user.id } : {}),
     };
+  }
+}
+
+function allTranscriptEntries(store: SqliteStore, sessionId: string): ReturnType<SqliteStore["transcriptAfter"]> {
+  const entries: ReturnType<SqliteStore["transcriptAfter"]> = [];
+  let after = 0;
+  while (true) {
+    const page = store.transcriptAfter(sessionId, after, 1_000);
+    entries.push(...page);
+    if (page.length < 1_000) return entries;
+    after = page.at(-1)!.sequence;
   }
 }
 

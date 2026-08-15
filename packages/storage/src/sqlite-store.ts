@@ -249,6 +249,7 @@ export class SqliteStore {
   getTranscriptEntry(id: string): TranscriptEntryRecord | undefined { return this.#workspace.getTranscriptEntry(id); }
   transcriptAfter(sessionId: string, sequence: number, limit = 1000): TranscriptEntryRecord[] { return this.#workspace.transcriptAfter(sessionId, sequence, limit); }
   transcriptBefore(sessionId: string, sequence: number, limit = 250): TranscriptEntryRecord[] { return this.#workspace.transcriptBefore(sessionId, sequence, limit); }
+  deleteTranscriptFrom(sessionId: string, sequence: number): number { return this.#workspace.deleteTranscriptFrom(sessionId, sequence); }
   hasTranscriptBefore(sessionId: string, sequence: number): boolean { return this.#workspace.hasTranscriptBefore(sessionId, sequence); }
   latestTranscriptCompaction(sessionId: string): TranscriptEntryRecord | undefined { return this.#workspace.latestTranscriptCompaction(sessionId); }
 
