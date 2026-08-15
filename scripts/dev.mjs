@@ -18,7 +18,7 @@ try {
   await stopLegacyDevSessions(root);
   await waitForPortAvailable(port);
   await buildPackages();
-  startHost(mode, devSession);
+  startDevelopmentProcesses(mode, devSession);
 } catch (error) {
   devSession.release();
   throw error;
@@ -32,10 +32,24 @@ function parsePort(value) {
   return parsed;
 }
 
-function startHost(engineMode, session) {
-  const child = spawn(
+function startDevelopmentProcesses(engineMode, session) {
+  // Workspace packages are imported through their built dist entry points.
+  // Keep those outputs current, then make the host watcher observe them too;
+  // otherwise a source-host reload can retain an older package API in memory.
+  const compiler = spawn(
     process.execPath,
-    [join(root, "node_modules", "tsx", "dist", "cli.mjs"), "watch", join(root, "apps", "host", "src", "server.ts")],
+    [join(root, "node_modules", "typescript", "lib", "tsc.js"), "-b", "--watch", "--preserveWatchOutput"],
+    { cwd: root, stdio: "inherit" },
+  );
+  const host = spawn(
+    process.execPath,
+    [
+      join(root, "node_modules", "tsx", "dist", "cli.mjs"),
+      "watch",
+      "--include",
+      join(root, "packages", "*", "dist", "**", "*.js"),
+      join(root, "apps", "host", "src", "server.ts"),
+    ],
     {
       cwd: root,
       stdio: "inherit",
@@ -52,23 +66,27 @@ function startHost(engineMode, session) {
   const stop = () => {
     if (stopping) return;
     stopping = true;
-    if (child.pid) terminateProcessTree(child.pid);
+    if (compiler.pid) terminateProcessTree(compiler.pid);
+    if (host.pid) terminateProcessTree(host.pid);
     session.release();
   };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
-  child.once("error", () => {
+  const failed = () => {
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
-    session.release();
-  });
-  child.once("exit", (code, signal) => {
-    process.removeListener("SIGINT", stop);
-    process.removeListener("SIGTERM", stop);
-    session.release();
+    stop();
+  };
+  compiler.once("error", failed);
+  host.once("error", failed);
+  const exited = (code, signal) => {
+    if (stopping) return;
+    failed();
     if (signal) process.kill(process.pid, signal);
     else process.exitCode = code ?? 1;
-  });
+  };
+  compiler.once("exit", exited);
+  host.once("exit", exited);
 }
 
 // Workspace packages resolve to built dist, so build first: a stale dist is the #1 cause
