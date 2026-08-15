@@ -73,6 +73,7 @@ import {
 import { CHAT_ROUTE_IDS, hasCloudRouteBinding, LOCAL_OWNER_ID, UserRouteResolver } from "./user-route-resolver.js";
 import { contextTokensForAgentRequest } from "./route-context.js";
 import { CLOUD_SUBAGENT_EFFORT_BUDGETS } from "./agent-effort-policy.js";
+import { ConversationTurnService } from "./conversation-turns.js";
 
 export { ensureMediaRoutes } from "./model-management-routes.js";
 
@@ -264,6 +265,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const mediaJobs = new MediaJobCoordinator({ store, artifacts, scheduler, routes, ...(security ? { security } : {}) });
   const mediaImageTimeoutMs = options.mediaImageTimeoutMs ?? 120_000;
   const context = options.contextManager ?? new ContextManager(store);
+  const conversationTurns = new ConversationTurnService(store, context);
   const piPackages = options.piPackages;
   const modelCatalog = options.modelCatalog;
   const ninferRuntime = options.ninferRuntime;
@@ -445,6 +447,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     artifacts,
     routes,
     context,
+    conversationTurns,
     ...(security ? { security } : {}),
     principals,
   });

@@ -6,6 +6,7 @@ import { LOCAL_MAIN_CONTEXT_TOKENS, type SessionRecord } from "@fitz/protocol";
 import type { AuthenticatedPrincipal, SecurityService } from "@fitz/security";
 import type { ArtifactRepository, SqliteStore } from "@fitz/storage";
 import type { ContextManager } from "@fitz/context";
+import { ConversationTurnError, type ConversationTurnService } from "./conversation-turns.js";
 
 const LOCAL_CONNECTION_ID = "hosted--local";
 const PUBLIC_ROUTE_IDS = new Set(["default", "fast", "smart"]);
@@ -17,12 +18,13 @@ export interface WorkspaceRouteOptions {
   artifacts: ArtifactRepository;
   routes: RouteResolver;
   context: ContextManager;
+  conversationTurns: ConversationTurnService;
   security?: SecurityService;
   principals: WeakMap<object, AuthenticatedPrincipal>;
 }
 
 export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
-  const { app, store, artifacts, routes, context, security, principals } = options;
+  const { app, store, artifacts, routes, context, conversationTurns, security, principals } = options;
   const principalFor = (request: object) => principals.get(request);
   const sessionFor = (sessionId: string) => store.getSession(sessionId);
   const canAccess = (ownerUserId: string | undefined, request: object) => canAccessOwner(principalFor(request), ownerUserId);
@@ -239,28 +241,14 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
       const principal = principalFor(request);
       if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" });
       const runId = requireString(requireRecord(request.body).runId, "runId");
-      const run = store.getAgentRun(runId);
-      if (!run || run.sessionId !== session.id) return reply.code(404).send({ error: "Assistant response not found" });
-      const active = store.latestSessionAgentRun(session.id);
-      if (active?.status === "running" || active?.status === "queued") return reply.code(409).send({ error: "Wait for the current response before regenerating" });
-
-      const entries = allTranscriptEntries(store, session.id);
-      const latestAnswer = entries.findLast((entry) => entry.kind === "message" && entry.role === "assistant" && entry.content.phase === "final");
-      if (latestAnswer?.content.runId !== runId) return reply.code(409).send({ error: "Only the latest assistant response can be regenerated" });
-      const firstRunEntry = entries.findIndex((entry) => entry.content.runId === runId);
-      if (firstRunEntry < 0) return reply.code(404).send({ error: "Assistant response transcript not found" });
-      let userIndex = firstRunEntry - 1;
-      while (userIndex >= 0 && !(entries[userIndex]!.kind === "message" && entries[userIndex]!.role === "user")) userIndex -= 1;
-      const userEntry = entries[userIndex];
-      const text = typeof userEntry?.content.text === "string" ? userEntry.content.text.trim() : "";
-      if (!userEntry || !text) return reply.code(409).send({ error: "The prompt for this response is unavailable" });
-
-      const removed = store.deleteTranscriptFrom(session.id, userEntry.sequence);
-      const estimatedContextTokens = context.estimateSession(session.id);
-      security?.audit("session.response-regenerated", principal?.user.id, "session", session.id, { runId, removedTranscriptEntries: removed });
-      return { data: { prompt: text, removedTranscriptEntries: removed, estimatedContextTokens } };
+      const result = conversationTurns.regenerateLatestAssistant(session.id, runId);
+      security?.audit("session.response-regenerated", principal?.user.id, "session", session.id, { runId, removedTranscriptEntries: result.removedTranscriptEntries });
+      return { data: result };
     } catch (error) {
-      return reply.code(400).send({ error: errorMessage(error) });
+      const status = error instanceof ConversationTurnError
+        ? error.code === "assistant-not-found" || error.code === "transcript-not-found" ? 404 : 409
+        : 400;
+      return reply.code(status).send({ error: errorMessage(error) });
     }
   });
 
@@ -431,17 +419,6 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
       updatedAt: now,
       ...(principal ? { ownerUserId: principal.user.id } : {}),
     };
-  }
-}
-
-function allTranscriptEntries(store: SqliteStore, sessionId: string): ReturnType<SqliteStore["transcriptAfter"]> {
-  const entries: ReturnType<SqliteStore["transcriptAfter"]> = [];
-  let after = 0;
-  while (true) {
-    const page = store.transcriptAfter(sessionId, after, 1_000);
-    entries.push(...page);
-    if (page.length < 1_000) return entries;
-    after = page.at(-1)!.sequence;
   }
 }
 

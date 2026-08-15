@@ -41,8 +41,10 @@ import { ProjectSidebarController } from "./ui/sidebar/project-sidebar.js";
 import { WorkQueueController } from "./ui/queue/work-queue.js";
 import { ArtifactController } from "./ui/artifacts/artifact-controller.js";
 import { assertHostContract, HostRequestError, parseHostError } from "./client-error.js";
+import type { RegenerateAssistantTurnRequest, RegeneratedAssistantTurn } from "@fitz/protocol";
 
 type Json = Record<string, any>;
+type ApiData<T> = { data: T };
 
 suppressNativeTooltips();
 
@@ -1069,10 +1071,11 @@ async function regenerateAssistantResponse(article: HTMLElement): Promise<void> 
   while (userArticle && !userArticle.matches("article.message.user")) userArticle = userArticle.previousElementSibling as HTMLElement | null;
   if (!userArticle) { showStatus("Load the original prompt before regenerating this response.", "error"); return; }
   try {
-    const response = await api(`/api/v1/sessions/${sessionId}/regenerate`, "POST", { runId });
-    const prompt = String(response.data?.prompt ?? "").trim();
+    const request = { runId } satisfies RegenerateAssistantTurnRequest;
+    const response = await typedApi<ApiData<RegeneratedAssistantTurn>>(`/api/v1/sessions/${sessionId}/regenerate`, "POST", request);
+    const prompt = response.data.prompt.trim();
     if (!prompt) throw new Error("The original prompt is unavailable");
-    const retainedContextTokens = Number(response.data?.estimatedContextTokens);
+    const retainedContextTokens = Number(response.data.estimatedContextTokens);
     if (!Number.isFinite(retainedContextTokens) || retainedContextTokens < 0) throw new Error("The regenerated context estimate is unavailable");
     let next = userArticle.nextElementSibling;
     while (next) { const remove = next; next = next.nextElementSibling; remove.remove(); }
@@ -1123,6 +1126,10 @@ async function api(path: string, method = "GET", body?: unknown): Promise<Json> 
   try { parsed = JSON.parse(response.body) as Json; } catch { parsed = { error: response.body }; }
   if (response.status >= 400) throw parseHostError(parsed, response.status);
   return parsed;
+}
+
+async function typedApi<T>(path: string, method = "GET", body?: unknown): Promise<T> {
+  return await api(path, method, body) as T;
 }
 
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }

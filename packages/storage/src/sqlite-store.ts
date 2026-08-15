@@ -126,6 +126,21 @@ export class SqliteStore {
     }
   }
 
+  /** Runs synchronous store operations as one immediate SQLite transaction. */
+  withImmediateTransaction<T>(operation: () => T): T {
+    if (this.#database.isTransaction) throw new Error("Nested store transactions are not supported");
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      const result = operation();
+      if (result instanceof Promise) throw new TypeError("Store transactions must be synchronous");
+      this.#database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   upsertRecipe(recipe: Recipe): void { this.#configuration.upsertRecipe(recipe); }
   upsertEngine(engine: EngineRegistration): void { this.#configuration.upsertEngine(engine); }
   getEngine(id: string): EngineRegistration | undefined { return this.#configuration.getEngine(id); }

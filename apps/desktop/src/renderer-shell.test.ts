@@ -476,7 +476,8 @@ describe("desktop renderer shell", () => {
   });
 
   it("replaces regenerated context instead of accumulating the discarded turn", () => {
-    expect(renderer).toContain("const retainedContextTokens = Number(response.data?.estimatedContextTokens)");
+    expect(renderer).toContain("typedApi<ApiData<RegeneratedAssistantTurn>>");
+    expect(renderer).toContain("const retainedContextTokens = Number(response.data.estimatedContextTokens)");
     expect(renderer).toContain("conversationContext.recalibrate(retainedContextTokens)");
   });
 
