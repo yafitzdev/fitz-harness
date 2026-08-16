@@ -1,4 +1,4 @@
-import { ModelCatalogController, type ModelCatalogApi } from "./model-catalog.js";
+import { createModelCatalogClient, ModelCatalogController, type ModelCatalogApi } from "./model-catalog.js";
 import type { ActionFeedback } from "../primitives/action-status.js";
 
 export interface ModelsPageOptions {
@@ -38,7 +38,7 @@ export class ModelsPageController {
       refresh: require("refresh-models"),
       categoryTabs,
     }, {
-      api: options.api,
+      api: createModelCatalogClient(options.api),
       openExternal: options.openExternal,
       openPath: options.openPath,
       showStatus: options.showStatus,

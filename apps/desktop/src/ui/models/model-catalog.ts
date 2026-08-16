@@ -5,7 +5,8 @@ import { catalogQueryString, type CatalogNumericFilter, type CatalogSortOption }
 import { createActionMenu } from "../primitives/action-menu.js";
 import type { ActionFeedback } from "../primitives/action-status.js";
 
-export type ModelCatalogApi = (path: string, method?: string, body?: unknown) => Promise<Record<string, any>>;
+/** Raw host request boundary used by the page adapter. */
+export type ModelCatalogApi = (path: string, method?: string, body?: unknown) => Promise<unknown>;
 
 export interface CatalogModel {
   id: string;
@@ -34,6 +35,39 @@ export interface DownloadRecord {
   error?: string;
 }
 
+export interface ModelCatalogPage {
+  total: number;
+  models: CatalogModel[];
+}
+
+/** Typed endpoint client consumed by the catalog controller. */
+export interface ModelCatalogClient {
+  listDownloaded(): Promise<DownloadedModel[]>;
+  listActiveDownloads(): Promise<DownloadRecord[]>;
+  searchCatalog(path: string): Promise<ModelCatalogPage>;
+  startDownload(repoId: string): Promise<DownloadRecord>;
+  getDownload(id: string): Promise<DownloadRecord>;
+  cancelDownload(id: string): Promise<void>;
+  removeDownloaded(repoId: string, fileName: string): Promise<void>;
+}
+
+/**
+ * Converts the raw JSON request function into an endpoint-specific client.
+ * Responses are validated at this boundary so rendering code never has to
+ * reach through an untyped `data` envelope or guess which fields are present.
+ */
+export function createModelCatalogClient(request: ModelCatalogApi): ModelCatalogClient {
+  return {
+    listDownloaded: async () => parseEnvelope(await request("/api/v1/management/models/downloaded"), parseDownloadedModels),
+    listActiveDownloads: async () => parseEnvelope(await request("/api/v1/management/models/downloads"), parseDownloadRecords),
+    searchCatalog: async (path) => parseEnvelope(await request(path), parseCatalogPage),
+    startDownload: async (repoId) => parseEnvelope(await request("/api/v1/management/models/download", "POST", { repo: repoId }), parseDownloadRecord),
+    getDownload: async (id) => parseEnvelope(await request(`/api/v1/management/models/downloads/${encodeURIComponent(id)}`), parseDownloadRecord),
+    cancelDownload: async (id) => { await request(`/api/v1/management/models/downloads/${encodeURIComponent(id)}`, "DELETE"); },
+    removeDownloaded: async (repoId, fileName) => { await request("/api/v1/management/models/downloaded", "DELETE", { repoId, fileName }); },
+  };
+}
+
 export interface ModelCatalogElements {
   /** The content column that owns the collapsible sections. */
   view: HTMLElement;
@@ -49,7 +83,7 @@ export interface ModelCatalogElements {
 }
 
 export interface ModelCatalogOptions {
-  api: ModelCatalogApi;
+  api: ModelCatalogClient;
   openExternal: (url: string) => void | Promise<void>;
   openPath: (path: string) => void | Promise<void>;
   showStatus: ActionFeedback;
@@ -134,14 +168,14 @@ export class ModelCatalogController {
         this.stopPolls();
         this.downloads.clear();
         const [downloaded, active] = await Promise.all([
-          this.options.api("/api/v1/management/models/downloaded"),
-          this.options.api("/api/v1/management/models/downloads"),
+          this.options.api.listDownloaded(),
+          this.options.api.listActiveDownloads(),
         ]);
         if (generation !== this.loadGeneration) return;
-        this.downloaded = downloaded.data ?? [];
+        this.downloaded = downloaded;
         this.renderDownloaded();
         // Re-attach to downloads that were already running on the host.
-        for (const record of (active.data ?? []) as DownloadRecord[]) {
+        for (const record of active) {
           this.downloads.set(record.repoId, record);
           this.poll(record.id, record.repoId);
         }
@@ -178,10 +212,10 @@ export class ModelCatalogController {
     const offset = append ? this.models.length : 0;
     const query = encodeURIComponent(this.elements.modelSearch.value.trim());
     const category = encodeURIComponent(this.category);
-    const response = await this.options.api(`/api/v1/management/models/catalog?query=${query}&category=${category}&offset=${offset}&limit=30&${catalogQueryString(this.filterBar.filters)}`);
+    const response = await this.options.api.searchCatalog(`/api/v1/management/models/catalog?query=${query}&category=${category}&offset=${offset}&limit=30&${catalogQueryString(this.filterBar.filters)}`);
     if (generation !== this.loadGeneration) return;
-    this.catalogTotal = response.data?.total ?? 0;
-    this.models = append ? [...this.models, ...(response.data?.models ?? [])] : (response.data?.models ?? []);
+    this.catalogTotal = response.total;
+    this.models = append ? [...this.models, ...response.models] : response.models;
     this.renderCatalog();
   }
 
@@ -283,8 +317,7 @@ export class ModelCatalogController {
       button.disabled = true;
       button.textContent = "Starting…";
       try {
-        const response = await this.options.api("/api/v1/management/models/download", "POST", { repo: repoId });
-        const record = response.data as DownloadRecord;
+        const record = await this.options.api.startDownload(repoId);
         this.downloads.set(repoId, record);
         this.poll(record.id, repoId);
         this.renderCatalog();
@@ -337,8 +370,7 @@ export class ModelCatalogController {
     const timer = setTimeout(async () => {
       if (this.pollTimers.get(repoId) !== timer) return;
       try {
-        const response = await this.options.api(`/api/v1/management/models/downloads/${id}`);
-        const record = response.data as DownloadRecord;
+        const record = await this.options.api.getDownload(id);
         this.downloads.set(repoId, record);
         this.renderCatalog();
         if (record.status === "active") {
@@ -368,7 +400,7 @@ export class ModelCatalogController {
     const record = this.downloads.get(repoId);
     if (!record) return;
     try {
-      await this.options.api(`/api/v1/management/models/downloads/${record.id}`, "DELETE");
+      await this.options.api.cancelDownload(record.id);
       this.downloads.delete(repoId);
       this.pollTimers.delete(repoId);
       this.renderCatalog();
@@ -379,7 +411,7 @@ export class ModelCatalogController {
 
   private async removeDownloaded(entry: DownloadedModel): Promise<void> {
     try {
-      await this.options.api("/api/v1/management/models/downloaded", "DELETE", { repoId: entry.repoId, fileName: entry.fileName });
+      await this.options.api.removeDownloaded(entry.repoId, entry.fileName);
       await this.load(false);
       this.options.showStatus(`Removed ${entry.fileName}`, "success");
     } catch (error) {
@@ -391,6 +423,81 @@ export class ModelCatalogController {
     for (const timer of this.pollTimers.values()) clearTimeout(timer);
     this.pollTimers.clear();
   }
+}
+
+function parseEnvelope<T>(value: unknown, parse: (value: unknown) => T): T {
+  if (!isRecord(value) || !("data" in value)) throw invalidResponse("missing data envelope");
+  return parse(value.data);
+}
+
+function parseCatalogPage(value: unknown): ModelCatalogPage {
+  if (!isRecord(value) || !isFiniteNumber(value.total) || !Array.isArray(value.models)) {
+    throw invalidResponse("catalog page is invalid");
+  }
+  return { total: value.total, models: value.models.map(parseCatalogModel) };
+}
+
+function parseCatalogModel(value: unknown): CatalogModel {
+  if (!isRecord(value) || typeof value.id !== "string" || !isFiniteNumber(value.downloads) || !isFiniteNumber(value.likes)) {
+    throw invalidResponse("catalog model is invalid");
+  }
+  return {
+    id: value.id,
+    downloads: value.downloads,
+    likes: value.likes,
+    ...(typeof value.pipelineTag === "string" ? { pipelineTag: value.pipelineTag } : {}),
+    ...(typeof value.downloadable === "boolean" ? { downloadable: value.downloadable } : {}),
+    ...(typeof value.updatedAt === "string" ? { updatedAt: value.updatedAt } : {}),
+  };
+}
+
+function parseDownloadedModels(value: unknown): DownloadedModel[] {
+  if (!Array.isArray(value)) throw invalidResponse("downloaded models are invalid");
+  return value.map((entry) => {
+    if (!isRecord(entry) || typeof entry.repoId !== "string" || typeof entry.fileName !== "string"
+      || typeof entry.path !== "string" || !isFiniteNumber(entry.size)) {
+      throw invalidResponse("downloaded model is invalid");
+    }
+    return { repoId: entry.repoId, fileName: entry.fileName, path: entry.path, size: entry.size };
+  });
+}
+
+function parseDownloadRecords(value: unknown): DownloadRecord[] {
+  if (!Array.isArray(value)) throw invalidResponse("download records are invalid");
+  return value.map(parseDownloadRecord);
+}
+
+function parseDownloadRecord(value: unknown): DownloadRecord {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.repoId !== "string"
+    || typeof value.fileName !== "string" || !isFiniteNumber(value.received) || !isDownloadStatus(value.status)) {
+    throw invalidResponse("download record is invalid");
+  }
+  return {
+    id: value.id,
+    repoId: value.repoId,
+    fileName: value.fileName,
+    received: value.received,
+    status: value.status,
+    ...(isFiniteNumber(value.total) ? { total: value.total } : {}),
+    ...(typeof value.path === "string" ? { path: value.path } : {}),
+    ...(typeof value.error === "string" ? { error: value.error } : {}),
+  };
+}
+
+function isDownloadStatus(value: unknown): value is DownloadRecord["status"] {
+  return value === "active" || value === "done" || value === "cancelled" || value === "failed";
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function invalidResponse(detail: string): TypeError {
+  return new TypeError(`The model catalog returned an invalid response: ${detail}`);
 }
 
 function emptyState(message: string): HTMLElement {

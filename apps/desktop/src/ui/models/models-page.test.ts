@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ManagementPageLayout, managementRefreshIcon } from "../layout/management-page.js";
+import { createModelCatalogClient } from "./model-catalog.js";
 import { ModelsPageController, type ModelsPageOptions } from "./models-page.js";
 
 function buildPage(): HTMLElement {
@@ -69,6 +70,11 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("ModelsPageController", () => {
+  it("rejects malformed catalog envelopes at the typed API boundary", async () => {
+    const client = createModelCatalogClient(async () => ({ data: { models: [] } }));
+    await expect(client.searchCatalog("/api/v1/management/models/catalog")).rejects.toThrow("catalog page is invalid");
+  });
+
   it("loads the Hugging Face catalog and downloaded models into the collapsible sections", async () => {
     const api = vi.fn(async (path: string) => {
       if (path === "/api/v1/management/models/downloaded") {
