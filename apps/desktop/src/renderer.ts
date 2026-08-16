@@ -43,6 +43,7 @@ import { WorkQueueController } from "./ui/queue/work-queue.js";
 import { ArtifactController } from "./ui/artifacts/artifact-controller.js";
 import { assertHostContract, HostRequestError } from "./client-error.js";
 import { HostApiClient } from "./host-api-client.js";
+import { parseManagementConfiguration, parseManagementRoute, type ChatDefaults, type ManagementConfiguration } from "./management-configuration.js";
 import type { RegenerateAssistantTurnRequest, RegeneratedAssistantTurn } from "@fitz/protocol";
 
 type Json = Record<string, any>;
@@ -52,7 +53,7 @@ suppressNativeTooltips();
 
 let queueRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let currentUserId: string | undefined;
-let managementConfiguration: Json | undefined;
+let managementConfiguration: ManagementConfiguration | undefined;
 let initialNavigationPending = true;
 
 const shell = query(".app-shell");
@@ -947,10 +948,10 @@ function setConversationInert(inert: boolean): void {
   }
 }
 
-async function loadManagementConfiguration(renderPage: boolean): Promise<Json | undefined> {
+async function loadManagementConfiguration(renderPage: boolean): Promise<ManagementConfiguration | undefined> {
   try {
     const firstConfiguration = !managementConfiguration;
-    managementConfiguration = await api("/api/v1/management/status");
+    managementConfiguration = parseManagementConfiguration(await hostApi.request<unknown>("/api/v1/management/status"));
     applyChatDefaults(managementConfiguration.chatDefaults);
     conversationContext.refresh();
     connectionWorkspace.setConfiguration(managementConfiguration);
@@ -964,7 +965,7 @@ async function loadManagementConfiguration(renderPage: boolean): Promise<Json | 
   return managementConfiguration;
 }
 
-function applyChatDefaults(defaults: Json | undefined): void {
+function applyChatDefaults(defaults: ChatDefaults | undefined): void {
   const route = typeof defaults?.route === "string" ? defaults.route : "default";
   const effort = defaults?.effort === "light" || defaults?.effort === "high" ? defaults.effort : "normal";
   composer.controls.setDefaults(route, effort);
@@ -973,7 +974,7 @@ function applyChatDefaults(defaults: Json | undefined): void {
 function applyManagementRoute(routeId: string, route: Json | undefined): void {
   if (!managementConfiguration) return;
   const routes = (managementConfiguration.routes ?? []).filter((item: Json) => item.id !== routeId);
-  if (route) routes.push(route);
+  if (route) routes.push(parseManagementRoute(route));
   managementConfiguration = { ...managementConfiguration, routes };
   conversationContext.refresh();
   rebuildRouteLabels();
