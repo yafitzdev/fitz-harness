@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { HostingPageController, type HostingPageElements } from "./hosting-page-controller.js";
+import { createHostingPageClient, HostingPageController, type HostingPageElements } from "./hosting-page-controller.js";
 
 function node<T extends HTMLElement>(tag: string): T { const value = document.createElement(tag) as T; document.body.append(value); return value; }
 function elements(): HostingPageElements { return { enabled: node("input"), stateLabel: node("span"), stateMessage: node("p"), publicUrl: node("code"), copyUrl: node("button"), statusCards: node("div"), repair: node("button"), advancedStatus: node("div"), startAtLogin: node("input"), configPath: node("code"), copyConfigPath: node("button"), configJson: node("textarea"), reloadConfig: node("button"), validateConfig: node("button"), saveConfig: node("button"), configStatus: node("p") }; }
@@ -11,10 +11,15 @@ const status = { enabled: false, online: false, provider: "tailscale-funnel", ga
 beforeEach(() => document.body.replaceChildren());
 
 describe("HostingPageController", () => {
+  it("rejects malformed hosting status envelopes at the typed API boundary", async () => {
+    const client = createHostingPageClient(async () => ({ data: { enabled: false } }));
+    await expect(client.status()).rejects.toThrow("hosting status is invalid");
+  });
+
   it("renders one hosting switch and the advanced canonical configuration", async () => {
     const view = elements(); const onConfiguration = vi.fn();
     const api = vi.fn(async (path: string) => path.endsWith("/hosting") ? { data: status } : { data: configuration });
-    const controller = new HostingPageController(view, { api, copyText: vi.fn(async () => undefined), showStatus: vi.fn(), errorMessage: String, onConfiguration });
+    const controller = new HostingPageController(view, { api: createHostingPageClient(api), copyText: vi.fn(async () => undefined), showStatus: vi.fn(), errorMessage: String, onConfiguration });
     await controller.load();
     expect(view.stateLabel.textContent).toBe("Off");
     expect(view.configJson.value).toContain('"tailscale-funnel"');
@@ -32,7 +37,7 @@ describe("HostingPageController", () => {
       if (path.endsWith("/config") && method === "PATCH") return { data: { configuration, hosting: online } };
       return { data: configuration };
     });
-    const controller = new HostingPageController(view, { api, copyText: vi.fn(async () => undefined), showStatus: vi.fn(), errorMessage: (error) => String(error) });
+    const controller = new HostingPageController(view, { api: createHostingPageClient(api), copyText: vi.fn(async () => undefined), showStatus: vi.fn(), errorMessage: (error) => String(error) });
     await controller.load();
     view.enabled.checked = true; view.enabled.dispatchEvent(new Event("change"));
     await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/hosting", "PUT", { enabled: true }));

@@ -34,7 +34,7 @@ import { OverlayHost } from "./ui/primitives/overlay-host.js";
 import { PluginsPageController } from "./ui/plugins/plugins-page.js";
 import { ModelsPageController } from "./ui/models/models-page.js";
 import { AdministrationPageController } from "./ui/administration/administration-page.js";
-import { HostingPageController } from "./ui/administration/hosting-page-controller.js";
+import { createHostingPageClient, HostingPageController } from "./ui/administration/hosting-page-controller.js";
 import { UsagePageController } from "./ui/usage/usage-page.js";
 import { PlaybookWorkspaceController } from "./ui/playbooks/playbook-workspace.js";
 import { ProjectsController } from "./ui/projects/projects.js";
@@ -663,7 +663,7 @@ const hostingPageController = new HostingPageController({
   saveConfig: element("save-hosting-config") as HTMLButtonElement,
   configStatus: element("hosting-config-status"),
 }, {
-  api,
+  api: createHostingPageClient(api),
   copyText: (value) => window.fitz.copyText(value),
   showStatus: (message, tone = "neutral") => showStatus(message, tone),
   errorMessage,

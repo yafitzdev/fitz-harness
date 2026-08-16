@@ -1,5 +1,47 @@
 type Json = Record<string, any>;
 
+/** Raw host request boundary used by the hosting page adapter. */
+export type HostingPageApi = (path: string, method?: string, body?: unknown) => Promise<unknown>;
+
+export interface HostingStatus {
+  enabled: boolean;
+  online: boolean;
+  provider: string;
+  gateway: { running: boolean; origin: string };
+  tailscale: { connected: boolean; enabled: boolean; state?: string; dnsName?: string; publicUrl?: string; message?: string };
+  startup: { available: boolean; configured: boolean; message?: string };
+  configPath: string;
+  restartRequired: boolean;
+  publicUrl?: string;
+  message?: string;
+}
+
+export interface HostingConfigurationPatchResponse {
+  configuration: Json;
+  hosting: HostingStatus;
+}
+
+export interface HostingPageClient {
+  status(): Promise<HostingStatus>;
+  configuration(): Promise<Json>;
+  setEnabled(enabled: boolean): Promise<HostingStatus>;
+  repair(): Promise<HostingStatus>;
+  validate(configuration: Json): Promise<Json>;
+  updateConfiguration(configuration: Json): Promise<HostingConfigurationPatchResponse>;
+}
+
+/** Converts raw hosting responses into a typed client used by the controller. */
+export function createHostingPageClient(request: HostingPageApi): HostingPageClient {
+  return {
+    status: async () => parseEnvelope(await request("/api/v1/management/hosting"), parseHostingStatus),
+    configuration: async () => parseEnvelope(await request("/api/v1/management/config"), parseConfiguration),
+    setEnabled: async (enabled) => parseEnvelope(await request("/api/v1/management/hosting", "PUT", { enabled }), parseHostingStatus),
+    repair: async () => parseEnvelope(await request("/api/v1/management/hosting/repair", "POST", {}), parseHostingStatus),
+    validate: async (configuration) => parseEnvelope(await request("/api/v1/management/config/validate", "POST", configuration), parseConfiguration),
+    updateConfiguration: async (configuration) => parseEnvelope(await request("/api/v1/management/config", "PATCH", configuration), parseConfigurationPatchResponse),
+  };
+}
+
 export interface HostingPageElements {
   enabled: HTMLInputElement;
   stateLabel: HTMLElement;
@@ -19,7 +61,7 @@ export interface HostingPageElements {
   configStatus: HTMLElement;
 }
 export interface HostingPageOptions {
-  api: (path: string, method?: string, body?: unknown) => Promise<Json>;
+  api: HostingPageClient;
   copyText: (value: string) => Promise<void>;
   showStatus: (message: string, tone?: "neutral" | "success" | "error") => void;
   errorMessage: (error: unknown) => string;
@@ -31,7 +73,7 @@ export interface HostingPageOptions {
 export class HostingPageController {
   readonly #elements: HostingPageElements;
   readonly #options: HostingPageOptions;
-  #status: Json | undefined;
+  #status: HostingStatus | undefined;
   #configuration: Json | undefined;
   #configDirty = false;
 
@@ -51,16 +93,13 @@ export class HostingPageController {
 
   async load(forceEditor = false): Promise<void> {
     try {
-      const [hosting, configuration] = await Promise.all([
-        this.#options.api("/api/v1/management/hosting"),
-        this.#options.api("/api/v1/management/config"),
-      ]);
-      this.#status = hosting.data;
-      this.#configuration = configuration.data;
-      this.#options.onConfiguration?.(configuration.data);
-      this.render(hosting.data);
+      const [hosting, configuration] = await Promise.all([this.#options.api.status(), this.#options.api.configuration()]);
+      this.#status = hosting;
+      this.#configuration = configuration;
+      this.#options.onConfiguration?.(configuration);
+      this.render(hosting);
       if (forceEditor || !this.#configDirty) {
-        this.#elements.configJson.value = JSON.stringify(configuration.data, null, 2);
+        this.#elements.configJson.value = JSON.stringify(configuration, null, 2);
         this.#configDirty = false;
         this.#elements.configStatus.textContent = "Validated canonical configuration";
       }
@@ -71,7 +110,7 @@ export class HostingPageController {
     }
   }
 
-  render(status: Json): void {
+  render(status: HostingStatus): void {
     this.#status = status;
     this.#elements.enabled.disabled = false;
     this.#elements.enabled.checked = status.enabled === true;
@@ -103,8 +142,8 @@ export class HostingPageController {
     const enabled = this.#elements.enabled.checked;
     this.#elements.enabled.disabled = true;
     try {
-      const response = await this.#options.api("/api/v1/management/hosting", "PUT", { enabled });
-      this.render(response.data);
+      const response = await this.#options.api.setEnabled(enabled);
+      this.render(response);
       await this.load();
       this.#options.showStatus(enabled ? "Hosting enabled" : "Hosting disabled", "success");
     } catch (error) {
@@ -117,10 +156,10 @@ export class HostingPageController {
     const startAtLogin = this.#elements.startAtLogin.checked;
     this.#elements.startAtLogin.disabled = true;
     try {
-      const response = await this.#options.api("/api/v1/management/config", "PATCH", { hosting: { startAtLogin } });
-      this.#configuration = response.data?.configuration;
+      const response = await this.#options.api.updateConfiguration({ hosting: { startAtLogin } });
+      this.#configuration = response.configuration;
       this.#options.onConfiguration?.(this.#configuration ?? {});
-      this.render(response.data?.hosting ?? await this.#statusFromApi());
+      this.render(response.hosting ?? await this.#statusFromApi());
       this.#options.showStatus(startAtLogin ? "Hosting will start with Windows" : "Hosting startup disabled", "success");
     } catch (error) {
       this.#elements.startAtLogin.checked = !startAtLogin;
@@ -130,7 +169,7 @@ export class HostingPageController {
 
   async #repair(): Promise<void> {
     this.#elements.repair.disabled = true;
-    try { const response = await this.#options.api("/api/v1/management/hosting/repair", "POST", {}); this.render(response.data); this.#options.showStatus("Hosting repaired", "success"); }
+    try { const response = await this.#options.api.repair(); this.render(response); this.#options.showStatus("Hosting repaired", "success"); }
     catch (error) { this.#options.showStatus(this.#options.errorMessage(error), "error"); }
     finally { this.#elements.repair.disabled = false; }
   }
@@ -138,9 +177,9 @@ export class HostingPageController {
   async #validate(): Promise<Json | undefined> {
     try {
       const parsed = this.#parseEditor();
-      const response = await this.#options.api("/api/v1/management/config/validate", "POST", parsed);
+      const response = await this.#options.api.validate(parsed);
       this.#elements.configStatus.textContent = "Configuration is valid";
-      return response.data;
+      return response;
     } catch (error) { this.#elements.configStatus.textContent = this.#options.errorMessage(error); return undefined; }
   }
 
@@ -149,19 +188,75 @@ export class HostingPageController {
     if (!parsed) return;
     this.#elements.saveConfig.disabled = true;
     try {
-      const response = await this.#options.api("/api/v1/management/config", "PATCH", parsed);
-      this.#configuration = response.data.configuration;
+      const response = await this.#options.api.updateConfiguration(parsed);
+      this.#configuration = response.configuration;
       this.#options.onConfiguration?.(this.#configuration ?? {});
       this.#configDirty = false;
       this.#elements.configJson.value = JSON.stringify(this.#configuration, null, 2);
-      this.#elements.configStatus.textContent = response.data.hosting?.restartRequired ? "Saved. Restart Fitz to apply the changed hosting ports." : "Saved and applied";
-      this.render(response.data.hosting);
+      this.#elements.configStatus.textContent = response.hosting.restartRequired ? "Saved. Restart Fitz to apply the changed hosting ports." : "Saved and applied";
+      this.render(response.hosting);
     } catch (error) { this.#elements.configStatus.textContent = this.#options.errorMessage(error); }
     finally { this.#elements.saveConfig.disabled = false; }
   }
 
   #parseEditor(): Json { const value = JSON.parse(this.#elements.configJson.value) as unknown; if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Configuration must be a JSON object"); return value as Json; }
-  async #statusFromApi(): Promise<Json> { return (await this.#options.api("/api/v1/management/hosting")).data; }
+  async #statusFromApi(): Promise<HostingStatus> { return this.#options.api.status(); }
   async #copy(value: unknown, message: string): Promise<void> { if (typeof value !== "string" || !value) return; await this.#options.copyText(value); this.#options.showStatus(message, "success"); }
   #renderCards(target: HTMLElement, values: Array<[string, string]>): void { target.replaceChildren(...values.map(([label, value]) => { const card = document.createElement("div"); card.append(Object.assign(document.createElement("small"), { textContent: label }), Object.assign(document.createElement("strong"), { textContent: value })); return card; })); }
+}
+
+function parseEnvelope<T>(value: unknown, parse: (value: unknown) => T): T {
+  if (!isRecord(value) || !("data" in value)) throw invalidResponse("missing data envelope");
+  return parse(value.data);
+}
+
+function parseHostingStatus(value: unknown): HostingStatus {
+  if (!isRecord(value) || typeof value.enabled !== "boolean" || typeof value.online !== "boolean"
+    || typeof value.provider !== "string" || typeof value.configPath !== "string" || typeof value.restartRequired !== "boolean"
+    || !isRecord(value.gateway) || typeof value.gateway.running !== "boolean" || typeof value.gateway.origin !== "string"
+    || !isRecord(value.tailscale) || typeof value.tailscale.connected !== "boolean" || typeof value.tailscale.enabled !== "boolean"
+    || !isRecord(value.startup) || typeof value.startup.available !== "boolean" || typeof value.startup.configured !== "boolean") {
+    throw invalidResponse("hosting status is invalid");
+  }
+  return {
+    enabled: value.enabled,
+    online: value.online,
+    provider: value.provider,
+    gateway: { running: value.gateway.running, origin: value.gateway.origin },
+    tailscale: {
+      connected: value.tailscale.connected,
+      enabled: value.tailscale.enabled,
+      ...(typeof value.tailscale.state === "string" ? { state: value.tailscale.state } : {}),
+      ...(typeof value.tailscale.dnsName === "string" ? { dnsName: value.tailscale.dnsName } : {}),
+      ...(typeof value.tailscale.publicUrl === "string" ? { publicUrl: value.tailscale.publicUrl } : {}),
+      ...(typeof value.tailscale.message === "string" ? { message: value.tailscale.message } : {}),
+    },
+    startup: {
+      available: value.startup.available,
+      configured: value.startup.configured,
+      ...(typeof value.startup.message === "string" ? { message: value.startup.message } : {}),
+    },
+    configPath: value.configPath,
+    restartRequired: value.restartRequired,
+    ...(typeof value.publicUrl === "string" ? { publicUrl: value.publicUrl } : {}),
+    ...(typeof value.message === "string" ? { message: value.message } : {}),
+  };
+}
+
+function parseConfiguration(value: unknown): Json {
+  if (!isRecord(value)) throw invalidResponse("configuration is invalid");
+  return value;
+}
+
+function parseConfigurationPatchResponse(value: unknown): HostingConfigurationPatchResponse {
+  if (!isRecord(value) || !isRecord(value.configuration)) throw invalidResponse("configuration patch is invalid");
+  return { configuration: value.configuration, hosting: parseHostingStatus(value.hosting) };
+}
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function invalidResponse(detail: string): TypeError {
+  return new TypeError(`The hosting API returned an invalid response: ${detail}`);
 }
