@@ -378,6 +378,16 @@ const agentRuns = new AgentRunController({
   subscribeAgentEvents: (input, listener) => window.fitz.subscribeAgentEvents(input, listener),
   appendAssistant: (runId, createdAt) => appendMessage("assistant", "", createdAt, runId),
   appendAssistantDelta: (target, delta) => appendMarkdown(target, delta),
+  loadFinalAssistant: async (runId) => {
+    const sessionId = projects.currentSessionId;
+    if (!sessionId) return undefined;
+    const response = await api(`/api/v1/sessions/${encodeURIComponent(sessionId)}/transcript`);
+    const entry = [...(response.data ?? [])].reverse().find((candidate: Json) =>
+      candidate.kind === "message" && candidate.role === "assistant"
+      && candidate.content?.runId === runId && candidate.content?.phase === "final");
+    const text = typeof entry?.content?.text === "string" ? entry.content.text : "";
+    return text ? { text, ...(typeof entry.createdAt === "string" ? { createdAt: entry.createdAt } : {}) } : undefined;
+  },
   appendSystem: (message) => { appendMessage("system", message); },
   appendChangeSummary: (files) => appendChangeSummary(files),
   addTokenEstimate: (text) => { conversationContext.add(text); conversationContext.refresh(); },

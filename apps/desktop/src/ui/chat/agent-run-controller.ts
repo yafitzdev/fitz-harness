@@ -47,6 +47,9 @@ export interface AgentRunControllerOptions {
   yieldToPaint?: () => Promise<void>;
   appendAssistant: (runId: string, createdAt?: string) => HTMLElement;
   appendAssistantDelta: (target: HTMLElement, delta: string) => void;
+  /** Reads the host's durable final transcript when the live relay reaches
+   * completion without delivering any assistant deltas. */
+  loadFinalAssistant?: (runId: string) => Promise<{ text: string; createdAt?: string } | undefined>;
   appendSystem: (message: string) => void;
   appendChangeSummary: (files: Array<{ path: string; action: "edited" | "created" }>) => void;
   addTokenEstimate: (text: string) => void;
@@ -410,6 +413,19 @@ export class AgentRunController {
           this.#options.setEngineState(success || event.type === "run.cancelled" ? "READY" : event.type.slice(4).toUpperCase());
           activity.remove();
           if (!success && event.data?.error && event.type !== "run.cancelled") this.#options.appendSystem(String(event.data.error));
+          if (success && !assistant && !mediaHandedOff && this.#options.loadFinalAssistant) {
+            try {
+              const recovered = await this.#options.loadFinalAssistant(runId);
+              if (recovered?.text) {
+                assistant = this.#options.appendAssistant(runId, recovered.createdAt);
+                this.#options.appendAssistantDelta(assistant, recovered.text);
+                this.#options.addTokenEstimate(recovered.text);
+              }
+            } catch {
+              // The existing explicit empty-response notice remains the safe
+              // fallback if transcript reconciliation is temporarily offline.
+            }
+          }
           // A media tool deliberately ends the Pi turn as soon as its durable
           // background job exists. No assistant text is expected at this point:
           // MediaJobTracker owns the eventual final answer/artifact card.

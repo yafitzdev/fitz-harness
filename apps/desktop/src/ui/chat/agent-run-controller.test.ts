@@ -31,7 +31,7 @@ function request(): AgentRunRequest {
 
 function setup(
   api: AgentRunControllerOptions["api"],
-  options: Pick<AgentRunControllerOptions, "subscribeAgentEvents" | "yieldToPaint"> = {},
+  options: Pick<AgentRunControllerOptions, "subscribeAgentEvents" | "yieldToPaint" | "loadFinalAssistant"> = {},
 ) {
   const messages = document.createElement("main");
   document.body.append(messages);
@@ -425,6 +425,21 @@ describe("AgentRunController", () => {
     await controller.start(request());
 
     expect(calls.recalibrateEstimate).toHaveBeenCalledWith(512);
+  });
+
+  it("recovers a durable final answer when the live relay delivers only completion", async () => {
+    const api = vi.fn(async (path: string) => path === "/api/v1/agent/runs"
+      ? { data: { id: "run-recover" } }
+      : { events: [{ sequence: 1, type: "run.completed", data: {} }] });
+    const loadFinalAssistant = vi.fn(async () => ({ text: "Recovered answer", createdAt: "now" }));
+    const { controller, assistant, calls } = setup(api, { loadFinalAssistant });
+
+    await controller.start(request());
+
+    expect(loadFinalAssistant).toHaveBeenCalledWith("run-recover");
+    expect(calls.appendAssistant).toHaveBeenCalledWith("run-recover", "now");
+    expect(calls.appendAssistantDelta).toHaveBeenCalledWith(assistant, "Recovered answer");
+    expect(calls.appendSystem).not.toHaveBeenCalledWith("The model completed without returning a response.");
   });
 
   it("does not recalibrate when a run starts without a compaction", async () => {
