@@ -1,4 +1,7 @@
-type Json = Record<string, any>;
+import type { Recipe, Route } from "@fitz/protocol";
+import type { ManagementConfiguration } from "../../management-configuration.js";
+
+export type TextRouteConfiguration = Pick<ManagementConfiguration, "routes" | "recipes" | "cloudRoutes">;
 
 export type TextRouteId = "default" | "fast" | "smart";
 export type CloudTextRouteId = Exclude<TextRouteId, "default">;
@@ -33,20 +36,20 @@ export interface TextRouteOption {
 /** Resolves a role through its real owner: Local through host routes, cloud
  * roles through the consumer-owned binding map. The routes fallback supports
  * the public configuration response, which also materializes resolved roles. */
-export function textRouteRecipeId(configuration: Json | undefined, routeId: TextRouteId): string | undefined {
+export function textRouteRecipeId(configuration: TextRouteConfiguration | undefined, routeId: TextRouteId): string | undefined {
   const cloudRecipeId = routeId === "default" ? undefined : configuration?.cloudRoutes?.[routeId];
   if (typeof cloudRecipeId === "string" && cloudRecipeId) return cloudRecipeId;
-  const route = (configuration?.routes ?? []).find((candidate: Json) => candidate.id === routeId && candidate.enabled !== false);
+  const route = (configuration?.routes ?? []).find((candidate: Route) => candidate.id === routeId && candidate.enabled !== false);
   return typeof route?.recipeId === "string" && route.recipeId ? route.recipeId : undefined;
 }
 
-export function textRouteRecipe(configuration: Json | undefined, routeId: TextRouteId): Json | undefined {
+export function textRouteRecipe(configuration: TextRouteConfiguration | undefined, routeId: TextRouteId): Recipe | undefined {
   const recipeId = textRouteRecipeId(configuration, routeId);
-  return recipeId ? (configuration?.recipes ?? []).find((candidate: Json) => candidate.id === recipeId) : undefined;
+  return recipeId ? (configuration?.recipes ?? []).find((candidate: Recipe) => candidate.id === recipeId) : undefined;
 }
 
 /** Builds every configured chat choice, including the concrete model name. */
-export function textRouteOptions(configuration: Json | undefined): TextRouteOption[] {
+export function textRouteOptions(configuration: TextRouteConfiguration | undefined): TextRouteOption[] {
   return TEXT_ROUTE_DEFINITIONS.flatMap((definition) => {
     const recipe = textRouteRecipe(configuration, definition.id);
     if (!recipe) return [];
