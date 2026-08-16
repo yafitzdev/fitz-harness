@@ -21,17 +21,15 @@ const CONNECTION_EDITOR_TEMPLATE = `
     <form id="connection-form" class="management-editor-form">
       <input id="consumer-connection-id" type="hidden">
       <div class="editor-heading connection-editor-heading">
-        <small>API connection</small>
-        <div id="connection-editor-title-row" class="connection-editor-title-row"><h1 id="connection-editor-title">New connection</h1><button id="connection-editor-rename" class="icon-button" type="button" title="Rename connection" aria-label="Rename connection" hidden><svg viewBox="0 0 20 20"><path d="m13.8 3.2 3 3L7.2 15.8 3 17l1.2-4.2z"></path></svg></button></div>
+        <div id="connection-editor-title-row" class="connection-editor-title-row" hidden><h1 id="connection-editor-title"></h1><button id="connection-editor-rename" class="icon-button" type="button" title="Rename connection" aria-label="Rename connection"><svg viewBox="0 0 20 20"><path d="m13.8 3.2 3 3L7.2 15.8 3 17l1.2-4.2z"></path></svg></button></div>
         <input id="consumer-connection-name" class="connection-name-input" maxlength="100" required placeholder="Connection name" aria-label="Connection name">
-        <p>Connect a provider or a model server you host yourself. Models are discovered automatically.</p>
       </div>
       <div class="configuration-grid">
-        <label>Template<select id="consumer-connection-template"><option value="openai-compatible">OpenAI-compatible</option><option value="openai-media">OpenAI media</option><option value="fal">Fal</option><option value="replicate">Replicate</option></select><small>Fal and Replicate fill in their base URL automatically.</small></label>
-        <label>Execution<select id="consumer-connection-execution"><option value="metered_cloud">Metered cloud</option><option value="self_hosted">Self-hosted</option></select><small>Controls orchestration and cost policy; it does not depend on where this desktop runs.</small></label>
-        <label id="consumer-connection-url-field" class="wide-field">OpenAI-compatible base URL<input id="consumer-connection-url" type="url" maxlength="2048" required placeholder="http://127.0.0.1:8000/v1"><small>Use a provider, local model server, or another Fitz host.</small></label>
-        <label id="consumer-model-ids-field" class="wide-field" hidden>Model IDs<input id="consumer-model-ids" maxlength="4000" placeholder="fal-ai/minimax-video, fal-ai/flux/dev"><small>Optional: restrict discovery to these model IDs.</small></label>
+        <label id="consumer-connection-url-field" class="wide-field">URL<input id="consumer-connection-url" type="url" maxlength="2048" required placeholder="http://127.0.0.1:8000/v1"></label>
         <label id="consumer-api-key-field" class="wide-field">API key<input id="consumer-connection-key" type="password" autocomplete="off" placeholder="Stored securely"></label>
+        <label>Template<select id="consumer-connection-template"><option value="openai-compatible">OpenAI-compatible</option><option value="openai-media">OpenAI media</option><option value="fal">Fal</option><option value="replicate">Replicate</option></select></label>
+        <label>Execution<select id="consumer-connection-execution"><option value="metered_cloud">Metered cloud</option><option value="self_hosted">Self-hosted</option></select></label>
+        <label id="consumer-model-ids-field" class="wide-field" hidden>Model IDs<input id="consumer-model-ids" maxlength="4000" placeholder="fal-ai/minimax-video, fal-ai/flux/dev"></label>
       </div>
       <p id="connection-form-status" class="connection-form-status" hidden></p>
       <div class="editor-actions"><button id="cancel-connection-edit" class="quiet-button" type="button">Cancel</button><button class="primary-button" type="submit">Connect</button></div>
@@ -43,6 +41,9 @@ export type FixedRouteId = TextRouteId;
 export type CloudRouteId = CloudTextRouteId;
 type RouteDefinition<T extends string> = { id: T; label: string; icon: string };
 export const LOCAL_CONNECTION_ID = "hosted--local";
+const EDIT_ICON = '<path d="m13.8 3.2 3 3L7.2 15.8 3 17l1.2-4.2z"></path>';
+const SAVE_ICON = '<path d="m4 10.5 3.5 3.5L16 5.5"></path>';
+const CANCEL_ICON = '<path d="m5 5 10 10M15 5 5 15"></path>';
 const ROUTE_ICONS: Record<FixedRouteId, string> = {
   default: '<g class="route-icon-outline"><circle cx="10" cy="10" r="6"></circle><circle cx="10" cy="10" r="1.6"></circle></g><path class="route-icon-filled" fill-rule="evenodd" d="M10 3.25a6.75 6.75 0 1 0 0 13.5 6.75 6.75 0 0 0 0-13.5Zm0 4a2.75 2.75 0 1 1 0 5.5 2.75 2.75 0 0 1 0-5.5Z"></path>',
   fast: '<path class="route-icon-outline" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path><path class="route-icon-filled" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path>',
@@ -118,8 +119,6 @@ export interface ConnectionWorkspaceElements {
   search: HTMLInputElement;
   refresh: HTMLButtonElement;
   newConnection: HTMLButtonElement;
-  editLocalModels: HTMLButtonElement;
-  cancelLocalModelEdit: HTMLButtonElement;
   editorBack: HTMLButtonElement;
   cancelEdit: HTMLButtonElement;
 }
@@ -147,8 +146,8 @@ export class ConnectionWorkspaceController {
   private refreshGeneration = 0;
   private readonly routeAssignmentGeneration = new Map<string, number>();
   private inferenceScope: "cloud" | "local" = "cloud";
-  private editingLocalModels = false;
-  private readonly localNameDrafts = new Map<string, string>();
+  private editingLocalRecipeId: string | undefined;
+  private localNameDraft = "";
 
   constructor(options: ConnectionWorkspaceOptions) {
     this.options = options;
@@ -164,8 +163,6 @@ export class ConnectionWorkspaceController {
       ],
       actions: [
         { id: "new-connection", label: "Connect cloud API", className: "quiet-button compact-button" },
-        { id: "edit-local-models", label: "Edit", className: "quiet-button compact-button" },
-        { id: "cancel-local-model-edit", label: "Cancel", className: "quiet-button compact-button" },
         { id: "refresh-connections", icon: managementRefreshIcon, label: "Refresh inference" },
       ],
     });
@@ -202,8 +199,6 @@ export class ConnectionWorkspaceController {
       search: this.require("connection-search"),
       refresh: this.require("refresh-connections"),
       newConnection: this.require("new-connection"),
-      editLocalModels: this.require("edit-local-models"),
-      cancelLocalModelEdit: this.require("cancel-local-model-edit"),
       editorBack: this.require("connection-editor-back"),
       cancelEdit: this.require("cancel-connection-edit"),
     };
@@ -262,9 +257,8 @@ export class ConnectionWorkspaceController {
     this.resetForm();
     this.elements.listView.hidden = true;
     this.elements.editor.hidden = false;
-    this.elements.editorTitle.textContent = connection?.displayName ?? "New connection";
-    this.elements.editorTitleRow.hidden = false;
-    this.elements.editorRename.hidden = !connection;
+    this.elements.editorTitle.textContent = connection?.displayName ?? "";
+    this.elements.editorTitleRow.hidden = !connection;
     this.elements.name.hidden = Boolean(connection);
     if (connection) {
       this.elements.id.value = connection.id;
@@ -306,11 +300,6 @@ export class ConnectionWorkspaceController {
   private bind(): void {
     this.elements.refresh.addEventListener("click", () => void this.sync(true));
     this.elements.newConnection.addEventListener("click", () => this.openEditor());
-    this.elements.editLocalModels.addEventListener("click", () => {
-      if (this.editingLocalModels) void this.saveLocalModelNames();
-      else this.beginLocalModelEdit();
-    });
-    this.elements.cancelLocalModelEdit.addEventListener("click", () => this.cancelLocalModelEditing());
     this.elements.editorBack.addEventListener("click", () => this.closeEditor());
     this.elements.cancelEdit.addEventListener("click", () => this.closeEditor());
     this.elements.editorRename.addEventListener("click", () => {
@@ -327,12 +316,11 @@ export class ConnectionWorkspaceController {
   private selectInferenceScope(scope: "cloud" | "local", render = true): void {
     if (scope !== this.inferenceScope) {
       if (this.editorOpen) this.closeEditor();
-      if (this.editingLocalModels) this.cancelLocalModelEditing(false);
+      if (this.editingLocalRecipeId) this.cancelLocalModelEditing(false);
     }
     this.inferenceScope = scope;
     this.layout.setActiveTab(scope === "cloud" ? "inference-cloud-tab" : "inference-local-tab");
     this.elements.newConnection.hidden = scope === "local";
-    this.updateLocalEditActions();
     const description = this.elements.listView.querySelector<HTMLElement>(":scope > p");
     if (description) description.textContent = scope === "cloud"
       ? "Provider APIs and remote model servers."
@@ -499,82 +487,91 @@ export class ConnectionWorkspaceController {
   }
 
   private modelName(recipeId: string, displayName: string, hosted: boolean): HTMLElement {
-    if (hosted && this.editingLocalModels) {
+    const row = document.createElement("div");
+    row.className = "local-model-name-row";
+    if (hosted && this.editingLocalRecipeId === recipeId) {
       const input = document.createElement("input");
       input.className = "local-model-name-input";
       input.maxLength = 100;
       input.required = true;
-      input.value = this.localNameDrafts.get(recipeId) ?? displayName;
+      input.value = this.localNameDraft;
       input.dataset.recipeId = recipeId;
       input.setAttribute("aria-label", `Name for ${displayName}`);
-      input.addEventListener("input", () => this.localNameDrafts.set(recipeId, input.value));
-      return input;
+      input.addEventListener("input", () => { this.localNameDraft = input.value; });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          void this.saveLocalModelName(recipeId);
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          this.cancelLocalModelEditing();
+        }
+      });
+      row.append(
+        input,
+        iconAction("Save model name", SAVE_ICON, () => void this.saveLocalModelName(recipeId)),
+        iconAction("Cancel rename", CANCEL_ICON, () => this.cancelLocalModelEditing()),
+      );
+      return row;
     }
     const name = document.createElement("span");
     name.className = "recipe-display-name";
     name.textContent = displayName;
-    return name;
+    row.append(name);
+    if (hosted) row.append(iconAction("Rename model", EDIT_ICON, () => this.beginLocalModelEdit(recipeId, displayName)));
+    return row;
   }
 
   private localRecipes(): Json[] {
     return (this.configuration?.recipes ?? []).filter((recipe: Json) => !String(recipe.id).startsWith("consumer-recipe--"));
   }
 
-  private beginLocalModelEdit(): void {
+  private beginLocalModelEdit(recipeId: string, displayName: string): void {
     if (this.inferenceScope !== "local") return;
-    this.localNameDrafts.clear();
-    for (const recipe of this.localRecipes()) {
-      this.localNameDrafts.set(String(recipe.id), String(recipe.displayName ?? recipe.modelId ?? recipe.id));
-    }
-    this.editingLocalModels = true;
-    this.updateLocalEditActions();
+    this.editingLocalRecipeId = recipeId;
+    this.localNameDraft = displayName;
     this.render();
-    this.elements.connections.querySelector<HTMLInputElement>(".local-model-name-input")?.focus();
+    const input = [...this.elements.connections.querySelectorAll<HTMLInputElement>(".local-model-name-input")]
+      .find((candidate) => candidate.dataset.recipeId === recipeId);
+    input?.focus();
+    input?.select();
   }
 
   private cancelLocalModelEditing(render = true): void {
-    this.editingLocalModels = false;
-    this.localNameDrafts.clear();
-    this.updateLocalEditActions();
+    this.editingLocalRecipeId = undefined;
+    this.localNameDraft = "";
     if (render) this.render();
   }
 
-  private updateLocalEditActions(): void {
-    this.elements.editLocalModels.hidden = this.inferenceScope !== "local";
-    this.elements.editLocalModels.textContent = this.editingLocalModels ? "Save" : "Edit";
-    this.elements.cancelLocalModelEdit.hidden = this.inferenceScope !== "local" || !this.editingLocalModels;
-  }
-
-  private async saveLocalModelNames(): Promise<void> {
-    const recipes = this.localRecipes();
-    const updates = recipes.flatMap((recipe) => {
-      const id = String(recipe.id);
-      const displayName = (this.localNameDrafts.get(id) ?? "").trim();
-      if (!displayName || displayName === String(recipe.displayName ?? recipe.modelId ?? recipe.id)) return [];
-      return [{ recipe, displayName }];
-    });
-    if ([...this.localNameDrafts.values()].some((name) => !name.trim())) {
+  private async saveLocalModelName(recipeId: string): Promise<void> {
+    const recipe = this.localRecipes().find((candidate) => String(candidate.id) === recipeId);
+    if (!recipe || this.editingLocalRecipeId !== recipeId) return;
+    const displayName = this.localNameDraft.trim();
+    if (!displayName) {
       this.options.showStatus("Model names cannot be empty", "error");
       return;
     }
-    this.elements.editLocalModels.disabled = true;
-    this.elements.cancelLocalModelEdit.disabled = true;
+    if (displayName === String(recipe.displayName ?? recipe.modelId ?? recipe.id)) {
+      this.cancelLocalModelEditing();
+      return;
+    }
+    const row = [...this.elements.connections.querySelectorAll<HTMLInputElement>(".local-model-name-input")]
+      .find((candidate) => candidate.dataset.recipeId === recipeId)?.parentElement;
+    for (const control of row?.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input,button") ?? []) control.disabled = true;
     try {
-      await Promise.all(updates.map(({ recipe, displayName }) => this.options.api(
+      await this.options.api(
         `/api/v1/management/recipes/${encodeURIComponent(String(recipe.id))}`,
         "PUT",
         { ...recipe, displayName },
-      )));
-      this.editingLocalModels = false;
-      this.localNameDrafts.clear();
+      );
+      this.editingLocalRecipeId = undefined;
+      this.localNameDraft = "";
       await this.refreshRecordsAndConfiguration();
-      this.options.showStatus(updates.length ? "Model names updated" : "No model names changed", "success");
+      this.options.showStatus("Model name updated", "success");
     } catch (error) {
       this.options.showStatus(this.options.errorMessage(error), "error");
     } finally {
-      this.elements.editLocalModels.disabled = false;
-      this.elements.cancelLocalModelEdit.disabled = false;
-      this.updateLocalEditActions();
+      for (const control of row?.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input,button") ?? []) control.disabled = false;
     }
   }
 
@@ -764,9 +761,8 @@ export class ConnectionWorkspaceController {
     this.elements.id.value = "";
     this.elements.template.value = "openai-compatible";
     this.elements.execution.value = "metered_cloud";
-    this.elements.editorTitle.textContent = "New connection";
-    this.elements.editorTitleRow.hidden = false;
-    this.elements.editorRename.hidden = true;
+    this.elements.editorTitle.textContent = "";
+    this.elements.editorTitleRow.hidden = true;
     this.elements.name.hidden = false;
     this.elements.apiKey.placeholder = "Stored securely";
     this.elements.apiKey.required = true;
@@ -798,6 +794,17 @@ function actionButton(label: string, action: (button: HTMLButtonElement) => void
   button.className = "quiet-button compact-button";
   button.textContent = label;
   button.addEventListener("click", () => void action(button));
+  return button;
+}
+
+function iconAction(label: string, icon: string, action: () => void): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "icon-button local-model-name-action";
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.append(svgIcon(icon));
+  button.addEventListener("click", action);
   return button;
 }
 

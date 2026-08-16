@@ -104,9 +104,10 @@ describe("ConnectionWorkspaceController", () => {
     selectInferenceTab(elements, "local");
     expect(elements.listView.querySelector(":scope > h1")?.textContent).toBe("Local");
     expect(elements.newConnection.hidden).toBe(true);
-    expect(elements.editLocalModels.hidden).toBe(false);
+    expect(controller.root.querySelector("#edit-local-models")).toBeNull();
     expect(elements.connections.textContent).toContain("llama.cpp");
     expect(elements.connections.textContent).toContain("Local Model");
+    expect(elements.connections.querySelector<HTMLButtonElement>('[aria-label="Rename model"]')).not.toBeNull();
     expect(elements.connections.querySelector(".media-text")).toBeNull();
     expect(elements.connections.querySelector(".recipe-context-label")).toBeNull();
     expect(elements.connections.querySelector(".recipe-concurrency-label")).toBeNull();
@@ -185,6 +186,18 @@ describe("ConnectionWorkspaceController", () => {
 
     expect(controller.root.querySelector("#consumer-connection-auth")).toBeNull();
     expect(elements.name.closest(".connection-editor-heading")).not.toBeNull();
+    expect(elements.editorTitleRow.hidden).toBe(true);
+    expect(elements.editor.textContent).not.toContain("New connection");
+    expect(elements.editor.textContent).not.toContain("API connection");
+    expect(elements.editor.textContent).not.toContain("Connect a provider");
+    expect(elements.form.querySelector(".configuration-grid small")).toBeNull();
+    expect([...elements.form.querySelectorAll<HTMLElement>(".configuration-grid > label")].map((label) => label.querySelector("input,select")?.id)).toEqual([
+      "consumer-connection-url",
+      "consumer-connection-key",
+      "consumer-connection-template",
+      "consumer-connection-execution",
+      "consumer-model-ids",
+    ]);
     expect(elements.apiKeyField.hidden).toBe(false);
     expect(elements.apiKey.required).toBe(true);
     elements.name.value = "Self hosted";
@@ -434,14 +447,14 @@ describe("ConnectionWorkspaceController", () => {
     expect(controller.editorOpen).toBe(false);
     expect(controller.openRoute(["model", "hosted--local--comfyui", "h3-video"])).toBe(false);
 
-    click(elements.editLocalModels);
+    click(elements.connections.querySelector<HTMLButtonElement>('[aria-label="Rename model"]')!);
     const name = elements.connections.querySelector<HTMLInputElement>(".local-model-name-input")!;
     expect(name.value).toBe("MiniMax H3");
     name.value = "H3 Video";
     name.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(elements.editLocalModels.textContent).toBe("Save");
-    expect(elements.cancelLocalModelEdit.hidden).toBe(false);
-    click(elements.editLocalModels);
+    expect(elements.connections.querySelector<HTMLButtonElement>('[aria-label="Save model name"]')).not.toBeNull();
+    expect(elements.connections.querySelector<HTMLButtonElement>('[aria-label="Cancel rename"]')).not.toBeNull();
+    click(elements.connections.querySelector<HTMLButtonElement>('[aria-label="Save model name"]')!);
 
     await vi.waitFor(() => expect(calls.api).toHaveBeenCalledWith(
       "/api/v1/management/recipes/h3-video",
@@ -450,9 +463,9 @@ describe("ConnectionWorkspaceController", () => {
     ));
     const payload = calls.api.mock.calls.find(([path]) => path === "/api/v1/management/recipes/h3-video")?.[2] as Record<string, unknown>;
     expect(payload).not.toHaveProperty("agentTopology");
-    await vi.waitFor(() => expect(calls.showStatus).toHaveBeenCalledWith("Model names updated", "success"));
-    expect(elements.editLocalModels.textContent).toBe("Edit");
-    expect(elements.cancelLocalModelEdit.hidden).toBe(true);
+    await vi.waitFor(() => expect(calls.showStatus).toHaveBeenCalledWith("Model name updated", "success"));
+    expect(elements.connections.querySelector<HTMLInputElement>(".local-model-name-input")).toBeNull();
+    expect(elements.connections.querySelector<HTMLButtonElement>('[aria-label="Rename model"]')).not.toBeNull();
   });
 
   it("assigns a well-known media route", async () => {

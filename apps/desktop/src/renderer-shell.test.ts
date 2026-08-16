@@ -301,8 +301,10 @@ describe("desktop renderer shell", () => {
     expect(connectionWorkspace).toContain('{ id: "inference-local-tab", label: "Local" }');
     expect(connectionWorkspace).toContain('title: "Cloud"');
     expect(connectionWorkspace).not.toContain("openRecipeEditor(model");
-    expect(connectionWorkspace).toContain('{ id: "edit-local-models", label: "Edit"');
-    expect(connectionWorkspace).toContain("private async saveLocalModelNames()");
+    expect(connectionWorkspace).not.toContain('{ id: "edit-local-models", label: "Edit"');
+    expect(connectionWorkspace).toContain('iconAction("Rename model", EDIT_ICON');
+    expect(connectionWorkspace).toContain("private async saveLocalModelName(recipeId: string)");
+    expect(styles).toContain(".connection-editor-heading { padding-bottom: 0; border-bottom: 0; }");
     expect(connectionWorkspace).toContain("http://127.0.0.1:8000/v1");
     expect(styles).toContain('max-height: min(440px, calc(100vh - 32px)); overflow-y: auto;');
     expect(main).toContain('safeStorage.encryptString(JSON.stringify(connections))');
