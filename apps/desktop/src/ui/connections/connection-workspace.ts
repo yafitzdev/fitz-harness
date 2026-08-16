@@ -4,7 +4,6 @@ import type { ActionFeedback } from "../primitives/action-status.js";
 import { CollapsibleSection } from "../layout/collapsible-section.js";
 import { svgIcon } from "../primitives/dom.js";
 import { engineDisplayName, recipeMetadata, type RecipeModality } from "../recipes/recipe-metadata.js";
-import { RecipeConfigurationEditor } from "../playbooks/recipe-configuration-editor.js";
 import {
   CLOUD_TEXT_ROUTE_DEFINITIONS,
   TEXT_ROUTE_DEFINITIONS,
@@ -33,21 +32,6 @@ const CONNECTION_EDITOR_TEMPLATE = `
       </div>
       <p id="connection-form-status" class="connection-form-status" hidden></p>
       <div class="editor-actions"><button id="cancel-connection-edit" class="quiet-button" type="button">Cancel</button><button class="primary-button" type="submit">Connect</button></div>
-    </form>
-  </div>
-`;
-
-const AGENT_EDITOR_TEMPLATE = `
-  <div id="inference-agent-editor" class="management-editor" hidden>
-    <button id="inference-agent-editor-back" class="management-back" type="button"><svg viewBox="0 0 20 20"><path d="m12.5 4-6 6 6 6"></path></svg>Inference</button>
-    <form id="inference-agent-form" class="management-editor-form">
-      <div class="editor-heading inference-agent-heading">
-        <small id="inference-agent-eyebrow">Model agents</small>
-        <div class="inference-agent-title-row"><h1 id="inference-agent-title"></h1><button id="inference-agent-rename" class="icon-button" type="button" title="Rename model" aria-label="Rename model"><svg viewBox="0 0 20 20"><path d="m13.8 3.2 3 3L7.2 15.8 3 17l1.2-4.2z"></path></svg></button></div>
-        <input id="inference-agent-display-name" class="inference-agent-name-input" maxlength="100" required hidden>
-      </div>
-      <div id="inference-agent-configuration"></div>
-      <div class="editor-actions"><button id="cancel-inference-agent-edit" class="quiet-button" type="button">Cancel</button><button class="primary-button" type="submit">Save</button></div>
     </form>
   </div>
 `;
@@ -130,17 +114,10 @@ export interface ConnectionWorkspaceElements {
   search: HTMLInputElement;
   refresh: HTMLButtonElement;
   newConnection: HTMLButtonElement;
+  editLocalModels: HTMLButtonElement;
+  cancelLocalModelEdit: HTMLButtonElement;
   editorBack: HTMLButtonElement;
   cancelEdit: HTMLButtonElement;
-  agentEditor: HTMLElement;
-  agentForm: HTMLFormElement;
-  agentEditorBack: HTMLButtonElement;
-  agentCancel: HTMLButtonElement;
-  agentTitle: HTMLElement;
-  agentEyebrow: HTMLElement;
-  agentRename: HTMLButtonElement;
-  agentDisplayName: HTMLInputElement;
-  agentConfiguration: HTMLElement;
 }
 
 export interface ConnectionWorkspaceOptions {
@@ -165,10 +142,9 @@ export class ConnectionWorkspaceController {
   private configuration: Json | undefined;
   private refreshGeneration = 0;
   private readonly routeAssignmentGeneration = new Map<string, number>();
-  private readonly agentConfigurationEditor: RecipeConfigurationEditor;
-  private editingRecipe: Json | undefined;
-  private editingConnectionId: string | undefined;
   private inferenceScope: "cloud" | "local" = "cloud";
+  private editingLocalModels = false;
+  private readonly localNameDrafts = new Map<string, string>();
 
   constructor(options: ConnectionWorkspaceOptions) {
     this.options = options;
@@ -184,6 +160,8 @@ export class ConnectionWorkspaceController {
       ],
       actions: [
         { id: "new-connection", label: "Connect cloud API", className: "quiet-button compact-button" },
+        { id: "edit-local-models", label: "Edit", className: "quiet-button compact-button" },
+        { id: "cancel-local-model-edit", label: "Cancel", className: "quiet-button compact-button" },
         { id: "refresh-connections", icon: managementRefreshIcon, label: "Refresh inference" },
       ],
     });
@@ -198,7 +176,6 @@ export class ConnectionWorkspaceController {
       body: [connectionsList],
     });
     this.root.insertAdjacentHTML("beforeend", CONNECTION_EDITOR_TEMPLATE);
-    this.root.insertAdjacentHTML("beforeend", AGENT_EDITOR_TEMPLATE);
     this.elements = {
       form: this.require("connection-form"),
       id: this.require("consumer-connection-id"),
@@ -220,22 +197,15 @@ export class ConnectionWorkspaceController {
       search: this.require("connection-search"),
       refresh: this.require("refresh-connections"),
       newConnection: this.require("new-connection"),
+      editLocalModels: this.require("edit-local-models"),
+      cancelLocalModelEdit: this.require("cancel-local-model-edit"),
       editorBack: this.require("connection-editor-back"),
       cancelEdit: this.require("cancel-connection-edit"),
-      agentEditor: this.require("inference-agent-editor"),
-      agentForm: this.require("inference-agent-form"),
-      agentEditorBack: this.require("inference-agent-editor-back"),
-      agentCancel: this.require("cancel-inference-agent-edit"),
-      agentTitle: this.require("inference-agent-title"),
-      agentEyebrow: this.require("inference-agent-eyebrow"),
-      agentRename: this.require("inference-agent-rename"),
-      agentDisplayName: this.require("inference-agent-display-name"),
-      agentConfiguration: this.require("inference-agent-configuration"),
     };
-    this.agentConfigurationEditor = new RecipeConfigurationEditor(this.elements.agentConfiguration);
     this.layout.onTabSelect((id) => this.selectInferenceScope(id === "inference-local-tab" ? "local" : "cloud"));
     this.bind();
     this.resetForm();
+    this.selectInferenceScope("cloud", false);
   }
 
   private require<T extends HTMLElement>(id: string): T {
@@ -244,7 +214,7 @@ export class ConnectionWorkspaceController {
     return value;
   }
 
-  get editorOpen(): boolean { return !this.elements.editor.hidden || !this.elements.agentEditor.hidden; }
+  get editorOpen(): boolean { return !this.elements.editor.hidden; }
 
   setConfiguration(configuration: Json | undefined): void {
     this.configuration = configuration;
@@ -304,37 +274,8 @@ export class ConnectionWorkspaceController {
     this.elements.name.focus();
   }
 
-  private openRecipeEditor(model: { recipeId: string; displayName?: string; modelId?: string; id?: string }, connectionId: string): void {
-    if (this.configuration?.isAdministrator !== true) return;
-    const recipe = (this.configuration?.recipes ?? []).find((candidate: Json) => candidate.id === model.recipeId);
-    if (!recipe) return;
-    this.editingRecipe = recipe;
-    this.editingConnectionId = connectionId;
-    this.elements.listView.hidden = true;
-    this.elements.editor.hidden = true;
-    this.elements.agentEditor.hidden = false;
-    this.elements.agentTitle.textContent = String(recipe.displayName ?? model.displayName ?? model.modelId ?? model.id);
-    this.elements.agentDisplayName.value = this.elements.agentTitle.textContent;
-    this.elements.agentDisplayName.hidden = true;
-    this.elements.agentTitle.parentElement!.hidden = false;
-    const supportsChat = recipe.capabilities?.chatCompletions === true;
-    this.elements.agentEyebrow.textContent = supportsChat ? "Self-hosted model" : "Self-hosted media model";
-    this.agentConfigurationEditor.load(String(recipe.adapter), recipe.configuration ?? {}, recipe);
-    this.options.onRouteChange?.(["model", connectionId, model.recipeId]);
-  }
-
   openRoute(path: readonly string[]): boolean {
-    const [kind, connectionId, recipeId] = path;
-    if (kind === "model" && connectionId && recipeId) {
-      const connection = this.views().find((candidate) => candidate.id === connectionId);
-      const model = connection?.availableModels.find((candidate) => candidate.recipeId === recipeId)
-        ?? connection?.availableMediaModels.find((candidate) => candidate.recipeId === recipeId);
-      if (!connection || !model) return false;
-      if (!connection.hosted && connection.executionClass !== "self_hosted") return false;
-      this.selectInferenceScope(connection.hosted ? "local" : "cloud");
-      this.openRecipeEditor(model, connectionId);
-      return true;
-    }
+    const [kind, connectionId] = path;
     if (kind === "new") {
       this.openEditor();
       return true;
@@ -350,27 +291,20 @@ export class ConnectionWorkspaceController {
     const wasOpen = this.editorOpen;
     this.resetForm();
     this.elements.editor.hidden = true;
-    this.elements.agentEditor.hidden = true;
     this.elements.listView.hidden = false;
-    this.editingRecipe = undefined;
-    this.editingConnectionId = undefined;
     if (wasOpen && remember) this.options.onRouteChange?.(undefined);
   }
 
   private bind(): void {
     this.elements.refresh.addEventListener("click", () => void this.sync(true));
     this.elements.newConnection.addEventListener("click", () => this.openEditor());
+    this.elements.editLocalModels.addEventListener("click", () => {
+      if (this.editingLocalModels) void this.saveLocalModelNames();
+      else this.beginLocalModelEdit();
+    });
+    this.elements.cancelLocalModelEdit.addEventListener("click", () => this.cancelLocalModelEditing());
     this.elements.editorBack.addEventListener("click", () => this.closeEditor());
     this.elements.cancelEdit.addEventListener("click", () => this.closeEditor());
-    this.elements.agentEditorBack.addEventListener("click", () => this.closeEditor());
-    this.elements.agentCancel.addEventListener("click", () => this.closeEditor());
-    this.elements.agentRename.addEventListener("click", () => {
-      this.elements.agentTitle.parentElement!.hidden = true;
-      this.elements.agentDisplayName.hidden = false;
-      this.elements.agentDisplayName.focus();
-      this.elements.agentDisplayName.select();
-    });
-    this.elements.agentForm.addEventListener("submit", (event) => { event.preventDefault(); void this.saveRecipeConfiguration(); });
     this.elements.search.addEventListener("input", () => this.render());
     this.elements.auth.addEventListener("change", () => this.updateAuthField());
     this.elements.template.addEventListener("change", () => this.updateTemplateFields());
@@ -378,9 +312,14 @@ export class ConnectionWorkspaceController {
   }
 
   private selectInferenceScope(scope: "cloud" | "local", render = true): void {
+    if (scope !== this.inferenceScope) {
+      if (this.editorOpen) this.closeEditor();
+      if (this.editingLocalModels) this.cancelLocalModelEditing(false);
+    }
     this.inferenceScope = scope;
     this.layout.setActiveTab(scope === "cloud" ? "inference-cloud-tab" : "inference-local-tab");
     this.elements.newConnection.hidden = scope === "local";
+    this.updateLocalEditActions();
     const description = this.elements.listView.querySelector<HTMLElement>(":scope > p");
     if (description) description.textContent = scope === "cloud"
       ? "Provider APIs and remote model servers."
@@ -390,7 +329,7 @@ export class ConnectionWorkspaceController {
 
   private views(): ConnectionView[] {
     const recipes = this.configuration?.recipes ?? [];
-    const localRecipes = recipes.filter((recipe: Json) => !String(recipe.id).startsWith("consumer-recipe--"));
+    const localRecipes = this.localRecipes();
     const localByEngine = new Map<string, Json[]>();
     for (const recipe of localRecipes) {
       const engineId = String(recipe.playbookId ?? recipe.adapter ?? "Local");
@@ -448,36 +387,29 @@ export class ConnectionWorkspaceController {
     });
     if (!section.collapsed) {
       if (!connection.availableModels.length && !mediaModels.length) section.appendBody(emptyState("No models available"));
-      for (const model of connection.availableModels) section.appendBody(this.modelCard(model, routes, connection.hosted, connection.id, connection.executionClass));
+      for (const model of connection.availableModels) section.appendBody(this.modelCard(model, routes, connection.hosted));
       if (mediaModels.length) {
-        for (const model of mediaModels) section.appendBody(this.mediaModelCard(model, routes, connection.hosted, connection.id));
+        for (const model of mediaModels) section.appendBody(this.mediaModelCard(model, routes, connection.hosted));
       }
     }
     return section.root;
   }
 
-  private modelCard(model: ConnectionModelView, routes: Json[], hosted: boolean, connectionId: string, executionClass: "self_hosted" | "metered_cloud"): HTMLElement {
+  private modelCard(model: ConnectionModelView, routes: Json[], hosted: boolean): HTMLElement {
     const card = document.createElement("article");
     card.className = "recipe-card";
-    const details = document.createElement(hosted || executionClass === "self_hosted" ? "button" : "div");
-    if (details instanceof HTMLButtonElement) details.type = "button";
+    const details = document.createElement("div");
     details.className = "recipe-card-details";
-    if (details instanceof HTMLButtonElement) {
-      details.title = this.configuration?.isAdministrator !== true ? "Only administrators can configure local models" : "Configure agents";
-      details.disabled = this.configuration?.isAdministrator !== true;
-      details.addEventListener("click", () => this.openRecipeEditor(model, connectionId));
-    }
-    const name = document.createElement("span");
-    name.className = "recipe-display-name";
-    name.textContent = model.displayName ?? model.id;
+    const name = this.modelName(model.recipeId, model.displayName ?? model.id, hosted);
     const labels = document.createElement("div");
     labels.className = "recipe-card-labels";
-    labels.append(...recipeMetadata({
-      modelId: model.modelId ?? "API model",
-      ...(model.contextTokens ? { contextTokens: model.contextTokens } : {}),
-      showConcurrency: hosted,
-      capabilities: { chatCompletions: true, maxConcurrentGenerations: model.maxConcurrentGenerations ?? 1 },
-    }));
+    if (hosted) labels.append(modelIdLabel(model.modelId ?? "Local model"));
+    else labels.append(...recipeMetadata({
+        modelId: model.modelId ?? "API model",
+        ...(model.contextTokens ? { contextTokens: model.contextTokens } : {}),
+        showConcurrency: false,
+        capabilities: { chatCompletions: true, maxConcurrentGenerations: model.maxConcurrentGenerations ?? 1 },
+      }));
     details.append(name, labels);
     const actions = document.createElement("div");
     actions.className = "recipe-card-actions";
@@ -511,20 +443,12 @@ export class ConnectionWorkspaceController {
     return card;
   }
 
-  private mediaModelCard(model: MediaModelView, routes: Json[], hosted: boolean, connectionId: string): HTMLElement {
+  private mediaModelCard(model: MediaModelView, routes: Json[], hosted: boolean): HTMLElement {
     const card = document.createElement("article");
     card.className = "recipe-card media-recipe-card";
-    const details = document.createElement(hosted ? "button" : "div");
-    if (details instanceof HTMLButtonElement) details.type = "button";
+    const details = document.createElement("div");
     details.className = "recipe-card-details";
-    if (details instanceof HTMLButtonElement) {
-      details.title = this.configuration?.isAdministrator !== true ? "Only administrators can configure local models" : "Configure model";
-      details.disabled = this.configuration?.isAdministrator !== true;
-      details.addEventListener("click", () => this.openRecipeEditor(model, connectionId));
-    }
-    const name = document.createElement("span");
-    name.className = "recipe-display-name";
-    name.textContent = model.displayName;
+    const name = this.modelName(model.recipeId, model.displayName, hosted);
     const labels = document.createElement("div");
     labels.className = "recipe-card-labels";
     labels.append(...recipeMetadata({
@@ -561,6 +485,86 @@ export class ConnectionWorkspaceController {
     return card;
   }
 
+  private modelName(recipeId: string, displayName: string, hosted: boolean): HTMLElement {
+    if (hosted && this.editingLocalModels) {
+      const input = document.createElement("input");
+      input.className = "local-model-name-input";
+      input.maxLength = 100;
+      input.required = true;
+      input.value = this.localNameDrafts.get(recipeId) ?? displayName;
+      input.dataset.recipeId = recipeId;
+      input.setAttribute("aria-label", `Name for ${displayName}`);
+      input.addEventListener("input", () => this.localNameDrafts.set(recipeId, input.value));
+      return input;
+    }
+    const name = document.createElement("span");
+    name.className = "recipe-display-name";
+    name.textContent = displayName;
+    return name;
+  }
+
+  private localRecipes(): Json[] {
+    return (this.configuration?.recipes ?? []).filter((recipe: Json) => !String(recipe.id).startsWith("consumer-recipe--"));
+  }
+
+  private beginLocalModelEdit(): void {
+    if (this.inferenceScope !== "local") return;
+    this.localNameDrafts.clear();
+    for (const recipe of this.localRecipes()) {
+      this.localNameDrafts.set(String(recipe.id), String(recipe.displayName ?? recipe.modelId ?? recipe.id));
+    }
+    this.editingLocalModels = true;
+    this.updateLocalEditActions();
+    this.render();
+    this.elements.connections.querySelector<HTMLInputElement>(".local-model-name-input")?.focus();
+  }
+
+  private cancelLocalModelEditing(render = true): void {
+    this.editingLocalModels = false;
+    this.localNameDrafts.clear();
+    this.updateLocalEditActions();
+    if (render) this.render();
+  }
+
+  private updateLocalEditActions(): void {
+    this.elements.editLocalModels.hidden = this.inferenceScope !== "local";
+    this.elements.editLocalModels.textContent = this.editingLocalModels ? "Save" : "Edit";
+    this.elements.cancelLocalModelEdit.hidden = this.inferenceScope !== "local" || !this.editingLocalModels;
+  }
+
+  private async saveLocalModelNames(): Promise<void> {
+    const recipes = this.localRecipes();
+    const updates = recipes.flatMap((recipe) => {
+      const id = String(recipe.id);
+      const displayName = (this.localNameDrafts.get(id) ?? "").trim();
+      if (!displayName || displayName === String(recipe.displayName ?? recipe.modelId ?? recipe.id)) return [];
+      return [{ recipe, displayName }];
+    });
+    if ([...this.localNameDrafts.values()].some((name) => !name.trim())) {
+      this.options.showStatus("Model names cannot be empty", "error");
+      return;
+    }
+    this.elements.editLocalModels.disabled = true;
+    this.elements.cancelLocalModelEdit.disabled = true;
+    try {
+      await Promise.all(updates.map(({ recipe, displayName }) => this.options.api(
+        `/api/v1/management/recipes/${encodeURIComponent(String(recipe.id))}`,
+        "PUT",
+        { ...recipe, displayName },
+      )));
+      this.editingLocalModels = false;
+      this.localNameDrafts.clear();
+      await this.refreshRecordsAndConfiguration();
+      this.options.showStatus(updates.length ? "Model names updated" : "No model names changed", "success");
+    } catch (error) {
+      this.options.showStatus(this.options.errorMessage(error), "error");
+    } finally {
+      this.elements.editLocalModels.disabled = false;
+      this.elements.cancelLocalModelEdit.disabled = false;
+      this.updateLocalEditActions();
+    }
+  }
+
   private async save(): Promise<void> {
     setFormBusy(this.elements.form, true);
     this.setFormStatus("Connecting…");
@@ -585,27 +589,6 @@ export class ConnectionWorkspaceController {
       this.options.showStatus(updating ? "Connection updated" : "Connection added", "success");
     } catch (error) { this.setFormStatus(this.options.errorMessage(error), true); }
     finally { setFormBusy(this.elements.form, false); }
-  }
-
-  private async saveRecipeConfiguration(): Promise<void> {
-    const recipe = this.editingRecipe;
-    if (!recipe) return;
-    const displayName = this.elements.agentDisplayName.value.trim();
-    setFormBusy(this.elements.agentForm, true);
-    try {
-      await this.options.api(`/api/v1/management/recipes/${encodeURIComponent(String(recipe.id))}`, "PUT", {
-        ...recipe,
-        displayName,
-        configuration: this.agentConfigurationEditor.value(),
-      });
-      this.closeEditor();
-      await this.refreshRecordsAndConfiguration();
-      this.options.showStatus("Model configuration saved", "success");
-    } catch (error) {
-      this.options.showStatus(this.options.errorMessage(error), "error");
-    } finally {
-      setFormBusy(this.elements.agentForm, false);
-    }
   }
 
   private async testConnection(connection: ConsumerConnectionSummary, button: HTMLButtonElement): Promise<void> {
@@ -812,6 +795,13 @@ function emptyState(message: string, className = "panel-empty"): HTMLElement {
   element.className = className;
   element.textContent = message;
   return element;
+}
+
+function modelIdLabel(modelId: string): HTMLElement {
+  const label = document.createElement("span");
+  label.className = "recipe-card-label";
+  label.textContent = modelId;
+  return label;
 }
 
 function setFormBusy(form: HTMLFormElement, busy: boolean): void {

@@ -1,13 +1,8 @@
 .connection-form-status { margin: 0; color: var(--muted); font-size: 11px; }
 .connection-form-status.error { color: var(--status-danger-soft); }
 .connections-empty { margin: 18px 0; color: var(--subtle); font-size: 12px; text-align: center; }
-.inference-agent-title-row { display: flex; align-items: center; gap: 7px; }
-.inference-agent-title-row h1 { margin: 0; }
-.inference-agent-title-row .icon-button { width: 28px; height: 28px; }
-.inference-agent-title-row svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; }
-.inference-agent-name-input { width: min(100%, 640px); font: inherit; font-size: 24px; font-weight: 650; }
-.recipe-card-details:is(button) { min-width: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
-.recipe-card-details:is(button):disabled { cursor: default; opacity: 1; }
+.local-model-name-input { width: min(100%, 520px); border: 1px solid var(--grey-400); border-radius: 7px; background: var(--grey-100); color: inherit; font: inherit; font-weight: 600; padding: 6px 8px; }
+.local-model-name-input:focus { border-color: var(--grey-650); outline: none; }
 .recipe-route-toggle { display: flex; align-items: center; gap: 1px; padding: 2px; border: 0; border-radius: 11px; background: var(--grey-100); }
 .route-symbol { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--grey-550); cursor: pointer; transition: background-color 100ms ease, color 100ms ease; }
 .route-symbol:hover { background: var(--grey-300); color: var(--grey-850); }

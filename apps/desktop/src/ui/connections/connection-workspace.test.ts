@@ -104,8 +104,13 @@ describe("ConnectionWorkspaceController", () => {
     selectInferenceTab(elements, "local");
     expect(elements.listView.querySelector(":scope > h1")?.textContent).toBe("Local");
     expect(elements.newConnection.hidden).toBe(true);
+    expect(elements.editLocalModels.hidden).toBe(false);
     expect(elements.connections.textContent).toContain("llama.cpp");
     expect(elements.connections.textContent).toContain("Local Model");
+    expect(elements.connections.querySelector(".media-text")).toBeNull();
+    expect(elements.connections.querySelector(".recipe-context-label")).toBeNull();
+    expect(elements.connections.querySelector(".recipe-concurrency-label")).toBeNull();
+    expect(elements.connections.querySelector(".recipe-card-label")?.textContent).toBe("local.gguf");
     elements.search.value = "local.gguf";
     elements.search.dispatchEvent(new Event("input", { bubbles: true }));
     expect(elements.connections.querySelectorAll(".consumer-playbook-card")).toHaveLength(1);
@@ -203,7 +208,7 @@ describe("ConnectionWorkspaceController", () => {
     expect(remoteCard.textContent).not.toContain("concurrent");
     expect(remoteCard.textContent).not.toContain("Sequential");
     click(details);
-    expect(elements.agentEditor.hidden).toBe(true);
+    expect(controller.editorOpen).toBe(false);
     expect(calls.api).not.toHaveBeenCalledWith(expect.stringContaining("agent-topology"), expect.anything(), expect.anything());
   });
 
@@ -380,7 +385,7 @@ describe("ConnectionWorkspaceController", () => {
     expect(MEDIA_ROUTES.find((route) => route.id === "audio")?.icon).toContain("route-icon-wave");
   });
 
-  it("opens and renames local ComfyUI recipes without exposing agent settings", async () => {
+  it("renames local ComfyUI recipes inline without opening a detail page", async () => {
     const { controller, elements, calls } = setup();
     await controller.sync(false);
     controller.setConfiguration({
@@ -400,15 +405,19 @@ describe("ConnectionWorkspaceController", () => {
     selectInferenceTab(elements, "local");
 
     const details = elements.connections.querySelector<HTMLElement>(".media-recipe-card .recipe-card-details")!;
-    expect(details).toBeInstanceOf(HTMLButtonElement);
+    expect(details).not.toBeInstanceOf(HTMLButtonElement);
     click(details);
+    expect(controller.editorOpen).toBe(false);
+    expect(controller.openRoute(["model", "hosted--local--comfyui", "h3-video"])).toBe(false);
 
-    expect(elements.agentEditor.hidden).toBe(false);
-    expect(elements.agentEyebrow.textContent).toBe("Self-hosted media model");
-    expect(elements.agentConfiguration.childElementCount).toBe(0);
-    click(elements.agentRename);
-    elements.agentDisplayName.value = "H3 Video";
-    elements.agentForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    click(elements.editLocalModels);
+    const name = elements.connections.querySelector<HTMLInputElement>(".local-model-name-input")!;
+    expect(name.value).toBe("MiniMax H3");
+    name.value = "H3 Video";
+    name.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(elements.editLocalModels.textContent).toBe("Save");
+    expect(elements.cancelLocalModelEdit.hidden).toBe(false);
+    click(elements.editLocalModels);
 
     await vi.waitFor(() => expect(calls.api).toHaveBeenCalledWith(
       "/api/v1/management/recipes/h3-video",
@@ -417,7 +426,9 @@ describe("ConnectionWorkspaceController", () => {
     ));
     const payload = calls.api.mock.calls.find(([path]) => path === "/api/v1/management/recipes/h3-video")?.[2] as Record<string, unknown>;
     expect(payload).not.toHaveProperty("agentTopology");
-    await vi.waitFor(() => expect(calls.showStatus).toHaveBeenCalledWith("Model configuration saved", "success"));
+    await vi.waitFor(() => expect(calls.showStatus).toHaveBeenCalledWith("Model names updated", "success"));
+    expect(elements.editLocalModels.textContent).toBe("Edit");
+    expect(elements.cancelLocalModelEdit.hidden).toBe(true);
   });
 
   it("assigns a well-known media route", async () => {
