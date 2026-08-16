@@ -229,6 +229,40 @@ describe("InferenceScheduler", () => {
       .map((event) => event.data.kind)).toEqual(["chat", "warm", "chat"]);
   });
 
+  it("replaces a superseded route warm-up and loads only the latest recipe", async () => {
+    const adapter = new FakeEngineAdapter({ loadDelayMs: 50 });
+    const events = new LifecycleEventBus();
+    const routes = new RouteResolver(
+      [route("default", "old")],
+      [recipe("old", 60), recipe("selected", 60)],
+    );
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]), events });
+    const scheduler = new InferenceScheduler(routes, lifecycle, events);
+
+    const obsolete = scheduler.enqueueWarm("default");
+    await waitFor(() => lifecycle.snapshot().recipeId === "old");
+    routes.upsertRoute(route("default", "selected"));
+    const selected = scheduler.enqueueWarm("default");
+
+    await expect(obsolete.result).rejects.toMatchObject({ name: "AbortError" });
+    await expect(selected.result).resolves.toMatchObject({ state: "READY", recipeId: "selected" });
+    expect(adapter.starts.map((handle) => handle.recipeId)).toEqual(["selected"]);
+  });
+
+  it("coalesces duplicate warm-ups for the same route recipe", async () => {
+    const adapter = new FakeEngineAdapter({ loadDelayMs: 20 });
+    const routes = new RouteResolver([route("default", "default")], [recipe("default", 60)]);
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]) });
+    const scheduler = new InferenceScheduler(routes, lifecycle);
+
+    const first = scheduler.enqueueWarm("default");
+    const duplicate = scheduler.enqueueWarm("default");
+
+    expect(duplicate.requestId).toBe(first.requestId);
+    await expect(Promise.all([first.result, duplicate.result])).resolves.toHaveLength(2);
+    expect(adapter.starts).toHaveLength(1);
+  });
+
   it("tests an exact recipe without assigning it to a consumer route", async () => {
     const adapter = new FakeEngineAdapter();
     const events = new LifecycleEventBus();

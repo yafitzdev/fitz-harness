@@ -34,7 +34,7 @@ interface LocalChatTelemetry {
 type QueueJob =
   | (JobBase & { kind: "chat"; recipeId?: string; unloadAfterCompletion?: boolean; request: InferenceRequest; output: AsyncChannel<InferenceDelta> })
   | (JobBase & { kind: "media"; recipeId?: string; mediaRequest: MediaGenerationRequest; output: AsyncChannel<MediaJobEvent> })
-  | (JobBase & { kind: "warm"; result: Deferred<InstanceSnapshot> });
+  | (JobBase & { kind: "warm"; recipeId: string; result: Deferred<InstanceSnapshot> });
 
 export interface ScheduledStream extends AsyncIterable<InferenceDelta> { requestId: string; cancel(): void }
 export interface ScheduledMediaJob { jobId: string; lane: InferenceLane; events: AsyncIterable<MediaJobEvent>; cancel(): void }
@@ -158,9 +158,19 @@ export class InferenceScheduler {
   }
 
   enqueueWarm(routeId: string, externalSignal?: AbortSignal, context: WorkContext = {}): ScheduledWarmup {
+    const recipeId = this.routes.resolve(routeId).recipe.id;
+    const admitted = this.#gpuLane.snapshot();
+    const existing = [...admitted.active, ...admitted.queued]
+      .find((job): job is Extract<QueueJob, { kind: "warm" }> => job.kind === "warm" && job.routeId === routeId && job.recipeId === recipeId);
+    if (existing) {
+      return { requestId: existing.id, result: existing.result.promise, cancel: () => this.#gpuLane.cancel(existing) };
+    }
+    for (const job of [...admitted.active, ...admitted.queued]) {
+      if (job.kind === "warm" && job.routeId === routeId) this.#gpuLane.cancel(job);
+    }
     const id = randomUUID();
     const result = deferred<InstanceSnapshot>();
-    const job: QueueJob = { kind: "warm", id, routeId, lane: "gpu", enqueuedAt: new Date().toISOString(), context, result, controller: new AbortController() };
+    const job: QueueJob = { kind: "warm", id, routeId, recipeId, lane: "gpu", enqueuedAt: new Date().toISOString(), context, result, controller: new AbortController() };
     this.#attachAbort(job, externalSignal);
     this.#submit(job);
     return { requestId: id, result: result.promise, cancel: () => this.#gpuLane.cancel(job) };
@@ -301,7 +311,7 @@ export class InferenceScheduler {
           }
         }
       } else if (job.kind === "warm") {
-        const recipe = this.routes.resolve(job.routeId).recipe;
+        const recipe = this.routes.resolveRecipe(job.recipeId);
         job.result.resolve(await this.lifecycle.warm(recipe, job.controller.signal));
       }
       closeJob(job);
