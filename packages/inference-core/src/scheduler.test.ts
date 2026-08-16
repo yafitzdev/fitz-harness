@@ -43,6 +43,17 @@ describe("InferenceScheduler", () => {
     expect(adapter.stops).toHaveLength(1);
   });
 
+  it("exposes bounded engine diagnostics without leaking the instance secret", async () => {
+    const adapter = new FakeEngineAdapter();
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]) });
+    const scheduler = new InferenceScheduler(new RouteResolver([route("default", "best")], [recipe("best", 60)]), lifecycle);
+    await collect(scheduler.enqueue("default", { messages: [{ role: "user", content: "diagnostics" }] }));
+    const handle = adapter.starts[0]! as unknown as Record<string, unknown>;
+    handle.apiKey = "secret-key";
+    handle.logs = ["stdout: ready", "stderr: secret-key leaked"];
+    expect(lifecycle.diagnostics()).toEqual({ logs: ["stdout: ready", "stderr: [REDACTED] leaked"] });
+  });
+
   it("restarts a loaded recipe when its runtime configuration changes", async () => {
     const adapter = new FakeEngineAdapter();
     const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]) });
@@ -417,6 +428,48 @@ describe("InferenceScheduler", () => {
       ownerUserId: "user-1", sessionId: "session-1", executionLane: "gpu", promptTokens: expect.any(Number), completionTokens: expect.any(Number),
       metadata: expect.objectContaining({ responseDurationMs: expect.any(Number), outputDelivery: "streamed", observedOutputChunks: expect.any(Number) }),
     })]);
+  });
+
+  it("captures the normalized request, every adapter delta, and terminal error state", async () => {
+    const adapter = new FakeEngineAdapter({ responseFactory: () => "captured" });
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]) });
+    const records: import("@fitz/protocol").InferenceEvidenceRecord[] = [];
+    const deltas: Array<{ evidenceId: string; sequence: number; delta: InferenceDelta }> = [];
+    const scheduler = new InferenceScheduler(
+      new RouteResolver([route("default", "best")], [recipe("best", 60)]),
+      lifecycle,
+      undefined,
+      { recordEvidence: (record) => { records.push(record); }, recordEvidenceDelta: (evidenceId, sequence, delta) => { deltas.push({ evidenceId, sequence, delta }); } },
+    );
+    const stream = scheduler.enqueue("default", { messages: [{ role: "user", content: "capture me" }], temperature: 0.4 }, undefined, { sessionId: "session-evidence", runId: "run-evidence" });
+    await collect(stream);
+    await waitFor(() => records.some((record) => record.status === "completed"));
+    const terminal = records.find((record) => record.status === "completed");
+    expect(records.map((record) => record.status)).toEqual(expect.arrayContaining(["queued", "running", "completed"]));
+    expect(terminal).toEqual(expect.objectContaining({ id: stream.requestId, sessionId: "session-evidence", runId: "run-evidence", routeId: "default", adapter: "fake" }));
+    expect(terminal?.request).toEqual(expect.objectContaining({ messages: [{ role: "user", content: "capture me" }], temperature: 0.4 }));
+    expect(terminal?.response).toEqual(expect.objectContaining({ deltas: expect.arrayContaining([expect.objectContaining({ text: "captured" })]) }));
+    expect(deltas).toEqual(expect.arrayContaining([expect.objectContaining({ evidenceId: stream.requestId, sequence: 1, delta: expect.objectContaining({ text: "captured" }) })]));
+    expect(terminal?.metadata).toEqual(expect.objectContaining({ recipeSnapshot: expect.objectContaining({ id: "best", adapter: "fake", modelId: "best-model" }) }));
+    expect(terminal?.engine).toEqual(expect.objectContaining({ executionLane: "gpu", lifecycle: expect.objectContaining({ state: "READY" }), diagnostics: expect.any(Object) }));
+  });
+
+  it("records an already-aborted admission instead of losing the request", async () => {
+    const adapter = new FakeEngineAdapter();
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]) });
+    const records: import("@fitz/protocol").InferenceEvidenceRecord[] = [];
+    const scheduler = new InferenceScheduler(
+      new RouteResolver([route("default", "best")], [recipe("best", 60)]),
+      lifecycle,
+      undefined,
+      { recordEvidence: (record) => { records.push(record); } },
+    );
+    const controller = new AbortController();
+    controller.abort();
+    const stream = scheduler.enqueue("default", { messages: [{ role: "user", content: "cancel before admission" }] }, controller.signal, { sessionId: "cancelled-session" });
+    await expect(collect(stream)).rejects.toMatchObject({ name: "AbortError" });
+    expect(records.map((record) => record.status)).toEqual(["queued", "cancelled"]);
+    expect(records.at(-1)).toEqual(expect.objectContaining({ id: stream.requestId, sessionId: "cancelled-session" }));
   });
 
   it("persists a local token estimate and model-ready timing when usage is absent", async () => {

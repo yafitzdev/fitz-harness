@@ -666,4 +666,66 @@ export const MIGRATIONS: readonly Migration[] = [
       FROM subagent_role_definitions WHERE id = 'researcher' AND version = 1;
     `,
   },
+  {
+    version: 24,
+    // A normalized, engine-neutral request/response envelope at the shared
+    // inference boundary. It makes model calls recoverable by session_id even
+    // when the agent runtime or provider process disappears mid-stream.
+    sql: `
+      CREATE TABLE IF NOT EXISTS inference_evidence (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind = 'chat'),
+        status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted')),
+        route_id TEXT NOT NULL,
+        recipe_id TEXT,
+        adapter TEXT,
+        model_id TEXT,
+        owner_user_id TEXT,
+        session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+        run_id TEXT REFERENCES agent_runs(id) ON DELETE SET NULL,
+        execution_lane TEXT NOT NULL CHECK (execution_lane IN ('gpu', 'cloud')),
+        enqueued_at TEXT NOT NULL,
+        started_at TEXT,
+        completed_at TEXT,
+        request_json TEXT NOT NULL,
+        response_json TEXT,
+        error_json TEXT,
+        engine_json TEXT,
+        metadata_json TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE INDEX IF NOT EXISTS idx_inference_evidence_session
+        ON inference_evidence(session_id, enqueued_at, id);
+      CREATE INDEX IF NOT EXISTS idx_inference_evidence_run
+        ON inference_evidence(run_id, enqueued_at, id);
+      CREATE INDEX IF NOT EXISTS idx_inference_evidence_status
+        ON inference_evidence(status, enqueued_at);
+    `,
+  },
+  {
+    version: 25,
+    // Append-only normalized deltas let an interrupted request retain the
+    // exact response observed before the host/provider disappeared. The
+    // evidence row remains the request lifecycle fact; this table is the
+    // durable stream behind its response snapshot.
+    sql: `
+      CREATE TABLE IF NOT EXISTS inference_evidence_deltas (
+        evidence_id TEXT NOT NULL REFERENCES inference_evidence(id) ON DELETE CASCADE,
+        sequence INTEGER NOT NULL CHECK (sequence > 0),
+        timestamp TEXT NOT NULL,
+        delta_json TEXT NOT NULL,
+        PRIMARY KEY (evidence_id, sequence)
+      );
+      CREATE INDEX IF NOT EXISTS idx_inference_evidence_deltas_evidence
+        ON inference_evidence_deltas(evidence_id, sequence);
+    `,
+  },
+  {
+    version: 26,
+    // Session-rooted exports read request usage by session repeatedly during
+    // diagnosis; keep that lookup bounded on long-lived stores.
+    sql: `
+      CREATE INDEX IF NOT EXISTS idx_request_usage_session
+        ON request_usage(session_id, enqueued_at, id);
+    `,
+  },
 ] as const;

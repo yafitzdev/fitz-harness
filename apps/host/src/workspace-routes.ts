@@ -146,6 +146,34 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
     return { data: session };
   });
 
+  /** One session ID -> one versioned diagnostic artifact. The default is a
+   * full export, including immutable artifact bytes as base64; callers doing
+   * lightweight inspection can opt out with includeArtifactContent=false. */
+  app.get("/api/v1/sessions/:sessionId/forensics", async (request, reply) => {
+    const session = sessionFor((request.params as { sessionId: string }).sessionId);
+    if (!session) return reply.code(404).send({ error: "Session not found" });
+    if (!canAccess(session.ownerUserId, request)) return reply.code(403).send({ error: "Session access denied" });
+    const query = request.query as { includeArtifactContent?: string; download?: string };
+    const includeArtifactContent = query.includeArtifactContent !== "false";
+    const bundle = store.sessionForensics(session.id);
+    if (!bundle) return reply.code(404).send({ error: "Session not found" });
+    if (includeArtifactContent) {
+      bundle.artifacts = await Promise.all(bundle.artifacts.map(async (artifact) => {
+        try {
+          const content = await artifacts.read(artifact.id);
+          return content ? { ...artifact, contentBase64: Buffer.from(content).toString("base64") } : { ...artifact, contentReadError: "content_not_found" };
+        } catch (error) {
+          return { ...artifact, contentReadError: errorMessage(error) };
+        }
+      }));
+    }
+    bundle.coverage.artifactContent = includeArtifactContent ? "included" : "metadata-only";
+    if (query.download === "true") {
+      reply.header("content-disposition", `attachment; filename="fitz-session-${safeFilename(session.id)}-forensics.json"`);
+    }
+    return { data: bundle };
+  });
+
   app.patch("/api/v1/sessions/:sessionId", async (request, reply) => {
     try {
       const session = sessionFor((request.params as { sessionId: string }).sessionId);

@@ -33,12 +33,16 @@ import type {
   UsageReport,
   UserUsageSummary,
   SubagentRoleDefinition,
+  InferenceDelta,
+  InferenceEvidenceRecord,
 } from "@fitz/protocol";
 import { MIGRATIONS } from "./migrations.js";
 import { SqliteAgentRunStore } from "./sqlite-agent-run-store.js";
 import { SqliteConfigurationStore } from "./sqlite-configuration-store.js";
 import { SqliteIdentityStore } from "./sqlite-identity-store.js";
 import { SqliteInferenceTelemetryStore } from "./sqlite-inference-telemetry-store.js";
+import { SqliteInferenceEvidenceStore } from "./sqlite-inference-evidence-store.js";
+import { SqliteForensicsStore } from "./sqlite-forensics-store.js";
 import { SqliteMediaStore, type MediaJobEventEnvelope } from "./sqlite-media-store.js";
 import { SqliteSafetyStore } from "./sqlite-safety-store.js";
 import { SqliteSettingsStore } from "./sqlite-settings-store.js";
@@ -64,6 +68,8 @@ export class SqliteStore {
   readonly #configuration: SqliteConfigurationStore;
   readonly #identity: SqliteIdentityStore;
   readonly #inferenceTelemetry: SqliteInferenceTelemetryStore;
+  readonly #inferenceEvidence: SqliteInferenceEvidenceStore;
+  readonly #forensics: SqliteForensicsStore;
   readonly #media: SqliteMediaStore;
   readonly #safety: SqliteSafetyStore;
   readonly #settings: SqliteSettingsStore;
@@ -78,6 +84,8 @@ export class SqliteStore {
     this.#configuration = new SqliteConfigurationStore(this.#database);
     this.#identity = new SqliteIdentityStore(this.#database);
     this.#inferenceTelemetry = new SqliteInferenceTelemetryStore(this.#database);
+    this.#inferenceEvidence = new SqliteInferenceEvidenceStore(this.#database);
+    this.#forensics = new SqliteForensicsStore(this.#database);
     this.#media = new SqliteMediaStore(this.#database);
     this.#safety = new SqliteSafetyStore(this.#database);
     this.#settings = new SqliteSettingsStore(this.#database);
@@ -164,7 +172,15 @@ export class SqliteStore {
   recoverInterruptedRequests(): number { return this.#inferenceTelemetry.recoverInterruptedRequests(); }
   listInferenceRequests(limit = 100): InferenceRequestRecord[] { return this.#inferenceTelemetry.listInferenceRequests(limit); }
   recordRequestUsage(record: RequestUsageRecord): void { this.#inferenceTelemetry.recordRequestUsage(record); }
+  recordInferenceEvidence(record: InferenceEvidenceRecord): void { this.#inferenceEvidence.record(record); }
+  recordInferenceEvidenceDelta(evidenceId: string, sequence: number, delta: InferenceDelta, timestamp?: string): void { this.#inferenceEvidence.recordDelta(evidenceId, sequence, delta, timestamp); }
+  getInferenceEvidence(id: string): InferenceEvidenceRecord | undefined { return this.#inferenceEvidence.get(id); }
+  listInferenceEvidenceForSession(sessionId: string): InferenceEvidenceRecord[] { return this.#inferenceEvidence.listForSession(sessionId); }
+  listInferenceEvidenceForRun(runId: string): InferenceEvidenceRecord[] { return this.#inferenceEvidence.listForRun(runId); }
+  recoverInterruptedInferenceEvidence(): number { return this.#inferenceEvidence.recoverInterrupted(); }
+  sessionForensics(sessionId: string, generatedAt?: string): import("@fitz/protocol").SessionForensicsBundle | undefined { return this.#forensics.build(sessionId, generatedAt); }
   listRequestUsageForRun(runId: string): RequestUsageRecord[] { return this.#inferenceTelemetry.listRequestUsageForRun(runId); }
+  listRequestUsageForSession(sessionId: string): RequestUsageRecord[] { return this.#inferenceTelemetry.listRequestUsageForSession(sessionId); }
   usageReport(options: { from: string; to: string; bucket: "hour" | "day"; ownerUserId?: string }): UsageReport { return this.#inferenceTelemetry.usageReport(options); }
   userUsageSummaries(options: { from: string; to: string }): UserUsageSummary[] { return this.#inferenceTelemetry.userUsageSummaries(options); }
 
@@ -231,6 +247,8 @@ export class SqliteStore {
   listAgentRuns(ownerUserId?: string, limit = 100): AgentRunRecord[] {
     return this.#agentRuns.listRuns(ownerUserId, limit);
   }
+  listAgentRunsForSession(sessionId: string): AgentRunRecord[] { return this.#agentRuns.listRunsForSession(sessionId); }
+  listAgentChildRuns(parentRunId: string): AgentRunRecord[] { return this.#agentRuns.listChildRuns(parentRunId); }
   getAgentRunRequest(id: string): AgentRunRequest | undefined { return this.#agentRuns.getRunRequest(id); }
   getAgentRunPlan(id: string): AgentRunPlan | undefined { return this.#agentRuns.getRunPlan(id); }
   saveAgentRunPlan(plan: AgentRunPlan, expectedRevision?: number): boolean { return this.#agentRuns.saveRunPlan(plan, expectedRevision); }
@@ -302,6 +320,7 @@ export class SqliteStore {
   createTrashEntry(entry: TrashEntryRecord): void { this.#safety.createTrashEntry(entry); }
   getTrashEntry(id: string): TrashEntryRecord | undefined { return this.#safety.getTrashEntry(id); }
   listTrashEntries(workspaceRoot?: string, limit = 200): TrashEntryRecord[] { return this.#safety.listTrashEntries(workspaceRoot, limit); }
+  listTrashEntriesForRun(runId: string): TrashEntryRecord[] { return this.#safety.listTrashEntriesForRun(runId); }
   markTrashRestored(id: string, restoredAt: string): boolean { return this.#safety.markTrashRestored(id, restoredAt); }
   deleteTrashEntry(id: string): boolean { return this.#safety.deleteTrashEntry(id); }
   deleteTrashEntriesBefore(before: string, workspaceRoot?: string): number { return this.#safety.deleteTrashEntriesBefore(before, workspaceRoot); }

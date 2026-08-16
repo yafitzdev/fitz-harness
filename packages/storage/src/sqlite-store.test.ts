@@ -242,4 +242,93 @@ describe("SqliteStore", () => {
     ]);
     store.close();
   });
+
+  it("builds one session-rooted forensic bundle across runs, transcript, usage, and evidence", () => {
+    const store = SqliteStore.memory();
+    const now = new Date(0).toISOString();
+    store.createProject({ id: "forensic-project", name: "Forensic project", createdAt: now, updatedAt: now });
+    store.createSession({ id: "forensic-session", projectId: "forensic-project", title: "Forensic", status: "active", createdAt: now, updatedAt: now });
+    store.createAgentRun(
+      { id: "forensic-run", routeId: "default", sessionId: "forensic-session", status: "completed", createdAt: now, updatedAt: now, lastSequence: 0 },
+      { model: "default", sessionId: "forensic-session", messages: [{ role: "user", content: "trace this" }] },
+    );
+    store.appendTranscriptEntry({ id: "forensic-user", sessionId: "forensic-session", kind: "message", role: "user", content: { text: "trace this" }, createdAt: now });
+    store.appendTranscriptEntry({ id: "forensic-reasoning", sessionId: "forensic-session", kind: "reasoning", role: "assistant", content: { text: "Inspecting the evidence" }, createdAt: now });
+    store.appendAgentEvent({ protocolVersion: "1", runId: "forensic-run", sequence: 1, timestamp: now, type: "run.started", data: {} });
+    store.appendAgentEvent({ protocolVersion: "1", runId: "forensic-run", sequence: 2, timestamp: now, type: "run.completed", data: {} });
+    store.createAgentRun(
+      { id: "forensic-worker", routeId: "fast", status: "completed", createdAt: now, updatedAt: now, lastSequence: 0 },
+      {
+        model: "fast",
+        messages: [{ role: "user", content: "inspect the worker scope" }],
+        delegation: {
+          parentRunId: "forensic-run",
+          role: { id: "researcher", version: 1, displayName: "Researcher", dispatchDescription: "Inspect", systemInstructions: "Inspect", accessMode: "read-only", toolCallBudget: 4, maxOutputTokens: 1000, outputContract: "Report" },
+        },
+      },
+    );
+    store.appendAgentEvent({ protocolVersion: "1", runId: "forensic-worker", sequence: 1, timestamp: now, type: "assistant.delta", data: { text: "worker report" } });
+    store.appendAgentEvent({ protocolVersion: "1", runId: "forensic-worker", sequence: 2, timestamp: now, type: "run.completed", data: {} });
+    store.recordInferenceEvidence({
+      id: "forensic-request",
+      kind: "chat",
+      status: "completed",
+      routeId: "default",
+      recipeId: "fake-best",
+      adapter: "fake",
+      modelId: "fake-model",
+      sessionId: "forensic-session",
+      runId: "forensic-run",
+      executionLane: "gpu",
+      enqueuedAt: now,
+      startedAt: now,
+      completedAt: now,
+      request: { messages: [{ role: "user", content: "trace this" }] },
+      response: { deltas: [{ text: "done" }] },
+    });
+    store.recordInferenceEvidenceDelta("forensic-request", 1, { text: "done" }, now);
+    store.recordInferenceEvidence({ id: "forensic-worker-request", kind: "chat", status: "completed", routeId: "fast", runId: "forensic-worker", executionLane: "gpu", enqueuedAt: now, completedAt: now, request: { messages: [{ role: "user", content: "inspect the worker scope" }] }, response: { deltas: [{ text: "worker report" }] } });
+    store.recordRequestUsage({ id: "forensic-worker-request", kind: "chat", status: "completed", routeId: "fast", runId: "forensic-worker", executionLane: "gpu", enqueuedAt: now, completedAt: now, promptTokens: 3, completionTokens: 2 });
+    store.recordRequestUsage({ id: "forensic-request", kind: "chat", status: "completed", routeId: "default", sessionId: "forensic-session", runId: "forensic-run", executionLane: "gpu", enqueuedAt: now, completedAt: now, promptTokens: 4, completionTokens: 1 });
+    store.createToolApproval({ id: "forensic-approval", sessionId: "forensic-session", runId: "forensic-run", toolCallId: "call-1", toolName: "bash", status: "approved", request: { command: "git status" }, requestedAt: now, resolvedAt: now });
+    store.appendAuditEvent({ id: "audit-session", timestamp: now, action: "session.created", targetType: "session", targetId: "forensic-session", detail: {} });
+    store.appendAuditEvent({ id: "audit-run", timestamp: now, action: "agent-run.created", targetType: "agent-run", targetId: "forensic-run", detail: {} });
+    store.appendAuditEvent({ id: "audit-approval", timestamp: now, action: "tool-approval.resolved", targetType: "tool-approval", targetId: "forensic-approval", detail: {} });
+    store.appendAuditEvent({ id: "audit-project", timestamp: now, action: "project.created", targetType: "project", targetId: "forensic-project", detail: {} });
+    store.recordQueueEvent({ protocolVersion: "1", sequence: 2, timestamp: now, type: "queue.updated", data: { requestId: "forensic-request", routeId: "default", kind: "chat", lane: "gpu", status: "completed", position: 0, depth: 0, sessionId: "forensic-session", runId: "forensic-run" } });
+    store.recordGpuQueueEvent({ protocolVersion: "1", sequence: 2, timestamp: now, type: "queue.updated", data: { requestId: "forensic-request", routeId: "default", kind: "chat", lane: "gpu", status: "completed", position: 0, depth: 0, sessionId: "forensic-session", runId: "forensic-run" } });
+    store.appendLifecycleEvent({ protocolVersion: "1", sequence: 1, timestamp: now, type: "queue.updated", data: { requestId: "forensic-request", routeId: "default", kind: "chat", lane: "gpu", status: "completed", position: 0, depth: 0, sessionId: "forensic-session", runId: "forensic-run" } });
+
+    const bundle = store.sessionForensics("forensic-session");
+    expect(bundle).toEqual(expect.objectContaining({ schemaVersion: 1, session: expect.objectContaining({ id: "forensic-session" }) }));
+    expect(bundle?.transcript.map((entry) => entry.kind)).toEqual(["message", "reasoning"]);
+    expect(bundle?.runs[0]?.events.map((event) => event.type)).toEqual(["run.started", "run.completed"]);
+    expect(bundle?.runs).toHaveLength(2);
+    expect(bundle?.runs.find((item) => item.run.id === "forensic-worker")?.evidence[0]?.id).toBe("forensic-worker-request");
+    expect(bundle?.evidence.map((item) => item.id)).toEqual(["forensic-request", "forensic-worker-request"]);
+    expect(bundle?.usage.map((item) => item.id)).toEqual(["forensic-request", "forensic-worker-request"]);
+    expect(bundle?.runs[0]?.evidence[0]?.response).toEqual({ deltas: [{ text: "done" }] });
+    expect(bundle?.usage[0]).toEqual(expect.objectContaining({ promptTokens: 4, completionTokens: 1 }));
+    expect(bundle?.approvals[0]).toEqual(expect.objectContaining({ id: "forensic-approval" }));
+    expect(bundle?.auditEvents.map((event) => event.id)).toEqual(["audit-approval", "audit-project", "audit-run", "audit-session"]);
+    expect(bundle?.lifecycleEvents).toHaveLength(1);
+    expect(bundle?.legacyInferenceRequests[0]).toEqual(expect.objectContaining({ id: "forensic-request", status: "completed" }));
+    expect(bundle?.gpuWork[0]).toEqual(expect.objectContaining({ id: "forensic-request", status: "completed" }));
+    store.close();
+  });
+
+  it("turns in-flight evidence into an explicit restart fact", () => {
+    const store = SqliteStore.memory();
+    const now = new Date(0).toISOString();
+    store.recordInferenceEvidence({ id: "in-flight", kind: "chat", status: "running", routeId: "default", executionLane: "gpu", enqueuedAt: now, startedAt: now, request: { messages: [] } });
+    store.recordInferenceEvidenceDelta("in-flight", 1, { reasoning: "partial" }, now);
+    expect(store.recoverInterruptedInferenceEvidence()).toBe(1);
+    expect(store.getInferenceEvidence("in-flight")).toEqual(expect.objectContaining({
+      status: "interrupted",
+      error: expect.objectContaining({ code: "host_restarted" }),
+      response: { deltas: [{ reasoning: "partial" }] },
+      observedDeltas: [{ evidenceId: "in-flight", sequence: 1, timestamp: now, delta: { reasoning: "partial" } }],
+    }));
+    store.close();
+  });
 });

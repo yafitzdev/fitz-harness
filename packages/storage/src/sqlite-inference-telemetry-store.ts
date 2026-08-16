@@ -99,6 +99,11 @@ export class SqliteInferenceTelemetryStore {
     return rows.map(mapRequestUsage);
   }
 
+  listRequestUsageForSession(sessionId: string): RequestUsageRecord[] {
+    const rows = this.database.prepare(`SELECT id, kind, status, route_id, recipe_id, playbook_id, adapter, model_id, owner_user_id, session_id, run_id, execution_lane, enqueued_at, started_at, first_output_at, completed_at, queue_wait_ms, ttft_ms, generation_ms, duration_ms, prompt_tokens, completion_tokens, credit_cost_cents, error_code, metadata_json FROM request_usage WHERE session_id = ? ORDER BY COALESCE(started_at, enqueued_at), completed_at, id`).all(sessionId) as unknown as RequestUsageRow[];
+    return rows.map(mapRequestUsage);
+  }
+
   usageReport(options: { from: string; to: string; bucket: "hour" | "day"; ownerUserId?: string }): UsageReport {
     const filters = ["completed_at >= ?", "completed_at < ?"];
     const values: SQLInputValue[] = [options.from, options.to];

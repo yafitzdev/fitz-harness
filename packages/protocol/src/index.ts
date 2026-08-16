@@ -10,3 +10,4 @@ export * from "./collaboration.js";
 export * from "./artifacts.js";
 export * from "./safety.js";
 export * from "./usage.js";
+export * from "./forensics.js";

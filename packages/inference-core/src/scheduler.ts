@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { InferenceDelta, InferenceLane, InferenceRequest, InstanceSnapshot, MediaGenerationRequest, MediaJobEvent, Recipe, RequestUsageRecord } from "@fitz/protocol";
+import type { InferenceDelta, InferenceEvidenceRecord, InferenceLane, InferenceRequest, InstanceSnapshot, MediaGenerationRequest, MediaJobEvent, Recipe, RequestUsageRecord } from "@fitz/protocol";
 import { AsyncChannel } from "./async-channel.js";
 import { BoundedWorkLane, type WorkLaneStatus } from "./bounded-work-lane.js";
 import { LifecycleEventBus } from "./event-bus.js";
@@ -66,6 +66,13 @@ export interface InferenceSchedulerOptions {
   streamBufferBytes?: number;
   /** Durable accounting sink. Failures in analytics must never fail inference. */
   recordUsage?: (record: RequestUsageRecord) => void | Promise<void>;
+  /** Durable diagnostic sink. Unlike analytics, this receives the exact
+   * normalized request and every normalized adapter delta. Failures are
+   * fail-open so diagnostics can never break inference. */
+  recordEvidence?: (record: InferenceEvidenceRecord) => void;
+  /** Append-only stream sink for normalized deltas. Keeping this separate
+   * from recordEvidence avoids rewriting a growing response on every chunk. */
+  recordEvidenceDelta?: (evidenceId: string, sequence: number, delta: InferenceDelta, timestamp: string) => void;
 }
 
 export type InferenceAdmissionReason = "queue_capacity" | "scheduler_closed";
@@ -94,6 +101,8 @@ export class InferenceScheduler {
   readonly #streamBufferItems: number;
   readonly #streamBufferBytes: number;
   readonly #recordUsage: InferenceSchedulerOptions["recordUsage"];
+  readonly #recordEvidence: InferenceSchedulerOptions["recordEvidence"];
+  readonly #recordEvidenceDelta: InferenceSchedulerOptions["recordEvidenceDelta"];
   #quiescing = false;
   #quiesceTask: Promise<void> | undefined;
 
@@ -108,6 +117,8 @@ export class InferenceScheduler {
     this.#streamBufferItems = options.streamBufferItems ?? 64;
     this.#streamBufferBytes = options.streamBufferBytes ?? 1024 * 1024;
     this.#recordUsage = options.recordUsage;
+    this.#recordEvidence = options.recordEvidence;
+    this.#recordEvidenceDelta = options.recordEvidenceDelta;
     this.#gpuLane = this.#createLane(options.gpuConcurrency ?? 1, options.gpuQueueCapacity ?? 256);
     this.#cloudLane = this.#createLane(options.cloudConcurrency ?? 4, options.cloudQueueCapacity ?? 64);
   }
@@ -215,8 +226,9 @@ export class InferenceScheduler {
 
   #enqueue(routeId: string, input: Omit<InferenceRequest, "id" | "routeId">, externalSignal: AbortSignal | undefined, recipeId: string | undefined, unloadAfterCompletion: boolean | undefined, context: WorkContext): ScheduledStream {
     let lane: InferenceLane = "gpu";
+    let recipe: Recipe | undefined;
     try {
-      const recipe = recipeId ? this.routes.resolveRecipe(recipeId) : this.routes.resolve(routeId).recipe;
+      recipe = recipeId ? this.routes.resolveRecipe(recipeId) : this.routes.resolve(routeId).recipe;
       const adapter = this.lifecycle.adapters.get(recipe.adapter);
       lane = (adapter.executionLocation?.(recipe) ?? "local") === "remote" ? "cloud" : "gpu";
     } catch {
@@ -226,7 +238,17 @@ export class InferenceScheduler {
     const output = this.#outputChannel<InferenceDelta>();
     const job: QueueJob = { kind: "chat", id, routeId, lane, enqueuedAt: new Date().toISOString(), context, request: { ...input, id, routeId }, output, controller: new AbortController(), ...(recipeId ? { recipeId } : {}), ...(unloadAfterCompletion ? { unloadAfterCompletion: true } : {}) };
     this.#attachAbort(job, externalSignal);
-    this.#submit(job);
+    // Persist admission intent before touching the live lane. This preserves
+    // a forensic fact even when the request is rejected for a full/closed
+    // queue, or arrives already aborted.
+    this.#safeRecordEvidence(this.#evidenceFor(job, "queued", recipe));
+    try {
+      const accepted = this.#submit(job);
+      if (!accepted) this.#safeRecordEvidence(this.#evidenceFor(job, "cancelled", recipe, { completedAt: new Date().toISOString(), error: serializeError(abortError()) }));
+    } catch (error) {
+      this.#safeRecordEvidence(this.#evidenceFor(job, "failed", recipe, { completedAt: new Date().toISOString(), error: serializeError(error) }));
+      throw error;
+    }
     return Object.assign(output, { requestId: id, cancel: () => this.#lane(lane).cancel(job) });
   }
 
@@ -240,6 +262,7 @@ export class InferenceScheduler {
         if (job.kind === "chat") {
           let recipe: Recipe | undefined;
           try { recipe = job.recipeId ? this.routes.resolveRecipe(job.recipeId) : this.routes.resolve(job.routeId).recipe; } catch { /* preserve cancellation when configuration changed */ }
+          this.#safeRecordEvidence(this.#evidenceFor(job, "cancelled", recipe, { error: serializeError(abortError()) }));
           void this.#safeRecordUsage(this.#chatUsage(job, recipe, "cancelled", new Date(), undefined));
         }
         job.detachExternalAbort?.();
@@ -249,18 +272,18 @@ export class InferenceScheduler {
     });
   }
 
-  #submit(job: QueueJob): void {
+  #submit(job: QueueJob): boolean {
     if (job.controller.signal.aborted) {
       failJob(job, abortError());
       job.detachExternalAbort?.();
-      return;
+      return false;
     }
     if (this.#quiescing) {
       job.detachExternalAbort?.();
       throw new InferenceAdmissionError(job.lane, "scheduler_closed");
     }
     const result = this.#lane(job.lane).enqueue(job);
-    if (result === "accepted") return;
+    if (result === "accepted") return true;
     job.detachExternalAbort?.();
     throw new InferenceAdmissionError(job.lane, result === "full" ? "queue_capacity" : "scheduler_closed");
   }
@@ -272,9 +295,14 @@ export class InferenceScheduler {
     let promptTokens: number | undefined;
     let completionTokens: number | undefined;
     const localTelemetry: LocalChatTelemetry = { generatedText: "", outputChunks: 0 };
+    const evidenceDeltas: InferenceDelta[] = [];
+    let evidenceDeltaSequence = 0;
+    let evidenceRecipe: Recipe | undefined;
     try {
       if (job.kind === "chat") {
         chatRecipe = job.recipeId ? this.routes.resolveRecipe(job.recipeId) : this.routes.resolve(job.routeId).recipe;
+        evidenceRecipe = chatRecipe;
+        this.#safeRecordEvidence(this.#evidenceFor(job, "running", chatRecipe, { startedAt: started.toISOString(), engine: this.#engineEvidence(job.lane) }));
         const execution = job.lane === "cloud" ? this.#remoteText : this.lifecycle;
         for await (const delta of execution.run(chatRecipe, job.request, job.controller.signal, {
           onInferenceStarted: () => { localTelemetry.inferenceStarted = new Date(); },
@@ -287,6 +315,8 @@ export class InferenceScheduler {
           }
           if (delta.promptTokens !== undefined) promptTokens = delta.promptTokens;
           if (delta.completionTokens !== undefined) completionTokens = delta.completionTokens;
+          evidenceDeltas.push(delta);
+          this.#safeRecordEvidenceDelta(job.id, ++evidenceDeltaSequence, delta);
           await job.output.push(delta, job.controller.signal);
         }
         if (job.unloadAfterCompletion && job.lane === "gpu") {
@@ -315,10 +345,26 @@ export class InferenceScheduler {
         job.result.resolve(await this.lifecycle.warm(recipe, job.controller.signal));
       }
       closeJob(job);
-      if (job.kind === "chat") await this.#safeRecordUsage(this.#chatUsage(job, chatRecipe, "completed", started, firstOutput, promptTokens, completionTokens, undefined, localTelemetry));
+      if (job.kind === "chat") {
+        this.#safeRecordEvidence(this.#evidenceFor(job, "completed", evidenceRecipe ?? chatRecipe, {
+          completedAt: new Date().toISOString(),
+          response: evidenceResponse(evidenceDeltas, promptTokens, completionTokens),
+          engine: this.#engineEvidence(job.lane),
+        }));
+        await this.#safeRecordUsage(this.#chatUsage(job, chatRecipe, "completed", started, firstOutput, promptTokens, completionTokens, undefined, localTelemetry));
+      }
     } catch (error) {
       failJob(job, error);
-      if (job.kind === "chat") await this.#safeRecordUsage(this.#chatUsage(job, chatRecipe, isAbort(error) ? "cancelled" : "failed", started, firstOutput, promptTokens, completionTokens, error, localTelemetry));
+      if (job.kind === "chat") {
+        const status = isAbort(error) ? "cancelled" : "failed" as const;
+        this.#safeRecordEvidence(this.#evidenceFor(job, status, evidenceRecipe ?? chatRecipe, {
+          completedAt: new Date().toISOString(),
+          response: evidenceResponse(evidenceDeltas, promptTokens, completionTokens),
+          error: serializeError(error),
+          engine: this.#engineEvidence(job.lane),
+        }));
+        await this.#safeRecordUsage(this.#chatUsage(job, chatRecipe, status, started, firstOutput, promptTokens, completionTokens, error, localTelemetry));
+      }
       throw error;
     } finally {
       job.detachExternalAbort?.();
@@ -358,6 +404,43 @@ export class InferenceScheduler {
 
   async #safeRecordUsage(record: RequestUsageRecord): Promise<void> {
     try { await this.#recordUsage?.(record); } catch { /* accounting is fail-open */ }
+  }
+
+  #safeRecordEvidence(record: InferenceEvidenceRecord): void {
+    try { this.#recordEvidence?.(record); } catch { /* diagnostics are fail-open */ }
+  }
+
+  #safeRecordEvidenceDelta(evidenceId: string, sequence: number, delta: InferenceDelta): void {
+    try { this.#recordEvidenceDelta?.(evidenceId, sequence, delta, new Date().toISOString()); } catch { /* diagnostics are fail-open */ }
+  }
+
+  #engineEvidence(lane: InferenceLane): Record<string, unknown> {
+    return lane === "gpu"
+      ? { executionLane: lane, lifecycle: this.lifecycle.snapshot(), diagnostics: this.lifecycle.diagnostics() }
+      : { executionLane: lane };
+  }
+
+  #evidenceFor(
+    job: Extract<QueueJob, { kind: "chat" }>,
+    status: InferenceEvidenceRecord["status"],
+    recipe?: Recipe,
+    patch: Partial<Pick<InferenceEvidenceRecord, "startedAt" | "completedAt" | "response" | "error" | "engine" | "metadata">> = {},
+  ): InferenceEvidenceRecord {
+    return {
+      id: job.id,
+      kind: "chat",
+      status,
+      routeId: job.routeId,
+      executionLane: job.lane,
+      enqueuedAt: job.enqueuedAt,
+      request: recordableRequest(job.request),
+      ...(recipe ? { recipeId: recipe.id, adapter: recipe.adapter, modelId: recipe.modelId } : {}),
+      ...(job.context.ownerUserId ? { ownerUserId: job.context.ownerUserId } : {}),
+      ...(job.context.sessionId ? { sessionId: job.context.sessionId } : {}),
+      ...(job.context.runId ? { runId: job.context.runId } : {}),
+      ...(recipe ? { metadata: { recipeSnapshot: recipeEvidenceSnapshot(recipe) } } : {}),
+      ...patch,
+    };
   }
 
   #attachAbort(job: QueueJob, externalSignal?: AbortSignal): void {
@@ -402,6 +485,35 @@ function abortError(): Error { const error = new Error("Inference request was ca
 function queueItem(job: QueueJob, status: "running" | "queued", position: number): InferenceQueueItem { return { id: job.id, routeId: job.routeId, kind: job.kind, lane: job.lane, status, position, enqueuedAt: job.enqueuedAt, context: job.context } }
 function serializedSize(value: unknown): number { return Buffer.byteLength(JSON.stringify(value), "utf8") }
 function isAbort(error: unknown): boolean { return error instanceof Error && error.name === "AbortError" }
+function serializeError(error: unknown): Record<string, unknown> {
+  return error instanceof Error
+    ? { name: error.name, message: error.message, ...(error.stack ? { stack: error.stack } : {}) }
+    : { name: "UnknownError", message: String(error) };
+}
+function recordableRequest(request: InferenceRequest): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(request)) as Record<string, unknown>;
+}
+function evidenceResponse(deltas: InferenceDelta[], promptTokens?: number, completionTokens?: number): Record<string, unknown> {
+  return {
+    deltas: JSON.parse(JSON.stringify(deltas)) as InferenceDelta[],
+    ...(promptTokens !== undefined ? { promptTokens } : {}),
+    ...(completionTokens !== undefined ? { completionTokens } : {}),
+  };
+}
+function recipeEvidenceSnapshot(recipe: Recipe): Record<string, unknown> {
+  return JSON.parse(JSON.stringify({
+    id: recipe.id,
+    playbookId: recipe.playbookId,
+    displayName: recipe.displayName,
+    adapter: recipe.adapter,
+    modelId: recipe.modelId,
+    ...(recipe.executionClass ? { executionClass: recipe.executionClass } : {}),
+    contextTokens: recipe.contextTokens,
+    capabilities: recipe.capabilities,
+    lifecycle: recipe.lifecycle,
+    configuration: recipe.configuration,
+  })) as Record<string, unknown>;
+}
 function estimateTokens(text: string): number { return Math.max(1, Math.ceil(Buffer.byteLength(text, "utf8") / 4)) }
 function generatedDeltaText(delta: InferenceDelta): string {
   const toolText = delta.toolCalls?.flatMap((call) => [call.id, call.function?.name, call.function?.arguments]).filter((value): value is string => Boolean(value)).join("") ?? "";

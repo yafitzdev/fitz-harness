@@ -170,6 +170,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const security = options.security ?? (authMode === "required" ? new SecurityService(store, options.authPepper ?? "") : undefined);
   const recoveredInterruptedRequests = store.recoverInterruptedRequests();
   const recoveredGpuWork = store.recoverInterruptedGpuWork();
+  const recoveredInferenceEvidence = store.recoverInterruptedInferenceEvidence();
   const recoveredAgentRuns = store.recoverInterruptedAgentRuns();
   const recoveredToolApprovals = store.recoverInterruptedToolApprovals();
   const recoveredMediaJobs = store.recoverInterruptedMediaJobs();
@@ -251,6 +252,14 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     recordUsage: async (record) => {
       store.recordRequestUsage(record);
       await options.schedulerOptions?.recordUsage?.(record);
+    },
+    recordEvidence: (record) => {
+      store.recordInferenceEvidence(record);
+      options.schedulerOptions?.recordEvidence?.(record);
+    },
+    recordEvidenceDelta: (evidenceId, sequence, delta, timestamp) => {
+      store.recordInferenceEvidenceDelta(evidenceId, sequence, delta, timestamp);
+      options.schedulerOptions?.recordEvidenceDelta?.(evidenceId, sequence, delta, timestamp);
     },
   });
   const agentRuns = new AgentRunCoordinator(
@@ -350,7 +359,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       engine: lifecycle.snapshot(),
       queueDepth: scheduler.queueDepth,
       resources: { ...resourceSnapshot, policy: resources.policy },
-      recovery: { interruptedGpuWork: recoveredGpuWork, interruptedRequests: recoveredInterruptedRequests, interruptedAgentRuns: recoveredAgentRuns, interruptedToolApprovals: recoveredToolApprovals, interruptedMediaJobs: recoveredMediaJobs },
+      recovery: { interruptedGpuWork: recoveredGpuWork, interruptedRequests: recoveredInterruptedRequests, interruptedInferenceEvidence: recoveredInferenceEvidence, interruptedAgentRuns: recoveredAgentRuns, interruptedToolApprovals: recoveredToolApprovals, interruptedMediaJobs: recoveredMediaJobs },
     };
   });
   if (options.devSessionToken) {

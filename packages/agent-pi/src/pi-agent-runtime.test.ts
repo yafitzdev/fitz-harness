@@ -4,6 +4,7 @@ import { once } from "node:events";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { SessionForensicsBundle } from "@fitz/protocol";
 import { broadFilesystemScanReason, buildFitzSystemInstructions, createSessionLookupTool, createTrashTool, formatSessionSnapshot, limitToolResultContent, PiAgentRuntime, readEnabledExtensionDirs, SESSION_LOOKUP_TOOL, TRASH_TOOL, type PiSession, type PiSessionFactory, type PiSessionReader, type PiSessionSnapshot } from "./pi-agent-runtime.js";
 
 describe("PiAgentRuntime", () => {
@@ -1125,6 +1126,25 @@ describe("fitz_session session lookup tool", () => {
       content: [{ type: "text", text: formatSessionSnapshot(snapshot) }],
       details: { source: "fitz_session" },
     });
+  });
+
+  it("forwards and formats a requested forensic section", async () => {
+    let seen: { section?: string; includeArtifactContent?: boolean } | undefined;
+    const forensics = {
+      schemaVersion: 1,
+      generatedAt: "2026-08-06T00:31:00Z",
+      session: { id: "abc-123", title: "Find the session", status: "completed", createdAt: "2026-08-06T00:00:00Z", updatedAt: "2026-08-06T00:31:00Z" },
+      transcript: [], evidence: [], runs: [], approvals: [], artifacts: [], mediaJobs: [], usage: [], auditEvents: [], lifecycleEvents: [], legacyInferenceRequests: [], gpuWork: [],
+      coverage: { normalizedAdapterEvidence: true, rawProviderWirePayloads: "not-captured", externalProcessLogs: "not-captured", reasoning: "emitted-events-only", artifactContent: "metadata-only" },
+    } as SessionForensicsBundle;
+    const tool = createSessionLookupTool(async (_sessionId, options) => {
+      seen = options;
+      return { ...snapshot, forensics };
+    });
+    const result = await tool.execute("call-1", { sessionId: "abc-123", section: "overview", includeArtifactContent: true });
+    expect(seen).toEqual({ section: "overview", includeArtifactContent: true });
+    expect(result.details).toEqual({ source: "fitz_session", section: "overview" });
+    expect(result.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("Inference evidence: 0") });
   });
 
   it("reports a missing session gracefully", async () => {

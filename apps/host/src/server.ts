@@ -185,7 +185,7 @@ const runtime = createHost({
         return project?.rootPath ?? process.cwd();
       },
       requestToolApproval: createToolApprovalRequester(store),
-      sessionReader: createSessionReader(store),
+      sessionReader: createSessionReader(store, { artifacts }),
       toolPolicy: safety.createToolEvaluator(),
       toolLease: workspaceMutationLeases.acquire,
       redactToolResult: safety.createResultRedactor(),

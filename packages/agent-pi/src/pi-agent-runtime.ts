@@ -1,5 +1,5 @@
 import type { AgentRuntime, AgentRuntimeEvent, AgentRuntimeRun, AgentRuntimeRunOptions } from "@fitz/agent-core";
-import type { AgentRunRequest, ToolAccessMode } from "@fitz/protocol";
+import type { AgentRunRequest, SessionForensicsBundle, ToolAccessMode } from "@fitz/protocol";
 import type { Model } from "@earendil-works/pi-ai/compat";
 import type { AgentToolResult, ToolDefinition } from "@earendil-works/pi-coding-agent";
 export type { ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -57,12 +57,13 @@ export type TrashToolHandler = (input: { paths: string[] }) => Promise<TrashMove
 /** One canonical transcript entry, reduced to what an agent needs to read. */
 export interface PiSessionMessage { sequence: number; role: "user" | "assistant" | "tool" | "system"; text: string }
 /** A past Fitz Codex conversation, as served to the agent's `fitz_session` tool. */
-export interface PiSessionSnapshot { title: string; status: string; updatedAt: string; messages: PiSessionMessage[] }
+export interface PiSessionSnapshot { title: string; status: string; updatedAt: string; messages: PiSessionMessage[]; forensics?: SessionForensicsBundle }
+export type PiSessionLookupSection = "overview" | "transcript" | "runs" | "evidence" | "artifacts" | "media" | "audit" | "all";
 /**
  * Reads a past conversation from the Fitz session store. The host provides the store-backed
  * implementation; the pi package owns the contract and the tool that uses it.
  */
-export type PiSessionReader = (sessionId: string, options?: { after?: number; limit?: number }) => Promise<PiSessionSnapshot | undefined>;
+export type PiSessionReader = (sessionId: string, options?: { after?: number; limit?: number; section?: PiSessionLookupSection; includeArtifactContent?: boolean; ownerUserId?: string }) => Promise<PiSessionSnapshot | undefined>;
 export type SubagentRoute = "default" | "fast" | "smart";
 export type SubagentRouteBudget = Readonly<Record<SubagentRoute, number>>;
 export interface PiRunPlanPolicy {
@@ -265,7 +266,11 @@ export class PiAgentRuntime implements AgentRuntime {
             return decision;
           });
         },
-        ...(this.#sessionReader ? { sessionReader: this.#sessionReader } : {}),
+        ...(this.#sessionReader ? {
+          sessionReader: options?.ownerUserId
+            ? (sessionId: string, lookup?: Parameters<PiSessionReader>[1]) => this.#sessionReader!(sessionId, { ...lookup, ownerUserId: options.ownerUserId! })
+            : this.#sessionReader,
+        } : {}),
         ...(this.#toolPolicy || this.#requestToolApproval
           ? { evaluateTool: async (toolCall) => {
               const admissionReason = runPlan?.admissionReason(toolCall) ?? delegation.admissionReason(toolCall) ?? workTools.admissionReason(toolCall);
@@ -649,16 +654,23 @@ export function createSessionLookupTool(reader: PiSessionReader): ToolDefinition
     sessionId: Type.String({ description: "The Fitz session id (a UUID, e.g. shown in the session header popover) to read" }),
     after: Type.Optional(Type.Number({ description: "Only return transcript entries with sequence greater than this value" })),
     limit: Type.Optional(Type.Number({ description: "Maximum number of transcript entries to return (default 200, max 1000)" })),
+    section: Type.Optional(Type.Union([
+      Type.Literal("overview"), Type.Literal("transcript"), Type.Literal("runs"),
+      Type.Literal("evidence"), Type.Literal("artifacts"), Type.Literal("media"),
+      Type.Literal("audit"), Type.Literal("all"),
+    ], { description: "Forensic section to read; transcript is the default and all returns the complete session bundle" })),
+    includeArtifactContent: Type.Optional(Type.Boolean({ description: "Include artifact bytes in the artifacts/all sections (default false)" })),
   });
   const tool: ToolDefinition<typeof parameters> = {
     name: SESSION_LOOKUP_TOOL,
     label: "Fitz session lookup",
     description:
-      "Read the transcript of a past Fitz Codex conversation by its session id. Use this when the user refers to an earlier conversation, past session, or previous chat: the transcript includes user and assistant messages, tool activity, and any compaction summaries. The current session's history is injected automatically, so this tool is for looking up OTHER sessions. Returns a formatted transcript, or a message saying the session was not found.",
-    promptSnippet: "Read past Fitz Codex conversations from the session store",
+      "Read a past Fitz Codex conversation or its versioned forensic record by session id. The default transcript section is paginated. Use overview first when diagnosing a failure, then runs/evidence/audit/artifacts/media as needed; use all only when the complete bundle is small enough. The current session's history is injected automatically, so this tool is for looking up OTHER sessions. Returns a formatted section, or a message saying the session was not found.",
+    promptSnippet: "Read past Fitz conversations or forensic evidence by session id",
     promptGuidelines: [
       "When the user references a previous conversation, use this tool with the session id they provide (they can find it in the session header popover).",
-      "Prefer reading a session over guessing what was discussed — the store is the single source of truth for conversation history.",
+      "Prefer reading a session over guessing what was discussed — the durable forensic bundle is the source of truth for conversation and execution history.",
+      "For a failure, read overview, then the relevant run and evidence sections; do not infer a provider failure from transcript text alone.",
     ],
     parameters,
     execute: async (_toolCallId, params) => {
@@ -666,9 +678,11 @@ export function createSessionLookupTool(reader: PiSessionReader): ToolDefinition
         const snapshot = await reader(params.sessionId, {
           ...(params.after !== undefined ? { after: params.after } : {}),
           ...(params.limit !== undefined ? { limit: params.limit } : {}),
+          ...(params.section !== undefined ? { section: params.section } : {}),
+          ...(params.includeArtifactContent !== undefined ? { includeArtifactContent: params.includeArtifactContent } : {}),
         });
         return snapshot
-          ? toolResult(formatSessionSnapshot(snapshot), { source: "fitz_session" })
+          ? toolResult(formatSessionSnapshot(snapshot, params.section), { source: "fitz_session", ...(params.section ? { section: params.section } : {}) })
           : toolResult(`No Fitz session found with id ${params.sessionId}.`);
       } catch (error) {
         return toolResult(`Could not read Fitz session ${params.sessionId}: ${error instanceof Error ? error.message : String(error)}`);
@@ -717,7 +731,8 @@ export function createTrashTool(handler: TrashToolHandler): ToolDefinition {
   return tool;
 }
 
-export function formatSessionSnapshot(snapshot: PiSessionSnapshot): string {
+export function formatSessionSnapshot(snapshot: PiSessionSnapshot, section: PiSessionLookupSection = "transcript"): string {
+  if (snapshot.forensics && section !== "transcript") return formatForensics(snapshot, section);
   const lines = [
     `Session: ${snapshot.title}`,
     `Status: ${snapshot.status}`,
@@ -725,6 +740,36 @@ export function formatSessionSnapshot(snapshot: PiSessionSnapshot): string {
     ...snapshot.messages.map((message) => `[${message.sequence}] ${message.role.toUpperCase()}: ${message.text}`),
   ];
   return lines.join("\n");
+}
+
+function formatForensics(snapshot: PiSessionSnapshot, section: PiSessionLookupSection): string {
+  const bundle = snapshot.forensics!;
+  if (section === "overview") {
+    return [
+      `Session: ${bundle.session.title}`,
+      `Status: ${bundle.session.status}`,
+      `Updated: ${bundle.session.updatedAt}`,
+      `Transcript entries: ${bundle.transcript.length}`,
+      `Runs: ${bundle.runs.length}`,
+      `Inference evidence: ${bundle.evidence.length}`,
+      `Media jobs: ${bundle.mediaJobs.length}`,
+      `Artifacts: ${bundle.artifacts.length}`,
+      `Coverage: ${safeJson(bundle.coverage)}`,
+      `Run ids: ${bundle.runs.map((entry) => `${entry.run.id} (${entry.run.status})`).join(", ") || "none"}`,
+    ].join("\n");
+  }
+  const value = section === "runs" ? { runs: bundle.runs }
+    : section === "evidence" ? { evidence: bundle.evidence, usage: bundle.usage }
+      : section === "artifacts" ? { artifacts: bundle.artifacts }
+        : section === "media" ? { mediaJobs: bundle.mediaJobs }
+          : section === "audit" ? { auditEvents: bundle.auditEvents, lifecycleEvents: bundle.lifecycleEvents, legacyInferenceRequests: bundle.legacyInferenceRequests, gpuWork: bundle.gpuWork }
+            : bundle;
+  return safeJson(value);
+}
+
+function safeJson(value: unknown): string {
+  try { return JSON.stringify(value, null, 2) ?? String(value); }
+  catch { return String(value); }
 }
 
 /**

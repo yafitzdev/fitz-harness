@@ -87,6 +87,14 @@ export class LifecycleManager {
     };
   }
 
+  /** Engine-neutral, bounded diagnostics for the currently loaded instance.
+   * Adapters that expose their standard in-memory log ring and child-process
+   * handle are captured without the scheduler knowing an engine name. Secrets
+   * such as the per-instance API key are removed before persistence. */
+  diagnostics(): Record<string, unknown> {
+    return collectInstanceDiagnostics(this.#handle);
+  }
+
   /** Resolved local topology for UI, context preparation, and worker admission.
    * Loaded engine capacity wins; before load the recipe declaration provides a
    * stable preview of the topology that will be requested. */
@@ -527,6 +535,33 @@ function abortError(): Error {
   const error = new Error("Operation aborted");
   error.name = "AbortError";
   return error;
+}
+
+function collectInstanceDiagnostics(handle: EngineInstanceHandle | undefined): Record<string, unknown> {
+  if (!handle || typeof handle !== "object") return {};
+  const value = handle as unknown as Record<string, unknown>;
+  const secret = typeof value.apiKey === "string" && value.apiKey.length > 0 ? value.apiKey : undefined;
+  const logs = Array.isArray(value.logs)
+    ? value.logs.filter((line): line is string => typeof line === "string").slice(-500).map((line) => secret ? line.replaceAll(secret, "[REDACTED]") : line)
+    : undefined;
+  const process = value.process;
+  const processRecord = process && typeof process === "object" ? process as Record<string, unknown> : undefined;
+  const processState = processRecord ? {
+    ...(typeof processRecord.pid === "number" ? { pid: processRecord.pid } : {}),
+    ...(processRecord.exitCode === null || typeof processRecord.exitCode === "number" ? { exitCode: processRecord.exitCode } : {}),
+    ...(processRecord.signalCode === null || typeof processRecord.signalCode === "string" ? { signalCode: processRecord.signalCode } : {}),
+  } : undefined;
+  const guestProcess = value.guestProcess;
+  const guestRecord = guestProcess && typeof guestProcess === "object" ? guestProcess as Record<string, unknown> : undefined;
+  const guestState = guestRecord ? {
+    ...(typeof guestRecord.pid === "number" ? { pid: guestRecord.pid } : {}),
+    ...(typeof guestRecord.distribution === "string" ? { distribution: guestRecord.distribution } : {}),
+  } : undefined;
+  return {
+    ...(logs?.length ? { logs } : {}),
+    ...(processState && Object.keys(processState).length ? { process: processState } : {}),
+    ...(guestState && Object.keys(guestState).length ? { guestProcess: guestState } : {}),
+  };
 }
 
 function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {

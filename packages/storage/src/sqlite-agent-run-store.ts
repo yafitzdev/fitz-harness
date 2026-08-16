@@ -28,6 +28,10 @@ interface AgentRunStateRow {
   client_request_id?: string | null;
 }
 
+interface ChildRunRow extends AgentRunRow {
+  request_json: string;
+}
+
 interface TranscriptRow {
   id: string;
   session_id: string;
@@ -87,6 +91,28 @@ export class SqliteAgentRunStore {
       ? this.database.prepare(`SELECT ${RUN_COLUMNS} FROM agent_runs WHERE owner_user_id = ? ORDER BY created_at DESC LIMIT ?`).all(ownerUserId, limit)
       : this.database.prepare(`SELECT ${RUN_COLUMNS} FROM agent_runs ORDER BY created_at DESC LIMIT ?`).all(limit)) as unknown as AgentRunRow[];
     return rows.map((row) => this.withRunState(mapAgentRun(row)));
+  }
+
+  listRunsForSession(sessionId: string): AgentRunRecord[] {
+    const rows = this.database.prepare(`SELECT ${RUN_COLUMNS} FROM agent_runs WHERE session_id = ? ORDER BY created_at, id`).all(sessionId) as unknown as AgentRunRow[];
+    return rows.map((row) => this.withRunState(mapAgentRun(row)));
+  }
+
+  /** Child runs intentionally have no session_id because their conversation
+   * is isolated from the visible chat. Forensics still needs to include them,
+   * so correlate the durable delegation parent link without changing UI
+   * transcript semantics. */
+  listChildRuns(parentRunId: string): AgentRunRecord[] {
+    const columns = RUN_COLUMNS.split(", ").map((column) => `r.${column}`).join(", ");
+    const rows = this.database.prepare(`SELECT ${columns}, s.request_json FROM agent_runs r JOIN agent_run_state s ON s.run_id = r.id`).all() as unknown as ChildRunRow[];
+    return rows.flatMap((row) => {
+      try {
+        const request = JSON.parse(row.request_json) as AgentRunRequest;
+        return request.delegation?.parentRunId === parentRunId ? [this.withRunState(mapAgentRun(row))] : [];
+      } catch {
+        return [];
+      }
+    });
   }
 
   getRunRequest(id: string): AgentRunRequest | undefined {

@@ -1446,6 +1446,28 @@ describe("Fitz host", () => {
   it("stores bounded artifacts and serves content with defensive headers", async () => { const runtime = createHost(); const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Artifacts" } }); const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "Preview" } }); const sessionId = session.json().data.id;
     const created = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/artifacts`, payload: { name: "note.txt", mimeType: "text/plain", contentBase64: Buffer.from("hello").toString("base64") } }); expect(created.statusCode).toBe(201); expect(created.json().data).toEqual(expect.objectContaining({ kind: "text", byteSize: 5, sha256: expect.stringMatching(/^[a-f0-9]{64}$/) })); const content = await runtime.app.inject({ method: "GET", url: `/api/v1/artifacts/${created.json().data.id}/content` }); expect(content.body).toBe("hello"); expect(content.headers["x-content-type-options"]).toBe("nosniff"); expect(content.headers["content-disposition"]).toContain("attachment"); const removed = await runtime.app.inject({ method: "DELETE", url: `/api/v1/artifacts/${created.json().data.id}` }); expect(removed.statusCode).toBe(204); expect((await runtime.app.inject({ method: "GET", url: `/api/v1/sessions/${sessionId}/artifacts` })).json().data).toEqual([]); await runtime.app.close(); });
 
+  it("returns a complete session forensics artifact with linked evidence and bytes", async () => {
+    const runtime = createHost();
+    try {
+      const session = await runtime.app.inject({ method: "POST", url: "/api/v1/chats", payload: { title: "Forensics" } });
+      const sessionId = session.json().data.id as string;
+      const artifact = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/artifacts`, payload: { name: "proof.txt", mimeType: "text/plain", contentBase64: Buffer.from("proof").toString("base64") } });
+      runtime.store.appendTranscriptEntry({ id: "forensics-message", sessionId, kind: "message", role: "user", content: { text: "reconstruct this" }, createdAt: new Date().toISOString() });
+      runtime.store.recordInferenceEvidence({ id: "forensics-request", kind: "chat", status: "failed", routeId: "default", sessionId, executionLane: "gpu", enqueuedAt: new Date().toISOString(), completedAt: new Date().toISOString(), request: { messages: [{ role: "user", content: "reconstruct this" }] }, error: { name: "EngineError", message: "fixture failure" } });
+      const response = await runtime.app.inject({ method: "GET", url: `/api/v1/sessions/${sessionId}/forensics?download=true` });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.headers["content-disposition"]).toContain("forensics.json");
+      const data = response.json().data;
+      expect(data).toEqual(expect.objectContaining({ schemaVersion: 1, coverage: expect.objectContaining({ artifactContent: "included" }) }));
+      expect(data.transcript).toEqual(expect.arrayContaining([expect.objectContaining({ id: "forensics-message" })]));
+      expect(data.evidence).toEqual(expect.arrayContaining([expect.objectContaining({ id: "forensics-request", status: "failed", error: { name: "EngineError", message: "fixture failure" } })]));
+      expect(data.artifacts).toEqual(expect.arrayContaining([expect.objectContaining({ id: artifact.json().data.id, contentBase64: Buffer.from("proof").toString("base64") })]));
+      const metadataOnly = await runtime.app.inject({ method: "GET", url: `/api/v1/sessions/${sessionId}/forensics?includeArtifactContent=false` });
+      expect(metadataOnly.json().data.coverage.artifactContent).toBe("metadata-only");
+      expect(metadataOnly.json().data.artifacts[0]).not.toHaveProperty("contentBase64");
+    } finally { await runtime.app.close(); }
+  });
+
   it("accepts artifacts up to the 5 MB bound and rejects larger ones", async () => { const runtime = createHost(); const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Limits" } }); const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "Limits" } }); const sessionId = session.json().data.id;
     const accepted = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/artifacts`, payload: { name: "medium.pdf", mimeType: "application/pdf", contentBase64: Buffer.alloc(2_000_000, 1).toString("base64") } }); expect(accepted.statusCode).toBe(201); expect(accepted.json().data).toEqual(expect.objectContaining({ kind: "pdf", byteSize: 2_000_000 }));
     const rejected = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/artifacts`, payload: { name: "big.pdf", mimeType: "application/pdf", contentBase64: Buffer.alloc(5_000_001, 1).toString("base64") } }); expect(rejected.statusCode).toBe(400); expect(String(rejected.json().error.message)).toContain("byte limit"); await runtime.app.close(); });
