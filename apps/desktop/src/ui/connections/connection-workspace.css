@@ -31,8 +31,8 @@
 .route-symbol .route-icon-filled { display: none; fill: currentColor; stroke: none; }
 .route-symbol.active .route-icon-outline { display: none; }
 .route-symbol.active .route-icon-filled { display: block; }
-.route-symbol.active .route-icon-cut { fill: none; stroke: var(--grey-300); stroke-width: 1.45; stroke-linecap: round; stroke-linejoin: round; }
-.route-symbol.active .route-icon-negative { fill: var(--grey-300); stroke: none; }
+.route-symbol.active .route-icon-cut { fill: none; stroke: var(--grey-950); stroke-width: 1.45; stroke-linecap: round; stroke-linejoin: round; }
+.route-symbol.active .route-icon-negative { fill: var(--grey-950); stroke: none; }
 .route-symbol.active .route-icon-wave { fill: none; stroke: currentColor; stroke-width: 1.45; stroke-linecap: round; stroke-linejoin: round; }
 
 /* Media generation (§5.10): media model cards and the Image / Video / Audio
