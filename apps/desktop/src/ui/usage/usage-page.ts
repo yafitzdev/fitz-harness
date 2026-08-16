@@ -2,10 +2,22 @@ import type { UsageBreakdownRow, UsageReport, UsageTimelineBucket } from "@fitz/
 
 type RangeId = "day" | "week" | "month";
 
+/** Raw host request boundary used by the usage page adapter. */
+export type UsagePageApi = (path: string) => Promise<unknown>;
+
+export interface UsagePageClient {
+  report(path: string): Promise<UsageReport>;
+}
+
+/** Validates the immutable usage report before it reaches the renderer. */
+export function createUsagePageClient(request: UsagePageApi): UsagePageClient {
+  return { report: async (path) => parseEnvelope(await request(path), parseUsageReport) };
+}
+
 export interface UsagePageOptions {
   root: HTMLElement;
   refresh: HTMLButtonElement;
-  api: (path: string) => Promise<Record<string, any>>;
+  api: UsagePageClient;
   errorMessage: (error: unknown) => string;
 }
 
@@ -36,8 +48,8 @@ export class UsagePageController {
       const to = new Date();
       const from = new Date(to.getTime() - range.milliseconds);
       const query = new URLSearchParams({ from: from.toISOString(), to: to.toISOString(), bucket: range.bucket });
-      const response = await this.#options.api(`/api/v1/management/usage?${query}`);
-      this.render(response.data as UsageReport);
+      const report = await this.#options.api.report(`/api/v1/management/usage?${query}`);
+      this.render(report);
     } catch (error) {
       this.#options.root.replaceChildren(message(this.#options.errorMessage(error)));
     }
@@ -227,3 +239,97 @@ function terminalFailureSummary(report: UsageReport): string {
   ].filter(Boolean);
   return parts.join(" · ") || "No unsuccessful requests";
 }
+
+function parseEnvelope<T>(value: unknown, parse: (value: unknown) => T): T {
+  if (!isRecord(value) || !("data" in value)) throw invalidResponse("missing data envelope");
+  return parse(value.data);
+}
+
+function parseUsageReport(value: unknown): UsageReport {
+  if (!isRecord(value) || typeof value.from !== "string" || typeof value.to !== "string"
+    || (value.bucket !== "hour" && value.bucket !== "day") || !isRecord(value.totals)
+    || !Array.isArray(value.timeline) || !Array.isArray(value.routes) || !Array.isArray(value.recipes) || !Array.isArray(value.modalities)) {
+    throw invalidResponse("usage report is invalid");
+  }
+  return {
+    from: value.from,
+    to: value.to,
+    bucket: value.bucket,
+    totals: parseUsageTotals(value.totals),
+    timeline: value.timeline.map(parseTimelineBucket),
+    routes: value.routes.map(parseBreakdownRow),
+    recipes: value.recipes.map(parseBreakdownRow),
+    modalities: value.modalities.map(parseBreakdownRow),
+  };
+}
+
+function parseUsageTotals(value: Record<string, unknown>): UsageReport["totals"] {
+  const required = ["requests", "successful", "failed", "cancelled", "interrupted", "promptTokens", "completionTokens", "totalTokens", "tokenReportedRequests", "mediaJobs", "creditCostCents"];
+  if (required.some((key) => !isFiniteNumber(value[key]))) throw invalidResponse("usage totals are invalid");
+  const averageQueueWaitMs = optionalNumber(value.averageQueueWaitMs);
+  const averageTtftMs = optionalNumber(value.averageTtftMs);
+  const averageDurationMs = optionalNumber(value.averageDurationMs);
+  return {
+    requests: requiredNumber(value, "requests"),
+    successful: requiredNumber(value, "successful"),
+    failed: requiredNumber(value, "failed"),
+    cancelled: requiredNumber(value, "cancelled"),
+    interrupted: requiredNumber(value, "interrupted"),
+    promptTokens: requiredNumber(value, "promptTokens"),
+    completionTokens: requiredNumber(value, "completionTokens"),
+    totalTokens: requiredNumber(value, "totalTokens"),
+    tokenReportedRequests: requiredNumber(value, "tokenReportedRequests"),
+    mediaJobs: requiredNumber(value, "mediaJobs"),
+    creditCostCents: requiredNumber(value, "creditCostCents"),
+    ...(averageQueueWaitMs !== undefined ? { averageQueueWaitMs } : {}),
+    ...(averageTtftMs !== undefined ? { averageTtftMs } : {}),
+    ...(averageDurationMs !== undefined ? { averageDurationMs } : {}),
+  };
+}
+
+function parseTimelineBucket(value: unknown): UsageTimelineBucket {
+  if (!isRecord(value) || typeof value.timestamp !== "string"
+    || !isFiniteNumber(value.requests) || !isFiniteNumber(value.failed) || !isFiniteNumber(value.interrupted)
+    || !isFiniteNumber(value.mediaJobs) || !isFiniteNumber(value.promptTokens) || !isFiniteNumber(value.completionTokens)) {
+    throw invalidResponse("usage timeline is invalid");
+  }
+  return {
+    timestamp: value.timestamp,
+    requests: value.requests,
+    failed: value.failed,
+    interrupted: value.interrupted,
+    mediaJobs: value.mediaJobs,
+    promptTokens: value.promptTokens,
+    completionTokens: value.completionTokens,
+  };
+}
+
+function parseBreakdownRow(value: unknown): UsageBreakdownRow {
+  if (!isRecord(value) || typeof value.key !== "string" || typeof value.label !== "string"
+    || !isFiniteNumber(value.requests) || !isFiniteNumber(value.failed) || !isFiniteNumber(value.interrupted) || !isFiniteNumber(value.totalTokens)) {
+    throw invalidResponse("usage breakdown is invalid");
+  }
+  const averageTtftMs = optionalNumber(value.averageTtftMs);
+  const averageDurationMs = optionalNumber(value.averageDurationMs);
+  return {
+    key: value.key,
+    label: value.label,
+    requests: value.requests,
+    failed: value.failed,
+    interrupted: value.interrupted,
+    totalTokens: value.totalTokens,
+    ...(averageTtftMs !== undefined ? { averageTtftMs } : {}),
+    ...(averageDurationMs !== undefined ? { averageDurationMs } : {}),
+  };
+}
+
+function requiredNumber(value: Record<string, unknown>, key: string): number {
+  const entry = value[key];
+  if (!isFiniteNumber(entry)) throw invalidResponse(`usage total ${key} is invalid`);
+  return entry;
+}
+
+function optionalNumber(value: unknown): number | undefined { return isFiniteNumber(value) ? value : undefined; }
+function isFiniteNumber(value: unknown): value is number { return typeof value === "number" && Number.isFinite(value); }
+function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
+function invalidResponse(detail: string): TypeError { return new TypeError(`The usage API returned an invalid response: ${detail}`); }

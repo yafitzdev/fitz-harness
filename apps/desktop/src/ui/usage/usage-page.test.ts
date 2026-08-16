@@ -2,7 +2,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UsageReport } from "@fitz/protocol";
-import { UsagePageController } from "./usage-page.js";
+import { createUsagePageClient, UsagePageController } from "./usage-page.js";
 
 const report: UsageReport = {
   from: "2026-08-03T00:00:00.000Z", to: "2026-08-10T00:00:00.000Z", bucket: "day",
@@ -16,12 +16,17 @@ const report: UsageReport = {
 beforeEach(() => document.body.replaceChildren());
 
 describe("UsagePageController", () => {
+  it("rejects malformed usage envelopes at the typed API boundary", async () => {
+    const client = createUsagePageClient(async () => ({ data: { totals: {} } }));
+    await expect(client.report("/api/v1/management/usage")).rejects.toThrow("usage report is invalid");
+  });
+
   it("renders aggregate KPIs, charts, and breakdowns", async () => {
     const root = document.createElement("div");
     const refresh = document.createElement("button");
     document.body.append(refresh, root);
     const api = vi.fn(async () => ({ data: report }));
-    const controller = new UsagePageController({ root, refresh, api, errorMessage: String });
+    const controller = new UsagePageController({ root, refresh, api: createUsagePageClient(api), errorMessage: String });
 
     await controller.load();
 
@@ -38,7 +43,7 @@ describe("UsagePageController", () => {
     const root = document.createElement("div");
     const refresh = document.createElement("button");
     const api = vi.fn(async () => ({ data: report }));
-    const controller = new UsagePageController({ root, refresh, api, errorMessage: String });
+    const controller = new UsagePageController({ root, refresh, api: createUsagePageClient(api), errorMessage: String });
     await controller.load();
 
     const day = [...root.querySelectorAll<HTMLButtonElement>(".usage-range button")].find((button) => button.textContent === "24 hours")!;

@@ -35,7 +35,7 @@ import { PluginsPageController } from "./ui/plugins/plugins-page.js";
 import { ModelsPageController } from "./ui/models/models-page.js";
 import { AdministrationPageController } from "./ui/administration/administration-page.js";
 import { createHostingPageClient, HostingPageController } from "./ui/administration/hosting-page-controller.js";
-import { UsagePageController } from "./ui/usage/usage-page.js";
+import { createUsagePageClient, UsagePageController } from "./ui/usage/usage-page.js";
 import { PlaybookWorkspaceController } from "./ui/playbooks/playbook-workspace.js";
 import { ProjectsController } from "./ui/projects/projects.js";
 import { ProjectSidebarController } from "./ui/sidebar/project-sidebar.js";
@@ -672,7 +672,7 @@ const hostingPageController = new HostingPageController({
 const usagePageController = new UsagePageController({
   root: element("usage-dashboard"),
   refresh: element("refresh-administration") as HTMLButtonElement,
-  api,
+  api: createUsagePageClient(api),
   errorMessage,
 });
 const hostingPanels: Record<string, HTMLElement> = {
