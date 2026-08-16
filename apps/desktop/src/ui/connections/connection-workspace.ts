@@ -3,6 +3,7 @@ import { ManagementPageLayout, managementRefreshIcon } from "../layout/managemen
 import type { ActionFeedback } from "../primitives/action-status.js";
 import { CollapsibleSection } from "../layout/collapsible-section.js";
 import { svgIcon } from "../primitives/dom.js";
+import { parseManagementRoute } from "../../management-configuration.js";
 import {
   CLOUD_TEXT_ROUTE_DEFINITIONS,
   TEXT_ROUTE_DEFINITIONS,
@@ -17,6 +18,7 @@ import {
   LOCAL_CONNECTION_ID,
   type ConnectionModelView,
   type ConnectionView,
+  type InferenceConfiguration,
   type Json,
   type MediaModelView,
   type MediaModality,
@@ -122,7 +124,7 @@ export interface ConnectionWorkspaceOptions {
   mount: HTMLElement;
   bridge: ConnectionWorkspaceBridge;
   api: (path: string, method?: string, body?: unknown) => Promise<Json>;
-  reloadConfiguration: () => Promise<Json | undefined>;
+  reloadConfiguration: () => Promise<InferenceConfiguration | undefined>;
   updateRouteConfiguration: (routeId: string, route: Json | undefined) => void;
   updateCloudRouteConfiguration: (role: CloudRouteId, recipeId: string | undefined) => void;
   closePopovers: () => void;
@@ -137,7 +139,7 @@ export class ConnectionWorkspaceController {
   private readonly options: ConnectionWorkspaceOptions;
   private readonly layout: ManagementPageLayout;
   private records: ConsumerConnectionSummary[] = [];
-  private configuration: Json | undefined;
+  private configuration: InferenceConfiguration | undefined;
   private refreshGeneration = 0;
   private readonly routeAssignmentGeneration = new Map<string, number>();
   private inferenceScope: "cloud" | "local" = "cloud";
@@ -211,7 +213,7 @@ export class ConnectionWorkspaceController {
 
   get editorOpen(): boolean { return !this.elements.editor.hidden; }
 
-  setConfiguration(configuration: Json | undefined): void {
+  setConfiguration(configuration: InferenceConfiguration | undefined): void {
     this.configuration = configuration;
   }
 
@@ -375,7 +377,7 @@ export class ConnectionWorkspaceController {
       const route = routes.find((item: Json) => item.id === routeId);
       const active = hosted
         ? route?.recipeId === model.recipeId
-        : this.configuration?.cloudRoutes?.[routeId] === model.recipeId;
+        : definition.id !== "default" && this.configuration?.cloudRoutes?.[definition.id] === model.recipeId;
       const button = document.createElement("button");
       button.type = "button";
       button.className = `route-symbol route-${definition.id}`;
@@ -641,7 +643,7 @@ export class ConnectionWorkspaceController {
 
   private async assignCloudRoute(definition: RouteDefinition<CloudRouteId>, model: ConnectionModelView): Promise<void> {
     const role = definition.id;
-    const previous = this.configuration?.cloudRoutes?.[role] as string | undefined;
+    const previous = this.configuration?.cloudRoutes?.[role];
     const next = previous === model.recipeId ? undefined : model.recipeId;
     const generation = (this.routeAssignmentGeneration.get(role) ?? 0) + 1;
     this.routeAssignmentGeneration.set(role, generation);
@@ -689,16 +691,17 @@ export class ConnectionWorkspaceController {
   }
 
   private applyRoute(routeId: string, route: Json | undefined): void {
-    const routes = (this.configuration?.routes ?? []).filter((item: Json) => item.id !== routeId);
-    if (route) routes.push(route);
-    this.configuration = { ...(this.configuration ?? {}), routes };
+    const configuration = this.configuration;
+    if (!configuration) return;
+    const routes = configuration.routes.filter((item) => item.id !== routeId);
+    if (route) routes.push(parseManagementRoute(route));
+    this.configuration = { ...configuration, routes };
   }
 
   private applyCloudRoute(role: CloudRouteId, recipeId: string | undefined): void {
-    this.configuration = {
-      ...(this.configuration ?? {}),
-      cloudRoutes: { ...(this.configuration?.cloudRoutes ?? {}), [role]: recipeId },
-    };
+    const configuration = this.configuration;
+    if (!configuration) return;
+    this.configuration = { ...configuration, cloudRoutes: { ...configuration.cloudRoutes, [role]: recipeId } };
   }
 
   private resetForm(): void {

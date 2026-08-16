@@ -1,7 +1,10 @@
+import type { Recipe } from "@fitz/protocol";
 import type { ConsumerConnectionSummary } from "../../preload.js";
+import type { ManagementConfiguration } from "../../management-configuration.js";
 import { engineDisplayName, type RecipeModality } from "../recipes/recipe-metadata.js";
 
 export type Json = Record<string, any>;
+export type InferenceConfiguration = Pick<ManagementConfiguration, "recipes" | "engineFolders" | "routes" | "cloudRoutes" | "isAdministrator">;
 export type MediaModality = Exclude<RecipeModality, "text">;
 export const LOCAL_CONNECTION_ID = "hosted--local";
 
@@ -38,16 +41,16 @@ export type SavedConnectionView = Omit<ConsumerConnectionSummary, "models" | "me
 export type ConnectionView = HostedConnectionView | SavedConnectionView;
 
 /** Build the renderable local-engine and saved-cloud view from one snapshot. */
-export function buildConnectionViews(configuration: Json | undefined, records: readonly ConsumerConnectionSummary[]): ConnectionView[] {
+export function buildConnectionViews(configuration: InferenceConfiguration | undefined, records: readonly ConsumerConnectionSummary[]): ConnectionView[] {
   const recipes = localRecipes(configuration);
-  const localByEngine = new Map<string, Json[]>();
+  const localByEngine = new Map<string, Recipe[]>();
   for (const recipe of recipes) {
     const engineId = String(recipe.playbookId ?? recipe.adapter ?? "Local");
     localByEngine.set(engineId, [...(localByEngine.get(engineId) ?? []), recipe]);
   }
   const engineFolders = configuration?.engineFolders ?? [];
   const hostedConnections = [...localByEngine.entries()].map(([engineId, engineRecipes]): HostedConnectionView => {
-    const folder = engineFolders.find((candidate: Json) => String(candidate.folderName).toLowerCase() === engineId.toLowerCase());
+    const folder = engineFolders.find((candidate) => candidate.folderName.toLowerCase() === engineId.toLowerCase());
     return {
       id: `${LOCAL_CONNECTION_ID}--${engineId}`,
       displayName: String(folder?.engine?.displayName ?? engineDisplayName(engineId)),
@@ -58,15 +61,15 @@ export function buildConnectionViews(configuration: Json | undefined, records: r
       executionClass: "self_hosted",
       accessClass: "same_device",
       availableModels: engineRecipes
-        .filter((recipe: Json) => recipe.capabilities?.chatCompletions !== false)
-        .map((recipe: Json): ConnectionModelView => ({
-          id: String(recipe.id),
-          recipeId: String(recipe.id),
+        .filter((recipe) => recipe.capabilities.chatCompletions !== false)
+        .map((recipe): ConnectionModelView => ({
+          id: recipe.id,
+          recipeId: recipe.id,
           displayName: String(recipe.displayName ?? recipe.modelId ?? recipe.id),
           modelId: String(recipe.modelId ?? recipe.id),
           engine: engineId,
           contextTokens: Number(recipe.contextTokens),
-          maxConcurrentGenerations: Number(recipe.capabilities?.maxConcurrentGenerations ?? 1),
+          maxConcurrentGenerations: Number(recipe.capabilities.maxConcurrentGenerations ?? 1),
         })),
       availableMediaModels: hostedMediaViews(engineRecipes),
       updatedAt: "",
@@ -80,14 +83,14 @@ export function buildConnectionViews(configuration: Json | undefined, records: r
       ...connection,
       hosted: false,
       availableModels: connection.models.map((model) => {
-        const recipe = (configuration?.recipes ?? []).find((candidate: Json) => candidate.id === model.recipeId);
+        const recipe = (configuration?.recipes ?? []).find((candidate) => candidate.id === model.recipeId);
         return {
           ...model,
           displayName: String(recipe?.displayName ?? model.id),
           modelId: String(recipe?.modelId ?? model.id),
           contextTokens: Number(recipe?.contextTokens),
           engine: String(connection.template ?? recipe?.adapter ?? "openai-compatible"),
-          maxConcurrentGenerations: Number(recipe?.capabilities?.maxConcurrentGenerations ?? 1),
+          maxConcurrentGenerations: Number(recipe?.capabilities.maxConcurrentGenerations ?? 1),
         };
       }),
       availableMediaModels: savedMediaViews(connection),
@@ -109,24 +112,27 @@ export function connectionMatches(connection: ConnectionView, query: string): bo
   return !normalized || connectionSearchValues(connection).some((value) => value.toLowerCase().includes(normalized));
 }
 
-export function localRecipes(configuration: Json | undefined): Json[] {
-  return (configuration?.recipes ?? []).filter((recipe: Json) => !String(recipe.id).startsWith("consumer-recipe--"));
+export function localRecipes(configuration: InferenceConfiguration | undefined): Recipe[] {
+  return (configuration?.recipes ?? []).filter((recipe) => !recipe.id.startsWith("consumer-recipe--"));
 }
 
-function hostedMediaViews(recipes: Json[]): MediaModelView[] {
+function hostedMediaViews(recipes: Recipe[]): MediaModelView[] {
   return recipes
-    .filter((recipe: Json) => !String(recipe.id).startsWith("consumer-recipe--")
-      && recipe.capabilities?.chatCompletions === false
-      && Array.isArray(recipe.capabilities?.modalities?.output)
+    .filter((recipe) => !String(recipe.id).startsWith("consumer-recipe--")
+      && recipe.capabilities.chatCompletions === false
+      && Array.isArray(recipe.capabilities.modalities?.output)
       && recipe.capabilities.modalities.output.length)
-    .map((recipe: Json): MediaModelView => ({
-      recipeId: String(recipe.id),
-      displayName: String(recipe.displayName ?? recipe.modelId ?? recipe.id),
-      modelId: String(recipe.modelId ?? recipe.id),
-      modalities: recipe.capabilities.modalities.output.filter((modality: unknown) => modality === "image" || modality === "video" || modality === "audio"),
-      ...(recipe.capabilities?.modalities?.limits ? { limits: recipe.capabilities.modalities.limits } : {}),
-      engine: String(recipe.playbookId ?? recipe.adapter ?? "Local"),
-    }));
+    .map((recipe): MediaModelView => {
+      const output = recipe.capabilities.modalities?.output ?? [];
+      return {
+        recipeId: recipe.id,
+        displayName: String(recipe.displayName ?? recipe.modelId ?? recipe.id),
+        modelId: String(recipe.modelId ?? recipe.id),
+        modalities: output.filter((modality: unknown): modality is MediaModality => modality === "image" || modality === "video" || modality === "audio"),
+        ...(recipe.capabilities.modalities?.limits ? { limits: recipe.capabilities.modalities.limits } : {}),
+        engine: String(recipe.playbookId ?? recipe.adapter ?? "Local"),
+      };
+    });
 }
 
 /** Media providers register one entry per (model, modality); the UI shows one card per model. */
