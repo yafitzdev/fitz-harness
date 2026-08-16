@@ -33,8 +33,8 @@
   --grey-450: #5a5e58;   /* input borders, scrollbar rails */
   --grey-400: #4a4d49;   /* dividers, chip borders, spinner tracks */
   --grey-350: #393939;   /* controls between the divider and input tones */
-  --grey-300: #303030;   /* control surfaces: menus, search bars, code blocks */
-  --grey-250: #303030;   /* composer and matching active surfaces intentionally share the code-block tone */
+  --grey-300: var(--tint-1); /* shared low-contrast surfaces: menus, code blocks, shell output */
+  --grey-250: var(--grey-300); /* composer and matching active surfaces share the same tone */
   --grey-200: #212121;   /* raised surfaces: inputs, artifact bubbles */
   --grey-100: #17181c;   /* inputs and the app background */
   --grey-50: #0d0d0d;    /* deepest background, dark button text */
