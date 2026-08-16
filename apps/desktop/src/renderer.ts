@@ -41,7 +41,8 @@ import { ProjectsController } from "./ui/projects/projects.js";
 import { ProjectSidebarController } from "./ui/sidebar/project-sidebar.js";
 import { WorkQueueController } from "./ui/queue/work-queue.js";
 import { ArtifactController } from "./ui/artifacts/artifact-controller.js";
-import { assertHostContract, HostRequestError, parseHostError } from "./client-error.js";
+import { assertHostContract, HostRequestError } from "./client-error.js";
+import { HostApiClient } from "./host-api-client.js";
 import type { RegenerateAssistantTurnRequest, RegeneratedAssistantTurn } from "@fitz/protocol";
 
 type Json = Record<string, any>;
@@ -76,6 +77,8 @@ const modelsButton = element("manage-models") as HTMLButtonElement;
 const overlayHost = new OverlayHost(document);
 const administrationPage = element("administration-page");
 const administrationButton = element("manage-administration") as HTMLButtonElement;
+const hostApi = new HostApiClient(window.fitz);
+const api = (path: string, method = "GET", body?: unknown): Promise<Json> => hostApi.request<Json>(path, method, body);
 
 // Every management tab is built from the same layout component: a header with
 // tabs and actions plus one or more content columns, so switching between
@@ -1056,7 +1059,7 @@ async function regenerateAssistantResponse(article: HTMLElement): Promise<void> 
   if (!userArticle) { showStatus("Load the original prompt before regenerating this response.", "error"); return; }
   try {
     const request = { runId } satisfies RegenerateAssistantTurnRequest;
-    const response = await typedApi<ApiData<RegeneratedAssistantTurn>>(`/api/v1/sessions/${sessionId}/regenerate`, "POST", request);
+    const response = await hostApi.request<ApiData<RegeneratedAssistantTurn>>(`/api/v1/sessions/${sessionId}/regenerate`, "POST", request);
     const prompt = response.data.prompt.trim();
     if (!prompt) throw new Error("The original prompt is unavailable");
     const retainedContextTokens = Number(response.data.estimatedContextTokens);
@@ -1102,16 +1105,4 @@ function setStatus(text: string, state: string): void { composer.setStatus(text,
 function showStatus(_text: string, _tone: ActionStatusTone): void {}
 function panelEmpty(text: string): HTMLElement { return textBlock("panel-empty", text); }
 function loadingMessage(text: string): HTMLElement { return textBlock("panel-empty", text); }
-async function api(path: string, method = "GET", body?: unknown): Promise<Json> {
-  const response = await window.fitz.request({ path, method, ...(body !== undefined ? { body } : {}) });
-  let parsed: Json;
-  try { parsed = JSON.parse(response.body) as Json; } catch { parsed = { error: response.body }; }
-  if (response.status >= 400) throw parseHostError(parsed, response.status);
-  return parsed;
-}
-
-async function typedApi<T>(path: string, method = "GET", body?: unknown): Promise<T> {
-  return await api(path, method, body) as T;
-}
-
 function errorMessage(error: unknown): string { return (error instanceof Error ? error.message : String(error)).replace(/^Error invoking remote method '[^']+':\s*Error:\s*/i, ""); }
