@@ -41,6 +41,7 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
       if (principal && !security?.authorizeRoute(principal, body.model)) {
         return reply.code(403).send({ error: "Route access denied" });
       }
+      const transcriptAttachments = attachmentRecords(body, store);
       const executionMessages = await hydrateAttachments(body, store, artifacts);
       if (principal) {
         const promptChars = executionMessages.reduce((total, message) => total + contentTextLength(message.content), 0);
@@ -51,7 +52,7 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
       const executionRequest = { ...durableRequest, messages: executionMessages };
       const prepared = await context.prepare(executionRequest, contextTokensForRequest(executionRequest, principal?.user.id));
       let run;
-      try { run = agentRuns.start(prepared.request, principal?.user.id, body.messages, durableRequest); }
+      try { run = agentRuns.start(prepared.request, principal?.user.id, body.messages, durableRequest, undefined, transcriptAttachments); }
       catch (error) {
         const concurrent = body.clientRequestId ? store.agentRunForClientRequest(body.clientRequestId) : undefined;
         if (concurrent && canAccessOwner(principal, concurrent.ownerUserId)) return reply.code(200).send({ protocolVersion: PROTOCOL_VERSION, data: concurrent, idempotentReplay: true });
@@ -318,6 +319,16 @@ async function hydrateAttachments(request: AgentRunRequest, store: SqliteStore, 
   const parts = [...existing, ...(attachmentText ? [{ type: "text" as const, text: `\n\n${attachmentText}` }] : []), ...imageParts];
   messages[index] = { ...message, content: parts.length === 1 && parts[0]?.type === "text" ? parts[0].text : parts };
   return messages;
+}
+
+function attachmentRecords(request: AgentRunRequest, store: SqliteStore) {
+  if (!request.attachments?.length) return [];
+  if (!request.sessionId) throw new TypeError("Attachments require a chat session");
+  return request.attachments.map((reference) => {
+    const artifact = store.getArtifact(reference.artifactId);
+    if (!artifact || artifact.sessionId !== request.sessionId) throw new TypeError(`Attachment is unavailable: ${reference.artifactId}`);
+    return artifact;
+  });
 }
 
 function parseAgentEffort(value: unknown): "light" | "normal" | "high" {

@@ -1,4 +1,4 @@
-import type { AgentEventEnvelope, AgentEventType, AgentQueueItem, AgentRunRecord, AgentRunRequest, SubagentRoleDefinition } from "@fitz/protocol";
+import type { AgentEventEnvelope, AgentEventType, AgentQueueItem, AgentRunRecord, AgentRunRequest, ArtifactRecord, SubagentRoleDefinition } from "@fitz/protocol";
 import { AGENT_PROTOCOL_VERSION } from "@fitz/protocol";
 import { OwnerFairQueue, type InferenceScheduler, type ScheduledStream } from "@fitz/inference-core";
 import type { AgentRuntime, AgentRuntimeEvent, AgentRuntimeRun } from "@fitz/agent-core";
@@ -57,7 +57,7 @@ export class AgentRunCoordinator {
     if (!Number.isInteger(maxConcurrentPerOwner) || maxConcurrentPerOwner < 1) throw new TypeError("Per-owner agent concurrency must be a positive integer");
   }
 
-  start(request: AgentRunRequest, ownerUserId?: string, canonicalMessages = request.messages, durableRequest = request, resumeOfRunId?: string): AgentRunRecord {
+  start(request: AgentRunRequest, ownerUserId?: string, canonicalMessages = request.messages, durableRequest = request, resumeOfRunId?: string, transcriptAttachments: readonly ArtifactRecord[] = []): AgentRunRecord {
     if (!this.#accepting) throw new AgentCoordinatorClosedError();
     if (this.#queue.length + this.#active.size >= this.maxDepth) throw new AgentQueueCapacityError();
     const id = randomUUID(); const now = new Date().toISOString();
@@ -67,7 +67,8 @@ export class AgentRunCoordinator {
     // duplicate the user's prompt in the transcript.
     this.store.createAgentRun(run, durableRequest, resumeOfRunId);
     try {
-      if (request.sessionId) for (const message of canonicalMessages) this.store.appendTranscriptEntry({ id: randomUUID(), sessionId: request.sessionId, kind: "message", role: message.role, content: { text: message.content, ...(message.name ? { name: message.name } : {}) }, createdAt: now });
+      const attachmentMessageIndex = canonicalMessages.findLastIndex((message) => message.role === "user");
+      if (request.sessionId) for (const [index, message] of canonicalMessages.entries()) this.store.appendTranscriptEntry({ id: randomUUID(), sessionId: request.sessionId, kind: "message", role: message.role, content: { text: message.content, ...(message.name ? { name: message.name } : {}), ...(index === attachmentMessageIndex && transcriptAttachments.length ? { attachments: transcriptAttachments.map(transcriptAttachment) } : {}) }, createdAt: now });
       this.#emit(id, "run.created", { routeId: request.model, ...(resumeOfRunId ? { resumeOfRunId } : {}) });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -293,6 +294,16 @@ export class AgentRunCoordinator {
   /** Reasoning is stored under its own transcript kind so it never round-trips into model context or renders as a chat message. */
   #appendReasoningTranscript(runId: string, text: string, fromSequence: number, eventSequence: number): void { const sessionId = this.store.getAgentRun(runId)?.sessionId; if (sessionId && text) this.store.appendTranscriptEntry({ id: `agent-event:${runId}:reasoning:${fromSequence}-${eventSequence}`, sessionId, kind: "reasoning", role: "assistant", content: { text, runId, eventSequence }, createdAt: new Date().toISOString() }); }
   #appendToolTranscript(runId: string, event: AgentEventEnvelope): void { const sessionId = this.store.getAgentRun(runId)?.sessionId; if (!sessionId || (event.type !== "tool.started" && event.type !== "tool.completed")) return; this.store.appendTranscriptEntry({ id: `agent-event:${runId}:${event.type}:${event.sequence}`, sessionId, kind: event.type === "tool.started" ? "tool-call" : "tool-result", role: "tool", content: { ...event.data, runId, eventSequence: event.sequence }, createdAt: event.timestamp }); }
+}
+
+function transcriptAttachment(artifact: ArtifactRecord) {
+  return {
+    id: artifact.id,
+    name: artifact.name,
+    mimeType: artifact.mimeType,
+    kind: artifact.kind,
+    byteSize: artifact.byteSize,
+  };
 }
 
 function abortError(): Error {

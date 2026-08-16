@@ -1,6 +1,7 @@
 import type { AgentEffort, MediaModality } from "@fitz/protocol";
 import type { ComposerSubmission, PastedAttachment } from "./composer.js";
 import type { MediaCreationParams } from "./media-creation-form.js";
+import type { MessageAttachment } from "./conversation-message-feed.js";
 
 export type PromptMessageContent = string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
 
@@ -22,9 +23,9 @@ export interface PromptSubmissionOptions {
   clearDraft: () => void;
   setDraft: (value: string) => void;
   resetWarmup: () => void;
-  uploadAttachment: (sessionId: string, attachment: PastedAttachment) => Promise<{ id: string }>;
+  uploadAttachment: (sessionId: string, attachment: PastedAttachment) => Promise<{ id: string; name?: string; mimeType?: string; kind?: string; byteSize?: number }>;
   clearLanding: () => void;
-  appendUser: (content: string) => void;
+  appendUser: (content: string, attachments?: readonly MessageAttachment[]) => void;
   persistUserMessage: (sessionId: string, content: string, clientMessageId: string) => Promise<void>;
   appendSteer: (content: string) => HTMLElement;
   pushHistory: (content: string) => void;
@@ -107,7 +108,7 @@ export class PromptSubmissionController {
     const uploadable = mediaCommand
       ? mediaCommand === "audio" ? [] : attachments.filter((attachment) => attachment.kind === "image")
       : attachments;
-    const uploaded: Array<{ artifact: { id: string }; attachment: PastedAttachment }> = [];
+    const uploaded: Array<{ artifact: Awaited<ReturnType<PromptSubmissionOptions["uploadAttachment"]>>; attachment: PastedAttachment }> = [];
     for (const attachment of uploadable) {
       try {
         const artifact = await this.#options.uploadAttachment(sessionId, attachment);
@@ -137,7 +138,11 @@ export class PromptSubmissionController {
       }
       this.#options.clearDraft();
       this.#options.clearLanding();
-      if (!existingUserMessage) this.#options.appendUser(displayContent);
+      if (!existingUserMessage) {
+        const messageAttachments = uploaded.map(messageAttachment);
+        if (messageAttachments.length) this.#options.appendUser(displayContent, messageAttachments);
+        else this.#options.appendUser(displayContent);
+      }
       if (displayContent && !existingUserMessage) this.#options.pushHistory(displayContent);
       this.#options.addTokenEstimate(displayContent);
       this.#options.refreshContext();
@@ -174,7 +179,11 @@ export class PromptSubmissionController {
 
     this.#options.clearDraft();
     this.#options.clearLanding();
-    if (!existingUserMessage) this.#options.appendUser(content);
+    if (!existingUserMessage) {
+      const messageAttachments = uploaded.map(messageAttachment);
+      if (messageAttachments.length) this.#options.appendUser(content, messageAttachments);
+      else this.#options.appendUser(content);
+    }
     if (content && !existingUserMessage) this.#options.pushHistory(content);
     this.#options.addTokenEstimate(content);
     this.#options.refreshContext();
@@ -211,4 +220,15 @@ export class PromptSubmissionController {
 
 function titleFrom(content: string): string {
   return content.split(/\r?\n/, 1)[0]!.trim().slice(0, 80) || "New chat";
+}
+
+function messageAttachment(uploaded: { artifact: Awaited<ReturnType<PromptSubmissionOptions["uploadAttachment"]>>; attachment: PastedAttachment }): MessageAttachment {
+  return {
+    id: uploaded.artifact.id,
+    name: uploaded.artifact.name ?? uploaded.attachment.name,
+    mimeType: uploaded.artifact.mimeType ?? uploaded.attachment.mimeType,
+    kind: uploaded.artifact.kind ?? uploaded.attachment.kind,
+    ...(uploaded.artifact.byteSize !== undefined ? { byteSize: uploaded.artifact.byteSize } : {}),
+    dataUrl: uploaded.attachment.dataUrl,
+  };
 }

@@ -44,6 +44,14 @@ describe("ConversationTranscript", () => {
     expect(activity.completeTool).toHaveBeenCalledWith(row, "bash", undefined, "ok", false, undefined);
   });
 
+  it("restores durable attachment tiles with user messages", () => {
+    const appendMessage = vi.fn(() => document.createElement("div"));
+    const view = new ConversationTranscript({ messages: document.createElement("main"), activity: { clear: vi.fn(), appendTool: vi.fn(), completeTool: vi.fn(), appendReasoning: vi.fn(), appendReasoningDelta: vi.fn(), completeReasoning: vi.fn(), appendContext: vi.fn() }, appendMessage, appendCommentary: vi.fn(), rebuildHistory: vi.fn() });
+    const attachment = { id: "artifact-1", name: "shot.png", mimeType: "image/png", kind: "image", byteSize: 42 };
+    view.restore([{ kind: "message", role: "user", content: { text: "look", attachments: [attachment] } }]);
+    expect(appendMessage).toHaveBeenCalledWith("user", "look", undefined, undefined, [attachment]);
+  });
+
   it("keeps historical plan revisions out of the active composer artifact", () => {
     const messages = document.createElement("main");
     const activity = { clear: vi.fn(), appendTool: vi.fn(() => document.createElement("div")), completeTool: vi.fn(), appendReasoning: vi.fn(), appendReasoningDelta: vi.fn(), completeReasoning: vi.fn(), appendContext: vi.fn() };

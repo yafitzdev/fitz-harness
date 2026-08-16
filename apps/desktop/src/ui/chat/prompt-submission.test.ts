@@ -41,7 +41,9 @@ describe("PromptSubmissionController", () => {
       attachments: [{ artifactId: "artifact-1" }],
       messages: [{ role: "user", content: "Build a dashboard\nwith charts" }],
     }));
-    expect(options.appendUser).toHaveBeenCalledWith("Build a dashboard\nwith charts");
+    expect(options.appendUser).toHaveBeenCalledWith("Build a dashboard\nwith charts", [expect.objectContaining({
+      id: "artifact-1", name: "shot.png", mimeType: "image/png", kind: "image", dataUrl: "data:image/png;base64,AAAA",
+    })]);
   });
 
   it("restores a steering draft when the active run rejects it", async () => {

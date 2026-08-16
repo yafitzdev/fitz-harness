@@ -1165,7 +1165,13 @@ describe("Fitz host", () => {
       expect(JSON.stringify(seen[0])).toContain("the answer is 42");
       expect(JSON.stringify(seen[0])).toContain("<main>important markup</main>");
       expect(JSON.stringify(seen[0])).toContain("[ATTACHMENT: bundle.zip");
-      expect(runtime.store.transcriptAfter(sessionId, 0).find((entry) => entry.role === "user")?.content.text).toBe("analyse this");
+      const userEntry = runtime.store.transcriptAfter(sessionId, 0).find((entry) => entry.role === "user");
+      expect(userEntry?.content.text).toBe("analyse this");
+      expect(userEntry?.content.attachments).toEqual([
+        expect.objectContaining({ id: note.json().data.id, name: "note.txt", mimeType: "text/plain" }),
+        expect.objectContaining({ id: page.json().data.id, name: "page.html", mimeType: "text/html" }),
+        expect.objectContaining({ id: archive.json().data.id, name: "bundle.zip", mimeType: "application/zip" }),
+      ]);
     } finally { await runtime.app.close(); }
   });
 

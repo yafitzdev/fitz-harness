@@ -6,8 +6,10 @@ function setup(active = false) {
   const messages = document.createElement("main");
   const activity = { finishWork: vi.fn(), appendCommentary: vi.fn((node: HTMLElement) => messages.append(node)) };
   const actions = { attach: vi.fn() };
-  const feed = new ConversationMessageFeed({ messages, activity, actions, runActive: () => active, projectRoot: () => "C:\\work" });
-  return { feed, messages, activity, actions };
+  const openAttachment = vi.fn();
+  const loadAttachmentPreview = vi.fn(async () => "data:image/png;base64,AAAA");
+  const feed = new ConversationMessageFeed({ messages, activity, actions, runActive: () => active, projectRoot: () => "C:\\work", openAttachment, loadAttachmentPreview });
+  return { feed, messages, activity, actions, openAttachment, loadAttachmentPreview };
 }
 
 beforeEach(() => document.body.replaceChildren());
@@ -23,6 +25,20 @@ describe("ConversationMessageFeed", () => {
     expect(messages.textContent).toBe("hello");
     expect(actions.attach).toHaveBeenCalledOnce();
     expect(activity.finishWork).toHaveBeenCalledWith("now", "next-message");
+  });
+
+  it("renders sent attachments as clickable image and file tiles", async () => {
+    const { feed, messages, openAttachment, loadAttachmentPreview } = setup();
+    const image = { id: "image-1", name: "shot.png", mimeType: "image/png", kind: "image" };
+    const file = { id: "file-1", name: "notes.txt", mimeType: "text/plain", kind: "text" };
+    feed.append("user", "analyse this", undefined, [image, file]);
+    await vi.waitFor(() => expect(messages.querySelector<HTMLImageElement>(".message-attachment img")?.src).toContain("data:image/png"));
+    expect(messages.querySelectorAll(".message-attachment")).toHaveLength(2);
+    expect(messages.textContent).toContain("shot.png");
+    expect(messages.textContent).toContain("notes.txt");
+    expect(loadAttachmentPreview).toHaveBeenCalledWith(image);
+    (messages.querySelector(".message-attachment") as HTMLButtonElement).click();
+    expect(openAttachment).toHaveBeenCalledWith(image);
   });
 
   it("does not count the idle gap before a later user message as agent work", () => {

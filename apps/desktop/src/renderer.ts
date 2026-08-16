@@ -10,7 +10,7 @@ import { MediaJobFeed } from "./ui/chat/media-job-feed.js";
 import { MediaJobTracker, type MediaJobSummary } from "./ui/chat/media-job-tracker.js";
 import { Composer, type ComposerSubmission } from "./ui/chat/composer.js";
 import { ConversationLanding } from "./ui/chat/conversation-landing.js";
-import { ConversationMessageFeed } from "./ui/chat/conversation-message-feed.js";
+import { ConversationMessageFeed, type MessageAttachment } from "./ui/chat/conversation-message-feed.js";
 import { ConversationTranscript } from "./ui/chat/conversation-transcript.js";
 import { ConversationContextController } from "./ui/chat/conversation-context.js";
 import { ConversationSessionController } from "./ui/chat/conversation-session.js";
@@ -426,10 +426,10 @@ const promptSubmission = new PromptSubmissionController({
       mimeType: attachment.mimeType,
       contentBase64: attachment.dataUrl.split(",")[1]!,
     });
-    return artifact as { id: string };
+    return artifact as { id: string; name: string; mimeType: string; kind: string; byteSize?: number };
   },
   clearLanding: () => { if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren(); },
-  appendUser: (content) => { appendMessage("user", content); },
+  appendUser: (content, attachments) => { appendMessage("user", content, undefined, undefined, attachments); },
   persistUserMessage: async (sessionId, content, clientMessageId) => {
     await api(`/api/v1/sessions/${sessionId}/messages`, "POST", { text: content, clientMessageId });
   },
@@ -578,6 +578,13 @@ const conversationMessages = new ConversationMessageFeed({
   actions: messageActions,
   runActive: () => agentRuns.active,
   projectRoot: () => projects.activeProject()?.rootPath ?? "",
+  openAttachment: (attachment) => { void inspectorPanel.previewArtifact(attachment); },
+  loadAttachmentPreview: async (attachment) => {
+    if (!attachment.mimeType.startsWith("image/")) return undefined;
+    const response = await window.fitz.request({ path: `/api/v1/artifacts/${encodeURIComponent(attachment.id)}/content`, responseType: "base64" });
+    if (response.status < 200 || response.status >= 300) return undefined;
+    return `data:${attachment.mimeType};base64,${response.body}`;
+  },
 });
 const administrationPageController = new AdministrationPageController({
   refresh: element("refresh-administration") as HTMLButtonElement,
@@ -1066,8 +1073,8 @@ function showLanding(hasTask = false): void {
   conversationLanding.showHome(hasTask);
 }
 
-function appendMessage(role: string, text: string, createdAt?: string, runId?: string): HTMLElement {
-  const content = conversationMessages.append(role, text, createdAt);
+function appendMessage(role: string, text: string, createdAt?: string, runId?: string, attachments: readonly MessageAttachment[] = []): HTMLElement {
+  const content = conversationMessages.append(role, text, createdAt, attachments);
   if (role === "assistant" && runId) {
     const article = content.closest<HTMLElement>("article.message");
     if (article) article.dataset.runId = runId;

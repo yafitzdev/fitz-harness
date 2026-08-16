@@ -117,6 +117,12 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .message { width: 100%; margin: 0 0 25px; }
 .message.user { display: grid; justify-items: end; }
 .message.user .message-body { max-width: 100%; padding: 8px 12px; border-radius: var(--radius-2xl); background: var(--tint-2); }
+.message-attachments { max-width: min(100%, 480px); display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-bottom: 6px; }
+.message-attachment { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; padding: 5px; border: 1px solid var(--border); border-radius: 12px; background: var(--tint-1); color: var(--text); cursor: pointer; }
+.message-attachment:hover { border-color: var(--subtle); background: var(--tint-2); }
+.message-attachment img { width: 76px; height: 56px; display: block; object-fit: cover; border-radius: 8px; background: var(--grey-200); }
+.message-attachment-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 8px; background: var(--grey-200); color: var(--muted); font-size: 9px; font-weight: 700; }
+.message-attachment-name { max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .message.assistant { display: block; }
 .message.commentary { color: var(--text); line-height: 1.62; }
 .message.commentary .message-body { color: var(--text); }

@@ -1,5 +1,6 @@
 import { estimateTranscriptContext } from "../../context-estimate.js";
 import { TranscriptWindow } from "./transcript-window.js";
+import type { MessageAttachment } from "./conversation-message-feed.js";
 
 type Json = Record<string, any>;
 
@@ -16,7 +17,7 @@ export interface TranscriptActivity {
 export interface ConversationTranscriptOptions {
   messages: HTMLElement;
   activity: TranscriptActivity;
-  appendMessage: (role: string, text: string, createdAt?: string, runId?: string) => HTMLElement;
+  appendMessage: (role: string, text: string, createdAt?: string, runId?: string, attachments?: readonly MessageAttachment[]) => HTMLElement;
   appendCommentary: (text: string, createdAt?: string) => HTMLElement;
   rebuildHistory: (messages: string[]) => void;
   resetPlan?: () => void;
@@ -105,7 +106,9 @@ export class ConversationTranscript {
       if (entry.role === "assistant" && entry.content?.phase === "commentary") this.#options.appendCommentary(text, entry.createdAt);
       else {
         const runId = typeof entry.content?.runId === "string" ? entry.content.runId : undefined;
-        if (runId) this.#options.appendMessage(entry.role ?? "system", text, entry.createdAt, runId);
+        const attachments = Array.isArray(entry.content?.attachments) ? entry.content.attachments as MessageAttachment[] : [];
+        if (attachments.length) this.#options.appendMessage(entry.role ?? "system", text, entry.createdAt, runId, attachments);
+        else if (runId) this.#options.appendMessage(entry.role ?? "system", text, entry.createdAt, runId);
         else this.#options.appendMessage(entry.role ?? "system", text, entry.createdAt);
       }
       return;
