@@ -1,7 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from "electron";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -390,26 +390,45 @@ function legacyConsumerConnectionsPath(): string {
   const hostId = createHash("sha256").update(new URL(hostUrl).origin).digest("hex").slice(0, 16);
   return join(app.getPath("userData"), `consumer-connections-${hostId}.bin`);
 }
+function legacyConsumerConnectionPaths(): string[] {
+  const root = app.getPath("userData");
+  const current = consumerConnectionsPath().toLowerCase();
+  const names = new Set([
+    basename(legacyConsumerConnectionsPath()),
+    ...readdirSync(root).filter((name) => /^consumer-connections-[a-f0-9]{16}(?:-[a-f0-9]{16})?\.bin$/i.test(name)),
+  ]);
+  return [...names].map((name) => join(root, name)).filter((path) => path.toLowerCase() !== current && existsSync(path));
+}
 function readConsumerConnections(path: string): StoredConsumerConnection[] {
   if (!safeStorage.isEncryptionAvailable() || !existsSync(path)) return [];
   const value = JSON.parse(safeStorage.decryptString(readFileSync(path))) as unknown;
   return Array.isArray(value) ? value.filter(isStoredConsumerConnection) : [];
 }
-/** One-time migration from the removed machine-global credential file. The
- * owner-scoped destination is written first, then the legacy source is retired
- * so an intentional later deletion can never resurrect old credentials. */
+/** One-time migration from every removed host/device-scoped credential file.
+ * The unified destination is written first, then all readable sources are
+ * retired so an intentional later deletion can never resurrect credentials. */
 function loadConsumerConnections(): StoredConsumerConnection[] {
   try {
     const currentPath = consumerConnectionsPath();
     const current = readConsumerConnections(currentPath);
-    const legacyPath = legacyConsumerConnectionsPath();
-    if (current.length > 0 || !existsSync(legacyPath)) return current;
-    const migrated = readConsumerConnections(legacyPath);
-    if (migrated.length === 0) return current;
-    persistConsumerConnections(migrated);
-    try { renameSync(legacyPath, `${legacyPath}.migrated`); }
-    catch (error) { console.warn("Connection migration succeeded, but the retired credential file could not be renamed", error); }
-    return migrated;
+    const readableSources: string[] = [];
+    const migratedById = new Map<string, StoredConsumerConnection>();
+    for (const path of legacyConsumerConnectionPaths()) {
+      try {
+        for (const connection of readConsumerConnections(path)) migratedById.set(connection.id, connection);
+        readableSources.push(path);
+      } catch (error) {
+        console.warn("Could not read a retired connection credential file", error);
+      }
+    }
+    for (const connection of current) migratedById.set(connection.id, connection);
+    const resolved = [...migratedById.values()];
+    if (readableSources.length > 0 && resolved.length > 0) persistConsumerConnections(resolved);
+    for (const [index, path] of readableSources.entries()) {
+      try { renameSync(path, `${path}.migrated-${Date.now()}-${index}`); }
+      catch (error) { console.warn("Connection migration succeeded, but a retired credential file could not be renamed", error); }
+    }
+    return resolved;
   } catch { return []; }
 }
 function persistConsumerConnections(connections: StoredConsumerConnection[]): void { if (!safeStorage.isEncryptionAvailable()) throw new Error("Secure credential storage is unavailable"); mkdirSync(dirname(consumerConnectionsPath()), { recursive: true }); writeFileSync(consumerConnectionsPath(), safeStorage.encryptString(JSON.stringify(connections)), { flag: "w" }); }

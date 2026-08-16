@@ -1156,7 +1156,10 @@ describe("desktop renderer shell", () => {
     expect(main).toContain("safeStorage.encryptString(token)");
     expect(main).toContain("safeStorage.decryptString");
     expect(main).toContain("legacyConsumerConnectionsPath");
-    expect(main).toContain('renameSync(legacyPath, `${legacyPath}.migrated`)');
+    expect(main).toContain("legacyConsumerConnectionPaths()");
+    expect(main).toContain("readdirSync(root).filter");
+    expect(main).toContain("for (const connection of current) migratedById.set(connection.id, connection)");
+    expect(main).toContain('renameSync(path, `${path}.migrated-${Date.now()}-${index}`)');
     expect(styles).not.toContain(".pairing-page");
   });
 
