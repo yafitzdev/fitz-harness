@@ -11,10 +11,7 @@ function harness(overrides: Partial<AppNavigationOptions> = {}) {
     openRoute: vi.fn(),
   }])) as unknown as AppNavigationOptions["management"];
   const options: AppNavigationOptions = {
-    administrator: () => true,
     blocked: () => false,
-    pairingActive: () => false,
-    focusPairing: vi.fn(),
     closePopovers: vi.fn(),
     closeInspector: vi.fn(),
     closeEditors: vi.fn(),
@@ -22,7 +19,6 @@ function harness(overrides: Partial<AppNavigationOptions> = {}) {
     navigation,
     management,
     replayConversation: vi.fn(),
-    renderPairing: vi.fn(),
     ...overrides,
   };
   return { controller: new AppNavigationController(options), management, navigation, options };
@@ -55,13 +51,8 @@ describe("AppNavigationController", () => {
     expect(management.connections.openRoute).toHaveBeenCalledWith(["edit", "remote-1"]);
   });
 
-  it("centralizes management visibility, access checks, and pairing gates", async () => {
-    let pairing = false;
-    const focusPairing = vi.fn();
+  it("centralizes universal management visibility and access checks", async () => {
     const { controller, management, navigation, options } = harness({
-      administrator: () => false,
-      pairingActive: () => pairing,
-      focusPairing,
     });
 
     controller.applyAvailability();
@@ -71,22 +62,16 @@ describe("AppNavigationController", () => {
     expect(await controller.openManagement("plugins")).toBe(true);
     expect(options.pages.show).toHaveBeenCalledWith("plugins");
 
-    pairing = true;
-    expect(await controller.openManagement("connections")).toBe(false);
-    expect(management.connections.load).not.toHaveBeenCalled();
-    expect(focusPairing).toHaveBeenCalledOnce();
+    expect(await controller.openManagement("connections")).toBe(true);
+    expect(management.connections.load).toHaveBeenCalledOnce();
   });
 
-  it("owns pairing and conversation workspace transitions", () => {
+  it("owns conversation workspace transitions", () => {
     const { controller, options } = harness();
 
-    controller.showPairing("Pair this device");
     controller.showConversation();
 
-    expect(options.renderPairing).toHaveBeenCalledWith("Pair this device");
-    expect(options.focusPairing).toHaveBeenCalledOnce();
-    expect(options.pages.show).toHaveBeenNthCalledWith(1, "pairing");
-    expect(options.pages.show).toHaveBeenNthCalledWith(2, "conversation");
-    expect(options.closeEditors).toHaveBeenCalledTimes(2);
+    expect(options.pages.show).toHaveBeenCalledWith("conversation");
+    expect(options.closeEditors).toHaveBeenCalledOnce();
   });
 });

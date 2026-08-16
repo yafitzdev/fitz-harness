@@ -50,20 +50,14 @@ type ApiData<T> = { data: T };
 suppressNativeTooltips();
 
 let queueRefreshTimer: ReturnType<typeof setTimeout> | undefined;
-let configuredHostOrigin = "Fitz host";
-let administrator = false;
 let currentUserId: string | undefined;
-let localCurrentUserId: string | undefined;
 let managementConfiguration: Json | undefined;
-let localManagementConfiguration: Json | undefined;
 let initialNavigationPending = true;
 
 const shell = query(".app-shell");
 const workspaceHeader = query(".workspace-header");
 const messages = element("messages");
 const workspace = query(".workspace");
-const connectionStatus = element("connection-status") as HTMLButtonElement;
-const connectionDetail = element("connection-detail");
 const projectTitle = element("project-title");
 const taskTitle = element("task-title");
 const engineState = element("engine-state");
@@ -79,13 +73,6 @@ const pluginsPage = element("plugins-page");
 const pluginsButton = element("manage-plugins") as HTMLButtonElement;
 const modelsPage = element("models-page");
 const modelsButton = element("manage-models") as HTMLButtonElement;
-const pairingPage = element("pairing-page");
-const hostConnectionForm = element("host-connection-form") as HTMLFormElement;
-const hostConnectionUrl = element("host-connection-url") as HTMLInputElement;
-const hostConnectionApiKey = element("host-connection-api-key") as HTMLInputElement;
-const setupLocalHost = element("setup-local-host") as HTMLButtonElement;
-const pairingDescription = element("pairing-description");
-const pairingError = element("pairing-error");
 const overlayHost = new OverlayHost(document);
 const administrationPage = element("administration-page");
 const administrationButton = element("manage-administration") as HTMLButtonElement;
@@ -312,7 +299,7 @@ const conversationLanding = new ConversationLanding({
   messages,
   clearActivity: () => activityTimeline.clear(),
   createProject: () => projectSidebar.beginCreateProject(),
-  retryConnection,
+  retryConnection: async () => { await window.fitz.retryLocalHost(); await initialize(); },
   updateTitles,
 });
 const agentQueue = new WorkQueueController({
@@ -531,10 +518,10 @@ const playbookWorkspace = new PlaybookWorkspaceController({
 const connectionWorkspace = new ConnectionWorkspaceController({
   mount: workspace,
   bridge: window.fitz,
-  api: localApi,
-  reloadConfiguration: () => loadLocalManagementConfiguration(),
-  updateRouteConfiguration: applyLocalManagementRoute,
-  updateCloudRouteConfiguration: applyLocalCloudRoute,
+  api,
+  reloadConfiguration: () => loadManagementConfiguration(false),
+  updateRouteConfiguration: applyManagementRoute,
+  updateCloudRouteConfiguration: applyCloudRoute,
   closePopovers,
   showStatus,
   errorMessage,
@@ -547,7 +534,6 @@ const workspacePages = new WorkspacePageController({
     plugins: pluginsPage,
     models: modelsPage,
     administration: administrationPage,
-    pairing: pairingPage,
   },
   navigation: {
     playbooks: element("manage-playbooks"),
@@ -560,14 +546,14 @@ const workspacePages = new WorkspacePageController({
 });
 const pluginsPageController = new PluginsPageController({
   page: pluginsPage,
-  api: localApi,
+  api,
   openExternal: (url) => window.fitz.openExternal(url),
   showStatus,
   errorMessage,
 });
 const modelsPageController = new ModelsPageController({
   page: modelsPage,
-  api: localApi,
+  api,
   openExternal: (url) => window.fitz.openExternal(url),
   openPath: (path) => window.fitz.openPath(path),
   showStatus,
@@ -647,10 +633,10 @@ const administrationPageController = new AdministrationPageController({
   cancelStorageRestore: element("cancel-storage-restore") as HTMLButtonElement,
   confirmStorageRestore: element("confirm-storage-restore") as HTMLButtonElement,
 }, {
-  api: localApi,
+  api,
   bridge: window.fitz,
   isAdministrator: () => true,
-  currentUserId: () => localCurrentUserId,
+  currentUserId: () => currentUserId,
   showStatus,
   errorMessage,
 });
@@ -672,7 +658,7 @@ const hostingPageController = new HostingPageController({
   saveConfig: element("save-hosting-config") as HTMLButtonElement,
   configStatus: element("hosting-config-status"),
 }, {
-  api: localApi,
+  api,
   copyText: (value) => window.fitz.copyText(value),
   showStatus: (message, tone = "neutral") => showStatus(message, tone),
   errorMessage,
@@ -681,7 +667,7 @@ const hostingPageController = new HostingPageController({
 const usagePageController = new UsagePageController({
   root: element("usage-dashboard"),
   refresh: element("refresh-administration") as HTMLButtonElement,
-  api: localApi,
+  api,
   errorMessage,
 });
 const hostingPanels: Record<string, HTMLElement> = {
@@ -773,10 +759,7 @@ const conversationSessions = new ConversationSessionController({
   appendSystem: (message) => { appendMessage("system", message); },
 });
 const appNavigation = new AppNavigationController({
-  administrator: () => administrator,
   blocked: () => agentRuns.active,
-  pairingActive: () => !pairingPage.hidden,
-  focusPairing: () => (hostConnectionUrl.value ? hostConnectionApiKey : hostConnectionUrl).focus(),
   closePopovers,
   closeInspector: () => { inAppBrowser.close(); inspectorPanel.close(); },
   closeEditors: () => {
@@ -797,7 +780,7 @@ const appNavigation = new AppNavigationController({
       openRoute: (path) => playbookWorkspace.openRoute(path),
     },
     connections: {
-      load: async () => { await loadLocalManagementConfiguration(); await connectionWorkspace.sync(false); },
+      load: async () => { await loadManagementConfiguration(false); await connectionWorkspace.sync(false); },
       openRoute: (path) => connectionWorkspace.openRoute(path),
     },
     plugins: {
@@ -818,12 +801,9 @@ const appNavigation = new AppNavigationController({
     else if (kind === "session" && id) await projects.selectSession(id, true, projectId);
     else if (kind === "project" && id) await projects.selectProject(id);
   },
-  renderPairing: (message) => {
-    pairingDescription.textContent = message || "Enter the server URL and API key from your Fitz host.";
-    pairingError.hidden = true;
-    pairingError.textContent = "";
-  },
 });
+appNavigation.applyAvailability();
+appNavigation.showConversation();
 void initialize();
 window.fitz.onHostReady(() => void initialize());
 
@@ -859,7 +839,6 @@ for (const windowButton of document.querySelectorAll<HTMLButtonElement>("[data-w
       .catch((error) => showStatus(errorMessage(error), "error"));
   });
 }
-connectionStatus.addEventListener("click", () => void retryConnection());
 inspectorArtifacts.addEventListener("click", () => inspectorPanel.toggle());
 window.addEventListener("fitz:open-resource", (event) => {
   const reference = (event as CustomEvent<{ reference?: string }>).detail?.reference;
@@ -872,68 +851,45 @@ window.addEventListener("fitz:resource-appeared", (event) => {
   if (reference) inspectorPanel.registerReference(reference);
 });
 element("context-add").addEventListener("click", () => artifactController.choose());
-hostConnectionForm.addEventListener("submit", (event) => { event.preventDefault(); void configureRemoteHost(); });
-setupLocalHost.addEventListener("click", () => void window.fitz.configureHost("http://127.0.0.1:8787"));
 document.addEventListener("click", closePopovers);
 
+let initialization: Promise<void> | undefined;
+let initialized = false;
 async function initialize(): Promise<void> {
+  if (initialized) return;
+  if (initialization) return initialization;
+  const attempt = initializeLocalWorkspace();
+  initialization = attempt;
+  void attempt.finally(() => { if (initialization === attempt) initialization = undefined; });
+  return attempt;
+}
+
+async function initializeLocalWorkspace(): Promise<void> {
   try {
-    setConnection("Connecting…", "loading");
-    setStatus("Connecting", "loading");
-    const [health, connection, identity] = await Promise.all([api("/health"), window.fitz.connectionInfo(), api("/api/v1/me")]);
+    setStatus("Starting local services", "loading");
+    const health = await api("/health");
     assertHostContract(health);
+    const identity = await api("/api/v1/me");
     await connectionWorkspace.sync(false);
-    configuredHostOrigin = connection.origin; currentUserId = identity.data?.user?.id; administrator = identity.data?.authMode === "disabled" || identity.data?.user?.role === "administrator";
-    appNavigation.applyAvailability();
-    void localApi("/api/v1/me").then((localIdentity) => { localCurrentUserId = localIdentity.data?.user?.id; }).catch(() => undefined);
+    currentUserId = identity.data?.user?.id;
     engineState.textContent = health.engine?.state ?? "UNLOADED";
     routeState.textContent = composer.controls.routeLabel;
-    setConnection(configuredHostOrigin.replace(/^https?:\/\//, ""), "active");
     setStatus(health.engine?.state ?? "Ready", "idle");
-    appNavigation.showConversation();
     await projects.load(undefined, undefined, !initialNavigationPending);
     if (initialNavigationPending) {
       initialNavigationPending = false;
       openNewChat();
     }
-    void loadManagementConfiguration(false);
+    await loadManagementConfiguration(false);
+    initialized = true;
   } catch (error) {
-    if (error instanceof HostRequestError && error.status === 401) {
-      const connection = await window.fitz.connectionInfo();
-      const bootstrapped = connection.isLoopback && connection.explicitlyConfigured ? await window.fitz.bootstrapLocalDevice().catch(() => false) : false;
-      if (bootstrapped) { await initialize(); return; }
-      currentUserId = undefined; administrator = false; appNavigation.applyAvailability(); configuredHostOrigin = connection.origin; hostConnectionUrl.value = connection.isLoopback && !connection.explicitlyConfigured ? "" : configuredHostOrigin; setConnection("Connect", "error"); setStatus("API key required", "error"); appNavigation.showPairing(connection.isLoopback && !connection.explicitlyConfigured ? "Host models on this PC, or connect to someone else's Fitz host." : `Enter the API key for ${configuredHostOrigin}.`);
-    }
-    else {
-      const connection = await window.fitz.connectionInfo().catch(() => undefined);
-      setConnection("Click to retry", "error"); setStatus("Offline", "error");
-      if (connection && !connection.isLoopback) {
-        configuredHostOrigin = connection.origin;
-        hostConnectionUrl.value = connection.origin;
-        administrator = false;
-        appNavigation.applyAvailability();
-        appNavigation.showPairing(`Could not reach ${connection.origin}. Check the address or choose another host.`);
-        pairingError.textContent = errorMessage(error);
-        pairingError.hidden = false;
-      } else {
-        configuredHostOrigin = connection?.origin ?? "http://127.0.0.1:8787";
-        hostConnectionUrl.value = "";
-        administrator = false;
-        appNavigation.applyAvailability();
-        appNavigation.showPairing("The local Fitz host is unavailable. Enter the public HTTPS URL and API key from the person hosting Fitz, or retry hosting on this PC.");
-        pairingError.textContent = errorMessage(error);
-        pairingError.hidden = false;
-      }
-    }
+    console.warn("Local Fitz services are not ready yet", error);
+    engineState.textContent = "STARTING";
+    setStatus("Starting local services", "loading");
+    void window.fitz.retryLocalHost().catch(() => false);
   } finally {
     refreshComposerState();
   }
-}
-
-async function retryConnection(): Promise<void> {
-  const connection = await window.fitz.connectionInfo().catch(() => undefined);
-  if (connection?.isLoopback) await window.fitz.retryLocalHost().catch(() => false);
-  await initialize();
 }
 
 // Connections and chat resolve labels through one shared role formatter. Cloud
@@ -987,20 +943,10 @@ function setConversationInert(inert: boolean): void {
   }
 }
 
-async function configureRemoteHost(): Promise<void> {
-  setFormBusy(hostConnectionForm, true);
-  pairingError.hidden = true;
-  try {
-    await window.fitz.connectRemote({ origin: hostConnectionUrl.value.trim(), apiKey: hostConnectionApiKey.value.trim() });
-  }
-  catch (error) { pairingError.textContent = errorMessage(error); pairingError.hidden = false; }
-  finally { setFormBusy(hostConnectionForm, false); }
-}
-
 async function loadManagementConfiguration(renderPage: boolean): Promise<Json | undefined> {
   try {
     const firstConfiguration = !managementConfiguration;
-    managementConfiguration = await api(administrator ? "/api/v1/management/status" : "/api/v1/configuration");
+    managementConfiguration = await api("/api/v1/management/status");
     applyChatDefaults(managementConfiguration.chatDefaults);
     conversationContext.refresh();
     connectionWorkspace.setConfiguration(managementConfiguration);
@@ -1012,12 +958,6 @@ async function loadManagementConfiguration(renderPage: boolean): Promise<Json | 
     if (renderPage) playbookWorkspace.showUnavailable(errorMessage(error));
   }
   return managementConfiguration;
-}
-
-async function loadLocalManagementConfiguration(): Promise<Json | undefined> {
-  localManagementConfiguration = await localApi("/api/v1/management/status");
-  connectionWorkspace.setConfiguration(localManagementConfiguration);
-  return localManagementConfiguration;
 }
 
 function applyChatDefaults(defaults: Json | undefined): void {
@@ -1046,22 +986,6 @@ function applyCloudRoute(role: "smart" | "fast", recipeId: string | undefined): 
   connectionWorkspace.setConfiguration(managementConfiguration);
 }
 
-function applyLocalManagementRoute(routeId: string, route: Json | undefined): void {
-  if (!localManagementConfiguration) return;
-  const routes = (localManagementConfiguration.routes ?? []).filter((item: Json) => item.id !== routeId);
-  if (route) routes.push(route);
-  localManagementConfiguration = { ...localManagementConfiguration, routes };
-  connectionWorkspace.setConfiguration(localManagementConfiguration);
-}
-
-function applyLocalCloudRoute(role: "smart" | "fast", recipeId: string | undefined): void {
-  if (!localManagementConfiguration) return;
-  localManagementConfiguration = {
-    ...localManagementConfiguration,
-    cloudRoutes: { ...(localManagementConfiguration.cloudRoutes ?? {}), [role]: recipeId },
-  };
-  connectionWorkspace.setConfiguration(localManagementConfiguration);
-}
 
 async function updateSessionBinding(): Promise<void> {
   const session = projects.currentSessionRecord();
@@ -1173,22 +1097,12 @@ function updateTitles(): void {
 function toggleSidebar(): void { adaptiveWorkspace?.toggleSidebar(); inAppBrowser.syncBounds(); closePopovers(); }
 
 function setStatus(text: string, state: string): void { composer.setStatus(text, state); }
-function setConnection(text: string, state: string): void { connectionDetail.textContent = text; connectionStatus.dataset.state = state; }
-function setFormBusy(formElement: HTMLFormElement, busy: boolean): void { for (const control of formElement.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>("input,button,select")) control.disabled = busy; }
 /** Action feedback is deliberately silent; operations render durable state in their own UI. */
 function showStatus(_text: string, _tone: ActionStatusTone): void {}
 function panelEmpty(text: string): HTMLElement { return textBlock("panel-empty", text); }
 function loadingMessage(text: string): HTMLElement { return textBlock("panel-empty", text); }
 async function api(path: string, method = "GET", body?: unknown): Promise<Json> {
   const response = await window.fitz.request({ path, method, ...(body !== undefined ? { body } : {}) });
-  let parsed: Json;
-  try { parsed = JSON.parse(response.body) as Json; } catch { parsed = { error: response.body }; }
-  if (response.status >= 400) throw parseHostError(parsed, response.status);
-  return parsed;
-}
-
-async function localApi(path: string, method = "GET", body?: unknown): Promise<Json> {
-  const response = await window.fitz.localRequest!({ path, method, ...(body !== undefined ? { body } : {}) });
   let parsed: Json;
   try { parsed = JSON.parse(response.body) as Json; } catch { parsed = { error: response.body }; }
   if (response.status >= 400) throw parseHostError(parsed, response.status);

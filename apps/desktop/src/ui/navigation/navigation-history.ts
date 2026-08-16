@@ -1,6 +1,6 @@
 import type { WorkspacePage } from "../layout/workspace-pages.js";
 
-export type NavigableWorkspacePage = Exclude<WorkspacePage, "pairing">;
+export type NavigableWorkspacePage = WorkspacePage;
 
 /** A page route recorded by the app-wide history. `path` is intentionally
  * opaque to the history controller: every page can add nested views without

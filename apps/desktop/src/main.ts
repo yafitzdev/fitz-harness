@@ -9,7 +9,7 @@ import { isAllowedExternalUrl, validateHostUrl } from "./security.js";
 import { readProjectResource } from "./resource-preview.js";
 import electronUpdater from "electron-updater";
 import { HostSupervisor } from "./host-supervisor.js";
-import { HostClient, hostRequestDeadline } from "./host-client.js";
+import { HostClient, HostRequestError, hostRequestDeadline } from "./host-client.js";
 import { createModelUnloadOnQuitHandler } from "./model-unload-on-quit.js";
 import { readThemeColor } from "./theme-token.js";
 import { InAppBrowserController } from "./in-app-browser-main.js";
@@ -22,14 +22,12 @@ const directory = dirname(fileURLToPath(import.meta.url));
 const windowBackground = readThemeColor(join(directory, "ui", "theme", "tokens.css"), "--window-background");
 const browserBackground = readThemeColor(join(directory, "ui", "theme", "tokens.css"), "--browser-surface");
 const localHostPort = commandLineValue("host-port");
-const storedHostUrl = readStoredHostUrl();
-const hostUrl = validateHostUrl(commandLineValue("host-url") ?? (localHostPort ? `http://127.0.0.1:${localHostPort}` : undefined) ?? process.env.FITZ_HOST_URL ?? storedHostUrl ?? "http://127.0.0.1:8787");
-const localHostUrl = isLoopbackHost(hostUrl) ? hostUrl : validateHostUrl(localHostPort ? `http://127.0.0.1:${localHostPort}` : "http://127.0.0.1:8787");
+const legacyRemoteHostUrl = readStoredHostUrl();
+const hostUrl = validateHostUrl(localHostPort ? `http://127.0.0.1:${localHostPort}` : "http://127.0.0.1:8787");
 let deviceToken = process.env.FITZ_DEVICE_TOKEN;
-let localDeviceToken: string | undefined;
 const hostClient = new HostClient({ origin: hostUrl, getToken: () => deviceToken });
-const localHostClient = new HostClient({ origin: localHostUrl, getToken: () => localDeviceToken });
 let localHostStartup: Promise<boolean> | undefined;
+let localHostReady = false;
 interface DesktopUpdateStatus { state: "idle" | "checking" | "available" | "downloading" | "current" | "downloaded" | "error" | "development"; percent?: number; version?: string }
 let latestUpdateStatus: DesktopUpdateStatus = { state: app.isPackaged ? "idle" : "development" };
 type InferenceExecutionClass = "self_hosted" | "metered_cloud";
@@ -40,6 +38,8 @@ const agentEventStreams = new Map<string, AbortController>();
 
 ipcMain.handle("fitz:request", async (event, input: unknown) => {
   if (!isRecord(input)) throw new TypeError("Request must be an object");
+  if (!await ensureLocalHost()) throw new Error("The local Fitz service is still starting");
+  if (!await ensureLocalDevice()) throw new Error("The desktop could not initialize its local Fitz service");
   const path = String(input.path ?? "");
   const responseType = input.responseType === "base64" ? "base64" : "text";
   const controller = new AbortController();
@@ -53,27 +53,9 @@ ipcMain.handle("fitz:request", async (event, input: unknown) => {
       timeoutMs: hostRequestDeadline(path, responseType),
       signal: controller.signal,
     });
-  } finally {
-    event.sender.removeListener("destroyed", cancel);
-  }
-});
-ipcMain.handle("fitz:local-request", async (event, input: unknown) => {
-  if (!isRecord(input)) throw new TypeError("Request must be an object");
-  if (!await ensureLocalHost()) throw new Error("The local Fitz host is unavailable");
-  if (!await ensureLocalDevice()) throw new Error("This desktop is not authorized to manage its local Fitz host");
-  const path = String(input.path ?? "");
-  const responseType = input.responseType === "base64" ? "base64" : "text";
-  const controller = new AbortController();
-  const cancel = () => controller.abort();
-  event.sender.once("destroyed", cancel);
-  try {
-    return await localHostClient.request(path, {
-      ...(typeof input.method === "string" ? { method: input.method } : {}),
-      ...(input.body !== undefined ? { body: input.body } : {}),
-      responseType,
-      timeoutMs: hostRequestDeadline(path, responseType),
-      signal: controller.signal,
-    });
+  } catch (error) {
+    if (error instanceof HostRequestError && error.code === "network") localHostReady = false;
+    throw error;
   } finally {
     event.sender.removeListener("destroyed", cancel);
   }
@@ -104,30 +86,7 @@ ipcMain.on("fitz:agent-events-unsubscribe", (event, subscriptionId: unknown) => 
   agentEventStreams.get(key)?.abort();
   agentEventStreams.delete(key);
 });
-ipcMain.handle("fitz:connection-info", () => ({ origin: new URL(hostUrl).origin, isLoopback: isLoopbackHost(hostUrl), explicitlyConfigured: Boolean(storedHostUrl || commandLineValue("host-url") || process.env.FITZ_HOST_URL), accessClass: isLoopbackHost(hostUrl) ? "same_device" : deviceToken ? "trusted_remote" : "public_remote" }));
-ipcMain.handle("fitz:retry-local-host", () => ensureLocalHost());
-ipcMain.handle("fitz:configure-host", (_event, value: unknown) => {
-  const url = validateHostUrl(requireBoundedText(value, "Host URL", 2048));
-  persistHostUrl(url.origin);
-  app.relaunch();
-  app.exit(0);
-});
-ipcMain.handle("fitz:connect-remote", async (_event, input: unknown) => {
-  if (!isRecord(input)) throw new TypeError("Connection details must be an object");
-  if (!safeStorage.isEncryptionAvailable()) throw new Error("Secure credential storage is unavailable");
-  const url = validateHostUrl(requireBoundedText(input.origin, "Server URL", 2048));
-  if (isLoopbackHost(url)) throw new Error("Use Host on this PC for a local Fitz host");
-  const apiKey = requireBoundedText(input.apiKey, "API key", 2048);
-  const response = await fetch(new URL("/api/v1/me", url), { headers: { authorization: `Bearer ${apiKey}` }, redirect: "manual", signal: AbortSignal.timeout(15_000) });
-  if (!response.ok) throw new Error(response.status === 401 || response.status === 403 ? "The server URL or API key is invalid" : `The Fitz server returned HTTP ${response.status}`);
-  const body = await response.json() as { data?: { user?: { id?: unknown; role?: unknown } } };
-  if (typeof body.data?.user?.id !== "string") throw new Error("The server did not return a valid Fitz identity");
-  if (body.data.user.role !== "consumer") throw new Error("Remote Fitz connections require a consumer API key");
-  persistDeviceTokenForOrigin(url.origin, apiKey);
-  persistHostUrl(url.origin);
-  app.relaunch();
-  app.exit(0);
-});
+ipcMain.handle("fitz:retry-local-host", () => { localHostReady = false; return ensureLocalHost(); });
 ipcMain.handle("fitz:consumer-connections-list", () => loadConsumerConnections().map(publicConsumerConnection));
 ipcMain.handle("fitz:consumer-connection-save", async (_event, input: unknown) => {
   if (!isRecord(input)) throw new TypeError("Connection must be an object");
@@ -189,7 +148,6 @@ ipcMain.handle("fitz:consumer-connections-sync", async () => {
   persistConsumerConnections(updated);
   return results;
 });
-ipcMain.handle("fitz:bootstrap-local-device", async () => await ensureLocalHost() && ensureLocalDevice());
 ipcMain.handle("fitz:open-external", async (_event, url: unknown) => { if (typeof url !== "string" || !isAllowedExternalUrl(url)) throw new Error("External URL is not allowed"); await shell.openExternal(url); });
 ipcMain.handle("fitz:browser-open", async (event, url: unknown) => inAppBrowserFor(event.sender)?.open(url));
 ipcMain.handle("fitz:browser-bounds", (event, bounds: unknown) => inAppBrowserFor(event.sender)?.setBounds(bounds));
@@ -240,9 +198,9 @@ autoUpdater.on("error", () => publishUpdateStatus({ state: "error" }));
 const desktopSmoke = process.env.FITZ_DESKTOP_SMOKE === "1";
 app.on("before-quit", createModelUnloadOnQuitHandler({
   app,
-  shouldUnload: () => !desktopSmoke && localHostUrl.origin === hostUrl.origin,
+  shouldUnload: () => !desktopSmoke,
   unload: async () => {
-    const response = await localHostClient.fetch("/api/v1/management/instances/stop", {
+    const response = await hostClient.fetch("/api/v1/management/instances/stop", {
       method: "POST",
       body: { mode: "force", reason: "desktop-quit" },
       timeoutMs: 45_000,
@@ -258,8 +216,7 @@ if (!primaryInstance) {
   if (!desktopSmoke) app.on("second-instance", focusPrimaryWindow);
   await app.whenReady();
   deviceToken ??= loadDeviceToken();
-  localDeviceToken = loadDeviceTokenForOrigin(localHostUrl.origin);
-  if (localHostUrl.origin === hostUrl.origin) localDeviceToken ??= deviceToken;
+  migrateLegacyRemoteHostConnection();
   if (desktopSmoke) {
     if (process.env.FITZ_DESKTOP_SMOKE_OUTPUT) writeFileSync(process.env.FITZ_DESKTOP_SMOKE_OUTPUT, "FITZ_DESKTOP_SMOKE_OK\n", { encoding: "utf8", flag: "wx" });
     app.quit();
@@ -269,7 +226,7 @@ if (!primaryInstance) {
       if (!ready) return;
       await ensureLocalDevice().catch(() => false);
       for (const window of BrowserWindow.getAllWindows()) window.webContents.send("fitz:host-ready");
-      if (localHostUrl.origin === hostUrl.origin) void warmLocalDefault();
+      void warmLocalDefault();
     });
     if (app.isPackaged) void autoUpdater.checkForUpdates().catch(() => undefined);
     app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
@@ -278,7 +235,7 @@ if (!primaryInstance) {
 }
 async function warmLocalDefault(): Promise<void> {
   try {
-    const response = await localHostClient.fetch("/api/v1/inference/warm", {
+    const response = await hostClient.fetch("/api/v1/inference/warm", {
       method: "POST",
       body: { model: "default" },
       timeoutMs: 15_000,
@@ -289,18 +246,21 @@ async function warmLocalDefault(): Promise<void> {
   }
 }
 function ensureLocalHost(): Promise<boolean> {
+  if (localHostReady) return Promise.resolve(true);
   if (localHostStartup) return localHostStartup;
   const attempt = (async () => {
     try {
       const supervisor = new HostSupervisor({
-        origin: localHostUrl,
+        origin: hostUrl,
         packaged: app.isPackaged,
         resourcesPath: process.resourcesPath,
         logPath: join(app.getPath("userData"), "host-startup.log"),
       });
       await supervisor.ensureReady();
+      localHostReady = true;
       return true;
     } catch (error) {
+      localHostReady = false;
       console.warn("The local Fitz host is unavailable; the desktop will remain open", error);
       return false;
     }
@@ -311,18 +271,17 @@ function ensureLocalHost(): Promise<boolean> {
 }
 async function ensureLocalDevice(): Promise<boolean> {
   if (!safeStorage.isEncryptionAvailable()) return false;
-  const identity = await localHostClient.fetch("/api/v1/me", { timeoutMs: 15_000 });
+  const identity = await hostClient.fetch("/api/v1/me", { timeoutMs: 15_000 });
   if (identity.ok) return true;
-  if (identity.status !== 401 || localDeviceToken) return false;
-  const response = await localHostClient.fetch("/api/v1/pairing/bootstrap", { method: "POST", authenticated: false, timeoutMs: 15_000 });
+  if (identity.status !== 401 || deviceToken) return false;
+  const response = await hostClient.fetch("/api/v1/pairing/bootstrap", { method: "POST", authenticated: false, timeoutMs: 15_000 });
   if (!response.ok) return false;
   const parsed = JSON.parse(await response.text()) as Record<string, unknown>;
   const data = isRecord(parsed.data) ? parsed.data : {};
   const token = typeof data.token === "string" ? data.token : undefined;
   if (!token) return false;
-  persistDeviceTokenForOrigin(localHostUrl.origin, token);
-  localDeviceToken = token;
-  if (localHostUrl.origin === hostUrl.origin) deviceToken = token;
+  persistDeviceToken(token);
+  deviceToken = token;
   return true;
 }
 type AgentEventRelayMessage =
@@ -379,7 +338,6 @@ function requireBoundedText(value: unknown, label: string, maximum: number): str
 function deviceTokenPath(): string { return deviceTokenPathForOrigin(new URL(hostUrl).origin); }
 function deviceTokenPathForOrigin(origin: string): string { const hostId = createHash("sha256").update(new URL(origin).origin).digest("hex").slice(0, 16); return join(app.getPath("userData"), `device-token-${hostId}.bin`); }
 function persistDeviceToken(token: string): void { mkdirSync(dirname(deviceTokenPath()), { recursive: true }); writeFileSync(deviceTokenPath(), safeStorage.encryptString(token), { flag: "w" }); }
-function persistDeviceTokenForOrigin(origin: string, token: string): void { const path = deviceTokenPathForOrigin(origin); mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, safeStorage.encryptString(token), { flag: "w" }); }
 function loadDeviceToken(): string | undefined { try { if (!safeStorage.isEncryptionAvailable() || !existsSync(deviceTokenPath())) return undefined; return safeStorage.decryptString(readFileSync(deviceTokenPath())); } catch { return undefined; } }
 function loadDeviceTokenForOrigin(origin: string): string | undefined { try { const path = deviceTokenPathForOrigin(origin); if (!safeStorage.isEncryptionAvailable() || !existsSync(path)) return undefined; return safeStorage.decryptString(readFileSync(path)); } catch { return undefined; } }
 function hostConfigurationPath(): string { return join(app.getPath("userData"), "host-connection.json"); }
@@ -389,9 +347,42 @@ function readStoredHostUrl(): string | undefined {
     return isRecord(value) && typeof value.origin === "string" ? value.origin : undefined;
   } catch { return undefined; }
 }
-function persistHostUrl(origin: string): void { mkdirSync(dirname(hostConfigurationPath()), { recursive: true }); writeFileSync(hostConfigurationPath(), JSON.stringify({ origin }), { encoding: "utf8", flag: "w" }); }
+/** Converts the removed desktop-wide remote-host mode into a normal inference
+ * connection. This is local file migration only: it never contacts the remote
+ * network and therefore cannot delay or block application startup. */
+function migrateLegacyRemoteHostConnection(): void {
+  if (!legacyRemoteHostUrl || !safeStorage.isEncryptionAvailable()) return;
+  try {
+    const remote = validateHostUrl(legacyRemoteHostUrl);
+    if (!isLoopbackHost(remote)) {
+      const apiKey = loadDeviceTokenForOrigin(remote.origin);
+      if (!apiKey) return;
+      const id = `fitz-${createHash("sha256").update(remote.origin).digest("hex").slice(0, 16)}`;
+      const connections = loadConsumerConnections();
+      if (!connections.some((connection) => connection.id === id || connection.baseUrl === remote.origin)) {
+        persistConsumerConnections([...connections, {
+          id,
+          displayName: `Fitz · ${remote.hostname}`,
+          baseUrl: remote.origin,
+          authType: "bearer",
+          apiKey,
+          template: "openai-compatible",
+          executionClass: "self_hosted",
+          accessClass: "trusted_remote",
+          models: [],
+          mediaModels: [],
+          updatedAt: new Date().toISOString(),
+        }]);
+      }
+    }
+    const path = hostConfigurationPath();
+    if (existsSync(path)) renameSync(path, `${path}.migrated-${Date.now()}`);
+  } catch (error) {
+    console.warn("Could not migrate the removed remote-host desktop mode", error);
+  }
+}
 function consumerConnectionsPath(): string {
-  const hostId = createHash("sha256").update(localHostUrl.origin).digest("hex").slice(0, 16);
+  const hostId = createHash("sha256").update(hostUrl.origin).digest("hex").slice(0, 16);
   const ownerId = createHash("sha256").update("local-owner").digest("hex").slice(0, 16);
   return join(app.getPath("userData"), `consumer-connections-${hostId}-${ownerId}.bin`);
 }
@@ -434,7 +425,7 @@ function requireModelIds(value: unknown): string[] { if (value === undefined) re
 function requireConsumerBaseUrl(value: unknown): string { const text = requireBoundedText(value, "Base URL", 2048); const url = new URL(text); if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Base URL must use HTTP or HTTPS"); if (url.username || url.password || url.search || url.hash) throw new Error("Base URL must not contain credentials, a query, or a fragment"); return url.toString().replace(/\/$/, ""); }
 async function trustedHostRequest(path: string, method: string, body?: unknown): Promise<Response> {
   if (!await ensureLocalHost() || !await ensureLocalDevice()) throw new Error("The local Fitz host is unavailable");
-  return localHostClient.fetch(path, { method, ...(body !== undefined ? { body } : {}) });
+  return hostClient.fetch(path, { method, ...(body !== undefined ? { body } : {}) });
 }
 async function parseHostResponse(response: Response): Promise<Record<string, unknown>> { const content = await response.text(); if (!response.ok) throw new Error(hostError(content)); const parsed = content ? JSON.parse(content) as unknown : {}; if (!isRecord(parsed)) throw new Error("The Fitz host returned an invalid response"); return parsed; }
 function hostError(content: string): string { try { const parsed = JSON.parse(content) as unknown; if (isRecord(parsed) && typeof parsed.error === "string") return parsed.error; if (isRecord(parsed) && isRecord(parsed.error) && typeof parsed.error.message === "string") return parsed.error.message; } catch {} return "The Fitz host returned an invalid error response"; }

@@ -8,10 +8,7 @@ export interface ManagementNavigationTarget {
 }
 
 export interface AppNavigationOptions {
-  administrator: () => boolean;
   blocked: () => boolean;
-  pairingActive: () => boolean;
-  focusPairing: () => void;
   closePopovers: () => void;
   closeInspector: () => void;
   closeEditors: () => void;
@@ -19,7 +16,6 @@ export interface AppNavigationOptions {
   navigation: Record<ManagementView, HTMLElement>;
   management: Record<ManagementView, ManagementNavigationTarget>;
   replayConversation: (location: AppLocation) => void | Promise<void>;
-  renderPairing: (message: string) => void;
 }
 
 /**
@@ -53,18 +49,14 @@ export class AppNavigationController {
   }
 
   applyAvailability(): void {
-    const visibility = managementNavigationVisibility(this.#options.administrator());
+    const visibility = managementNavigationVisibility();
     for (const [view, element] of Object.entries(this.#options.navigation) as Array<[ManagementView, HTMLElement]>) {
       element.hidden = !visibility[view];
     }
   }
 
   async openManagement(view: ManagementView): Promise<boolean> {
-    if (!canOpenManagementView(view, this.#options.administrator())) return false;
-    if (this.#options.pairingActive()) {
-      this.#options.focusPairing();
-      return false;
-    }
+    if (!canOpenManagementView(view)) return false;
     this.#prepareNonConversation();
     this.#options.pages.show(view);
     await this.#options.management[view].load();
@@ -75,13 +67,6 @@ export class AppNavigationController {
   showConversation(): void {
     this.#options.closeEditors();
     this.#options.pages.show("conversation");
-  }
-
-  showPairing(message: string): void {
-    this.#prepareNonConversation();
-    this.#options.pages.show("pairing");
-    this.#options.renderPairing(message);
-    this.#options.focusPairing();
   }
 
   #prepareNonConversation(): void {

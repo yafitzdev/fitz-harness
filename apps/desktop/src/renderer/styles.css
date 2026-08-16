@@ -65,14 +65,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .nav-action:hover { background: var(--tint-5); }
 .nav-action.active { background: var(--selection); color: var(--text); }
 .sidebar-spacer { flex: 1; }
-.connection-card { display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px; border-radius: 8px; background: transparent; color: var(--sidebar-text); text-align: left; cursor: pointer; }
-.connection-card:hover { background: var(--tint-5); }
-.connection-card span:last-child { display: grid; }
-.connection-card small { color: var(--sidebar-muted); font-size: 11px; }
-.connection-dot, .mode-dot { display: inline-block; border-radius: 50%; background: var(--status-warning); }
-.connection-dot { width: 8px; height: 8px; }
-.connection-card[data-state="active"] .connection-dot { background: var(--status-success); box-shadow: 0 0 0 3px var(--status-success-glow); }
-.connection-card[data-state="error"] .connection-dot { background: var(--status-danger); }
+.mode-dot { display: inline-block; border-radius: 50%; background: var(--status-warning); }
 
 .workspace { --inspector-width: 400px; --composer-height: 112px; --conversation-viewport: 100%; --conversation-space: var(--conversation-viewport); --conversation-inset: clamp(48px, 8vw, 96px); --conversation-width: min(768px, calc(var(--conversation-space) - var(--conversation-inset))); --conversation-gutter: max(24px, calc((var(--conversation-space) - var(--conversation-width)) / 2)); position: relative; isolation: isolate; min-width: 0; margin-top: 5px; display: grid; grid-template-rows: var(--workspace-header-height) minmax(0, 1fr); overflow: hidden; border-top-left-radius: var(--radius-lg); background: var(--bg); box-shadow: -1px -1px 0 var(--border-soft); transition: background-color 220ms cubic-bezier(.23,1,.32,1); }
 .workspace.inspector-open { --conversation-viewport: calc(100% - var(--inspector-width)); --conversation-inset: clamp(36px, 7vw, 72px); --conversation-width: min(768px, calc(var(--conversation-space) - var(--conversation-inset))); --conversation-gutter: max(18px, calc((var(--conversation-space) - var(--conversation-width)) / 2)); }
@@ -259,29 +252,6 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .queue-cancel svg { width: 14px; height: 14px; }
 .panel-empty { padding: 16px 8px; color: var(--subtle); font-size: 12px; text-align: center; }
 
-.pairing-page { display: grid; place-items: center; padding: 48px 24px; }
-.pairing-content { width: min(520px, 100%); }
-.pairing-mark { width: 42px; height: 42px; display: grid; place-items: center; margin-bottom: 20px; border-radius: 13px; background: var(--grey-200); color: var(--muted); }
-.pairing-mark svg { width: 23px; height: 23px; }
-.pairing-content h1 { margin: 0; font-size: 28px; font-weight: 560; letter-spacing: -.03em; }
-.pairing-content > p { margin: 7px 0 28px; color: var(--muted); font-size: 15px; }
-.pairing-content form { display: grid; gap: 16px; }
-.pairing-content label { display: grid; gap: 7px; color: var(--muted); font-size: 12px; }
-.pairing-content input { width: 100%; height: 44px; padding: 0 13px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--grey-200); color: var(--text); font-size: 14px; outline: 0; }
-.pairing-content input:focus { border-color: var(--grey-500); box-shadow: 0 0 0 1px var(--grey-500); }
-.pairing-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.pairing-error { margin: 0; color: var(--status-danger); font-size: 12px; }
-.pairing-submit { justify-self: end; min-width: 110px; padding: 9px 17px; border-radius: var(--radius-md); background: var(--accent); color: var(--accent-text); cursor: pointer; font-weight: 550; }
-.pairing-submit:hover { background: var(--accent-hover); }
-.pairing-submit:disabled { opacity: .5; cursor: default; }
-.host-connection-form { margin-bottom: 20px; }
-.pairing-host-actions { display: flex; justify-content: space-between; gap: 10px; }
-.pairing-host-actions > button { min-height: 40px; padding: 0 15px; border-radius: var(--radius-md); background: var(--tint-5); color: var(--text); cursor: pointer; }
-.pairing-host-actions > button:hover { background: var(--tint-7); }
-.pairing-host-actions > .pairing-submit { background: var(--accent); color: var(--accent-text); }
-.pairing-separator { display: flex; align-items: center; gap: 12px; margin: 2px 0 20px; color: var(--subtle); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
-.pairing-separator::before, .pairing-separator::after { content: ""; flex: 1; height: 1px; background: var(--border); }
-.pairing-page[hidden] { display: none; }
 
 /* Native select rendering is retained as the trigger; renderer.ts owns the Codex menu surface. */
 select {

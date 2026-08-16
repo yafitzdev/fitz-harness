@@ -88,7 +88,6 @@ describe("desktop renderer shell", () => {
       "new-standalone-chat",
       "manage-playbooks",
       "new-project",
-      "connection-status",
       "inspector-artifacts",
       "context-add",
       "add-artifact",
@@ -261,7 +260,7 @@ describe("desktop renderer shell", () => {
     expect(composerCss).toContain("background: var(--grey-250)");
     expect(styles).toContain(".markdown-code");
     expect(styles).toContain("background: var(--grey-300)");
-    expect(renderer).toContain('identity.data?.authMode === "disabled" || identity.data?.user?.role === "administrator"');
+    expect(renderer).not.toContain('identity.data?.user?.role === "administrator"');
     expect(html).toContain('d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"');
   });
 
@@ -358,8 +357,10 @@ describe("desktop renderer shell", () => {
     expect(preload).toContain("onHostReady(listener: () => void)");
     expect(renderer).toContain("window.fitz.onHostReady(() => void initialize())");
     expect(renderer).toContain("window.fitz.retryLocalHost().catch(() => false)");
-    expect(renderer).toContain('appNavigation.showPairing("The local Fitz host is unavailable.');
-    expect(renderer).toContain('hostConnectionUrl.value = ""');
+    expect(renderer).toContain("appNavigation.showConversation();\nvoid initialize();");
+    expect(renderer).toContain('setStatus("Starting local services", "loading")');
+    expect(renderer).not.toContain("showPairing");
+    expect(renderer).not.toContain('setStatus("Offline"');
   });
 
   it("retires the Playbooks navigation surface in favor of Inference", () => {
@@ -406,7 +407,7 @@ describe("desktop renderer shell", () => {
 
   it("exposes working keyboard, retry, attachment, and cancellation paths", () => {
     expect(composer).toContain('event.key === "Enter"');
-    expect(renderer).toContain('connectionStatus.addEventListener("click"');
+    expect(renderer).toContain("window.fitz.retryLocalHost()");
     expect(artifactController).toContain("this.#options.fileInput.click()");
     expect(renderer).not.toContain('api(`/api/v1/artifacts/${artifact.id}`, "DELETE")');
     expect(composer).toContain("chip.remove()");
@@ -419,7 +420,7 @@ describe("desktop renderer shell", () => {
     expect(projectSidebar).toContain('this.#openMenu("project"');
     expect(projectSidebar).toContain('this.#openMenu("task"');
     expect(composerControls).toContain('this.openSettingsSubmenu(row.dataset.setting as ComposerSetting, row)');
-    expect(renderer).toContain('administrator ? "/api/v1/management/status" : "/api/v1/configuration"');
+    expect(renderer).toContain('api("/api/v1/management/status")');
     expect(playbookWorkspace).toContain('/api/v1/management/recipes/${encodeURIComponent(id)}');
     expect(renderer).toContain("conversationContext.add(text)");
     expect(projects).toContain('this.options.api(`/api/v1/sessions/${session.id}`, "PATCH", { status: "archived" })');
@@ -676,7 +677,7 @@ describe("desktop renderer shell", () => {
 
   it("warms Default on desktop open and retains first-character warm as a safety net", () => {
     expect(main).toContain("void warmLocalDefault()");
-    expect(main).toContain('localHostClient.fetch("/api/v1/inference/warm"');
+    expect(main).toContain('hostClient.fetch("/api/v1/inference/warm"');
     expect(renderer).toContain("agentRuns.scheduleWarmup(text, composer.controls.routeId)");
     expect(renderer).not.toContain("agentRuns.scheduleWarmup(composer.value, composer.controls.routeId)");
     expect(agentRunController).toContain('this.#options.api("/api/v1/inference/warm", "POST", { model })');
@@ -1135,29 +1136,28 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("mediaJobs.watch(jobId)");
   });
 
-  it("connects a desktop with only a URL and API key without exposing the durable credential to the renderer", () => {
-    for (const id of ["pairing-page", "host-connection-form", "host-connection-url", "host-connection-api-key", "setup-local-host", "pairing-error"]) expect(html).toContain(`id="${id}"`);
-    expect(renderer).toContain("appNavigation.showPairing(connection.isLoopback && !connection.explicitlyConfigured");
-    expect(renderer).toContain('window.fitz.configureHost("http://127.0.0.1:8787")');
-    expect(renderer).toContain("window.fitz.connectRemote");
-    expect(renderer).toContain("window.fitz.bootstrapLocalDevice()");
-    expect(preload).toContain('ipcRenderer.invoke("fitz:bootstrap-local-device"');
-    expect(preload).toContain('ipcRenderer.invoke("fitz:connect-remote"');
-    expect(preload).toContain('ipcRenderer.invoke("fitz:connection-info"');
-    expect(main).toContain('ipcMain.handle("fitz:connect-remote"');
-    expect(main).toContain('ipcMain.handle("fitz:bootstrap-local-device"');
-    expect(main).toContain('ipcMain.handle("fitz:local-request"');
-    expect(preload).toContain('ipcRenderer.invoke("fitz:local-request"');
-    expect(main).toContain("origin: localHostUrl");
-    expect(main).toContain('ipcMain.handle("fitz:connection-info"');
+  it("always opens the local workspace and treats remote Fitz hosts as inference connections", () => {
+    for (const id of ["pairing-page", "host-connection-form", "host-connection-url", "host-connection-api-key", "setup-local-host", "pairing-error", "connection-status"]) expect(html).not.toContain(`id="${id}"`);
+    for (const channel of ["fitz:connect-remote", "fitz:configure-host", "fitz:connection-info", "fitz:local-request", "fitz:bootstrap-local-device"]) {
+      expect(main).not.toContain(channel);
+      expect(preload).not.toContain(channel);
+    }
+    expect(main).toContain('const hostUrl = validateHostUrl(localHostPort ? `http://127.0.0.1:${localHostPort}` : "http://127.0.0.1:8787")');
+    expect(main).not.toContain("FITZ_HOST_URL");
+    expect(main).not.toContain('commandLineValue("host-url")');
+    expect(renderer).toContain("appNavigation.showConversation();\nvoid initialize();");
+    expect(renderer).toContain('setStatus("Starting local services", "loading")');
+    expect(renderer).not.toContain('setStatus("Offline"');
+    expect(renderer).not.toContain("showPairing");
+    expect(main).toContain("migrateLegacyRemoteHostConnection()");
+    expect(main).toContain('template: "openai-compatible"');
+    expect(main).toContain('executionClass: "self_hosted"');
+    expect(preload).toContain('ipcRenderer.invoke("fitz:consumer-connection-save"');
     expect(main).toContain("safeStorage.encryptString(token)");
     expect(main).toContain("safeStorage.decryptString");
-    expect(main).toContain('createHash("sha256").update(new URL(hostUrl).origin)');
     expect(main).toContain("legacyConsumerConnectionsPath");
     expect(main).toContain('renameSync(legacyPath, `${legacyPath}.migrated`)');
-    expect(main).toContain('redirect: "manual"');
-    expect(styles).toContain(".pairing-page");
-    expect(renderer).toContain('setConnection(configuredHostOrigin.replace');
+    expect(styles).not.toContain(".pairing-page");
   });
 
   it("surfaces actionable cloud-connection errors without Electron IPC boilerplate", () => {
