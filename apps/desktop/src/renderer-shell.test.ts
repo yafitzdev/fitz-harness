@@ -391,6 +391,8 @@ describe("desktop renderer shell", () => {
     expect(renderer).not.toContain("${folder.rootPath}");
     expect(styles).toContain(".recipe-card-actions { align-self: center; display: flex; align-items: center;");
     expect(styles).toContain(".recipe-route-toggle { display: flex; align-items: center; gap: 1px; padding: 2px; border: 0;");
+    expect(styles).toContain(".inference-model-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 34px; }");
+    expect(styles).toContain("grid-template-columns: 38px minmax(0,1fr) auto; gap: 12px; align-items: center; padding: 10px 6px;");
     expect(connectionWorkspace).toContain('class="route-icon-cut"');
     expect(connectionWorkspace).toContain('class="route-icon-filled" fill-rule="evenodd"');
     expect(html).not.toContain("NiNfer");
@@ -399,11 +401,12 @@ describe("desktop renderer shell", () => {
     expect(renderer).toContain("appNavigation.showConversation()");
   });
 
-  it("shows recipe metadata without test actions", () => {
+  it("shows playbook metadata and tag-free inference rows without test actions", () => {
     expect(playbookWorkspace).not.toContain('recipe-test-button');
     expect(connectionWorkspace).not.toContain('recipe-test-button');
     expect(playbookWorkspace).toContain("labels.append(...recipeMetadata({");
-    expect(connectionWorkspace).toContain("labels.append(...recipeMetadata({");
+    expect(connectionWorkspace).not.toContain("recipeMetadata({");
+    expect(connectionWorkspace).toContain('meta.className = "inference-model-meta"');
     expect(playbookWorkspace).not.toContain('detail.textContent = `${recipe.adapter} · ${recipe.modelId}`');
     expect(styles).not.toContain(".recipe-test-button");
     expect(styles).toContain(".recipe-card-label {");

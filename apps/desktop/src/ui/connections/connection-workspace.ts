@@ -3,7 +3,7 @@ import { ManagementPageLayout, managementRefreshIcon } from "../layout/managemen
 import type { ActionFeedback } from "../primitives/action-status.js";
 import { CollapsibleSection } from "../layout/collapsible-section.js";
 import { svgIcon } from "../primitives/dom.js";
-import { engineDisplayName, recipeMetadata, type RecipeModality } from "../recipes/recipe-metadata.js";
+import { engineDisplayName, type RecipeModality } from "../recipes/recipe-metadata.js";
 import {
   CLOUD_TEXT_ROUTE_DEFINITIONS,
   TEXT_ROUTE_DEFINITIONS,
@@ -44,6 +44,7 @@ export const LOCAL_CONNECTION_ID = "hosted--local";
 const EDIT_ICON = '<path d="m13.8 3.2 3 3L7.2 15.8 3 17l1.2-4.2z"></path>';
 const SAVE_ICON = '<path d="m4 10.5 3.5 3.5L16 5.5"></path>';
 const CANCEL_ICON = '<path d="m5 5 10 10M15 5 5 15"></path>';
+const MODEL_ICON = '<path d="M10 2.5 17 6v8l-7 3.5L3 14V6z"></path><path d="M3 6l7 3.5L17 6M10 9.5V17.5"></path>';
 const ROUTE_ICONS: Record<FixedRouteId, string> = {
   default: '<g class="route-icon-outline"><circle cx="10" cy="10" r="6"></circle><circle cx="10" cy="10" r="1.6"></circle></g><path class="route-icon-filled" fill-rule="evenodd" d="M10 3.25a6.75 6.75 0 1 0 0 13.5 6.75 6.75 0 0 0 0-13.5Zm0 4a2.75 2.75 0 1 1 0 5.5 2.75 2.75 0 0 1 0-5.5Z"></path>',
   fast: '<path class="route-icon-outline" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path><path class="route-icon-filled" d="m11 2.25-6.25 8.6h4.8l-.55 6.9 6.25-8.6h-4.8z"></path>',
@@ -386,6 +387,7 @@ export class ConnectionWorkspaceController {
       onToggle: () => this.render(),
       actions,
     });
+    section.body.classList.add("inference-model-grid");
     if (!section.collapsed) {
       if (!connection.availableModels.length && !mediaModels.length) section.appendBody(emptyState("No models available"));
       for (const model of connection.availableModels) section.appendBody(this.modelCard(model, routes, connection.hosted));
@@ -398,20 +400,15 @@ export class ConnectionWorkspaceController {
 
   private modelCard(model: ConnectionModelView, routes: Json[], hosted: boolean): HTMLElement {
     const card = document.createElement("article");
-    card.className = "recipe-card";
-    const details = document.createElement("div");
-    details.className = "recipe-card-details";
+    card.className = "recipe-card inference-model-card";
+    const icon = modelRowIcon();
+    const copy = document.createElement("div");
+    copy.className = "inference-model-copy";
     const name = this.modelName(model.recipeId, model.displayName ?? model.id, hosted);
-    const labels = document.createElement("div");
-    labels.className = "recipe-card-labels";
-    if (hosted) labels.append(modelIdLabel(model.modelId ?? "Local model"));
-    else labels.append(...recipeMetadata({
-        modelId: model.modelId ?? "API model",
-        ...(model.contextTokens ? { contextTokens: model.contextTokens } : {}),
-        showConcurrency: false,
-        capabilities: { chatCompletions: true, maxConcurrentGenerations: model.maxConcurrentGenerations ?? 1 },
-      }));
-    details.append(name, labels);
+    const meta = document.createElement("span");
+    meta.className = "inference-model-meta";
+    meta.textContent = model.modelId ?? "API model";
+    copy.append(name, meta);
     const actions = document.createElement("div");
     actions.className = "recipe-card-actions";
     const routeToggle = document.createElement("div");
@@ -440,23 +437,21 @@ export class ConnectionWorkspaceController {
       routeToggle.append(button);
     }
     actions.append(routeToggle);
-    card.append(details, actions);
+    card.append(icon, copy, actions);
     return card;
   }
 
   private mediaModelCard(model: MediaModelView, routes: Json[], hosted: boolean): HTMLElement {
     const card = document.createElement("article");
-    card.className = "recipe-card media-recipe-card";
-    const details = document.createElement("div");
-    details.className = "recipe-card-details";
+    card.className = "recipe-card inference-model-card media-recipe-card";
+    const icon = modelRowIcon();
+    const copy = document.createElement("div");
+    copy.className = "inference-model-copy";
     const name = this.modelName(model.recipeId, model.displayName, hosted);
-    const labels = document.createElement("div");
-    labels.className = "recipe-card-labels";
-    labels.append(...recipeMetadata({
-      modelId: model.modelId,
-      capabilities: { chatCompletions: false, modalities: { output: model.modalities, ...(model.limits ? { limits: model.limits } : {}) } },
-    }));
-    details.append(name, labels);
+    const meta = document.createElement("span");
+    meta.className = "inference-model-meta";
+    meta.textContent = model.modelId;
+    copy.append(name, meta);
     const actions = document.createElement("div");
     actions.className = "recipe-card-actions";
     const routeToggle = document.createElement("div");
@@ -482,7 +477,7 @@ export class ConnectionWorkspaceController {
       routeToggle.append(button);
     }
     actions.append(routeToggle);
-    card.append(details, actions);
+    card.append(icon, copy, actions);
     return card;
   }
 
@@ -815,11 +810,11 @@ function emptyState(message: string, className = "panel-empty"): HTMLElement {
   return element;
 }
 
-function modelIdLabel(modelId: string): HTMLElement {
-  const label = document.createElement("span");
-  label.className = "recipe-card-label";
-  label.textContent = modelId;
-  return label;
+function modelRowIcon(): HTMLElement {
+  const icon = document.createElement("span");
+  icon.className = "inference-model-icon";
+  icon.append(svgIcon(MODEL_ICON));
+  return icon;
 }
 
 function setFormBusy(form: HTMLFormElement, busy: boolean): void {

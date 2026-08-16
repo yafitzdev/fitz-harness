@@ -7,7 +7,16 @@
 .connection-editor-title-row .icon-button { width: 28px; height: 28px; }
 .connection-editor-title-row svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; }
 .connection-name-input { width: min(100%, 640px); font: inherit; font-size: 24px; font-weight: 650; }
-.inference-page .recipe-card-details { cursor: default; }
+.inference-model-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 34px; }
+.inference-model-grid > .panel-empty { grid-column: 1 / -1; }
+.inference-page .inference-model-card { min-width: 0; min-height: 70px; display: grid; grid-template-columns: 38px minmax(0,1fr) auto; gap: 12px; align-items: center; padding: 10px 6px; overflow: visible; border: 0; border-bottom: 1px solid var(--tint-1); border-radius: 0; background: transparent; }
+.inference-page .inference-model-card + .inference-model-card { margin-top: 0; }
+.inference-page .inference-model-card:hover, .inference-page .inference-model-card:focus-within { border-color: var(--tint-1); background: transparent; }
+.inference-model-icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; color: var(--muted); background: var(--tint-2); }
+.inference-model-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.35; }
+.inference-model-copy { min-width: 0; display: grid; gap: 3px; }
+.inference-model-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
+.inference-page .inference-model-card > .recipe-card-actions { margin-right: 0; gap: 5px; }
 .local-model-name-row { min-width: 0; display: flex; align-items: center; gap: 6px; }
 .local-model-name-row .recipe-display-name { min-width: 0; }
 .local-model-name-action { flex: 0 0 auto; width: 26px; height: 26px; }
@@ -30,7 +39,6 @@
  * single-assignment route toggles. All colors are design tokens; the ramp +
  * semantic roles are the single source of truth. */
 .media-section-heading { margin: 14px 0 6px; color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
-.media-recipe-card { border-left: 2px solid transparent; }
 .media-modality-badge { background: var(--grey-200); }
 .media-modality-badge.media-image { color: var(--media-image); }
 .media-modality-badge.media-video { color: var(--media-video); }
@@ -39,3 +47,4 @@
 .route-symbol.route-media.active { background: var(--grey-300); color: var(--grey-900); }
 .route-symbol:disabled { opacity: 0.38; cursor: default; }
 .route-symbol:disabled:hover { background: transparent; color: var(--grey-550); }
+@media (max-width: 900px) { .inference-model-grid { grid-template-columns: 1fr; } }

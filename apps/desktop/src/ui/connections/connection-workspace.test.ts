@@ -96,8 +96,11 @@ describe("ConnectionWorkspaceController", () => {
     expect(elements.newConnection.hidden).toBe(false);
     expect(elements.connections.querySelectorAll(".consumer-playbook-card")).toHaveLength(1);
     expect(elements.connections.textContent).toContain("Remote API");
-    expect(elements.connections.querySelector(".media-text")?.textContent).toBe("Text");
-    expect([...elements.connections.querySelectorAll(".recipe-card")].map((card) => card.querySelector(".recipe-card-label")?.textContent)).toEqual(["remote-model"]);
+    expect(elements.connections.querySelector(".recipe-card-label")).toBeNull();
+    expect(elements.connections.querySelector(".media-modality-badge")).toBeNull();
+    expect([...elements.connections.querySelectorAll(".recipe-card")].map((card) => card.querySelector(".inference-model-meta")?.textContent)).toEqual(["remote-model"]);
+    expect(elements.connections.querySelector(".inference-model-grid")).not.toBeNull();
+    expect(elements.connections.querySelector(".inference-model-icon")).not.toBeNull();
     expect(elements.connections.querySelector(".recipe-engine-label")).toBeNull();
     expect(calls.showStatus).toHaveBeenCalledWith("Remote unavailable", "error");
 
@@ -111,7 +114,8 @@ describe("ConnectionWorkspaceController", () => {
     expect(elements.connections.querySelector(".media-text")).toBeNull();
     expect(elements.connections.querySelector(".recipe-context-label")).toBeNull();
     expect(elements.connections.querySelector(".recipe-concurrency-label")).toBeNull();
-    expect(elements.connections.querySelector(".recipe-card-label")?.textContent).toBe("local.gguf");
+    expect(elements.connections.querySelector(".recipe-card-label")).toBeNull();
+    expect(elements.connections.querySelector(".inference-model-meta")?.textContent).toBe("local.gguf");
     elements.search.value = "local.gguf";
     elements.search.dispatchEvent(new Event("input", { bubbles: true }));
     expect(elements.connections.querySelectorAll(".consumer-playbook-card")).toHaveLength(1);
@@ -239,12 +243,12 @@ describe("ConnectionWorkspaceController", () => {
     const { controller, elements, calls } = setup();
     await controller.sync(false);
     const remoteCard = elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[0]!;
-    const details = remoteCard.querySelector<HTMLElement>(".recipe-card-details")!;
+    const copy = remoteCard.querySelector<HTMLElement>(".inference-model-copy")!;
 
-    expect(details).not.toBeInstanceOf(HTMLButtonElement);
+    expect(copy).not.toBeInstanceOf(HTMLButtonElement);
     expect(remoteCard.textContent).not.toContain("concurrent");
     expect(remoteCard.textContent).not.toContain("Sequential");
-    click(details);
+    click(copy);
     expect(controller.editorOpen).toBe(false);
     expect(calls.api).not.toHaveBeenCalledWith(expect.stringContaining("agent-topology"), expect.anything(), expect.anything());
   });
@@ -389,7 +393,7 @@ describe("ConnectionWorkspaceController", () => {
     expect(elements.connections.querySelectorAll<HTMLElement>(".consumer-playbook-card")[0]!.classList.contains("collapsed")).toBe(false);
   });
 
-  it("renders media model cards with modality badges and disabled incompatible toggles", async () => {
+  it("renders aligned media model rows without tags and disables incompatible toggles", async () => {
     const mediaRemote = {
       id: "fal-1", displayName: "Fal", baseUrl: "", authType: "none" as const, hasCredential: false, template: "fal" as const,
       models: [],
@@ -407,9 +411,10 @@ describe("ConnectionWorkspaceController", () => {
     const mediaCards = [...card.querySelectorAll<HTMLElement>(".media-recipe-card")];
     expect(mediaCards).toHaveLength(2);
     expect(mediaCards[0]!.querySelector(".recipe-display-name")?.textContent).toBe("fal-ai/flux/dev");
-    expect(mediaCards[0]!.querySelector(".recipe-card-label")?.textContent).toBe("fal-ai/flux/dev");
-    expect(mediaCards[0]!.querySelectorAll(".media-modality-badge")).toHaveLength(1);
-    expect(mediaCards[0]!.querySelector(".media-modality-badge")?.textContent).toBe("Image");
+    expect(mediaCards[0]!.querySelector(".inference-model-meta")?.textContent).toBe("fal-ai/flux/dev");
+    expect(mediaCards[0]!.querySelector(".recipe-card-label")).toBeNull();
+    expect(mediaCards[0]!.querySelector(".media-modality-badge")).toBeNull();
+    expect(mediaCards[0]!.querySelector(".inference-model-icon")).not.toBeNull();
 
     // The image model can only toggle the image route; video and audio are disabled.
     const imageToggles = mediaCards[0]!.querySelectorAll<HTMLButtonElement>(".route-media");
@@ -441,9 +446,9 @@ describe("ConnectionWorkspaceController", () => {
     });
     selectInferenceTab(elements, "local");
 
-    const details = elements.connections.querySelector<HTMLElement>(".media-recipe-card .recipe-card-details")!;
-    expect(details).not.toBeInstanceOf(HTMLButtonElement);
-    click(details);
+    const copy = elements.connections.querySelector<HTMLElement>(".media-recipe-card .inference-model-copy")!;
+    expect(copy).not.toBeInstanceOf(HTMLButtonElement);
+    click(copy);
     expect(controller.editorOpen).toBe(false);
     expect(controller.openRoute(["model", "hosted--local--comfyui", "h3-video"])).toBe(false);
 
