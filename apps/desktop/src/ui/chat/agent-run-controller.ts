@@ -1,26 +1,9 @@
 import { reconnectDelay } from "@fitz/connectivity/reconnect";
 import type { ActionFeedback } from "../primitives/action-status.js";
 import type { AgentEffort } from "@fitz/protocol";
+import { AgentEventProjector, type AgentRunActivity, type Json } from "./agent-event-projector.js";
 
-import { mediaJobIdFromToolResult } from "./media-job-tracker.js";
-import { scrollToLatestIfFollowing } from "./conversation-scroll.js";
-
-type Json = Record<string, any>;
-
-export interface AgentRunActivity {
-  appendRun(label: string): HTMLElement;
-  setRun(activity: HTMLElement, label: string, startedAt: number): void;
-  appendContext(label?: string): HTMLElement;
-  markAssistantAsCommentary(content: HTMLElement): void;
-  appendReasoning(running: boolean): HTMLElement;
-  appendReasoningDelta(row: HTMLElement, text: string): void;
-  completeReasoning(row: HTMLElement): void;
-  appendApproval(approval: Json): HTMLElement;
-  resolveApproval(row: HTMLElement, decision: "approved" | "denied"): void;
-  appendTool(toolName: string, input: unknown, toolCallId: string, running: boolean): HTMLElement;
-  completeTool(row: HTMLElement, toolName: string, input: unknown, result: unknown, isError: boolean, completedAt?: string): void;
-  finishWork(completedAt?: string): void;
-}
+export type { AgentRunActivity } from "./agent-event-projector.js";
 
 export interface AgentRunRequest {
   model: string;
@@ -236,20 +219,35 @@ export class AgentRunController {
   }
 
   async #follow(runId: string, activity: HTMLElement, startedAt: number, generation: number): Promise<void> {
-    let assistant: HTMLElement | undefined;
-    let assistantText = "";
-    let reasoning: HTMLElement | undefined;
-    const tools = new Map<string, { row: HTMLElement; toolName: string; input: unknown }>();
-    const planToolCalls = new Set<string>();
-    const approvals = new Map<string, HTMLElement>();
-    const changedFiles = new Map<string, "edited" | "created">();
-    let done = false;
-    let queued = true;
     let reconnectAttempt = 0;
     let nextEnginePoll = 0;
-    let mediaHandedOff = false;
     let eventStream: AgentEventInbox | undefined;
     let unsubscribeEventStream: (() => void) | undefined;
+    const projector = new AgentEventProjector({
+      runId,
+      startedAt,
+      activityRoot: activity,
+      messages: this.#options.messages,
+      activity: this.#options.activity,
+      appendAssistant: this.#options.appendAssistant,
+      appendAssistantDelta: this.#options.appendAssistantDelta,
+      replaceAssistant: this.#options.replaceAssistant,
+      ...(this.#options.loadFinalAssistant ? { loadFinalAssistant: this.#options.loadFinalAssistant } : {}),
+      appendSystem: this.#options.appendSystem,
+      appendChangeSummary: this.#options.appendChangeSummary,
+      addTokenEstimate: this.#options.addTokenEstimate,
+      setStatus: this.#options.setStatus,
+      setEngineState: this.#options.setEngineState,
+      updatePlan: this.#options.updatePlan,
+      clearPlan: this.#options.clearPlan,
+      findApproval: (approvalId) => this.#options.messages.querySelector<HTMLElement>(`[data-approval-id="${CSS.escape(approvalId)}"]`) ?? undefined,
+      findTool: (toolCallId) => {
+        const row = this.#options.messages.querySelector<HTMLElement>(`[data-tool-call-id="${CSS.escape(toolCallId)}"]`);
+        return row ? { row, toolName: row.dataset.toolName ?? "tool", input: undefined } : undefined;
+      },
+      ...(this.#options.onMediaJobSubmitted ? { onMediaJobSubmitted: this.#options.onMediaJobSubmitted } : {}),
+      yieldToPaint: () => this.#yieldToPaint(),
+    });
     const connectEventStream = () => {
       if (!this.#options.subscribeAgentEvents) return;
       const inbox = new AgentEventInbox();
@@ -261,7 +259,7 @@ export class AgentRunController {
     };
     connectEventStream();
     try {
-      while (!done && this.#runId === runId && this.#generation === generation) {
+      while (!projector.done && this.#runId === runId && this.#generation === generation) {
         let replay: Json;
         if (eventStream) {
           const delivery = await eventStream.next(1_000);
@@ -294,183 +292,32 @@ export class AgentRunController {
           }
         }
         for (const event of replay.events ?? []) {
-        this.#lastSequence = Number(event.sequence ?? this.#lastSequence);
-        if (event.type === "run.queue.updated") {
-          queued = event.data?.status === "queued";
-          if (queued) {
-            const position = Math.max(1, Number(event.data?.position ?? 1));
-            this.#options.setStatus(`Queued ${position}`, "loading");
-            this.#options.setEngineState("QUEUED");
-            this.#options.activity.setRun(activity, position === 1 ? "Queued · next" : `Queued · ${position - 1} ahead`, startedAt);
-          }
-          if (this.#options.queueVisible()) void this.#options.refreshQueue();
+          this.#lastSequence = Number(event.sequence ?? this.#lastSequence);
+          await projector.apply(event);
+          if (event.type === "run.queue.updated" && this.#options.queueVisible()) void this.#options.refreshQueue();
         }
-        if (event.type === "run.started") {
-          queued = false;
-          this.#options.setStatus("Working", "active");
-          this.#options.setEngineState("WORKING");
-          this.#options.activity.setRun(activity, "Working", startedAt);
-        }
-        if (event.type === "assistant.delta") {
-          if (!assistant) { activity.remove(); assistant = this.#options.appendAssistant(runId, typeof event.timestamp === "string" ? event.timestamp : undefined); }
-          const delta = String(event.data?.text ?? "");
-          this.#options.appendAssistantDelta(assistant, delta);
-          assistantText += delta;
-          this.#options.addTokenEstimate(delta);
-          scrollToLatestIfFollowing(this.#options.messages);
-        }
-        if (event.type === "reasoning.delta") {
-          // Provider-native reasoning streams as visible prose between tool bursts.
-          // It remains outside the assistant bubble and is never re-sent as context.
-          const delta = String(event.data?.text ?? "");
-          if (delta) {
-            if (!reasoning) { activity.remove(); reasoning = this.#options.activity.appendReasoning(true); }
-            this.#options.activity.appendReasoningDelta(reasoning, delta);
-            this.#options.addTokenEstimate(delta);
-            await this.#yieldToPaint();
-          }
-        }
-        if (event.type === "reasoning.completed") {
-          if (reasoning) { this.#options.activity.completeReasoning(reasoning); reasoning = undefined; }
-        }
-        if (event.type === "user.steer") {
-          // A steering message was delivered into the running conversation; the next
-          // deltas answer it, so start a fresh assistant bubble instead of merging
-          // into the previous turn's text.
-          assistant = undefined;
-          assistantText = "";
-        }
-        if (event.type === "tool.approval.requested") {
-          const approvalId = String(event.data?.approvalId ?? "");
-          activity.remove();
-          if (assistant) { this.#options.activity.markAssistantAsCommentary(assistant); assistant = undefined; assistantText = ""; }
-          if (reasoning) { this.#options.activity.completeReasoning(reasoning); reasoning = undefined; }
-          approvals.set(approvalId, this.#options.activity.appendApproval({ id: approvalId, toolName: String(event.data?.toolName ?? "tool"), request: event.data?.input ?? {}, status: "pending" }));
-          this.#options.setStatus("Waiting for approval", "active");
-          this.#options.setEngineState("WAITING");
-        }
-        if (event.type === "tool.approval.resolved") {
-          const approvalId = String(event.data?.approvalId ?? "");
-          const decision = event.data?.decision === "approved" ? "approved" : "denied";
-          const approval = approvals.get(approvalId) ?? this.#options.messages.querySelector<HTMLElement>(`[data-approval-id="${CSS.escape(approvalId)}"]`);
-          if (approval) this.#options.activity.resolveApproval(approval, decision);
-          this.#options.setStatus("Working", "active");
-          this.#options.setEngineState("WORKING");
-        }
-        if (event.type === "tool.started") {
-          const toolName = String(event.data?.toolName ?? "tool");
-          const toolCallId = String(event.data?.toolCallId ?? `${toolName}-${event.sequence}`);
-          const input = event.data?.input;
-          activity.remove();
-          if (assistant) { this.#options.activity.markAssistantAsCommentary(assistant); assistant = undefined; assistantText = ""; }
-          if (reasoning) { this.#options.activity.completeReasoning(reasoning); reasoning = undefined; }
-          this.#options.addTokenEstimate(stringifyForEstimate(input));
-          if (toolName === "agent_plan") {
-            planToolCalls.add(toolCallId);
-            this.#options.setStatus("Updating tasks", "active");
-            this.#options.setEngineState("WORKING");
-          } else {
-            tools.set(toolCallId, { row: this.#options.activity.appendTool(toolName, input, toolCallId, true), toolName, input });
-            this.#options.setStatus(`Running ${toolName}`, "active");
-            this.#options.setEngineState(toolName.toUpperCase());
-          }
-        }
-        if (event.type === "tool.completed") {
-          const toolCallId = String(event.data?.toolCallId ?? "");
-          let existing = tools.get(toolCallId);
-          const completedToolName = planToolCalls.has(toolCallId) ? "agent_plan" : existing?.toolName ?? String(event.data?.toolName ?? "tool");
-          if (completedToolName === "agent_plan") {
-            planToolCalls.delete(toolCallId);
-            this.#options.updatePlan(event.data?.result);
-            this.#options.addTokenEstimate(stringifyForEstimate(event.data?.result));
-            this.#options.setStatus("Working", "active");
-            this.#options.setEngineState("WORKING");
-            continue;
-          }
-          if (!existing) {
-            const restored = this.#options.messages.querySelector<HTMLElement>(`[data-tool-call-id="${CSS.escape(toolCallId)}"]`);
-            if (restored) existing = { row: restored, toolName: restored.dataset.toolName ?? String(event.data?.toolName ?? "tool"), input: undefined };
-          }
-          if (existing) this.#options.activity.completeTool(existing.row, existing.toolName, existing.input, event.data?.result, Boolean(event.data?.isError));
-          this.#options.addTokenEstimate(stringifyForEstimate(event.data?.result));
-          const mediaJobId = mediaJobIdFromToolResult(event.data?.result);
-          if (mediaJobId) {
-            mediaHandedOff = true;
-            this.#options.onMediaJobSubmitted?.(mediaJobId, existing?.toolName ?? String(event.data?.toolName ?? "generate_video"));
-          }
-          // Track file changes from write/edit tools (updated)
-          if (existing && (existing.toolName === "write" || existing.toolName === "edit") && !Boolean(event.data?.isError)) {
-            const input = existing.input;
-            if (input && typeof input === "object" && "path" in input && typeof input.path === "string") {
-              changedFiles.set(input.path, existing.toolName === "write" ? "created" : "edited");
+        if (!projector.done && !projector.queued && !projector.hasOpenOutput && (!eventStream || (replay.events?.length ?? 0) === 0) && Date.now() >= nextEnginePoll) {
+          nextEnginePoll = Date.now() + 1_000;
+          try {
+            const management = await this.#options.api("/api/v1/management/status");
+            const state = String(management.engine?.state ?? "");
+            this.#options.setEngineState(state || "WORKING");
+            if (state === "PREPARING" || state === "LOADING") {
+              const label = state === "PREPARING" ? "Preparing model" : "Loading model";
+              this.#options.setStatus(label, "loading");
+              this.#options.activity.setRun(activity, label, startedAt);
             }
-          }
-          this.#options.setStatus("Working", "active");
-          this.#options.setEngineState("WORKING");
+            else if (state === "READY" || state === "BUSY") this.#options.activity.setRun(activity, "Thinking", startedAt);
+            else if (state === "FAILED") activity.textContent = `Model failed: ${management.engine?.failureReason ?? "Unknown error"}`;
+            else this.#options.activity.setRun(activity, "Working", startedAt);
+          } catch { this.#options.activity.setRun(activity, "Working", startedAt); }
         }
-        if (["run.completed", "run.failed", "run.cancelled", "run.interrupted"].includes(event.type)) {
-          done = true;
-          if (reasoning) { this.#options.activity.completeReasoning(reasoning); reasoning = undefined; }
-          const success = event.type === "run.completed";
-          this.#options.setStatus(success ? "Ready" : event.type.slice(4), success ? "idle" : "error");
-          this.#options.setEngineState(success || event.type === "run.cancelled" ? "READY" : event.type.slice(4).toUpperCase());
-          activity.remove();
-          if (!success && event.data?.error && event.type !== "run.cancelled") this.#options.appendSystem(String(event.data.error));
-          if (success && !mediaHandedOff && this.#options.loadFinalAssistant) {
-            try {
-              const recovered = await this.#options.loadFinalAssistant(runId);
-              if (recovered?.text) {
-                if (!assistant) {
-                  assistant = this.#options.appendAssistant(runId, recovered.createdAt);
-                  this.#options.appendAssistantDelta(assistant, recovered.text);
-                  this.#options.addTokenEstimate(recovered.text);
-                } else if (assistantText !== recovered.text) {
-                  this.#options.replaceAssistant(assistant, recovered.text);
-                }
-                assistantText = recovered.text;
-              }
-            } catch {
-              // Keep the streamed answer (or the explicit empty-response notice)
-              // if transcript reconciliation is temporarily offline.
-            }
-          }
-          // A media tool deliberately ends the Pi turn as soon as its durable
-          // background job exists. No assistant text is expected at this point:
-          // MediaJobTracker owns the eventual final answer/artifact card.
-          if (success && !assistant && !mediaHandedOff) this.#options.appendSystem("The model completed without returning a response.");
-          // Show change summary if files were modified
-          if (success && changedFiles.size > 0) {
-            this.#options.appendChangeSummary([...changedFiles.entries()].map(([path, action]) => ({ path, action })));
-          }
-          // Media tools return after durable submission while the GPU job keeps
-          // running in the background. Keep the outer work disclosure active;
-          // MediaJobTracker closes it with the true terminal timestamp.
-          if (!mediaHandedOff) this.#options.activity.finishWork();
-          this.#options.clearPlan();
-        }
-      }
-        if (!done && !queued && !assistant && !reasoning && (!eventStream || (replay.events?.length ?? 0) === 0) && Date.now() >= nextEnginePoll) {
-        nextEnginePoll = Date.now() + 1_000;
-        try {
-          const management = await this.#options.api("/api/v1/management/status");
-          const state = String(management.engine?.state ?? "");
-          this.#options.setEngineState(state || "WORKING");
-          if (state === "PREPARING" || state === "LOADING") {
-            const label = state === "PREPARING" ? "Preparing model" : "Loading model";
-            this.#options.setStatus(label, "loading");
-            this.#options.activity.setRun(activity, label, startedAt);
-          }
-          else if (state === "READY" || state === "BUSY") this.#options.activity.setRun(activity, "Thinking", startedAt);
-          else if (state === "FAILED") activity.textContent = `Model failed: ${management.engine?.failureReason ?? "Unknown error"}`;
-          else this.#options.activity.setRun(activity, "Working", startedAt);
-        } catch { this.#options.activity.setRun(activity, "Working", startedAt); }
-        }
-        if (!done && !eventStream) await this.#delay(350);
+        if (!projector.done && !eventStream) await this.#delay(350);
       }
     } finally {
       unsubscribeEventStream?.();
     }
-    if (done) {
+    if (projector.done) {
       await this.#options.onRunSettled?.();
       await this.#options.refreshAssistantPerformance?.(runId);
     }
@@ -510,11 +357,4 @@ class AgentEventInbox {
       this.#waiter = { resolve, timer };
     });
   }
-}
-
-/** Text form of a tool input/result for context estimation; structured payloads become JSON. */
-function stringifyForEstimate(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (value === undefined || value === null) return "";
-  try { return JSON.stringify(value); } catch { return String(value); }
 }
