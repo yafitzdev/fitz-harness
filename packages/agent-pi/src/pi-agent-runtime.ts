@@ -80,6 +80,9 @@ export type PiSessionFactory = (options: {
   apiKey: string;
   contextWindow: number;
   maxTokens: number;
+  /** Modalities present in this run. Pi uses this to decide whether attached
+   * images may be forwarded to the OpenAI-compatible endpoint. */
+  input: Array<"text" | "image">;
   agentDir: string;
   llmRoot: string;
   thinkingLevel?: ThinkingLevel;
@@ -219,6 +222,9 @@ export class PiAgentRuntime implements AgentRuntime {
     const contextWindow = typeof this.#contextWindow === "function" ? this.#contextWindow(request, options) : this.#contextWindow;
     const thinkingLevel = typeof this.#thinkingLevel === "function" ? this.#thinkingLevel(request, options) : this.#thinkingLevel;
     const thinkingFormat = typeof this.#thinkingFormat === "function" ? this.#thinkingFormat(request, options) : this.#thinkingFormat;
+    const input: Array<"text" | "image"> = request.messages.some((message) =>
+      Array.isArray(message.content) && message.content.some((part) => part.type === "image_url"))
+      ? ["text", "image"] : ["text"];
     const rootToolCallBudget = request.delegation ? undefined
       : typeof this.#toolCallBudget === "function" ? this.#toolCallBudget(request, options) : this.#toolCallBudget;
     const workTools = new WorkToolBudget(rootToolCallBudget);
@@ -236,6 +242,7 @@ export class PiAgentRuntime implements AgentRuntime {
         apiKey: this.#apiKey,
         contextWindow,
         maxTokens: request.maxTokens ?? 16_384,
+        input,
         agentDir: this.#agentDir,
         llmRoot: this.#llmRoot,
         thinkingLevel,
@@ -559,7 +566,7 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
     provider: "openrouter",
     baseUrl: options.baseUrl,
     reasoning: (options.thinkingLevel ?? "off") !== "off",
-    input: ["text"],
+    input: options.input,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: options.contextWindow,
     maxTokens: options.maxTokens,

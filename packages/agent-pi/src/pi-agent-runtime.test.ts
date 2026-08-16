@@ -350,9 +350,9 @@ describe("PiAgentRuntime", () => {
   it("passes data-URL image attachments into the Pi vision prompt", async () => {
     const seen: unknown[] = [];
     let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
-    const runtime = new PiAgentRuntime({ createSession: async () => ({
+    const runtime = new PiAgentRuntime({ createSession: async (options) => ({
       subscribe: (next) => { listener = next; return () => undefined; },
-      prompt: async (_text, images) => { seen.push(images); listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "seen" } }); },
+      prompt: async (_text, images) => { seen.push(options.input, images); listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "seen" } }); },
       steer: async () => undefined,
       abort: async () => undefined,
       dispose: () => undefined,
@@ -361,7 +361,7 @@ describe("PiAgentRuntime", () => {
       { type: "text", text: "analyse this" },
       { type: "image_url", image_url: { url: "data:image/png;base64,QUJD" } },
     ] }] })) { /* consume */ }
-    expect(seen).toEqual([[{ type: "image", mimeType: "image/png", data: "QUJD" }]]);
+    expect(seen).toEqual([["text", "image"], [{ type: "image", mimeType: "image/png", data: "QUJD" }]]);
   });
 
   it("aborts and disposes the Pi session after a terminal model request failure", async () => {
