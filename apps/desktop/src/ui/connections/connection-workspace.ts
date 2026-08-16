@@ -3,7 +3,6 @@ import { ManagementPageLayout, managementRefreshIcon } from "../layout/managemen
 import type { ActionFeedback } from "../primitives/action-status.js";
 import { CollapsibleSection } from "../layout/collapsible-section.js";
 import { svgIcon } from "../primitives/dom.js";
-import { engineDisplayName, type RecipeModality } from "../recipes/recipe-metadata.js";
 import {
   CLOUD_TEXT_ROUTE_DEFINITIONS,
   TEXT_ROUTE_DEFINITIONS,
@@ -11,9 +10,20 @@ import {
   type TextRouteDefinition,
   type TextRouteId,
 } from "../routes/text-route-presentation.js";
+import {
+  buildConnectionViews,
+  connectionMatches,
+  localRecipes,
+  LOCAL_CONNECTION_ID,
+  type ConnectionModelView,
+  type ConnectionView,
+  type Json,
+  type MediaModelView,
+  type MediaModality,
+} from "./connection-workspace-model.js";
 
-type Json = Record<string, any>;
-export type MediaModality = Exclude<RecipeModality, "text">;
+export { LOCAL_CONNECTION_ID } from "./connection-workspace-model.js";
+export type { MediaModality } from "./connection-workspace-model.js";
 
 const CONNECTION_EDITOR_TEMPLATE = `
   <div id="connection-editor" class="management-editor" hidden>
@@ -40,7 +50,6 @@ const CONNECTION_EDITOR_TEMPLATE = `
 export type FixedRouteId = TextRouteId;
 export type CloudRouteId = CloudTextRouteId;
 type RouteDefinition<T extends string> = { id: T; label: string; icon: string };
-export const LOCAL_CONNECTION_ID = "hosted--local";
 const EDIT_ICON = '<path d="m13.8 3.2 3 3L7.2 15.8 3 17l1.2-4.2z"></path>';
 const SAVE_ICON = '<path d="m4 10.5 3.5 3.5L16 5.5"></path>';
 const CANCEL_ICON = '<path d="m5 5 10 10M15 5 5 15"></path>';
@@ -75,21 +84,6 @@ export const CONSUMER_TEMPLATES: readonly { id: string; label: string; descripti
   { id: "fal", label: "Fal", description: "Fal.ai media models; the base URL is filled in automatically." },
   { id: "replicate", label: "Replicate", description: "Replicate media models; the base URL is filled in automatically." },
 ];
-
-type ConnectionModelView = ConsumerConnectionSummary["models"][number] & { displayName?: string; modelId?: string; engine?: string; contextTokens?: number; maxConcurrentGenerations?: number };
-/** One media model card: a media recipe plus the well-known route toggles it can serve. */
-interface MediaModelView {
-  recipeId: string;
-  displayName: string;
-  modelId: string;
-  engine: string;
-  /** Output modalities the recipe can generate — one well-known route toggle each. */
-  modalities: MediaModality[];
-  limits?: { maxDurationSeconds?: number; maxFps?: number; maxResolution?: string; maxRefs?: number; maxFrames?: number };
-}
-type HostedConnectionView = Omit<ConsumerConnectionSummary, "models" | "mediaModels"> & { hosted: true; availableModels: ConnectionModelView[]; availableMediaModels: MediaModelView[] };
-type SavedConnectionView = Omit<ConsumerConnectionSummary, "models" | "mediaModels"> & { hosted: false; availableModels: ConnectionModelView[]; availableMediaModels: MediaModelView[]; source: ConsumerConnectionSummary };
-type ConnectionView = HostedConnectionView | SavedConnectionView;
 
 export interface ConnectionWorkspaceBridge {
   listConsumerConnections(): Promise<ConsumerConnectionSummary[]>;
@@ -241,16 +235,17 @@ export class ConnectionWorkspaceController {
 
   render(): void {
     this.elements.connections.replaceChildren();
-    const connectionRecords = this.views().filter((connection) => connection.hosted === (this.inferenceScope === "local"));
+    const connectionRecords = buildConnectionViews(this.configuration, this.records)
+      .filter((connection) => connection.hosted === (this.inferenceScope === "local"));
     const query = this.elements.search.value.trim().toLowerCase();
-    const visible = connectionRecords.filter((connection) => !query || [connection.displayName, ...connection.availableModels.flatMap((model) => [model.id, model.displayName, model.modelId, model.engine]), ...connection.availableMediaModels.flatMap((model) => [model.modelId, model.displayName, model.engine])].some((value) => String(value ?? "").toLowerCase().includes(query)));
+    const visible = connectionRecords.filter((connection) => connectionMatches(connection, query));
     if (!visible.length) {
       const empty = this.inferenceScope === "cloud" ? "No cloud APIs connected yet" : "No local engines available";
       this.elements.connections.append(emptyState(query ? "No matching models or providers" : empty, query ? "panel-empty" : "connections-empty"));
       return;
     }
     const routes = this.configuration?.routes ?? [];
-    for (const connection of visible) this.elements.connections.append(this.connectionCard(connection, routes, connection.availableMediaModels));
+    for (const connection of visible) this.elements.connections.append(this.connectionCard(connection, routes));
   }
 
   private openEditor(connection?: ConsumerConnectionSummary): void {
@@ -329,48 +324,7 @@ export class ConnectionWorkspaceController {
     if (render) this.render();
   }
 
-  private views(): ConnectionView[] {
-    const recipes = this.configuration?.recipes ?? [];
-    const localRecipes = this.localRecipes();
-    const localByEngine = new Map<string, Json[]>();
-    for (const recipe of localRecipes) {
-      const engineId = String(recipe.playbookId ?? recipe.adapter ?? "Local");
-      localByEngine.set(engineId, [...(localByEngine.get(engineId) ?? []), recipe]);
-    }
-    const engineFolders = this.configuration?.engineFolders ?? [];
-    const hostedConnections = [...localByEngine.entries()].map(([engineId, engineRecipes]): HostedConnectionView => {
-      const folder = engineFolders.find((candidate: Json) => String(candidate.folderName).toLowerCase() === engineId.toLowerCase());
-      const availableModels = engineRecipes
-        .filter((recipe: Json) => recipe.capabilities?.chatCompletions !== false)
-        .map((recipe: Json): ConnectionModelView => ({ id: String(recipe.id), recipeId: String(recipe.id), displayName: String(recipe.displayName ?? recipe.modelId ?? recipe.id), modelId: String(recipe.modelId ?? recipe.id), engine: engineId, contextTokens: Number(recipe.contextTokens), maxConcurrentGenerations: Number(recipe.capabilities?.maxConcurrentGenerations ?? 1) }));
-      return {
-        id: `${LOCAL_CONNECTION_ID}--${engineId}`,
-        displayName: String(folder?.engine?.displayName ?? engineDisplayName(engineId)),
-        baseUrl: "",
-        authType: "none",
-        hasCredential: false,
-        template: "openai-compatible",
-        executionClass: "self_hosted",
-        accessClass: "same_device",
-        availableModels,
-        availableMediaModels: hostedMediaViews(engineRecipes),
-        updatedAt: "",
-        hosted: true,
-      };
-    });
-    return [...hostedConnections, ...this.records.map((connection): SavedConnectionView => ({
-      ...connection,
-      hosted: false,
-      availableModels: connection.models.map((model) => {
-        const recipe = recipes.find((candidate: Json) => candidate.id === model.recipeId);
-        return { ...model, displayName: String(recipe?.displayName ?? model.id), modelId: String(recipe?.modelId ?? model.id), contextTokens: Number(recipe?.contextTokens), engine: String(connection.template ?? recipe?.adapter ?? "openai-compatible"), maxConcurrentGenerations: Number(recipe?.capabilities?.maxConcurrentGenerations ?? 1) };
-      }),
-      availableMediaModels: savedMediaViews(connection),
-      source: connection,
-    }))];
-  }
-
-  private connectionCard(connection: ConnectionView, routes: Json[], mediaModels: MediaModelView[]): HTMLElement {
+  private connectionCard(connection: ConnectionView, routes: Json[]): HTMLElement {
     const actions: HTMLButtonElement[] = [];
     if (!connection.hosted) {
       actions.push(
@@ -389,10 +343,10 @@ export class ConnectionWorkspaceController {
     });
     section.body.classList.add("inference-model-grid");
     if (!section.collapsed) {
-      if (!connection.availableModels.length && !mediaModels.length) section.appendBody(emptyState("No models available"));
+      if (!connection.availableModels.length && !connection.availableMediaModels.length) section.appendBody(emptyState("No models available"));
       for (const model of connection.availableModels) section.appendBody(this.modelCard(model, routes, connection.hosted));
-      if (mediaModels.length) {
-        for (const model of mediaModels) section.appendBody(this.mediaModelCard(model, routes, connection.hosted));
+      if (connection.availableMediaModels.length) {
+        for (const model of connection.availableMediaModels) section.appendBody(this.mediaModelCard(model, routes, connection.hosted));
       }
     }
     return section.root;
@@ -517,10 +471,6 @@ export class ConnectionWorkspaceController {
     return row;
   }
 
-  private localRecipes(): Json[] {
-    return (this.configuration?.recipes ?? []).filter((recipe: Json) => !String(recipe.id).startsWith("consumer-recipe--"));
-  }
-
   private beginLocalModelEdit(recipeId: string, displayName: string): void {
     if (this.inferenceScope !== "local") return;
     this.editingLocalRecipeId = recipeId;
@@ -539,7 +489,7 @@ export class ConnectionWorkspaceController {
   }
 
   private async saveLocalModelName(recipeId: string): Promise<void> {
-    const recipe = this.localRecipes().find((candidate) => String(candidate.id) === recipeId);
+    const recipe = localRecipes(this.configuration).find((candidate) => String(candidate.id) === recipeId);
     if (!recipe || this.editingLocalRecipeId !== recipeId) return;
     const displayName = this.localNameDraft.trim();
     if (!displayName) {
@@ -819,37 +769,4 @@ function modelRowIcon(): HTMLElement {
 
 function setFormBusy(form: HTMLFormElement, busy: boolean): void {
   for (const control of form.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>("input,button,select")) control.disabled = busy;
-}
-
-/** Media recipes hosted on this PC (playbook/engine recipes, §5.10): one card
- *  per recipe with all of its output modalities as route toggles. */
-function hostedMediaViews(recipes: Json[]): MediaModelView[] {
-  return recipes
-    .filter((recipe: Json) => !String(recipe.id).startsWith("consumer-recipe--") && recipe.capabilities?.chatCompletions === false && Array.isArray(recipe.capabilities?.modalities?.output) && recipe.capabilities.modalities.output.length)
-    .map((recipe: Json): MediaModelView => ({
-      recipeId: String(recipe.id),
-      displayName: String(recipe.displayName ?? recipe.modelId ?? recipe.id),
-      modelId: String(recipe.modelId ?? recipe.id),
-      modalities: recipe.capabilities.modalities.output.filter((modality: unknown) => modality === "image" || modality === "video" || modality === "audio"),
-      ...(recipe.capabilities?.modalities?.limits ? { limits: recipe.capabilities.modalities.limits } : {}),
-      engine: String(recipe.playbookId ?? recipe.adapter ?? "Local"),
-    }));
-}
-
-/** Media models from a saved connection: the host registers one entry per
- *  (model, modality) but the UI shows one card per model (recipe). */
-function savedMediaViews(connection: ConsumerConnectionSummary): MediaModelView[] {
-  const byRecipe = new Map<string, MediaModelView>();
-  for (const model of connection.mediaModels ?? []) {
-    const view = byRecipe.get(model.recipeId) ?? {
-      recipeId: model.recipeId,
-      displayName: model.id,
-      modelId: model.id,
-      modalities: [],
-      engine: model.template,
-    };
-    if (!view.modalities.includes(model.modality)) view.modalities.push(model.modality);
-    byRecipe.set(model.recipeId, view);
-  }
-  return [...byRecipe.values()];
 }
