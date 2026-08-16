@@ -676,7 +676,7 @@ describe("desktop renderer shell", () => {
 
   it("warms Default on desktop open and retains first-character warm as a safety net", () => {
     expect(main).toContain("void warmLocalDefault()");
-    expect(main).toContain('hostClient.fetch("/api/v1/inference/warm"');
+    expect(main).toContain('localHostClient.fetch("/api/v1/inference/warm"');
     expect(renderer).toContain("agentRuns.scheduleWarmup(text, composer.controls.routeId)");
     expect(renderer).not.toContain("agentRuns.scheduleWarmup(composer.value, composer.controls.routeId)");
     expect(agentRunController).toContain('this.#options.api("/api/v1/inference/warm", "POST", { model })');
@@ -1146,7 +1146,9 @@ describe("desktop renderer shell", () => {
     expect(preload).toContain('ipcRenderer.invoke("fitz:connection-info"');
     expect(main).toContain('ipcMain.handle("fitz:connect-remote"');
     expect(main).toContain('ipcMain.handle("fitz:bootstrap-local-device"');
-    expect(main).toContain("!isLoopbackHost(hostUrl)");
+    expect(main).toContain('ipcMain.handle("fitz:local-request"');
+    expect(preload).toContain('ipcRenderer.invoke("fitz:local-request"');
+    expect(main).toContain("origin: localHostUrl");
     expect(main).toContain('ipcMain.handle("fitz:connection-info"');
     expect(main).toContain("safeStorage.encryptString(token)");
     expect(main).toContain("safeStorage.decryptString");

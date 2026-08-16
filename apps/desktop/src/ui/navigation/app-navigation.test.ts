@@ -67,9 +67,9 @@ describe("AppNavigationController", () => {
     controller.applyAvailability();
     expect(navigation.connections.hidden).toBe(false);
     expect(navigation.playbooks.hidden).toBe(true);
-    expect(navigation.administration.hidden).toBe(true);
-    expect(await controller.openManagement("plugins")).toBe(false);
-    expect(options.pages.show).not.toHaveBeenCalled();
+    expect(navigation.administration.hidden).toBe(false);
+    expect(await controller.openManagement("plugins")).toBe(true);
+    expect(options.pages.show).toHaveBeenCalledWith("plugins");
 
     pairing = true;
     expect(await controller.openManagement("connections")).toBe(false);
