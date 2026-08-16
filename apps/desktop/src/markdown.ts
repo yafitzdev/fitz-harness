@@ -9,6 +9,7 @@ export function setMarkdown(target: HTMLElement, source: string): void {
   // The stored transcript and the context sent back to the model stay raw.
   const display = applyPostGeneration(source.replace(/\r\n?/g, "\n"));
   markdownSources.set(target, display);
+  target.hidden = display.length === 0;
   target.classList.add("markdown");
   target.replaceChildren();
   renderBlocks(target, display.split("\n"));

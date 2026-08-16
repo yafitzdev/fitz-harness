@@ -566,9 +566,10 @@ describe("desktop renderer shell", () => {
   });
 
   it("renders streamed assistant Markdown safely while keeping prompts plain", () => {
-    expect(renderer).toContain('import { appendMarkdown } from "./markdown.js"');
+    expect(renderer).toContain('import { appendMarkdown, setMarkdown } from "./markdown.js"');
     expect(conversationMessageFeed).toContain('import { setMarkdown } from "../../markdown.js"');
     expect(renderer).toContain("appendAssistantDelta: (target, delta) => appendMarkdown(target, delta)");
+    expect(renderer).toContain("replaceAssistant: (target, text) => setMarkdown(target, text)");
     expect(conversationMessageFeed).toContain('if (role === "assistant" || role === "commentary") setMarkdown(content, text);');
     expect(conversationMessageFeed).toContain("else content.textContent = text");
     expect(markdown).toContain("target.replaceChildren()");
@@ -766,10 +767,13 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("--brand-electric-blue: #458ce6");
     expect(styles).toContain("position: relative; isolation: isolate;");
     expect(styles).toContain(".messages { position: absolute; z-index: 2;");
-    expect(composerCss).toContain(".composer-halo { position: absolute; z-index: 1; inset: 0;");
+    expect(composerCss).toContain(".composer-halo { position: absolute; z-index: 1; right: 0; bottom: 0; left: 0; height: var(--composer-card-height);");
     expect(composer).toContain('<div class="composer-halo" aria-hidden="true"></div>\n  <form id="composer"');
     expect(composerCss).not.toContain("clip-path: inset(0 -120px -120px -120px)");
     expect(styles).toContain(".agent-plan-panel { position: relative; z-index: 31;");
+    expect(styles).toContain("margin: 0 0 -1px");
+    expect(composerCss).toContain(".composer-dock:has(.agent-plan-panel:not([hidden])) .composer-card");
+    expect(conversationLayout).toContain('workspace.style.setProperty("--composer-card-height"');
     expect(composerCss).not.toContain(":has(.popover");
     expect(overlayHostCss).toContain("z-index: var(--layer-overlay)");
     expect(overlayHostCss).toContain("position: fixed !important");

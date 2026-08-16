@@ -40,6 +40,7 @@ function setup(
   const calls = {
     appendAssistant: vi.fn(() => assistant),
     appendAssistantDelta: vi.fn(),
+    replaceAssistant: vi.fn(),
     appendSystem: vi.fn(),
     addTokenEstimate: vi.fn(),
     recalibrateEstimate: vi.fn(),
@@ -259,7 +260,7 @@ describe("AgentRunController", () => {
     const activity = activityMock();
     const replacement = new AgentRunController({
       messages: document.createElement("main"), activity: activity.timeline, api,
-      appendAssistant: () => document.createElement("div"), appendAssistantDelta: vi.fn(), appendSystem, appendChangeSummary: vi.fn(),
+      appendAssistant: () => document.createElement("div"), appendAssistantDelta: vi.fn(), replaceAssistant: vi.fn(), appendSystem, appendChangeSummary: vi.fn(),
       addTokenEstimate: vi.fn(), recalibrateEstimate: vi.fn(), setStatus: vi.fn(), setEngineState: vi.fn(), refreshControls: vi.fn(),
       queueVisible: () => false, refreshQueue: vi.fn(), showStatus: vi.fn(), errorMessage: String, terminalReplayError: () => false,
       updatePlan: vi.fn(),
@@ -440,6 +441,39 @@ describe("AgentRunController", () => {
     expect(calls.appendAssistant).toHaveBeenCalledWith("run-recover", "now");
     expect(calls.appendAssistantDelta).toHaveBeenCalledWith(assistant, "Recovered answer");
     expect(calls.appendSystem).not.toHaveBeenCalledWith("The model completed without returning a response.");
+  });
+
+  it("reconciles a partial live answer with the durable final transcript", async () => {
+    const api = vi.fn(async (path: string) => path === "/api/v1/agent/runs"
+      ? { data: { id: "run-partial" } }
+      : { events: [
+        { sequence: 1, type: "assistant.delta", data: { text: "Partial" } },
+        { sequence: 2, type: "run.completed", data: {} },
+      ] });
+    const loadFinalAssistant = vi.fn(async () => ({ text: "Complete durable answer", createdAt: "now" }));
+    const { controller, assistant, calls } = setup(api, { loadFinalAssistant });
+
+    await controller.start(request());
+
+    expect(loadFinalAssistant).toHaveBeenCalledWith("run-partial");
+    expect(calls.replaceAssistant).toHaveBeenCalledWith(assistant, "Complete durable answer");
+    expect(calls.appendAssistant).toHaveBeenCalledTimes(1);
+    expect(calls.appendSystem).not.toHaveBeenCalledWith("The model completed without returning a response.");
+  });
+
+  it("does not redraw an answer that already matches the durable transcript", async () => {
+    const api = vi.fn(async (path: string) => path === "/api/v1/agent/runs"
+      ? { data: { id: "run-matched" } }
+      : { events: [
+        { sequence: 1, type: "assistant.delta", data: { text: "Complete answer" } },
+        { sequence: 2, type: "run.completed", data: {} },
+      ] });
+    const loadFinalAssistant = vi.fn(async () => ({ text: "Complete answer", createdAt: "now" }));
+    const { controller, calls } = setup(api, { loadFinalAssistant });
+
+    await controller.start(request());
+
+    expect(calls.replaceAssistant).not.toHaveBeenCalled();
   });
 
   it("does not recalibrate when a run starts without a compaction", async () => {

@@ -47,8 +47,9 @@ export interface AgentRunControllerOptions {
   yieldToPaint?: () => Promise<void>;
   appendAssistant: (runId: string, createdAt?: string) => HTMLElement;
   appendAssistantDelta: (target: HTMLElement, delta: string) => void;
+  replaceAssistant: (target: HTMLElement, text: string) => void;
   /** Reads the host's durable final transcript when the live relay reaches
-   * completion without delivering any assistant deltas. */
+   * completion so the rendered answer can be reconciled with durable state. */
   loadFinalAssistant?: (runId: string) => Promise<{ text: string; createdAt?: string } | undefined>;
   appendSystem: (message: string) => void;
   appendChangeSummary: (files: Array<{ path: string; action: "edited" | "created" }>) => void;
@@ -237,6 +238,7 @@ export class AgentRunController {
 
   async #follow(runId: string, activity: HTMLElement, startedAt: number, generation: number): Promise<void> {
     let assistant: HTMLElement | undefined;
+    let assistantText = "";
     let reasoning: HTMLElement | undefined;
     const tools = new Map<string, { row: HTMLElement; toolName: string; input: unknown }>();
     const planToolCalls = new Set<string>();
@@ -314,6 +316,7 @@ export class AgentRunController {
           if (!assistant) { activity.remove(); assistant = this.#options.appendAssistant(runId, typeof event.timestamp === "string" ? event.timestamp : undefined); }
           const delta = String(event.data?.text ?? "");
           this.#options.appendAssistantDelta(assistant, delta);
+          assistantText += delta;
           this.#options.addTokenEstimate(delta);
           scrollToLatestIfFollowing(this.#options.messages);
         }
@@ -336,11 +339,12 @@ export class AgentRunController {
           // deltas answer it, so start a fresh assistant bubble instead of merging
           // into the previous turn's text.
           assistant = undefined;
+          assistantText = "";
         }
         if (event.type === "tool.approval.requested") {
           const approvalId = String(event.data?.approvalId ?? "");
           activity.remove();
-          if (assistant) { this.#options.activity.markAssistantAsCommentary(assistant); assistant = undefined; }
+          if (assistant) { this.#options.activity.markAssistantAsCommentary(assistant); assistant = undefined; assistantText = ""; }
           if (reasoning) { this.#options.activity.completeReasoning(reasoning); reasoning = undefined; }
           approvals.set(approvalId, this.#options.activity.appendApproval({ id: approvalId, toolName: String(event.data?.toolName ?? "tool"), request: event.data?.input ?? {}, status: "pending" }));
           this.#options.setStatus("Waiting for approval", "active");
@@ -359,7 +363,7 @@ export class AgentRunController {
           const toolCallId = String(event.data?.toolCallId ?? `${toolName}-${event.sequence}`);
           const input = event.data?.input;
           activity.remove();
-          if (assistant) { this.#options.activity.markAssistantAsCommentary(assistant); assistant = undefined; }
+          if (assistant) { this.#options.activity.markAssistantAsCommentary(assistant); assistant = undefined; assistantText = ""; }
           if (reasoning) { this.#options.activity.completeReasoning(reasoning); reasoning = undefined; }
           this.#options.addTokenEstimate(stringifyForEstimate(input));
           if (toolName === "agent_plan") {
@@ -413,17 +417,22 @@ export class AgentRunController {
           this.#options.setEngineState(success || event.type === "run.cancelled" ? "READY" : event.type.slice(4).toUpperCase());
           activity.remove();
           if (!success && event.data?.error && event.type !== "run.cancelled") this.#options.appendSystem(String(event.data.error));
-          if (success && !assistant && !mediaHandedOff && this.#options.loadFinalAssistant) {
+          if (success && !mediaHandedOff && this.#options.loadFinalAssistant) {
             try {
               const recovered = await this.#options.loadFinalAssistant(runId);
               if (recovered?.text) {
-                assistant = this.#options.appendAssistant(runId, recovered.createdAt);
-                this.#options.appendAssistantDelta(assistant, recovered.text);
-                this.#options.addTokenEstimate(recovered.text);
+                if (!assistant) {
+                  assistant = this.#options.appendAssistant(runId, recovered.createdAt);
+                  this.#options.appendAssistantDelta(assistant, recovered.text);
+                  this.#options.addTokenEstimate(recovered.text);
+                } else if (assistantText !== recovered.text) {
+                  this.#options.replaceAssistant(assistant, recovered.text);
+                }
+                assistantText = recovered.text;
               }
             } catch {
-              // The existing explicit empty-response notice remains the safe
-              // fallback if transcript reconciliation is temporarily offline.
+              // Keep the streamed answer (or the explicit empty-response notice)
+              // if transcript reconciliation is temporarily offline.
             }
           }
           // A media tool deliberately ends the Pi turn as soon as its durable

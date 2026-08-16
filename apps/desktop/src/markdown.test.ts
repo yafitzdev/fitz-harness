@@ -1,6 +1,18 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from "vitest";
-import { normalizeResourceReference, setMarkdown } from "./markdown.js";
+import { appendMarkdown, normalizeResourceReference, setMarkdown } from "./markdown.js";
+
+describe("Streaming Markdown visibility", () => {
+  it("reveals an assistant body that was hidden while it was empty", () => {
+    const target = document.createElement("div");
+    target.hidden = true;
+
+    appendMarkdown(target, "Visible answer");
+
+    expect(target.hidden).toBe(false);
+    expect(target.textContent).toBe("Visible answer");
+  });
+});
 
 describe("Markdown lists", () => {
   it("keeps blank-separated ordered items in one list so numbering advances", () => {

@@ -1,4 +1,4 @@
-import { appendMarkdown } from "./markdown.js";
+import { appendMarkdown, setMarkdown } from "./markdown.js";
 import { estimateTokens } from "./context-estimate.js";
 import { MessageActions } from "./ui/chat/message-actions.js";
 import { AssistantPerformance } from "./ui/chat/assistant-performance.js";
@@ -367,6 +367,7 @@ const agentRuns = new AgentRunController({
   subscribeAgentEvents: (input, listener) => window.fitz.subscribeAgentEvents(input, listener),
   appendAssistant: (runId, createdAt) => appendMessage("assistant", "", createdAt, runId),
   appendAssistantDelta: (target, delta) => appendMarkdown(target, delta),
+  replaceAssistant: (target, text) => setMarkdown(target, text),
   loadFinalAssistant: async (runId) => {
     const sessionId = projects.currentSessionId;
     if (!sessionId) return undefined;
