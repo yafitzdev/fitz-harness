@@ -3,7 +3,7 @@
 .workspace.new-chat-open .composer-dock { left: max(24px, calc((var(--conversation-viewport) - min(calc(var(--conversation-width) * 1.2), calc(var(--conversation-viewport) - 48px))) / 2)); bottom: clamp(28px, calc(42% - var(--composer-height)), 300px); width: min(calc(var(--conversation-width) * 1.2), calc(var(--conversation-viewport) - 48px)); }
 .workspace.new-chat-open .composer-dock.new-chat-launching { left: var(--conversation-gutter); bottom: 20px; width: var(--conversation-width); }
 .workspace.new-chat-open .new-chat-heading { display: block; }
-.composer-halo { position: absolute; z-index: -1; inset: 0; border-radius: inherit; box-shadow: var(--elevation-prominent), var(--shadow-chat-rest); animation: chat-halo-breathe 7.2s ease-in-out infinite; pointer-events: none; }
+.composer-halo { position: absolute; z-index: 1; inset: 0; border-radius: var(--radius-lg); box-shadow: var(--elevation-prominent), var(--shadow-chat-rest); animation: chat-halo-breathe 7.2s ease-in-out infinite; pointer-events: none; }
 .scroll-to-bottom { position: absolute; z-index: 30; left: 50%; bottom: calc(100% + 12px); width: 40px; height: 40px; display: grid; place-items: center; padding: 0; transform: translateX(-50%); border: 1px solid var(--border); border-radius: 50%; background: var(--bg); color: var(--text); box-shadow: var(--shadow-float); cursor: pointer; }
 .scroll-to-bottom[hidden] { display: none; }
 .scroll-to-bottom:hover { background: var(--grey-200); }

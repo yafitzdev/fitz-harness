@@ -34,8 +34,8 @@ const COMPOSER_TEMPLATE = `
   <button id="scroll-to-bottom" class="scroll-to-bottom" type="button" aria-label="Go to latest message" title="Go to latest message" hidden>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v15M5.5 12.5 12 19l6.5-6.5"></path></svg>
   </button>
+  <div class="composer-halo" aria-hidden="true"></div>
   <form id="composer" class="composer-card">
-    <div class="composer-halo" aria-hidden="true"></div>
     <div class="composer-outline-shine" aria-hidden="true"></div>
     <div id="composer-attachments" class="composer-attachments" hidden></div>
     <div id="new-chat-context" class="new-chat-context" hidden>

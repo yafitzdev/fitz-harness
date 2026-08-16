@@ -758,7 +758,8 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain("--brand-electric-blue: #458ce6");
     expect(styles).toContain("position: relative; isolation: isolate;");
     expect(styles).toContain(".messages { position: absolute; z-index: 2;");
-    expect(composerCss).toContain(".composer-halo { position: absolute; z-index: -1; inset: 0;");
+    expect(composerCss).toContain(".composer-halo { position: absolute; z-index: 1; inset: 0;");
+    expect(composer).toContain('<div class="composer-halo" aria-hidden="true"></div>\n  <form id="composer"');
     expect(composerCss).not.toContain("clip-path: inset(0 -120px -120px -120px)");
     expect(styles).toContain(".agent-plan-panel { position: relative; z-index: 31;");
     expect(composerCss).not.toContain(":has(.popover");

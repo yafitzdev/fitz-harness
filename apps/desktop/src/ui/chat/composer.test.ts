@@ -76,7 +76,8 @@ describe("Composer", () => {
     expect(composer.root.querySelector("#model-menu")).toBeNull();
     expect(overlayHost.root.querySelector("#model-menu")).toBeTruthy();
     expect(composer.root.querySelector<HTMLElement>(".new-chat-heading")!.textContent).toBe("What should we build?");
-    expect(composer.root.querySelector("#composer > .composer-halo")).toBeTruthy();
+    expect(composer.root.querySelector(":scope > .composer-halo")).toBeTruthy();
+    expect(composer.root.querySelector("#composer > .composer-halo")).toBeNull();
     expect(composer.root.querySelector("#composer > .composer-outline-shine")).toBeTruthy();
     expect(composer.root.querySelector<HTMLElement>("#new-chat-context")!.hidden).toBe(true);
   });
