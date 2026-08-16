@@ -1,9 +1,14 @@
+import type { Recipe } from "@fitz/protocol";
+import type { EngineFolderSnapshot, ManagementConfiguration } from "../../management-configuration.js";
 import { CollapsibleSection } from "../layout/collapsible-section.js";
 import { recipeMetadata } from "../recipes/recipe-metadata.js";
 import type { ActionFeedback } from "../primitives/action-status.js";
 import { RecipeConfigurationEditor } from "./recipe-configuration-editor.js";
 
 type Json = Record<string, any>;
+
+/** The typed management fields that the Playbooks page actually consumes. */
+export type PlaybookConfiguration = Pick<ManagementConfiguration, "recipes" | "engineFolders" | "engineRoot">;
 
 export interface PlaybookWorkspaceElements {
   page: HTMLElement;
@@ -48,7 +53,7 @@ export interface PlaybookWorkspaceElements {
 
 export interface PlaybookWorkspaceOptions {
   api: (path: string, method?: string, body?: unknown) => Promise<Json>;
-  reloadConfiguration: () => Promise<Json | undefined>;
+  reloadConfiguration: () => Promise<PlaybookConfiguration | undefined>;
   showStatus: ActionFeedback;
   errorMessage: (error: unknown) => string;
   onRouteChange?: (path: string[] | undefined) => void;
@@ -57,8 +62,8 @@ export interface PlaybookWorkspaceOptions {
 export class PlaybookWorkspaceController {
   readonly elements: PlaybookWorkspaceElements;
   private readonly options: PlaybookWorkspaceOptions;
-  private configuration: Json | undefined;
-  private editingRecipe: Json | undefined;
+  private configuration: PlaybookConfiguration | undefined;
+  private editingRecipe: Recipe | undefined;
   private originalRecipeDisplayName = "";
   private readonly configurationEditor: RecipeConfigurationEditor;
 
@@ -71,7 +76,7 @@ export class PlaybookWorkspaceController {
 
   get editorOpen(): boolean { return !this.elements.editor.hidden; }
 
-  setConfiguration(configuration: Json | undefined): void {
+  setConfiguration(configuration: PlaybookConfiguration | undefined): void {
     this.configuration = configuration;
   }
 
@@ -94,15 +99,15 @@ export class PlaybookWorkspaceController {
     const folders = configuration.engineFolders ?? [];
     const query = this.elements.search.value.trim().toLowerCase();
     const matches = (...values: unknown[]) => !query || values.some((value) => String(value ?? "").toLowerCase().includes(query));
-    const visibleFolders = folders.filter((folder: Json) => {
-      const engineRecipes = recipes.filter((recipe: Json) => samePlaybook(recipe.playbookId, folder.folderName));
-      return matches(folder.folderName, folder.rootPath, folder.engine?.displayName, ...engineRecipes.flatMap((recipe: Json) => [recipe.displayName, recipe.modelId]));
+    const visibleFolders = folders.filter((folder) => {
+      const engineRecipes = recipes.filter((recipe) => samePlaybook(recipe.playbookId, folder.folderName));
+      return matches(folder.folderName, folder.rootPath, folder.engine?.displayName, ...engineRecipes.flatMap((recipe) => [recipe.displayName, recipe.modelId]));
     });
     if (!visibleFolders.length) { this.elements.list.append(emptyState(`No engine folders found in ${configuration.engineRoot ?? "the configured root"}`)); return; }
     for (const folder of visibleFolders) this.elements.list.append(this.renderFolderCard(folder, recipes));
   }
 
-  openEngineEditor(folder?: Json): void {
+  openEngineEditor(folder?: EngineFolderSnapshot): void {
     this.elements.engineForm.reset();
     this.elements.engineFolder.replaceChildren();
     const folders = this.configuration?.engineFolders ?? [];
@@ -112,7 +117,7 @@ export class PlaybookWorkspaceController {
       option.textContent = candidate.folderName;
       this.elements.engineFolder.append(option);
     }
-    const preferred = folder ?? folders.find((candidate: Json) => !candidate.registered) ?? folders[0];
+    const preferred = folder ?? folders.find((candidate) => !candidate.registered) ?? folders[0];
     this.elements.engineEditorTitle.textContent = preferred?.engine ? "Configure engine" : "Set up engine";
     if (preferred) this.elements.engineFolder.value = preferred.folderName;
     else {
@@ -128,7 +133,7 @@ export class PlaybookWorkspaceController {
     (preferred ? this.elements.engineDisplayName : this.elements.engineFolder).focus();
   }
 
-  openRecipeEditor(recipe?: Json, playbook?: Json): void {
+  openRecipeEditor(recipe?: Recipe, playbook?: Json): void {
     this.editingRecipe = recipe;
     this.elements.recipeForm.reset();
     this.originalRecipeDisplayName = String(recipe?.displayName ?? "");
@@ -139,7 +144,7 @@ export class PlaybookWorkspaceController {
     this.elements.recipeEditorDescription.hidden = Boolean(recipe);
     this.elements.recipeRename.hidden = !recipe;
     this.elements.recipeIdentityFields.hidden = Boolean(recipe);
-    const playbookIds = [...new Set((this.configuration?.recipes ?? []).map((item: Json) => item.playbookId))];
+    const playbookIds = [...new Set((this.configuration?.recipes ?? []).map((item) => item.playbookId))];
     const playbookId = recipe?.playbookId ?? playbook?.id ?? (playbookIds.length === 1 ? playbookIds[0] : "");
     this.elements.recipePlaybookId.value = playbookId; this.elements.recipePlaybookId.readOnly = Boolean(playbookId);
     this.elements.recipeId.value = recipe?.id ?? ""; this.elements.recipeId.readOnly = Boolean(recipe);
@@ -164,19 +169,19 @@ export class PlaybookWorkspaceController {
   openRoute(path: readonly string[]): boolean {
     const [kind, playbookId, recipeId] = path;
     if (kind === "engine" && playbookId) {
-      const folder = (this.configuration?.engineFolders ?? []).find((candidate: Json) => candidate.folderName === playbookId);
+      const folder = (this.configuration?.engineFolders ?? []).find((candidate) => candidate.folderName === playbookId);
       if (!folder) return false;
       this.openEngineEditor(folder);
       return true;
     }
     if (kind !== "recipe" || !playbookId) return false;
     const recipe = recipeId
-      ? (this.configuration?.recipes ?? []).find((candidate: Json) => candidate.id === recipeId)
+      ? (this.configuration?.recipes ?? []).find((candidate) => candidate.id === recipeId)
       : undefined;
     if (recipeId && !recipe) return false;
-    const folder = (this.configuration?.engineFolders ?? []).find((candidate: Json) => samePlaybook(candidate.folderName, playbookId));
+    const folder = (this.configuration?.engineFolders ?? []).find((candidate) => samePlaybook(candidate.folderName, playbookId));
     if (!recipe && !folder?.engine) return false;
-    this.openRecipeEditor(recipe, folder ? { ...folder.engine, folderName: folder.folderName, rootPath: folder.rootPath } : undefined);
+    this.openRecipeEditor(recipe, folder ? editorPlaybook(folder) : undefined);
     return true;
   }
 
@@ -207,10 +212,10 @@ export class PlaybookWorkspaceController {
     for (const button of this.elements.closeEditorButtons) button.addEventListener("click", () => this.closeEditor());
   }
 
-  private renderFolderCard(folder: Json, recipes: Json[]): HTMLElement {
+  private renderFolderCard(folder: EngineFolderSnapshot, recipes: Recipe[]): HTMLElement {
     const engine = folder.engine;
     const playbookId = folder.folderName;
-    const playbookRecipes = recipes.filter((recipe: Json) => samePlaybook(recipe.playbookId, playbookId));
+    const playbookRecipes = recipes.filter((recipe) => samePlaybook(recipe.playbookId, playbookId));
     const actions: HTMLButtonElement[] = [];
     const configure = document.createElement("button");
     configure.type = "button";
@@ -223,7 +228,7 @@ export class PlaybookWorkspaceController {
       addRecipe.type = "button";
       addRecipe.className = "quiet-button compact-button";
       addRecipe.textContent = "Add recipe";
-      addRecipe.addEventListener("click", () => this.openRecipeEditor(undefined, { ...engine, folderName: folder.folderName, rootPath: folder.rootPath }));
+      addRecipe.addEventListener("click", () => this.openRecipeEditor(undefined, editorPlaybook(folder)));
       actions.push(addRecipe);
     }
     const section = CollapsibleSection.create({
@@ -275,7 +280,7 @@ export class PlaybookWorkspaceController {
     this.elements.recipeRename.focus();
   }
 
-  private renderRecipeCard(recipe: Json): HTMLElement {
+  private renderRecipeCard(recipe: Recipe): HTMLElement {
     const recipeCard = document.createElement("article");
     recipeCard.className = "recipe-card";
     const recipeDetails = document.createElement("button");
@@ -350,7 +355,7 @@ export class PlaybookWorkspaceController {
 
   private applyEngineFolderChoice(): void {
     const folderName = this.elements.engineFolder.value;
-    const folder = (this.configuration?.engineFolders ?? []).find((candidate: Json) => candidate.folderName === folderName);
+    const folder = (this.configuration?.engineFolders ?? []).find((candidate) => candidate.folderName === folderName);
     const engine = folder?.engine;
     this.elements.engineDisplayName.value = engine?.displayName ?? folderName;
     this.elements.engineConnection.value = engine?.connectionMode ?? "managed";
@@ -388,4 +393,8 @@ function setFormBusy(form: HTMLFormElement, busy: boolean): void {
 
 function samePlaybook(left: unknown, right: unknown): boolean {
   return String(left ?? "").localeCompare(String(right ?? ""), undefined, { sensitivity: "accent" }) === 0;
+}
+
+function editorPlaybook(folder: EngineFolderSnapshot): Json {
+  return { ...(folder.engine ?? {}), folderName: folder.folderName, rootPath: folder.rootPath };
 }
