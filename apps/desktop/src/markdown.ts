@@ -217,12 +217,9 @@ function resourceLink(label: string, reference: string): HTMLAnchorElement {
   const cleaned = normalizeResourceReference(reference);
   const link = document.createElement("a"); link.href = "#"; link.className = "resource-link"; link.textContent = label; link.dataset.resource = cleaned;
   link.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); window.dispatchEvent(new CustomEvent("fitz:open-resource", { detail: { reference: cleaned } })); });
-  // Files register in the artifact repository as soon as they render, so the
-  // repo grows with every artifact the agent produces — no click required.
-  // Remote URLs are left out; only local artifacts belong in the repository.
-  if (!/^(?:https?|file):\/\//i.test(cleaned)) {
-    window.dispatchEvent(new CustomEvent("fitz:resource-appeared", { detail: { reference: cleaned } }));
-  }
+  // A link is only an Inspector affordance. Repository membership is owned by
+  // explicit generated-file and user-upload flows, never by rendering or
+  // opening arbitrary chat references.
   return link;
 }
 

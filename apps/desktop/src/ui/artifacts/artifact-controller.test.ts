@@ -92,4 +92,13 @@ describe("ArtifactController", () => {
     await controller.uploadSelected();
     expect(calls.stageFile.mock.calls.map(([file]) => file.name)).toEqual(["one.txt", "two.pdf"]);
   });
+
+  it("adds a newly uploaded user file to the Inspector repository immediately", async () => {
+    const artifact = { id: "new", name: "dropped.txt", sha256: "abc", byteSize: 5, kind: "text" };
+    const { controller, calls } = setup({ sessionId: "session-1", api: async () => ({ data: artifact }) });
+
+    await controller.uploadData("session-1", { name: "dropped.txt", mimeType: "text/plain", contentBase64: "aGVsbG8=" });
+
+    expect(calls.setSessionArtifacts).toHaveBeenLastCalledWith([artifact]);
+  });
 });

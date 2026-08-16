@@ -288,6 +288,7 @@ const activityTimeline = new ActivityTimeline({
 const conversationTranscript = new ConversationTranscript({
   messages,
   activity: activityTimeline,
+  registerGeneratedFile: (path, action) => inspectorPanel.registerGeneratedFile(path, action),
   appendMessage,
   appendCommentary,
   rebuildHistory: (history) => composer.rebuildHistory(history),
@@ -384,6 +385,7 @@ const agentRuns = new AgentRunController({
   },
   appendSystem: (message) => { appendMessage("system", message); },
   appendChangeSummary: (files) => appendChangeSummary(files),
+  registerGeneratedFile: (path, action) => inspectorPanel.registerGeneratedFile(path, action),
   addTokenEstimate: (text) => { conversationContext.add(text); conversationContext.refresh(); },
   recalibrateEstimate: (tokens) => conversationContext.recalibrate(tokens),
   setStatus,
@@ -850,10 +852,6 @@ window.addEventListener("fitz:open-resource", (event) => {
   if (!reference) return;
   if (/^https?:\/\//i.test(reference)) { inspectorPanel.open(); void inAppBrowser.open(reference); }
   else void inspectorPanel.inspect(reference);
-});
-window.addEventListener("fitz:resource-appeared", (event) => {
-  const reference = (event as CustomEvent<{ reference?: string }>).detail?.reference;
-  if (reference) inspectorPanel.registerReference(reference);
 });
 element("context-add").addEventListener("click", () => artifactController.choose());
 document.addEventListener("click", closePopovers);

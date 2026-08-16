@@ -64,7 +64,7 @@ describe("InspectorPanel", () => {
     expect(view.tabBar.hidden).toBe(true);
     expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(0);
     // The repository view renders once into the panel content.
-    expect(view.element.querySelector(".inspector-empty")?.textContent).toContain("land here automatically");
+    expect(view.element.querySelector(".inspector-empty")?.textContent).toContain("Agent-generated files and user uploads appear here");
     expect(host.querySelectorAll(".inspector-panel, .inspector-resizer")).toHaveLength(2);
   });
 
@@ -210,13 +210,14 @@ describe("InspectorPanel", () => {
     expect(view.element.hidden).toBe(true);
     expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(0);
 
-    // Reopening lands on the artifact repository home view — no stale tab.
+    // Reopening lands on the artifact repository home view — no stale tab or
+    // inspected-file entry.
     view.open();
     expect(view.isOpen).toBe(true);
     expect(view.tabBar.querySelectorAll(".inspector-tab")).toHaveLength(0);
     expect(view.tabBar.querySelector(".inspector-tab.active")).toBeNull();
     const repo = view.element.querySelector<HTMLElement>(".inspector-tabpanel:not([hidden])")!;
-    expect(repo.querySelector(".inspector-repository-item")?.textContent).toContain("notes.txt");
+    expect(repo.querySelector(".inspector-repository-item")).toBeNull();
     vi.unstubAllGlobals();
   });
 
@@ -229,32 +230,35 @@ describe("InspectorPanel", () => {
       previewResource: vi.fn(async (input: { reference: string }) => ({ kind: "text", name: input.reference.split(/[\\/]/).pop() ?? "file", path: `/project/${input.reference}`, content: "x", size: 1 })),
     });
 
-    // Chat A: a streamed reference and an inspected file land in A's repo.
+    // Chat A: generated files land in A's repo; an inspected chat file does not.
     view.setChat("chat-a");
-    view.registerReference("a.txt");
+    view.registerGeneratedFile("a.txt", "created");
+    view.setSessionArtifacts([{ id: "upload-a", name: "upload-a.txt", sha256: "a", byteSize: 1, kind: "text" }]);
     await view.inspect("b.txt");
     const storedA = JSON.parse(localStorage.getItem("fitz-inspector-repository:chat-a")!) as Array<{ path: string }>;
-    expect(storedA.map((entry) => entry.path)).toEqual(["/project/b.txt", "a.txt"]);
+    expect(storedA.map((entry) => entry.path)).toEqual(["a.txt"]);
     expect(view.element.querySelectorAll(".inspector-repository-item")).toHaveLength(2);
 
     // Switching chats re-scopes: chat B starts with a fresh, empty repo.
     view.reset();
     view.setChat("chat-b");
     expect(view.element.querySelectorAll(".inspector-repository-item")).toHaveLength(0);
-    expect(view.element.querySelector(".inspector-empty")?.textContent).toContain("land here automatically");
+    expect(view.element.querySelector(".inspector-empty")?.textContent).toContain("Agent-generated files and user uploads appear here");
 
     // B's own files persist under B's key, and A's come back on reopen.
-    view.registerReference("c.txt");
+    view.registerGeneratedFile("c.txt", "created");
     const storedB = JSON.parse(localStorage.getItem("fitz-inspector-repository:chat-b")!) as Array<{ path: string }>;
     expect(storedB.map((entry) => entry.path)).toEqual(["c.txt"]);
     expect(localStorage.getItem("fitz-inspector-repository:chat-a")).not.toBeNull();
     view.setChat("chat-a");
-    expect(view.element.querySelectorAll(".inspector-repository-item")).toHaveLength(2);
+    expect(view.element.querySelectorAll(".inspector-repository-item")).toHaveLength(1);
+    expect(view.element.textContent).toContain("a.txt");
+    expect(view.element.textContent).not.toContain("upload-a.txt");
 
     // Leaving the conversation (no session yet) scopes to a fresh draft repo.
     view.setChat(undefined);
     expect(view.element.querySelectorAll(".inspector-repository-item")).toHaveLength(0);
-    expect(view.element.querySelector(".inspector-empty")?.textContent).toContain("land here automatically");
+    expect(view.element.querySelector(".inspector-empty")?.textContent).toContain("Agent-generated files and user uploads appear here");
     vi.unstubAllGlobals();
   });
 
@@ -363,7 +367,7 @@ describe("InspectorPanel", () => {
     vi.unstubAllGlobals();
   });
 
-  it("grows the artifact repository with inspected files and reopens them from the repository view", async () => {
+  it("keeps inspected chat files out of the artifact repository", async () => {
     const host = mount();
     const view = new InspectorPanel(options(host, {
       getProjectRoot: () => "/project",
@@ -375,12 +379,8 @@ describe("InspectorPanel", () => {
     view.showRepository();
 
     const repo = view.element.querySelector<HTMLElement>(".inspector-tabpanel:not([hidden])")!;
-    const row = repo.querySelector<HTMLButtonElement>(".inspector-repository-item");
-    expect(row).not.toBeNull();
-    expect(row?.textContent).toContain("a.txt");
-
-    row!.click();
-    expect(previewResource).toHaveBeenLastCalledWith({ projectRoot: "/project", reference: "/project/a.txt", searchRoots: [] });
+    expect(repo.querySelector<HTMLButtonElement>(".inspector-repository-item")).toBeNull();
+    expect(previewResource).toHaveBeenCalledWith({ projectRoot: "/project", reference: "a.txt", searchRoots: [] });
     vi.unstubAllGlobals();
   });
 
@@ -486,22 +486,21 @@ describe("InspectorPanel", () => {
     // Without a heading, the file tab's tooltip carries the project-relative path.
     const fileTab = [...view.tabBar.querySelectorAll<HTMLElement>(".inspector-tab")].find((tab) => tab.textContent?.includes("app.ts"));
     expect(fileTab?.getAttribute("title")).toBe("src/app.ts");
-    // The repository row meta is relative too (the list itself stays hidden).
-    const row = view.element.querySelector<HTMLButtonElement>(".inspector-repository-item")!;
-    expect(row.querySelector("small")?.textContent).toBe("src/app.ts");
-    expect(row.querySelector("small")?.textContent).not.toContain("/project");
+    // Inspection does not create a repository row; the tab tooltip still
+    // carries the resolved project-relative location.
+    expect(view.element.querySelector(".inspector-repository-item")).toBeNull();
     vi.unstubAllGlobals();
   });
 
-  it("registers files in the repository as soon as they appear in the conversation", () => {
+  it("registers only files explicitly generated by the agent", () => {
     const host = mount();
     const view = panel(host);
 
     // A streaming partial lands first, then the complete path supersedes it.
-    view.registerReference("src/app.t");
-    view.registerReference("src/app.ts");
+    view.registerGeneratedFile("src/app.t", "created");
+    view.registerGeneratedFile("src/app.ts", "created");
     // Re-renders while streaming must not add duplicates.
-    view.registerReference("src/app.ts");
+    view.registerGeneratedFile("src/app.ts", "edited");
 
     const rows = view.element.querySelectorAll<HTMLButtonElement>(".inspector-repository-item");
     expect(rows).toHaveLength(1);
@@ -510,7 +509,38 @@ describe("InspectorPanel", () => {
     expect(view.tabBar.querySelector(".inspector-tab.active")).toBeNull();
   });
 
-  it("supersedes a chat reference with the resolved path once the file is inspected", async () => {
+  it("coalesces generated path aliases while retaining the specific path", () => {
+    const host = mount();
+    const view = panel(host);
+
+    view.registerGeneratedFile("sqlite.ts", "created");
+    view.registerGeneratedFile("packages/sqlite.ts", "edited");
+
+    const rows = view.element.querySelectorAll<HTMLButtonElement>(".inspector-repository-item");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.querySelector("small")?.textContent).toBe("packages/sqlite.ts");
+    expect(JSON.parse(localStorage.getItem("fitz-inspector-repository")!)).toEqual([
+      expect.objectContaining({ path: "packages/sqlite.ts", origin: "generated" }),
+    ]);
+  });
+
+  it("deduplicates uploaded artifacts by checksum in the repository", () => {
+    const host = mount();
+    const view = panel(host);
+
+    view.setSessionArtifacts([
+      { id: "first", name: "copy-a.txt", sha256: "ABC", byteSize: 3, kind: "text" },
+      { id: "second", name: "copy-b.txt", sha256: "abc", byteSize: 3, kind: "text" },
+      { id: "third", name: "other.txt", sha256: "def", byteSize: 5, kind: "text" },
+    ]);
+
+    const rows = view.element.querySelectorAll<HTMLButtonElement>(".inspector-repository-item");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.textContent).toContain("copy-a.txt");
+    expect(rows[1]?.textContent).toContain("other.txt");
+  });
+
+  it("does not convert a generated entry into an inspected-file entry", async () => {
     const host = mount();
     const view = new InspectorPanel(options(host, {
       getProjectRoot: () => "/project",
@@ -519,15 +549,15 @@ describe("InspectorPanel", () => {
       previewResource: vi.fn(async () => ({ kind: "text", name: "app.ts", path: "/project/src/app.ts", content: "x", size: 1 })),
     });
 
-    view.registerReference("src/app.ts");
+    view.registerGeneratedFile("src/app.ts", "created");
     await view.inspect("src/app.ts");
-    // A later mention of the same file must not re-add the relative reference.
-    view.registerReference("src/app.ts");
+    // A later mention and inspection must not mutate repository membership.
+    view.registerGeneratedFile("src/app.ts", "edited");
 
     const rows = view.element.querySelectorAll<HTMLButtonElement>(".inspector-repository-item");
     expect(rows).toHaveLength(1);
     const stored = JSON.parse(localStorage.getItem("fitz-inspector-repository")!) as Array<{ path: string }>;
-    expect(stored.map((entry) => entry.path)).toEqual(["/project/src/app.ts"]);
+    expect(stored.map((entry) => entry.path)).toEqual(["src/app.ts"]);
     vi.unstubAllGlobals();
   });
 
@@ -597,18 +627,18 @@ describe("InspectorPanel", () => {
     vi.unstubAllGlobals();
   });
 
-  it("cleans stray delimiters in chat references and collapses absolute paths", () => {
+  it("normalizes generated paths and collapses absolute paths", () => {
     const host = mount();
     const view = new InspectorPanel(options(host, {
       getProjectRoot: () => "/project",
     }));
 
     // A streamed fragment arrives parenthesized mid-sentence.
-    view.registerReference("(llama.cpp/tests/test-unified-mixed-replay.cpp");
+    view.registerGeneratedFile("(llama.cpp/tests/test-unified-mixed-replay.cpp", "created");
     // An absolute path outside the project root still shows its bare name.
-    view.registerReference("C:\\Users\\me\\Documents\\notes.txt");
+    view.registerGeneratedFile("C:\\Users\\me\\Documents\\notes.txt", "created");
     // A reference under the root renders relative.
-    view.registerReference("/project/src/app.ts");
+    view.registerGeneratedFile("/project/src/app.ts", "created");
 
     const stored = JSON.parse(localStorage.getItem("fitz-inspector-repository")!) as Array<{ path: string }>;
     expect(stored.map((entry) => entry.path)).toEqual(["/project/src/app.ts", "C:\\Users\\me\\Documents\\notes.txt", "llama.cpp/tests/test-unified-mixed-replay.cpp"]);
@@ -624,13 +654,13 @@ describe("InspectorPanel", () => {
       getProjectRoot: () => "/project",
     }));
 
-    // Newest first: each registered reference tops the list.
-    view.registerReference("manual.pdf");
-    view.registerReference("photo.png");
-    view.registerReference("src/app.ts");
-    view.registerReference("README.md");
-    view.registerReference("data.csv");
-    view.registerReference("notes");
+    // Newest first: each generated file tops the list.
+    view.registerGeneratedFile("manual.pdf", "created");
+    view.registerGeneratedFile("photo.png", "created");
+    view.registerGeneratedFile("src/app.ts", "created");
+    view.registerGeneratedFile("README.md", "created");
+    view.registerGeneratedFile("data.csv", "created");
+    view.registerGeneratedFile("notes", "created");
 
     const rows = view.element.querySelectorAll<HTMLButtonElement>(".inspector-repository-item");
     const types = [...rows].map((row) => row.querySelector("svg")?.getAttribute("data-file-type"));
@@ -660,7 +690,9 @@ describe("InspectorPanel", () => {
     localStorage.setItem("fitz-inspector-repository", JSON.stringify([
       { path: "(llama.cpp/tests/test-unified-mixed-replay.cpp", name: "test-unified-mixed-replay.cpp", addedAt: 2 },
       { path: "llama.cpp/tests/test-unified-mixed-replay.cpp", name: "test-unified-mixed-replay.cpp", addedAt: 1 },
-      { path: "/project/a.txt", name: "a.txt", addedAt: 3 },
+      { path: "/project/a.txt", name: "a.txt", addedAt: 3, origin: "resolved" },
+      { path: "packages/sqlite.ts", name: "sqlite.ts", addedAt: 4, origin: "generated" },
+      { path: "sqlite.ts", name: "sqlite.ts", addedAt: 5, origin: "generated" },
     ]));
     const host = mount();
     const view = new InspectorPanel(options(host, {
@@ -670,9 +702,9 @@ describe("InspectorPanel", () => {
     const rows = view.element.querySelectorAll<HTMLButtonElement>(".inspector-repository-item");
     expect(rows).toHaveLength(1);
     const metas = [...rows].map((row) => row.querySelector("small")?.textContent);
-    expect(metas).toEqual(["a.txt"]);
+    expect(metas).toEqual(["packages/sqlite.ts"]);
     expect(JSON.parse(localStorage.getItem("fitz-inspector-repository")!)).toEqual([
-      { path: "/project/a.txt", name: "a.txt", addedAt: 3 },
+      { path: "packages/sqlite.ts", name: "sqlite.ts", addedAt: 5, origin: "generated" },
     ]);
   });
 });

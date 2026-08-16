@@ -17,6 +17,7 @@ export interface TranscriptActivity {
 export interface ConversationTranscriptOptions {
   messages: HTMLElement;
   activity: TranscriptActivity;
+  registerGeneratedFile?: (path: string, action: "edited" | "created") => void;
   appendMessage: (role: string, text: string, createdAt?: string, runId?: string, attachments?: readonly MessageAttachment[]) => HTMLElement;
   appendCommentary: (text: string, createdAt?: string) => HTMLElement;
   rebuildHistory: (messages: string[]) => void;
@@ -132,6 +133,10 @@ export class ConversationTranscript {
       const input = existing?.input;
       const row = existing?.row ?? this.#options.activity.appendTool(toolName, undefined, toolCallId, true, entry.createdAt);
       this.#options.activity.completeTool(row, toolName, input, entry.content?.result, Boolean(entry.content?.isError), entry.createdAt);
+      const generatedPath = input && typeof input === "object" ? (input as Record<string, unknown>).path : undefined;
+      if (!entry.content?.isError && (toolName === "write" || toolName === "edit") && typeof generatedPath === "string") {
+        this.#options.registerGeneratedFile?.(generatedPath, toolName === "write" ? "created" : "edited");
+      }
       return;
     }
     if (entry.kind === "reasoning") {

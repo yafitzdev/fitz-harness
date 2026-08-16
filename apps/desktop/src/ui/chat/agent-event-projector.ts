@@ -30,6 +30,7 @@ export interface AgentEventProjectorOptions {
   loadFinalAssistant?: (runId: string) => Promise<{ text: string; createdAt?: string } | undefined>;
   appendSystem: (message: string) => void;
   appendChangeSummary: (files: Array<{ path: string; action: "edited" | "created" }>) => void;
+  registerGeneratedFile?: (path: string, action: "edited" | "created") => void;
   addTokenEstimate: (text: string) => void;
   setStatus: (label: string, state: string) => void;
   setEngineState: (state: string) => void;
@@ -219,7 +220,9 @@ export class AgentEventProjector {
     if (existing && (existing.toolName === "write" || existing.toolName === "edit") && !Boolean(data?.isError)) {
       const input = existing.input;
       if (input && typeof input === "object" && "path" in input && typeof input.path === "string") {
-        this.#changedFiles.set(input.path, existing.toolName === "write" ? "created" : "edited");
+        const action = existing.toolName === "write" ? "created" : "edited";
+        this.#changedFiles.set(input.path, action);
+        this.#options.registerGeneratedFile?.(input.path, action);
       }
     }
     this.#options.setStatus("Working", "active");

@@ -4,18 +4,20 @@ import { svgIcon, textBlock } from "../primitives/dom.js";
 
 type Json = Record<string, any>;
 
-/** A file the user inspected that is kept in the persistent repository. */
+/** A file created or modified by the agent that is kept in the repository. */
 export interface RepositoryFile {
   path: string;
   name: string;
   addedAt: number;
-  /** Relative references are transcript-derived and may be replayed; a
-   * resolved entry is backed by an absolute path that the Inspector opened. */
-  origin?: "reference" | "resolved";
+  origin: "generated";
+}
+
+function isAbsolutePath(value: string): boolean {
+  return /^(?:[A-Za-z]:[\\/]|[\\/])/.test(value);
 }
 
 export interface ArtifactRepositoryOptions {
-  /** localStorage key that persists inspected files (default "fitz-inspector-repository"). */
+  /** localStorage key that persists generated files (default "fitz-inspector-repository"). */
   storageKey?: string;
   /** Opens a persisted file in the Inspector (receives the absolute path). */
   onOpenFile: (path: string) => void;
@@ -25,7 +27,7 @@ export interface ArtifactRepositoryOptions {
   getProjectRoot?: () => string;
 }
 
-/** Keeps at most this many inspected files in the persisted repository. */
+/** Keeps at most this many generated files in the persisted repository. */
 const MAX_FILES = 200;
 
 /** A repository-row icon: raw SVG markup plus the key stamped on the element for tests and styling. */
@@ -49,11 +51,10 @@ const FILE_TYPE_ICONS = {
 } as const satisfies Record<string, RepositoryIcon>;
 
 /**
- * The artifact repository — the Inspector's defacto base tab. It grows with
- * every file the agent produces (registered as soon as it appears in the
- * conversation, persisted by path) and with the current session's uploaded
- * artifacts, and renders as one list where every entry reopens in the
- * Inspector.
+ * The artifact repository — the Inspector's de facto base tab. It contains
+ * only files created/modified by the agent and files uploaded by the user.
+ * Arbitrary links in chat remain openable in the Inspector, but do not become
+ * repository entries merely because they were mentioned or inspected.
  */
 export class ArtifactRepository {
   readonly #options: ArtifactRepositoryOptions;
@@ -77,61 +78,56 @@ export class ArtifactRepository {
     if (storageKey === this.#storageKey) return;
     this.#storageKey = storageKey;
     this.#files = [];
+    // Uploads are session-scoped too. Clear them synchronously so a chat
+    // switch cannot briefly render the previous chat's attachments while the
+    // host fetch for the new session is still in flight.
+    this.#sessionArtifacts = [];
     this.#load();
     this.#render();
   }
 
-  /** The persisted inspected files, newest first. */
+  /** The persisted agent-generated files, newest first. */
   files(): RepositoryFile[] { return this.#files; }
 
   /**
-   * Adds (or refreshes) an inspected file and persists the repository. The
-   * optional reference is the chat reference that opened it — any entry that
-   * was registered from that same reference on appearance is superseded by
-   * the resolved absolute path so the file never appears twice.
+   * Adds (or refreshes) a file created or modified by the agent. References
+   * that identify the same file through a longer/shorter path are coalesced;
+   * the most specific path is retained for reopening and display.
    */
-  registerFile(path: string, name: string, reference?: string): void {
-    if (reference && reference !== path) {
-      this.#files = this.#files.filter((file) => file.path !== reference && !ArtifactRepository.#supersedes(file.path, reference));
-    }
-    const existing = this.#files.find((file) => file.path === path);
-    if (existing) {
-      existing.name = name || existing.name;
-      existing.addedAt = Date.now();
-      existing.origin = "resolved";
-    } else {
-      this.#files.unshift({ path, name: name || path, addedAt: Date.now(), origin: "resolved" });
-    }
-    if (this.#files.length > MAX_FILES) this.#files.length = MAX_FILES;
-    this.#save();
-    this.#render();
-  }
-
-  /**
-   * Registers a file the moment it appears in the conversation (no click
-   * needed). References are stored as given and reopened through the normal
-   * resolve path. Streaming partials like `src/app.t` are superseded by the
-   * complete `src/app.ts` when it renders, and references that already sit in
-   * the repository (exact path, or resolved to the same relative path) are
-   * left untouched.
-   */
-  registerReference(reference: string): void {
-    if (!reference || /^(?:https?|file):\/\//i.test(reference)) return;
-    reference = normalizeResourceReference(reference);
+  registerGeneratedFile(path: string, action: "edited" | "created" = "edited"): void {
+    if (!path || /^(?:https?|file):\/\//i.test(path)) return;
+    const reference = normalizeResourceReference(path);
     if (!reference) return;
     const root = this.#options.getProjectRoot?.() ?? "";
-    const alreadyPresent = this.#files.some((file) => file.path === reference || (root && projectRelativePath(file.path, root) === reference));
-    if (alreadyPresent) return;
-    this.#files = this.#files.filter((file) => !ArtifactRepository.#supersedes(file.path, reference));
-    this.#files.unshift({ path: reference, name: reference.split(/[\\/]/).pop() || reference, addedAt: Date.now(), origin: "reference" });
+    const now = Date.now();
+    const duplicate = this.#files.find((file) => ArtifactRepository.#sameFileReference(file.path, reference, root));
+    if (duplicate) {
+      duplicate.path = ArtifactRepository.#preferredPath(duplicate.path, reference, root);
+      duplicate.name = duplicate.path.split(/[\\/]/).pop() || duplicate.name;
+      duplicate.addedAt = now;
+      duplicate.origin = "generated";
+    } else {
+      this.#files.unshift({ path: reference, name: reference.split(/[\\/]/).pop() || reference, addedAt: now, origin: "generated" });
+    }
     if (this.#files.length > MAX_FILES) this.#files.length = MAX_FILES;
     this.#save();
     this.#render();
   }
 
-  /** Replaces the current session's uploaded artifacts. */
+  /** Replaces the current session's user-uploaded artifacts, deduplicated by content. */
   setSessionArtifacts(artifacts: Json[]): void {
-    this.#sessionArtifacts = artifacts;
+    const seen = new Set<string>();
+    this.#sessionArtifacts = artifacts.filter((artifact) => {
+      const id = String(artifact.id ?? "");
+      const sha256 = String(artifact.sha256 ?? "").toLowerCase();
+      // Malformed/incomplete records are still renderable; without an id or
+      // checksum they cannot be safely compared to another record.
+      if (!id && !sha256) return true;
+      const key = sha256 ? `sha256:${sha256}` : `id:${id}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
     this.#render();
   }
 
@@ -147,33 +143,37 @@ export class ArtifactRepository {
       if (!raw) return;
       const parsed = JSON.parse(raw) as unknown;
       if (!Array.isArray(parsed)) return;
-      // The repository is a derived cache. Relative chat references are
-      // replayed from the transcript on session load, while absolute paths
-      // represent files that were actually resolved by the Inspector. Drop
-      // legacy relative-only entries here: older builds persisted ambiguous
-      // prose such as `NInfer/llama.cpp` as if it were a file, and those rows
-      // cannot be distinguished from valid references without resolving them.
-      // Keeping resolved absolute paths preserves inspected files; replay
-      // repopulates valid relative references for the active chat. New
-      // reference records carry an origin marker so they survive a chat
-      // switch; legacy relative records without one are discarded.
-      const seen = new Set<string>();
+      // This is a derived cache. Older builds persisted every link that
+      // appeared in chat and every file the user inspected. Those entries are
+      // intentionally discarded during the semantic migration: only entries
+      // explicitly marked as agent-generated belong here now. User uploads
+      // are durable host artifacts and are loaded separately via
+      // setSessionArtifacts().
       let changed = false;
-      this.#files = parsed
+      const loaded = parsed
         .filter((entry): entry is RepositoryFile => typeof entry === "object" && entry !== null && typeof (entry as RepositoryFile).path === "string")
         .map((entry) => ({
           path: normalizeResourceReference(entry.path),
           name: typeof entry.name === "string" ? entry.name : entry.path,
           addedAt: typeof entry.addedAt === "number" ? entry.addedAt : 0,
-          ...(entry.origin === "reference" || entry.origin === "resolved" ? { origin: entry.origin } : {}),
+          ...(entry.origin === "generated" ? { origin: "generated" as const } : {}),
         }))
         .sort((left, right) => right.addedAt - left.addedAt)
-        .filter((entry) => {
-          if (!entry.path || seen.has(entry.path)) { changed = true; return false; }
-          if (!isAbsolutePath(entry.path) && entry.origin !== "reference") { changed = true; return false; }
-          seen.add(entry.path);
+        .filter((entry): entry is RepositoryFile => {
+          if (!entry.path || entry.origin !== "generated") { changed = true; return false; }
           return true;
         });
+      this.#files = [];
+      const root = this.#options.getProjectRoot?.() ?? "";
+      for (const entry of loaded) {
+        const duplicate = this.#files.find((file) => ArtifactRepository.#sameFileReference(file.path, entry.path, root));
+        if (duplicate) {
+          changed = true;
+          duplicate.path = ArtifactRepository.#preferredPath(duplicate.path, entry.path, root);
+          duplicate.name = duplicate.path.split(/[\\/]/).pop() || duplicate.name;
+        } else this.#files.push(entry);
+      }
+      if (this.#files.length !== loaded.length) changed = true;
       if (changed) this.#save();
     } catch {
       this.#files = [];
@@ -192,7 +192,7 @@ export class ArtifactRepository {
     if (!this.#container) return;
     this.#container.replaceChildren();
     if (this.#sessionArtifacts.length === 0 && this.#files.length === 0) {
-      this.#container.append(textBlock("inspector-empty", "Files that appear in the conversation land here automatically."));
+      this.#container.append(textBlock("inspector-empty", "Agent-generated files and user uploads appear here."));
       return;
     }
     const list = document.createElement("div");
@@ -219,7 +219,7 @@ export class ArtifactRepository {
       const relative = projectRelativePath(path, root);
       if (relative !== path) return relative;
     }
-    // Already relative (e.g. a chat reference outside the active root): keep.
+    // Already relative (for example a generated path outside the active root): keep.
     if (!/^(?:[A-Za-z]:[\\/]|[\\/])/.test(path)) return path;
     return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
   }
@@ -286,8 +286,38 @@ export class ArtifactRepository {
     };
     return dirOf(left) === dirOf(right) && stemOf(left) === stemOf(right);
   }
-}
 
-function isAbsolutePath(value: string): boolean {
-  return /^(?:[A-Za-z]:[\\/]|[\\/])/.test(value);
+  /** Treat a concise path as an alias only when one normalized path is a
+   * suffix of the other (or is an in-progress extension of it). This keeps
+   * `packages/sqlite.ts` and `sqlite.ts` together without merging unrelated
+   * files that merely share a basename in different directories. */
+  static #sameFileReference(left: string, right: string, root: string): boolean {
+    const normalizedLeft = ArtifactRepository.#relativeComparable(left, root);
+    const normalizedRight = ArtifactRepository.#relativeComparable(right, root);
+    if (normalizedLeft === normalizedRight) return true;
+    if (ArtifactRepository.#supersedes(normalizedLeft, normalizedRight) || ArtifactRepository.#supersedes(normalizedRight, normalizedLeft)) return true;
+    const leftSegments = normalizedLeft.split("/").filter(Boolean);
+    const rightSegments = normalizedRight.split("/").filter(Boolean);
+    if (!leftSegments.length || !rightSegments.length || leftSegments.at(-1) !== rightSegments.at(-1)) return false;
+    const suffix = (full: string[], short: string[]) => full.length >= short.length && full.slice(-short.length).every((segment, index) => segment === short[index]);
+    return suffix(leftSegments, rightSegments) || suffix(rightSegments, leftSegments);
+  }
+
+  static #relativeComparable(value: string, root: string): string {
+    const normalize = (input: string) => input.replaceAll("\\", "/").replace(/^\.\//, "").replace(/^\/+|\/+$/g, "").toLowerCase();
+    if (root && isAbsolutePath(value) && isAbsolutePath(root)) {
+      const normalizedValue = normalize(value);
+      const normalizedRoot = normalize(root);
+      if (normalizedValue === normalizedRoot || normalizedValue.startsWith(`${normalizedRoot}/`)) return normalizedValue.slice(normalizedRoot.length).replace(/^\/+/, "");
+    }
+    return normalize(value);
+  }
+
+  static #preferredPath(left: string, right: string, root: string): string {
+    if (isAbsolutePath(right) && !isAbsolutePath(left)) return right;
+    if (isAbsolutePath(left) && !isAbsolutePath(right)) return left;
+    const leftLength = ArtifactRepository.#relativeComparable(left, root).split("/").length;
+    const rightLength = ArtifactRepository.#relativeComparable(right, root).split("/").length;
+    return rightLength > leftLength ? right : left;
+  }
 }

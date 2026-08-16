@@ -217,8 +217,7 @@ export class InspectorPanel {
   }
 
   /**
-   * Opens (or focuses) a tab for a local file or URL and previews it. Local
-   * files are registered in the artifact repository once they resolve.
+   * Opens (or focuses) a tab for a local file or URL and previews it.
    */
   inspect(reference: string): Promise<void> {
     const id = /^https?:\/\//i.test(reference) ? `url:${reference}` : `file:${reference}`;
@@ -267,14 +266,9 @@ export class InspectorPanel {
     }
   }
 
-  /**
-   * Registers a file in the artifact repository as soon as it appears in the
-   * conversation — no click needed. References are resolved lazily when the
-   * entry is opened, and are superseded by the resolved absolute path once
-   * the user actually inspects the file.
-   */
-  registerReference(reference: string): void {
-    this.#repository.registerReference(reference);
+  /** Adds an agent-created or agent-modified file to the repository. */
+  registerGeneratedFile(path: string, action: "edited" | "created" = "edited"): void {
+    this.#repository.registerGeneratedFile(path, action);
   }
 
   /**
@@ -335,7 +329,7 @@ export class InspectorPanel {
       getSearchRoots: this.#options.getSearchRoots,
       showStatus: this.#options.showStatus,
       ...(this.#options.renderToggle ? { renderToggle: this.#options.renderToggle } : {}),
-      onFileInspected: (path, name, reference) => this.#onFileInspected(tab.id, path, name, reference),
+      onFileResolved: (path, name) => this.#onFileResolved(tab.id, path, name),
     });
     this.#attachTabHandlers(tab);
     this.#tabs.push(tab);
@@ -366,9 +360,9 @@ export class InspectorPanel {
     });
   }
 
-  /** Registers an inspected file in the repository and merges duplicate tabs. */
-  #onFileInspected(tabId: string, path: string, name: string, reference?: string): void {
-    this.#repository.registerFile(path, name, reference);
+  /** Records a resolved path for tab deduplication; inspection itself never
+   * changes repository membership. */
+  #onFileResolved(tabId: string, path: string, name: string): void {
     const tab = this.#tabs.find((candidate) => candidate.id === tabId);
     if (!tab) return;
     tab.resolvedPath = path;

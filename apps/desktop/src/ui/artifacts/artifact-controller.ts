@@ -24,6 +24,8 @@ export interface ArtifactControllerOptions {
 export class ArtifactController {
   readonly #options: ArtifactControllerOptions;
   #loadGeneration = 0;
+  #sessionId: string | undefined;
+  #sessionArtifacts: Json[] = [];
 
   constructor(options: ArtifactControllerOptions) {
     this.#options = options;
@@ -47,7 +49,9 @@ export class ArtifactController {
     list.replaceChildren();
     this.#options.clearChips();
     const sessionId = this.#options.getSessionId();
+    this.#sessionId = sessionId;
     if (!sessionId) {
+      this.#sessionArtifacts = [];
       this.#options.setSessionArtifacts([]);
       list.append(textBlock("panel-empty", "Artifacts appear with a task"));
       return [];
@@ -55,6 +59,7 @@ export class ArtifactController {
     const response = await this.#options.api(`/api/v1/sessions/${sessionId}/artifacts`);
     if (generation !== this.#loadGeneration || this.#options.getSessionId() !== sessionId) return [];
     const artifacts = Array.isArray(response.data) ? response.data : [];
+    this.#sessionArtifacts = artifacts;
     this.#options.setSessionArtifacts(artifacts);
     if (!artifacts.length) list.append(textBlock("panel-empty", "No artifacts yet"));
     for (const artifact of artifacts) list.append(this.#renderItem(artifact));
@@ -63,7 +68,21 @@ export class ArtifactController {
 
   async uploadData(sessionId: string, input: { name: string; mimeType: string; contentBase64: string }): Promise<Json> {
     const response = await this.#options.api(`/api/v1/sessions/${sessionId}/artifacts`, "POST", input);
-    return response.data;
+    const artifact = response.data as Json;
+    if (this.#sessionId !== sessionId) {
+      this.#sessionId = sessionId;
+      this.#sessionArtifacts = [];
+    }
+    const id = String(artifact.id ?? "");
+    const sha256 = String(artifact.sha256 ?? "").toLowerCase();
+    const duplicate = this.#sessionArtifacts.find((candidate) => {
+      if (id && String(candidate.id ?? "") === id) return true;
+      return Boolean(sha256) && String(candidate.sha256 ?? "").toLowerCase() === sha256;
+    });
+    if (duplicate) Object.assign(duplicate, artifact);
+    else this.#sessionArtifacts = [...this.#sessionArtifacts, artifact];
+    this.#options.setSessionArtifacts(this.#sessionArtifacts);
+    return artifact;
   }
 
   async uploadSelected(): Promise<void> {

@@ -36,6 +36,7 @@ export interface AgentRunControllerOptions {
   loadFinalAssistant?: (runId: string) => Promise<{ text: string; createdAt?: string } | undefined>;
   appendSystem: (message: string) => void;
   appendChangeSummary: (files: Array<{ path: string; action: "edited" | "created" }>) => void;
+  registerGeneratedFile?: (path: string, action: "edited" | "created") => void;
   addTokenEstimate: (text: string) => void;
   /** Reset the live context estimate to an authoritative number (e.g. after an automatic compaction). */
   recalibrateEstimate: (tokens: number) => void;
@@ -235,6 +236,7 @@ export class AgentRunController {
       ...(this.#options.loadFinalAssistant ? { loadFinalAssistant: this.#options.loadFinalAssistant } : {}),
       appendSystem: this.#options.appendSystem,
       appendChangeSummary: this.#options.appendChangeSummary,
+      ...(this.#options.registerGeneratedFile ? { registerGeneratedFile: this.#options.registerGeneratedFile } : {}),
       addTokenEstimate: this.#options.addTokenEstimate,
       setStatus: this.#options.setStatus,
       setEngineState: this.#options.setEngineState,

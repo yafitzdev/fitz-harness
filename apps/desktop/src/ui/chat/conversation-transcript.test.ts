@@ -16,12 +16,15 @@ describe("ConversationTranscript", () => {
     const appendMessage = vi.fn(() => document.createElement("div"));
     const appendCommentary = vi.fn(() => document.createElement("div"));
     const rebuildHistory = vi.fn();
-    const view = new ConversationTranscript({ messages, activity, appendMessage, appendCommentary, rebuildHistory });
+    const registerGeneratedFile = vi.fn();
+    const view = new ConversationTranscript({ messages, activity, registerGeneratedFile, appendMessage, appendCommentary, rebuildHistory });
     const tokens = view.restore([
       { kind: "message", role: "user", content: { text: "hello" } },
       { kind: "message", role: "assistant", content: { phase: "commentary", text: "checking" } },
       { kind: "tool-call", id: "call", content: { toolCallId: "call", toolName: "read", input: { path: "a.ts" } } },
       { kind: "tool-result", id: "result", content: { toolCallId: "call", result: "source" } },
+      { kind: "tool-call", id: "write-call", content: { toolCallId: "write-call", toolName: "write", input: { path: "src/generated.ts" } } },
+      { kind: "tool-result", id: "write-result", content: { toolCallId: "write-call", result: "ok", isError: false } },
       { kind: "reasoning", content: { text: "thinking" } },
       { kind: "compaction", content: { manual: false } },
     ]);
@@ -29,6 +32,7 @@ describe("ConversationTranscript", () => {
     expect(appendMessage).toHaveBeenCalledWith("user", "hello", undefined);
     expect(appendCommentary).toHaveBeenCalledWith("checking", undefined);
     expect(activity.completeTool).toHaveBeenCalledWith(toolRow, "read", { path: "a.ts" }, "source", false, undefined);
+    expect(registerGeneratedFile).toHaveBeenCalledWith("src/generated.ts", "created");
     expect(activity.appendReasoningDelta).toHaveBeenCalledWith(reasoningRow, "thinking");
     expect(activity.appendContext).toHaveBeenCalledWith("Context automatically compacted", undefined);
     expect(tokens).toBeGreaterThan(0);

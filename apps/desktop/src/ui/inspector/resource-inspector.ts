@@ -23,12 +23,8 @@ export interface ResourceInspectorOptions {
   getProjectRoot: () => string;
   getSearchRoots: () => string[];
   showStatus: ActionFeedback;
-  /**
-   * Fires when a local file preview resolves, so the repository can grow.
-   * The third argument is the chat reference that opened the file (when one
-   * was used), so a reference registered on appearance can be superseded.
-   */
-  onFileInspected?: (path: string, name: string, reference?: string) => void;
+  /** Fires when a local file preview resolves so Inspector tabs can merge. */
+  onFileResolved?: (path: string, name: string) => void;
 }
 
 /** Owns local/remote resource resolution and every Inspector rendering mode. */
@@ -39,8 +35,6 @@ export class ResourceInspector {
   #sourceMode = false;
   #version = 0;
   #activeObjectUrl: string | undefined;
-  /** The chat reference currently being previewed (for repository superseding). */
-  #reference: string | undefined;
   /** Whether this inspector is the visible tab; only it may touch the shared controls. */
   #active = true;
   #openButtonHidden = true;
@@ -156,7 +150,6 @@ export class ResourceInspector {
     const version = ++this.#version;
     this.#revokeObjectUrl();
     this.#preview = undefined;
-    this.#reference = reference;
     this.#setRenderToggle(true);
     this.#options.openPanel();
     this.#options.preview.replaceChildren(this.empty("Loading preview…"));
@@ -193,7 +186,7 @@ export class ResourceInspector {
       this.#setRenderToggle(preview.kind !== "markdown" && preview.kind !== "html");
       this.#setOpenButton(false);
       this.#render(preview);
-      this.#options.onFileInspected?.(preview.path, preview.name, this.#reference);
+      this.#options.onFileResolved?.(preview.path, preview.name);
     } catch (error) {
       if (version !== this.#version) return;
       this.#resource = undefined;

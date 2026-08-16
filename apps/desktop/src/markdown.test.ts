@@ -56,27 +56,29 @@ describe("Post-generation rules at render time", () => {
 });
 
 describe("Resource links in rendered output", () => {
-  it("announces local resources as they render so they can join the artifact repository", () => {
+  it("renders local resources as links without registering them in the repository", () => {
     const target = document.createElement("div");
     const listener = vi.fn();
     window.addEventListener("fitz:resource-appeared", listener);
     try {
-      // Backtick file references register; remote URLs are left out.
+      // Backtick file references remain clickable; remote URLs are left out
+      // of the local Inspector repository contract entirely.
       setMarkdown(target, "See `src/app.ts` and https://example.com/x.");
-      expect(listener).toHaveBeenCalledTimes(1);
-      expect(listener).toHaveBeenCalledWith(expect.objectContaining({ detail: { reference: "src/app.ts" } }));
+      expect(target.querySelector("a.resource-link")?.dataset.resource).toBe("src/app.ts");
+      expect(listener).not.toHaveBeenCalled();
     } finally {
       window.removeEventListener("fitz:resource-appeared", listener);
     }
   });
 
-  it("announces plain-text file paths as they stream into the conversation", () => {
+  it("keeps generated-looking plain-text paths clickable without treating mentions as artifacts", () => {
     const target = document.createElement("div");
     const listener = vi.fn();
     window.addEventListener("fitz:resource-appeared", listener);
     try {
       setMarkdown(target, "Wrote docs/guide.md with the full walkthrough.");
-      expect(listener).toHaveBeenCalledWith(expect.objectContaining({ detail: { reference: "docs/guide.md" } }));
+      expect(target.querySelector("a.resource-link")?.dataset.resource).toBe("docs/guide.md");
+      expect(listener).not.toHaveBeenCalled();
     } finally {
       window.removeEventListener("fitz:resource-appeared", listener);
     }
@@ -107,7 +109,7 @@ describe("Resource links in rendered output", () => {
       expect(link?.dataset.resource).toBe("storage/sqlite-store.ts");
       expect(link?.textContent).toBe("storage/sqlite-store.ts");
       expect(target.textContent).not.toContain("`");
-      expect(listener).toHaveBeenCalledWith(expect.objectContaining({ detail: { reference: "storage/sqlite-store.ts" } }));
+      expect(listener).not.toHaveBeenCalled();
     } finally {
       window.removeEventListener("fitz:resource-appeared", listener);
     }
@@ -120,8 +122,8 @@ describe("Resource links in rendered output", () => {
     try {
       // Mid-stream the agent wrote `(llama.cpp/...cpp` with no closing paren yet.
       setMarkdown(target, "See (llama.cpp/tests/test-unified-mixed-replay.cpp) next.");
-      expect(listener).toHaveBeenCalledTimes(1);
-      expect(listener).toHaveBeenCalledWith(expect.objectContaining({ detail: { reference: "llama.cpp/tests/test-unified-mixed-replay.cpp" } }));
+      expect(target.querySelector("a.resource-link")?.dataset.resource).toBe("llama.cpp/tests/test-unified-mixed-replay.cpp");
+      expect(listener).not.toHaveBeenCalled();
     } finally {
       window.removeEventListener("fitz:resource-appeared", listener);
     }

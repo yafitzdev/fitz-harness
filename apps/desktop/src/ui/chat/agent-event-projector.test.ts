@@ -32,6 +32,7 @@ function setup(overrides: Partial<AgentEventProjectorOptions> = {}) {
     replaceAssistant: vi.fn(),
     appendSystem: vi.fn(),
     appendChangeSummary: vi.fn(),
+    registerGeneratedFile: vi.fn(),
     addTokenEstimate: vi.fn(),
     setStatus: vi.fn(),
     setEngineState: vi.fn(),
@@ -87,6 +88,7 @@ describe("AgentEventProjector", () => {
 
     expect(activity.appendTool).toHaveBeenCalledWith("write", { path: "src/new.ts" }, "write-1", true);
     expect(calls.updatePlan).toHaveBeenCalledWith(plan);
+    expect(calls.registerGeneratedFile).toHaveBeenCalledWith("src/new.ts", "created");
     expect(calls.appendChangeSummary).toHaveBeenCalledWith([{ path: "src/new.ts", action: "created" }]);
     expect(activity.finishWork).toHaveBeenCalledOnce();
     expect(projector.done).toBe(true);
