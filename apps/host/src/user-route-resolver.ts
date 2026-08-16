@@ -76,6 +76,10 @@ export class UserRouteResolver {
     return result;
   }
 
+  publicMediaRoutes(): Route[] {
+    return this.routes.listRoutes().filter((route) => route.kind === "image" || route.kind === "video" || route.kind === "audio");
+  }
+
   contextTokens(routeId: string, ownerUserId = LOCAL_OWNER_ID, internal = false): number {
     return Math.min(LOCAL_MAIN_CONTEXT_TOKENS, this.resolve(routeId, ownerUserId, internal).recipe.contextTokens);
   }

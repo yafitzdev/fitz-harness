@@ -14,6 +14,19 @@ const defaultRoute: Route = {
 };
 
 describe("UserRouteResolver", () => {
+  it("publishes enabled generation routes for OpenAI-compatible discovery", () => {
+    const store = SqliteStore.memory();
+    const mediaRoutes: Route[] = [
+      { id: "image", displayName: "Image", recipeId: "image-recipe", kind: "image", enabled: true },
+      { id: "video", displayName: "Video", recipeId: "video-recipe", kind: "video", enabled: false },
+      { id: "audio", displayName: "Audio", recipeId: "audio-recipe", kind: "audio", enabled: true },
+    ];
+    const resolver = new UserRouteResolver(store, new RouteResolver([defaultRoute, ...mediaRoutes], [defaultRecipe]));
+
+    expect(resolver.publicMediaRoutes().map((route) => route.id)).toEqual(["image", "audio"]);
+    store.close();
+  });
+
   it("isolates Smart and Fast bindings by connection owner", () => {
     const store = SqliteStore.memory();
     const aliceRecipe = recipe("alice-cloud", "openai-compatible", "alice-model");

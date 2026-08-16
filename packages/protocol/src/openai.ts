@@ -89,6 +89,8 @@ export interface ModelCard {
   owned_by: "fitz";
   display_name: string;
   description?: string;
+  /** Optional OpenAI-compatible capability hints used by provider discovery. */
+  endpoints?: string[];
 }
 
 export interface ModelListResponse {

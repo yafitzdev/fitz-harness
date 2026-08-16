@@ -106,6 +106,22 @@ export function registerConsumerConnectionRoutes(options: ConsumerConnectionRout
         let mediaDiscovery: ProviderModel[] = [];
         if (template === "openai-compatible") {
           discovered = await client.listModels(baseUrl, AbortSignal.timeout(15_000));
+          // OpenAI-compatible catalogs may describe chat and generation models
+          // together. Media discovery is opportunistic here, so ordinary
+          // chat-only providers retain exactly the same connection behavior.
+          try {
+            mediaDiscovery = await mediaProviders.get("openai-media").discover(
+              {
+                id: connectionId,
+                baseUrl,
+                ...(authType === "bearer" ? { apiKeyEnv: credentialEnv } : {}),
+                ...(requestedModelIds ? { modelIds: requestedModelIds } : {}),
+              },
+              AbortSignal.timeout(15_000),
+            );
+          } catch {
+            mediaDiscovery = [];
+          }
         } else {
           mediaDiscovery = await mediaProviders.get(template).discover(
             {
@@ -157,7 +173,8 @@ export function registerConsumerConnectionRoutes(options: ConsumerConnectionRout
         const mediaModels = saveMediaRecipes(store, routes, {
           connectionId,
           ownerUserId: connectionOwnerUserId,
-          template,
+          template: template === "openai-compatible" ? "openai-media" : template,
+          executionClass,
           displayName,
           baseUrl,
           credentialEnv,
@@ -360,6 +377,7 @@ function saveMediaRecipes(
     ownerUserId: string;
     connectionId: string;
     template: string;
+    executionClass: InferenceExecutionClass;
     displayName: string;
     baseUrl: string;
     credentialEnv: string;
@@ -377,7 +395,7 @@ function saveMediaRecipes(
       displayName: model.modelId,
       adapter: options.template,
       modelId: model.modelId,
-      executionClass: "metered_cloud",
+      executionClass: options.executionClass,
       contextTokens: LOCAL_MAIN_CONTEXT_TOKENS,
       capabilities: {
         chatCompletions: false,

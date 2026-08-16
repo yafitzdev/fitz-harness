@@ -45,7 +45,7 @@ describe("consumer connection routes", () => {
     const upstream = createServer((request, response) => {
       if (request.url === "/v1/models") {
         response.writeHead(200, { "content-type": "application/json" });
-        response.end('{"data":[{"id":"chat-model"},{"id":"embed-model","endpoints":["embed"]}]}');
+        response.end('{"data":[{"id":"chat-model"},{"id":"image-model","endpoints":["images/generations"]},{"id":"embed-model","endpoints":["embed"]}]}');
         return;
       }
       response.writeHead(404);
@@ -66,8 +66,10 @@ describe("consumer connection routes", () => {
       expect(saved.statusCode, saved.body).toBe(200);
       expect(saved.json().data).toMatchObject({ executionClass: "metered_cloud", accessClass: "same_device" });
       expect(saved.json().data.models).toEqual([{ id: "chat-model", recipeId: expect.any(String) }]);
+      expect(saved.json().data.mediaModels).toEqual([expect.objectContaining({ id: "image-model", modality: "image", template: "openai-media" })]);
       const recipeId = saved.json().data.models[0].recipeId as string;
       expect(fixture.routes.resolveRecipe(recipeId)).toMatchObject({ modelId: "chat-model", executionClass: "metered_cloud" });
+      expect(fixture.routes.resolveRecipe(saved.json().data.mediaModels[0].recipeId)).toMatchObject({ modelId: "image-model", executionClass: "metered_cloud", adapter: "openai-media" });
 
       const assigned = await fixture.app.inject({
         method: "PUT",

@@ -13,6 +13,9 @@ describe("Fitz OpenAI-shaped media gateway", () => {
       await registerMediaRecipe(runtime, "h3-img", ["image"]);
       await assignRoute(runtime, "image", "h3-img");
 
+      const catalog = await runtime.app.inject({ method: "GET", url: "/v1/models" });
+      expect(catalog.json().data).toContainEqual(expect.objectContaining({ id: "image", endpoints: ["images/generations"] }));
+
       const response = await runtime.app.inject({ method: "POST", url: "/v1/images/generations", payload: { model: "image", prompt: "a cat", response_format: "b64_json" } });
       expect(response.statusCode, response.body).toBe(200);
       const body = response.json();

@@ -36,7 +36,7 @@ export function registerOpenAIRoutes(options: OpenAIRouteOptions): void {
 
   app.get("/v1/models", async (request): Promise<ModelListResponse> => ({
     object: "list",
-    data: userRoutes.publicRoutes(principals.get(request)?.user.id ?? LOCAL_OWNER_ID).filter((route) => {
+    data: [...userRoutes.publicRoutes(principals.get(request)?.user.id ?? LOCAL_OWNER_ID), ...userRoutes.publicMediaRoutes()].filter((route) => {
       const principal = principals.get(request);
       return !principal || security?.authorizeRoute(principal, route.id);
     }).map((route) => ({
@@ -46,6 +46,7 @@ export function registerOpenAIRoutes(options: OpenAIRouteOptions): void {
       owned_by: "fitz",
       display_name: route.displayName,
       ...(route.description ? { description: route.description } : {}),
+      ...(route.kind && route.kind !== "chat" ? { endpoints: [`${route.kind === "audio" ? "audio" : `${route.kind}s`}/generations`] } : {}),
     })),
   }));
 
