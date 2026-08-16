@@ -116,7 +116,7 @@ describe("PluginsPageController", () => {
     expect(calls.openExternal).toHaveBeenCalledWith("https://example.com/pi-extra");
   });
 
-  it("filters the catalog by header type tabs and searches installed skills", async () => {
+  it("filters the catalog by header type tabs without adding an Installed search", async () => {
     const api = vi.fn(async (path: string) => {
       if (path === "/api/v1/management/pi/packages") return { data: [] };
       if (path === "/api/v1/management/pi/skills") return { data: [{ name: "Docs", description: "Read docs", source: "npm:docs", enabled: false, filePath: "docs.md" }] };
@@ -140,10 +140,8 @@ describe("PluginsPageController", () => {
     expect(page.querySelector("#plugins-title")?.textContent).toBe("Skills");
     expect(page.querySelector("#plugins-installed-section")?.hasAttribute("hidden")).toBe(true);
     expect(page.querySelector("#plugins-skills-section")?.hasAttribute("hidden")).toBe(false);
-
-    const search = page.querySelector<HTMLInputElement>("#skill-search")!;
-    search.value = "docs";
-    search.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(page.querySelector("#skill-search")).toBeNull();
+    expect(page.querySelector("#installed-skills-body .management-search")).toBeNull();
     expect(page.querySelector("#installed-skills")?.textContent).toContain("Docs");
   });
 

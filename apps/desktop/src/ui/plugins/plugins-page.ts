@@ -1,4 +1,3 @@
-import { ManagementPageLayout } from "../layout/management-page.js";
 import { PluginCatalogController, type PluginCatalogApi } from "./plugin-catalog.js";
 import type { ActionFeedback } from "../primitives/action-status.js";
 
@@ -28,20 +27,12 @@ export class PluginsPageController {
     };
     const typeTabs = [...options.page.querySelectorAll<HTMLButtonElement>(".management-page-tabs [data-type]")];
     if (typeTabs.length === 0) throw new Error("Plugins page is missing type tabs");
-    // The Installed skills section keeps its own search pill, composed here
-    // with the layout's helper so the shell markup stays a set of empty
-    // containers and every pill renders identically.
-    const skillsBody = options.page.querySelector<HTMLElement>("#installed-skills-body");
-    if (!skillsBody) throw new Error("Plugins page is missing #installed-skills-body");
-    const skillsSearch = ManagementPageLayout.createSearch({ id: "skill-search", placeholder: "Search skills" });
-    skillsBody.prepend(skillsSearch);
     this.catalog = new PluginCatalogController({
       pluginsView: require("plugins-view"),
       title: require("plugins-title"),
       installedSection: require("plugins-installed-section"),
       skillsSection: require("plugins-skills-section"),
       pluginSearch: require("plugin-search"),
-      skillSearch: require("skill-search"),
       installedPlugins: require("installed-plugins"),
       pluginCatalog: require("plugin-catalog"),
       installedSkills: require("installed-skills"),

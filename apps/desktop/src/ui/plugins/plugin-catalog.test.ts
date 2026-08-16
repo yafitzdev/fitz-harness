@@ -67,7 +67,6 @@ function setup(api: PluginCatalogApi, searchDelayMs = 250) {
     installedSection: installed.section,
     skillsSection: skills.section,
     pluginSearch: node("input"),
-    skillSearch: node("input"),
     installedPlugins, pluginCatalog, installedSkills, loadMorePlugins, refresh: node("button"),
     typeTabs,
   };
@@ -217,7 +216,7 @@ describe("PluginCatalogController", () => {
     expect(elements.pluginCatalog.textContent).toContain("one");
   });
 
-  it("filters installed skills by the section search", async () => {
+  it("renders all installed skills without a second search control", async () => {
     const api = vi.fn(async (path: string) => {
       if (path === "/api/v1/management/pi/packages") return { data: [] };
       if (path === "/api/v1/management/pi/skills") return { data: [
@@ -235,9 +234,8 @@ describe("PluginCatalogController", () => {
     await vi.waitFor(() => expect(elements.skillsSection.hidden).toBe(false));
 
     expect(elements.installedSkills.querySelectorAll(".plugin-card")).toHaveLength(2);
-    elements.skillSearch.value = "docs";
-    elements.skillSearch.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(elements.installedSkills.querySelectorAll(".plugin-card")).toHaveLength(1);
+    expect(elements.skillsSection.querySelector(".management-search")).toBeNull();
+    expect(elements.installedSkills.textContent).toContain("Review");
     expect(elements.installedSkills.textContent).toContain("Docs");
     expect(elements.installedSkills.textContent).toContain("Disabled");
   });

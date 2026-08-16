@@ -1,6 +1,4 @@
 .management-page-content > .collapsible-section + .collapsible-section { margin-top: 12px; }
-/* The skills search lives inside a collapsible body, so it gets a tighter gap than the page-level search pill. */
-.collapsible-body > .management-search { margin-bottom: 12px; }
 .plugin-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 34px; }
 .plugin-card { min-width: 0; display: grid; grid-template-columns: 38px minmax(0,1fr) auto; gap: 12px; align-items: center; min-height: 70px; padding: 10px 6px; border-bottom: 1px solid var(--tint-1); }
 .plugin-icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; color: var(--muted); background: var(--tint-2); }

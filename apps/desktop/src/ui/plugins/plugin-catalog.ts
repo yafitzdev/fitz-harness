@@ -43,7 +43,6 @@ export interface PluginCatalogElements {
   /** The Installed skills section; visible only on the Skills tab. */
   skillsSection: HTMLElement;
   pluginSearch: HTMLInputElement;
-  skillSearch: HTMLInputElement;
   installedPlugins: HTMLElement;
   pluginCatalog: HTMLElement;
   installedSkills: HTMLElement;
@@ -147,7 +146,6 @@ export class PluginCatalogController {
       if (this.searchTimer) clearTimeout(this.searchTimer);
       this.searchTimer = setTimeout(() => void this.load(false), this.searchDelayMs);
     });
-    this.elements.skillSearch.addEventListener("input", () => this.renderSkills());
     this.elements.loadMorePlugins.addEventListener("click", () => void this.load(true));
   }
 
@@ -207,13 +205,11 @@ export class PluginCatalogController {
 
   private renderSkills(): void {
     this.elements.installedSkills.replaceChildren();
-    const query = this.elements.skillSearch.value.trim().toLowerCase();
-    const visible = this.installedSkills.filter((skill) => !query || `${skill.name} ${skill.description} ${skill.source}`.toLowerCase().includes(query));
-    if (!visible.length) {
-      this.elements.installedSkills.append(emptyState("No matching skills"));
+    if (!this.installedSkills.length) {
+      this.elements.installedSkills.append(emptyState("No skills installed"));
       return;
     }
-    for (const skill of visible) {
+    for (const skill of this.installedSkills) {
       const card = this.packageCard(skill.name, skill.description || skill.source, undefined, sourceWebsite(skill.source));
       card.classList.add("skill-card");
       const actions = card.querySelector(".plugin-actions") as HTMLElement;
