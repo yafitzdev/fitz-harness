@@ -191,13 +191,12 @@ export class AgentRunController {
       if (!response) throw new Error("The run could not be created");
       this.#runId = String(response.data.id);
       this.#starting = false;
-      if (response.context?.compacted) {
-        this.#options.activity.appendContext();
-        // The host reported an automatic compaction: the session context shrank to the
-        // checkpoint summary plus the recent window, so reset the meter to match.
-        const compactedEstimate = Number(response.context.estimatedContextTokens);
-        if (Number.isFinite(compactedEstimate) && compactedEstimate >= 0) this.#options.recalibrateEstimate(compactedEstimate);
-      }
+      const preparedEstimate = Number(response.context?.estimatedContextTokens);
+      // Every run is prepared from the host's canonical transcript. Re-anchor the local
+      // meter on that authoritative request so deleted or regenerated turns cannot leak
+      // into the next run through accumulated renderer-only estimates.
+      if (Number.isFinite(preparedEstimate) && preparedEstimate >= 0) this.#options.recalibrateEstimate(preparedEstimate);
+      if (response.context?.compacted) this.#options.activity.appendContext();
       if (this.#cancelPending) await this.#options.api(`/api/v1/agent/runs/${this.#runId}`, "DELETE");
       await this.#follow(this.#runId, activity, startedAt, generation);
     } catch (error) {

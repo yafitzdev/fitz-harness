@@ -1306,7 +1306,14 @@ describe("Fitz host", () => {
   });
 
   it("creates projects and sessions and records a canonical run transcript", async () => {
-    const runtime = createHost(); const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Fitz", rootPath: "C:\\work\\fitz" } }); const projectId = project.json().data.id; expect(project.json().data.rootPath).toBe("C:\\work\\fitz");
+    const seenModelRequests: unknown[] = [];
+    let invocation = 0;
+    const runtime = createHost({ agentRuntime: { id: "regeneration-agent", run: (request) => {
+      seenModelRequests.push(request.messages);
+      const answer = invocation++ === 0 ? "superseded answer" : "replacement answer";
+      const events = (async function* () { yield { type: "assistant.delta" as const, text: answer }; })();
+      return Object.assign(events, { cancel: () => undefined });
+    } } }); const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Fitz", rootPath: "C:\\work\\fitz" } }); const projectId = project.json().data.id; expect(project.json().data.rootPath).toBe("C:\\work\\fitz");
     const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${projectId}/sessions`, payload: { title: "Infrastructure" } }); const sessionId = session.json().data.id;
     const run = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", sessionId, messages: [{ role: "user", content: "persist this turn" }] } }); const runId = run.json().data.id; for (let attempt = 0; attempt < 400 && runtime.agentRuns.get(runId)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
     expect(runtime.agentRuns.get(runId)?.status).toBe("completed");
@@ -1315,6 +1322,14 @@ describe("Fitz host", () => {
     expect(regenerate.statusCode, regenerate.body).toBe(200);
     expect(regenerate.json().data).toEqual(expect.objectContaining({ prompt: "persist this turn", removedTranscriptEntries: 2, estimatedContextTokens: 0 }));
     expect(runtime.store.transcriptAfter(sessionId, 0)).toEqual([]);
+    const replacement = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", sessionId, messages: [{ role: "user", content: regenerate.json().data.prompt }] } });
+    const replacementRunId = replacement.json().data.id;
+    for (let attempt = 0; attempt < 400 && runtime.agentRuns.get(replacementRunId)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(seenModelRequests).toEqual([
+      [{ role: "user", content: "persist this turn" }],
+      [{ role: "user", content: "persist this turn" }],
+    ]);
+    expect(JSON.stringify(seenModelRequests.at(-1))).not.toContain("superseded answer");
     await runtime.app.close();
   });
 

@@ -476,17 +476,18 @@ describe("AgentRunController", () => {
     expect(calls.replaceAssistant).not.toHaveBeenCalled();
   });
 
-  it("does not recalibrate when a run starts without a compaction", async () => {
+  it("recalibrates every run from the host's canonical prepared context", async () => {
     const api = vi.fn(async (path: string) => path === "/api/v1/agent/runs"
-      ? { data: { id: "run-plain" }, context: { compacted: false } }
+      ? { data: { id: "run-plain" }, context: { compacted: false, estimatedContextTokens: 37 } }
       : { events: [
         { sequence: 1, type: "run.started", data: {} },
         { sequence: 2, type: "run.completed", data: {} },
       ] });
-    const { controller, calls } = setup(api);
+    const { controller, activity, calls } = setup(api);
 
     await controller.start(request());
 
-    expect(calls.recalibrateEstimate).not.toHaveBeenCalled();
+    expect(calls.recalibrateEstimate).toHaveBeenCalledWith(37);
+    expect(activity.timeline.appendContext).not.toHaveBeenCalled();
   });
 });
