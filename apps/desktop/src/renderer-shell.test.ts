@@ -635,7 +635,7 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".messages > * { grid-column: 2; }");
     expect(styles).toContain("left: var(--conversation-gutter)");
     expect(styles).toContain("bottom: 20px");
-    expect(styles).not.toContain("clip-path: inset(0 0 calc(var(--composer-height) + 20px) 0)");
+    expect(styles).toContain("clip-path: inset(0 0 calc(var(--composer-height) + 20px) 0)");
     expect(styles).toContain("--conversation-space: var(--conversation-viewport)");
     expect(styles).not.toContain("--conversation-scrollbar");
     expect(styles).toContain(".workspace.inspector-open { --conversation-viewport: calc(100% - var(--inspector-width))");
