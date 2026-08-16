@@ -812,6 +812,8 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".workspace-header .inspector-tab { position: relative; height: 26px; max-width: 180px; padding: 0 8px 0 12px; border-radius: 8px; border: 0; background: var(--grey-200); color: var(--subtle); font-size: 12px; }");
     expect(styles).toContain(".workspace-header .inspector-tab:hover { background: var(--tint-7);");
     expect(styles).toContain(".workspace-header .inspector-tab.active { background: var(--selection); color: var(--grey-950); }");
+    expect(styles).toContain(".workspace.new-chat-open:not(.inspector-open) .workspace-header { visibility: hidden;");
+    expect(styles).toContain(".workspace.new-chat-open.inspector-open .workspace-title { visibility: hidden; }");
     // The legacy codex-* namespace and its duplicate surface/red tokens are
     // gone: the ramp and the semantic roles above are the only source of truth.
     expect(styles).not.toContain("--codex-");
