@@ -11,6 +11,7 @@ import {
   PiDelegationPolicy,
   delegatedCompaction,
 } from "./pi-delegation-policy.js";
+import { PiTurnOutputState, type PiInternalPromptPurpose } from "./pi-turn-output-state.js";
 import type { ToolLeaseAcquirer, ToolLeaseRelease } from "./workspace-mutation-leases.js";
 
 type PiEvent =
@@ -220,11 +221,10 @@ export class PiAgentRuntime implements AgentRuntime {
   }
   run(request: AgentRunRequest, signal?: AbortSignal, options?: AgentRuntimeRunOptions): AgentRuntimeRun {
     const channel = new EventChannel(); let session: PiSession | undefined; const controller = new AbortController();
-    let completedMediaHandoff = false;
+    let outputState: PiTurnOutputState | undefined;
     const parentSubagentBudget = request.delegation ? undefined : this.#subagentBudget?.(request, options);
     const delegation = new PiDelegationPolicy(request, parentSubagentBudget);
     const runPlan = request.delegation ? undefined : this.#runPlan?.(request, options);
-    const planRequired = () => runPlan ? (runPlan.required?.() ?? true) : false;
     const cancel = () => { controller.abort(); void session?.abort(); }; if (signal) { if (signal.aborted) cancel(); else signal.addEventListener("abort", cancel, { once: true }); }
     const cwd = typeof this.#cwd === "function" ? this.#cwd(request) : this.#cwd;
     const contextWindow = typeof this.#contextWindow === "function" ? this.#contextWindow(request, options) : this.#contextWindow;
@@ -286,60 +286,18 @@ export class PiAgentRuntime implements AgentRuntime {
     })();
     void (async () => { try {
       const activeSession = await sessionTask;
-      let sawAssistant = false;
-      let sawFinalAssistant = false;
-      let planAnswerFinalized = false;
-      let bufferedAssistant: AgentRuntimeEvent[] = [];
-      const readyCandidates = new Map<string, AgentRuntimeEvent[]>();
-      let internalDelegationRetry = false;
-      let internalPlanRetry = false;
-      let internalWorkerReportRetry = false;
-      let workerReportCandidate = false;
-      let terminalFailure = false;
+      const output = new PiTurnOutputState({
+        ...(runPlan ? { plan: runPlan } : {}),
+        delegated: Boolean(request.delegation),
+        emit: (event) => channel.push(event),
+        discardAssistantDraft: () => { activeSession.discardLastAssistantDraft?.(); },
+      });
+      outputState = output;
       const failActiveSession = (error: Error) => {
-        if (terminalFailure || completedMediaHandoff || planAnswerFinalized) return;
-        terminalFailure = true;
+        if (!output.beginFailure()) return;
         controller.abort();
         channel.fail(error);
         queueMicrotask(() => void activeSession.abort().catch(() => undefined));
-      };
-      const emitAssistant = (events: AgentRuntimeEvent[], final: boolean) => {
-        for (const output of events) channel.push(output);
-        if (events.length) {
-          sawAssistant = true;
-          if (final) sawFinalAssistant = true;
-        }
-      };
-      const finalizePlanAnswer = () => {
-        if (!runPlan || planAnswerFinalized || !sawFinalAssistant) return;
-        planAnswerFinalized = true;
-      };
-      const discardBufferedAssistant = () => {
-        if (!bufferedAssistant.length) return;
-        // Suppressing the UI event alone is not enough: Pi keeps the assistant
-        // message in its model context. Remove it there as well or the next
-        // completion can refer to a draft the user never received.
-        activeSession.discardLastAssistantDraft?.();
-        bufferedAssistant = [];
-      };
-      const settlePlanOutputAfterPrompt = () => {
-        if (!runPlan || planAnswerFinalized) return;
-        if (!planRequired() && runPlan.phase() === "missing") {
-          emitAssistant(bufferedAssistant, true);
-          bufferedAssistant = [];
-          finalizePlanAnswer();
-          return;
-        }
-        if (runPlan.phase() === "ready_for_answer") {
-          emitAssistant(bufferedAssistant, true);
-          bufferedAssistant = [];
-          finalizePlanAnswer();
-          return;
-        }
-        // A model that tries to answer while prerequisite work remains does not
-        // get to leak that draft into either transcript. The continuation prompt
-        // gives it the concrete outstanding plan state instead.
-        discardBufferedAssistant();
       };
       // The first user message_start is the initial prompt; any later one is a steering
       // message Pi has pulled off its steer queue, i.e. the point where the user's text is
@@ -350,78 +308,56 @@ export class PiAgentRuntime implements AgentRuntime {
         if (failure) { failActiveSession(failure); return; }
         if (event.type === "message_start" && event.message?.role === "user") {
           if (!sawInitialUserMessage) { sawInitialUserMessage = true; return; }
-          if (internalDelegationRetry) { internalDelegationRetry = false; return; }
-          if (internalPlanRetry) { internalPlanRetry = false; return; }
-          if (internalWorkerReportRetry) { internalWorkerReportRetry = false; return; }
+          if (output.consumeInternalUserEcho()) return;
           const text = extractTextFromMessageContent(event.message.content);
           if (text) channel.push({ type: "user.steer", text });
           return;
         }
-        if (runPlan && event.type === "tool_execution_start" && bufferedAssistant.length) {
-          if (isPlanReadyCall(event)) readyCandidates.set(event.toolCallId, bufferedAssistant);
-          else if (runPlan.phase() !== "ready_for_answer" && runPlan.phase() !== "completed") emitAssistant(bufferedAssistant, false);
-          bufferedAssistant = [];
-        }
+        if (event.type === "tool_execution_start") output.beforeToolStart(event.toolCallId, isPlanReadyCall(event));
         const translated = translateEvent(event);
         if (translated) {
           const delegationOutput = translated.type === "assistant.delta" || translated.type === "reasoning.delta" || translated.type === "reasoning.completed";
           if (!(delegation.shouldSuppressModelOutput && delegationOutput)) {
-            if (runPlan && translated.type === "assistant.delta") {
-              bufferedAssistant.push(translated);
-            } else {
-              if (translated.type === "assistant.delta") sawAssistant = true;
-              if (request.delegation && translated.type === "assistant.delta") workerReportCandidate = true;
-              channel.push(translated);
-            }
+            output.accept(translated);
           }
         }
-        if (event.type === "tool_execution_end") {
-          const candidate = readyCandidates.get(event.toolCallId);
-          if (candidate) {
-            readyCandidates.delete(event.toolCallId);
-            if (runPlan?.phase() === "ready_for_answer") {
-              emitAssistant(candidate, true);
-              try {
-                finalizePlanAnswer();
-                // Pi would ordinarily perform another completion after a tool
-                // result. The buffered answer is already the final response.
-                queueMicrotask(() => void activeSession.abort());
-              } catch (error) {
-                failActiveSession(error instanceof Error ? error : new Error(String(error)));
-              }
-            }
-          }
+        if (event.type === "tool_execution_end" && output.afterToolEnd(event.toolCallId)) {
+          // Pi would ordinarily perform another completion after a tool result.
+          // The held plan-ready answer is already the final response.
+          queueMicrotask(() => void activeSession.abort());
         }
-        if (request.delegation && event.type === "tool_execution_start") workerReportCandidate = false;
         if (isCompletedMediaHandoff(event)) {
           // Media generation is an asynchronous handoff. Letting Pi request one
           // more text completion here makes that request sit behind the several-
           // minute GPU media job and eventually fail as `terminated`. The media
           // tracker owns the rest of the lifecycle, so end this agent turn cleanly
           // as soon as the durable media job id has been returned.
-          completedMediaHandoff = true;
+          output.beginMediaHandoff();
           queueMicrotask(() => void activeSession.abort());
         }
       }); try {
         const prompt = async (text: string, images?: PiImageContent[]) => {
           try { await activeSession.prompt(text, images); }
-          catch (error) { if (!planAnswerFinalized) throw error; }
-          settlePlanOutputAfterPrompt();
+          catch (error) { if (!output.shouldIgnorePromptError) throw error; }
+          output.settleAfterPrompt();
+        };
+        const internalPrompt = async (purpose: PiInternalPromptPurpose, text: string) => {
+          output.expectInternalPrompt(purpose);
+          try { await prompt(text); }
+          finally { output.completeInternalPrompt(purpose); }
         };
         const initialInstructions = [runPlan?.initialInstruction, delegation.initialPromptInstruction(), workTools.initialInstruction()].filter(Boolean).join("\n");
         await prompt(formatPrompt(request, initialInstructions || undefined), imageContentFromRequest(request));
-        if (completedMediaHandoff) { channel.close(); return; }
+        if (output.phase === "media-handoff") { channel.close(); return; }
         if (controller.signal.aborted) throw abortError();
         if (delegation.requiresInitialFanout && !delegation.initialFanoutComplete) {
-          internalDelegationRetry = true;
-          await prompt(delegation.retryPrompt());
+          await internalPrompt("delegation", delegation.retryPrompt());
         }
         if (delegation.requiresInitialFanout && !delegation.initialFanoutComplete) throw delegation.missingFanoutError();
-        if (request.delegation && !workerReportCandidate) {
+        if (request.delegation && !output.hasWorkerReportCandidate) {
           const reportPrompt = delegation.beginFinalReport();
-          for (let attempt = 0; attempt < 2 && !workerReportCandidate; attempt += 1) {
-            internalWorkerReportRetry = true;
-            await prompt(reportPrompt);
+          for (let attempt = 0; attempt < 2 && !output.hasWorkerReportCandidate; attempt += 1) {
+            await internalPrompt("worker-report", reportPrompt);
             if (controller.signal.aborted) throw abortError();
           }
         }
@@ -429,21 +365,18 @@ export class PiAgentRuntime implements AgentRuntime {
         for (let issue = runPlan?.completionIssue(); issue; issue = runPlan?.completionIssue()) {
           if (planRetries >= 24) throw new Error(`The main agent did not complete its execution plan after ${planRetries} continuation turns.`);
           planRetries += 1;
-          internalPlanRetry = true;
-          await prompt(issue);
+          await internalPrompt("plan", issue);
           if (controller.signal.aborted) throw abortError();
         }
-        for (let attempt = 0; runPlan?.phase() === "ready_for_answer" && !sawFinalAssistant && attempt < 3; attempt += 1) {
-          internalPlanRetry = true;
-          await prompt("SYSTEM: Prerequisite work is complete. Provide exactly one complete, standalone final answer now. Do not call tools and do not refer to any earlier draft.");
+        for (let attempt = 0; runPlan?.phase() === "ready_for_answer" && !output.sawFinalAssistant && attempt < 3; attempt += 1) {
+          await internalPrompt("plan", "SYSTEM: Prerequisite work is complete. Provide exactly one complete, standalone final answer now. Do not call tools and do not refer to any earlier draft.");
           if (controller.signal.aborted) throw abortError();
         }
-        if (runPlan && sawFinalAssistant) finalizePlanAnswer();
-        if (runPlan && !sawFinalAssistant) throw new Error("Pi agent completed without a final assistant response");
-        if (!runPlan && !sawAssistant) throw new Error("Pi agent completed without an assistant response");
+        const completionError = output.finish();
+        if (completionError) throw completionError;
         channel.close();
       } finally { unsubscribe(); activeSession.dispose(); }
-    } catch (error) { if (completedMediaHandoff) channel.close(); else channel.fail(error); } })();
+    } catch (error) { if (outputState?.phase === "media-handoff") channel.close(); else channel.fail(error); } })();
     const steer = async (text: string): Promise<void> => {
       if (controller.signal.aborted) throw abortError();
       const activeSession = await sessionTask;
