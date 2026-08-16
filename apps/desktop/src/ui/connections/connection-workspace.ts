@@ -20,14 +20,17 @@ const CONNECTION_EDITOR_TEMPLATE = `
     <button id="connection-editor-back" class="management-back" type="button"><svg viewBox="0 0 20 20"><path d="m12.5 4-6 6 6 6"></path></svg>Inference</button>
     <form id="connection-form" class="management-editor-form">
       <input id="consumer-connection-id" type="hidden">
-      <div class="editor-heading"><small>API connection</small><h1 id="connection-editor-title">New connection</h1><p>Connect a provider or a model server you host yourself. Models are discovered automatically.</p></div>
+      <div class="editor-heading connection-editor-heading">
+        <small>API connection</small>
+        <div id="connection-editor-title-row" class="connection-editor-title-row"><h1 id="connection-editor-title">New connection</h1><button id="connection-editor-rename" class="icon-button" type="button" title="Rename connection" aria-label="Rename connection" hidden><svg viewBox="0 0 20 20"><path d="m13.8 3.2 3 3L7.2 15.8 3 17l1.2-4.2z"></path></svg></button></div>
+        <input id="consumer-connection-name" class="connection-name-input" maxlength="100" required placeholder="Connection name" aria-label="Connection name">
+        <p>Connect a provider or a model server you host yourself. Models are discovered automatically.</p>
+      </div>
       <div class="configuration-grid">
-        <label>Connection name<input id="consumer-connection-name" maxlength="100" required placeholder="Cohere"></label>
         <label>Template<select id="consumer-connection-template"><option value="openai-compatible">OpenAI-compatible</option><option value="openai-media">OpenAI media</option><option value="fal">Fal</option><option value="replicate">Replicate</option></select><small>Fal and Replicate fill in their base URL automatically.</small></label>
         <label>Execution<select id="consumer-connection-execution"><option value="metered_cloud">Metered cloud</option><option value="self_hosted">Self-hosted</option></select><small>Controls orchestration and cost policy; it does not depend on where this desktop runs.</small></label>
         <label id="consumer-connection-url-field" class="wide-field">OpenAI-compatible base URL<input id="consumer-connection-url" type="url" maxlength="2048" required placeholder="http://127.0.0.1:8000/v1"><small>Use a provider, local model server, or another Fitz host.</small></label>
         <label id="consumer-model-ids-field" class="wide-field" hidden>Model IDs<input id="consumer-model-ids" maxlength="4000" placeholder="fal-ai/minimax-video, fal-ai/flux/dev"><small>Optional: restrict discovery to these model IDs.</small></label>
-        <label>Authorization<select id="consumer-connection-auth"><option value="bearer">Bearer token</option><option value="none">None</option></select></label>
         <label id="consumer-api-key-field" class="wide-field">API key<input id="consumer-connection-key" type="password" autocomplete="off" placeholder="Stored securely"></label>
       </div>
       <p id="connection-form-status" class="connection-form-status" hidden></p>
@@ -103,7 +106,6 @@ export interface ConnectionWorkspaceElements {
   execution: HTMLSelectElement;
   modelIds: HTMLInputElement;
   modelIdsField: HTMLElement;
-  auth: HTMLSelectElement;
   apiKey: HTMLInputElement;
   apiKeyField: HTMLElement;
   formStatus: HTMLElement;
@@ -111,6 +113,8 @@ export interface ConnectionWorkspaceElements {
   listView: HTMLElement;
   editor: HTMLElement;
   editorTitle: HTMLElement;
+  editorTitleRow: HTMLElement;
+  editorRename: HTMLButtonElement;
   search: HTMLInputElement;
   refresh: HTMLButtonElement;
   newConnection: HTMLButtonElement;
@@ -186,7 +190,6 @@ export class ConnectionWorkspaceController {
       execution: this.require("consumer-connection-execution"),
       modelIds: this.require("consumer-model-ids"),
       modelIdsField: this.require("consumer-model-ids-field"),
-      auth: this.require("consumer-connection-auth"),
       apiKey: this.require("consumer-connection-key"),
       apiKeyField: this.require("consumer-api-key-field"),
       formStatus: this.require("connection-form-status"),
@@ -194,6 +197,8 @@ export class ConnectionWorkspaceController {
       listView: this.require("connection-list-view"),
       editor: this.require("connection-editor"),
       editorTitle: this.require("connection-editor-title"),
+      editorTitleRow: this.require("connection-editor-title-row"),
+      editorRename: this.require("connection-editor-rename"),
       search: this.require("connection-search"),
       refresh: this.require("refresh-connections"),
       newConnection: this.require("new-connection"),
@@ -257,7 +262,10 @@ export class ConnectionWorkspaceController {
     this.resetForm();
     this.elements.listView.hidden = true;
     this.elements.editor.hidden = false;
-    this.elements.editorTitle.textContent = connection ? "Configure connection" : "New connection";
+    this.elements.editorTitle.textContent = connection?.displayName ?? "New connection";
+    this.elements.editorTitleRow.hidden = false;
+    this.elements.editorRename.hidden = !connection;
+    this.elements.name.hidden = Boolean(connection);
     if (connection) {
       this.elements.id.value = connection.id;
       this.elements.name.value = connection.displayName;
@@ -265,13 +273,13 @@ export class ConnectionWorkspaceController {
       this.elements.execution.value = connection.executionClass;
       this.elements.url.value = connection.baseUrl;
       this.elements.modelIds.value = [...new Set((connection.mediaModels ?? []).map((model) => model.id))].join(", ");
-      this.elements.auth.value = connection.authType;
       this.elements.apiKey.placeholder = connection.hasCredential ? "Leave blank to keep current key" : "API key";
+      this.elements.apiKey.required = !connection.hasCredential;
     }
     this.updateTemplateFields();
-    this.updateAuthField();
     this.options.onRouteChange?.(connection ? ["edit", connection.id] : ["new"]);
-    this.elements.name.focus();
+    if (connection) this.elements.url.focus();
+    else this.elements.name.focus();
   }
 
   openRoute(path: readonly string[]): boolean {
@@ -305,8 +313,13 @@ export class ConnectionWorkspaceController {
     this.elements.cancelLocalModelEdit.addEventListener("click", () => this.cancelLocalModelEditing());
     this.elements.editorBack.addEventListener("click", () => this.closeEditor());
     this.elements.cancelEdit.addEventListener("click", () => this.closeEditor());
+    this.elements.editorRename.addEventListener("click", () => {
+      this.elements.editorTitleRow.hidden = true;
+      this.elements.name.hidden = false;
+      this.elements.name.focus();
+      this.elements.name.select();
+    });
     this.elements.search.addEventListener("input", () => this.render());
-    this.elements.auth.addEventListener("change", () => this.updateAuthField());
     this.elements.template.addEventListener("change", () => this.updateTemplateFields());
     this.elements.form.addEventListener("submit", (event) => { event.preventDefault(); void this.save(); });
   }
@@ -578,7 +591,7 @@ export class ConnectionWorkspaceController {
         ...(hidesUrl ? {} : { baseUrl: this.elements.url.value.trim() }),
         template,
         executionClass: this.elements.execution.value as "self_hosted" | "metered_cloud",
-        authType: this.elements.auth.value as "none" | "bearer",
+        authType: "bearer",
         ...(this.elements.apiKey.value.trim() ? { apiKey: this.elements.apiKey.value.trim() } : {}),
         ...(template !== "openai-compatible" && this.elements.modelIds.value.trim()
           ? { modelIds: this.elements.modelIds.value.split(",").map((item) => item.trim()).filter(Boolean) }
@@ -751,11 +764,14 @@ export class ConnectionWorkspaceController {
     this.elements.id.value = "";
     this.elements.template.value = "openai-compatible";
     this.elements.execution.value = "metered_cloud";
-    this.elements.auth.value = "bearer";
+    this.elements.editorTitle.textContent = "New connection";
+    this.elements.editorTitleRow.hidden = false;
+    this.elements.editorRename.hidden = true;
+    this.elements.name.hidden = false;
     this.elements.apiKey.placeholder = "Stored securely";
+    this.elements.apiKey.required = true;
     this.setFormStatus();
     this.updateTemplateFields();
-    this.updateAuthField();
   }
 
   private updateTemplateFields(): void {
@@ -767,11 +783,6 @@ export class ConnectionWorkspaceController {
     this.elements.modelIdsField.hidden = template === "openai-compatible";
     if (mediaProvider) this.elements.execution.value = "metered_cloud";
     this.elements.execution.disabled = mediaProvider;
-  }
-
-  private updateAuthField(): void {
-    this.elements.apiKeyField.hidden = this.elements.auth.value === "none";
-    this.elements.apiKey.required = this.elements.auth.value === "bearer" && !this.elements.id.value;
   }
 
   private setFormStatus(message?: string, error = false): void {

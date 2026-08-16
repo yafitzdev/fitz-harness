@@ -176,26 +176,50 @@ describe("ConnectionWorkspaceController", () => {
     expect(calls.showStatus).not.toHaveBeenCalledWith("Obsolete failure", "error");
   });
 
-  it("owns editor auth state and saves a new OpenAI-compatible connection", async () => {
+  it("uses bearer credentials and saves a new OpenAI-compatible connection", async () => {
     const { controller, elements, bridge, calls } = setup();
     click(elements.newConnection);
     expect(controller.editorOpen).toBe(true);
     expect(elements.listView.hidden).toBe(true);
     expect(calls.onRouteChange).toHaveBeenLastCalledWith(["new"]);
 
+    expect(controller.root.querySelector("#consumer-connection-auth")).toBeNull();
+    expect(elements.name.closest(".connection-editor-heading")).not.toBeNull();
+    expect(elements.apiKeyField.hidden).toBe(false);
+    expect(elements.apiKey.required).toBe(true);
     elements.name.value = "Self hosted";
     elements.url.value = "http://127.0.0.1:8000/v1";
     elements.execution.value = "self_hosted";
-    elements.auth.value = "none";
-    elements.auth.dispatchEvent(new Event("change", { bubbles: true }));
-    expect(elements.apiKeyField.hidden).toBe(true);
-    expect(elements.apiKey.required).toBe(false);
+    elements.apiKey.value = "secret-token";
 
     elements.form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    await vi.waitFor(() => expect(bridge.saveConsumerConnection).toHaveBeenCalledWith({ displayName: "Self hosted", baseUrl: "http://127.0.0.1:8000/v1", authType: "none", template: "openai-compatible", executionClass: "self_hosted" }));
+    await vi.waitFor(() => expect(bridge.saveConsumerConnection).toHaveBeenCalledWith({ displayName: "Self hosted", baseUrl: "http://127.0.0.1:8000/v1", authType: "bearer", apiKey: "secret-token", template: "openai-compatible", executionClass: "self_hosted" }));
     await vi.waitFor(() => expect(controller.editorOpen).toBe(false));
     expect(bridge.listConsumerConnections).toHaveBeenCalled();
     await vi.waitFor(() => expect(calls.showStatus).toHaveBeenCalledWith("Connection added", "success"));
+  });
+
+  it("renames an existing cloud connection in the header and discards edits when switching to Local", async () => {
+    const { controller, elements, bridge } = setup();
+    await controller.sync(false);
+    const remoteCard = elements.connections.querySelector<HTMLElement>(".consumer-playbook-card")!;
+    const edit = [...remoteCard.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Edit")!;
+    click(edit);
+
+    expect(elements.editorTitle.textContent).toBe("Remote API");
+    expect(elements.editorRename.hidden).toBe(false);
+    expect(elements.name.hidden).toBe(true);
+    click(elements.editorRename);
+    expect(elements.editorTitleRow.hidden).toBe(true);
+    expect(elements.name.hidden).toBe(false);
+    elements.name.value = "Unsaved name";
+
+    selectInferenceTab(elements, "local");
+    expect(controller.editorOpen).toBe(false);
+    expect(elements.listView.hidden).toBe(false);
+    expect(elements.name.value).toBe("");
+    expect(bridge.saveConsumerConnection).not.toHaveBeenCalled();
+    expect(elements.listView.querySelector(":scope > h1")?.textContent).toBe("Local");
   });
 
   it("does not expose agent configuration or concurrency claims for cloud models", async () => {
@@ -471,9 +495,8 @@ describe("ConnectionWorkspaceController", () => {
 
     elements.name.value = "Fal";
     elements.modelIds.value = "fal-ai/flux/dev, fal-ai/minimax-video";
-    elements.auth.value = "none";
-    elements.auth.dispatchEvent(new Event("change", { bubbles: true }));
+    elements.apiKey.value = "fal-token";
     elements.form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    await vi.waitFor(() => expect(bridge.saveConsumerConnection).toHaveBeenCalledWith({ displayName: "Fal", template: "fal", authType: "none", executionClass: "metered_cloud", modelIds: ["fal-ai/flux/dev", "fal-ai/minimax-video"] }));
+    await vi.waitFor(() => expect(bridge.saveConsumerConnection).toHaveBeenCalledWith({ displayName: "Fal", template: "fal", authType: "bearer", apiKey: "fal-token", executionClass: "metered_cloud", modelIds: ["fal-ai/flux/dev", "fal-ai/minimax-video"] }));
   });
 });

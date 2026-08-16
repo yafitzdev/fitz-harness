@@ -1,6 +1,11 @@
 .connection-form-status { margin: 0; color: var(--muted); font-size: 11px; }
 .connection-form-status.error { color: var(--status-danger-soft); }
 .connections-empty { margin: 18px 0; color: var(--subtle); font-size: 12px; text-align: center; }
+.connection-editor-title-row { display: flex; align-items: center; gap: 7px; }
+.connection-editor-title-row h1 { margin: 0; }
+.connection-editor-title-row .icon-button { width: 28px; height: 28px; }
+.connection-editor-title-row svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.connection-name-input { width: min(100%, 640px); font: inherit; font-size: 24px; font-weight: 650; }
 .local-model-name-input { width: min(100%, 520px); border: 1px solid var(--grey-400); border-radius: 7px; background: var(--grey-100); color: inherit; font: inherit; font-weight: 600; padding: 6px 8px; }
 .local-model-name-input:focus { border-color: var(--grey-650); outline: none; }
 .recipe-route-toggle { display: flex; align-items: center; gap: 1px; padding: 2px; border: 0; border-radius: 11px; background: var(--grey-100); }
