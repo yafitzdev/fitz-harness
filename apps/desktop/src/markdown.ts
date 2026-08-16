@@ -7,7 +7,11 @@ const markdownSources = new WeakMap<HTMLElement, string>();
 export function setMarkdown(target: HTMLElement, source: string): void {
   // Post-generation rules edit the raw output before it reaches the user.
   // The stored transcript and the context sent back to the model stay raw.
-  const display = applyPostGeneration(source.replace(/\r\n?/g, "\n"));
+  // Keep inline-code delimiters for this pass: appendInline consumes them and
+  // can therefore tell an explicit file reference from a coincidental
+  // `engine/name.ext` phrase in ordinary prose. The delimiters themselves are
+  // never rendered.
+  const display = applyPostGeneration(source.replace(/\r\n?/g, "\n"), { preserveInlineCode: true });
   markdownSources.set(target, display);
   target.hidden = display.length === 0;
   target.classList.add("markdown");
@@ -107,7 +111,18 @@ function appendInline(target: HTMLElement, source: string): void {
   for (const match of source.matchAll(pattern)) {
     const start = match.index ?? 0; if (start > cursor) appendPlainText(target, source.slice(cursor, start));
     const token = match[0];
-    if (token.startsWith("`")) { const value = token.slice(1, -1); const code = document.createElement("code"); code.textContent = value; const reference = resourceTarget(value); if (reference) { const link = resourceLink("", reference); link.classList.add("inline-code-resource"); link.append(code); target.append(link); } else target.append(code); }
+    if (token.startsWith("`")) {
+      const value = token.slice(1, -1);
+      const code = document.createElement("code");
+      code.textContent = value;
+      const reference = resourceTarget(value);
+      if (reference && isPlainResourceReference(source, start, reference)) {
+        const link = resourceLink("", reference);
+        link.classList.add("inline-code-resource");
+        link.append(code);
+        target.append(link);
+      } else target.append(code);
+    }
     else if (token.startsWith("**") || token.startsWith("__")) { appendPlainText(target, token.slice(2, -2)); }
     else if (token.startsWith("~~")) { const strike = document.createElement("del"); appendInline(strike, token.slice(2, -2)); target.append(strike); }
     else if (token.startsWith("[")) appendLink(target, token);
@@ -132,11 +147,36 @@ function appendPlainText(target: HTMLElement, source: string): void {
     let reference = match[0];
     const punctuation = reference.match(/[),.;!?]+$/)?.[0] ?? "";
     if (punctuation && reference.startsWith("http")) reference = reference.slice(0, -punctuation.length);
-    target.append(resourceLink(reference, reference));
-    if (punctuation) target.append(document.createTextNode(punctuation));
+    if (isPlainResourceReference(source, start, reference)) {
+      target.append(resourceLink(reference, reference));
+      if (punctuation) target.append(document.createTextNode(punctuation));
+    } else {
+      // Keep the original match intact when it is ordinary prose. In
+      // particular, do not append trailing punctuation a second time.
+      target.append(document.createTextNode(match[0]));
+    }
     cursor = start + match[0].length;
   }
   if (cursor < source.length) target.append(document.createTextNode(source.slice(cursor)));
+}
+
+const PROJECT_REFERENCE_ROOTS = new Set([
+  "apps", "brand", "data", "docs", "fixtures", "packages", "release", "sample-files", "scripts", "src", "test", "tests",
+]);
+const FILE_CONTEXT = /(?:file(?:\s+path)?|wrote|written|created|edited|updated|saved|generated|attached|opened|open|read|see|from|at|in)\s*[*_`]*\s*:?\s*[*_`]*\s*$/i;
+
+/**
+ * Plain prose is deliberately conservative. A phrase such as
+ * `NInfer/llama.cpp` describes an engine family, not necessarily a file. A
+ * file becomes a link when the surrounding sentence labels it as one, uses
+ * an explicit relative/absolute marker, or starts in a known project root.
+ */
+function isPlainResourceReference(source: string, start: number, reference: string): boolean {
+  if (/^https?:\/\//i.test(reference)) return true;
+  if (/^(?:[A-Za-z]:[\\/]|[\\/]|\.\.?[\\/])/.test(reference)) return true;
+  if (FILE_CONTEXT.test(source.slice(Math.max(0, start - 96), start))) return true;
+  const firstSegment = reference.split(/[\\/]/, 1)[0]?.replace(/^[([{]+/, "").toLowerCase();
+  return Boolean(firstSegment && PROJECT_REFERENCE_ROOTS.has(firstSegment));
 }
 
 function resourceTarget(value: string): string | undefined {

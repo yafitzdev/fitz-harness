@@ -37,4 +37,8 @@ describe("post-generation rules", () => {
     const message = "# Done\n\nOpen `app.ts` and run **npm install**.";
     expect(applyPostGeneration(applyPostGeneration(message))).toBe(applyPostGeneration(message));
   });
+
+  it("can preserve inline-code delimiters for structural renderers", () => {
+    expect(applyPostGeneration("Open `src/app.ts`.", { preserveInlineCode: true })).toBe("Open `src/app.ts`.");
+  });
 });

@@ -9,6 +9,9 @@ export interface RepositoryFile {
   path: string;
   name: string;
   addedAt: number;
+  /** Relative references are transcript-derived and may be replayed; a
+   * resolved entry is backed by an absolute path that the Inspector opened. */
+  origin?: "reference" | "resolved";
 }
 
 export interface ArtifactRepositoryOptions {
@@ -95,8 +98,9 @@ export class ArtifactRepository {
     if (existing) {
       existing.name = name || existing.name;
       existing.addedAt = Date.now();
+      existing.origin = "resolved";
     } else {
-      this.#files.unshift({ path, name: name || path, addedAt: Date.now() });
+      this.#files.unshift({ path, name: name || path, addedAt: Date.now(), origin: "resolved" });
     }
     if (this.#files.length > MAX_FILES) this.#files.length = MAX_FILES;
     this.#save();
@@ -119,7 +123,7 @@ export class ArtifactRepository {
     const alreadyPresent = this.#files.some((file) => file.path === reference || (root && projectRelativePath(file.path, root) === reference));
     if (alreadyPresent) return;
     this.#files = this.#files.filter((file) => !ArtifactRepository.#supersedes(file.path, reference));
-    this.#files.unshift({ path: reference, name: reference.split(/[\\/]/).pop() || reference, addedAt: Date.now() });
+    this.#files.unshift({ path: reference, name: reference.split(/[\\/]/).pop() || reference, addedAt: Date.now(), origin: "reference" });
     if (this.#files.length > MAX_FILES) this.#files.length = MAX_FILES;
     this.#save();
     this.#render();
@@ -143,22 +147,34 @@ export class ArtifactRepository {
       if (!raw) return;
       const parsed = JSON.parse(raw) as unknown;
       if (!Array.isArray(parsed)) return;
-      // Migration: normalize chat-emitted references that were stored with
-      // stray delimiters (e.g. a streamed `(src/app.t`) and drop duplicates.
+      // The repository is a derived cache. Relative chat references are
+      // replayed from the transcript on session load, while absolute paths
+      // represent files that were actually resolved by the Inspector. Drop
+      // legacy relative-only entries here: older builds persisted ambiguous
+      // prose such as `NInfer/llama.cpp` as if it were a file, and those rows
+      // cannot be distinguished from valid references without resolving them.
+      // Keeping resolved absolute paths preserves inspected files; replay
+      // repopulates valid relative references for the active chat. New
+      // reference records carry an origin marker so they survive a chat
+      // switch; legacy relative records without one are discarded.
       const seen = new Set<string>();
+      let changed = false;
       this.#files = parsed
         .filter((entry): entry is RepositoryFile => typeof entry === "object" && entry !== null && typeof (entry as RepositoryFile).path === "string")
         .map((entry) => ({
           path: normalizeResourceReference(entry.path),
           name: typeof entry.name === "string" ? entry.name : entry.path,
           addedAt: typeof entry.addedAt === "number" ? entry.addedAt : 0,
+          ...(entry.origin === "reference" || entry.origin === "resolved" ? { origin: entry.origin } : {}),
         }))
         .sort((left, right) => right.addedAt - left.addedAt)
         .filter((entry) => {
-          if (!entry.path || seen.has(entry.path)) return false;
+          if (!entry.path || seen.has(entry.path)) { changed = true; return false; }
+          if (!isAbsolutePath(entry.path) && entry.origin !== "reference") { changed = true; return false; }
           seen.add(entry.path);
           return true;
         });
+      if (changed) this.#save();
     } catch {
       this.#files = [];
     }
@@ -270,4 +286,8 @@ export class ArtifactRepository {
     };
     return dirOf(left) === dirOf(right) && stemOf(left) === stemOf(right);
   }
+}
+
+function isAbsolutePath(value: string): boolean {
+  return /^(?:[A-Za-z]:[\\/]|[\\/])/.test(value);
 }

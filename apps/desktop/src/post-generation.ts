@@ -19,6 +19,13 @@ export interface PostGenerationRule {
   apply(text: string): string;
 }
 
+export interface PostGenerationOptions {
+  /** Keep inline-code delimiters so a structural Markdown renderer can still
+   * distinguish explicit file references from ordinary prose. The renderer
+   * consumes the delimiters; they are never shown to the user. */
+  preserveInlineCode?: boolean;
+}
+
 /** Applies `transform` only to lines that are outside fenced ``` code blocks. */
 export function transformOutsideFences(text: string, transform: (line: string) => string): string {
   const lines = text.split("\n");
@@ -62,6 +69,10 @@ export const flattenHeadings: PostGenerationRule = {
 export const postGenerationRules: PostGenerationRule[] = [stripInlineBackticks, stripBoldMarkers, flattenHeadings];
 
 /** Runs all enabled rules over raw LLM output. */
-export function applyPostGeneration(text: string): string {
-  return postGenerationRules.reduce((value, rule) => (rule.enabled ? rule.apply(value) : value), text);
+export function applyPostGeneration(text: string, options: PostGenerationOptions = {}): string {
+  return postGenerationRules.reduce((value, rule) => {
+    if (!rule.enabled) return value;
+    if (options.preserveInlineCode && rule.id === "strip-inline-backticks") return value;
+    return rule.apply(value);
+  }, text);
 }

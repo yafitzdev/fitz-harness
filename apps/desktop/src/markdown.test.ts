@@ -82,6 +82,37 @@ describe("Resource links in rendered output", () => {
     }
   });
 
+  it("does not turn engine names in ordinary prose into file links", () => {
+    const target = document.createElement("div");
+    const listener = vi.fn();
+    window.addEventListener("fitz:resource-appeared", listener);
+    try {
+      setMarkdown(target, "Engine instances: NInfer/llama.cpp/vLLM processes in WSL/Linux.");
+      setMarkdown(target, "Engine binary: `NInfer/llama.cpp`.");
+      expect(target.querySelectorAll("a.resource-link")).toHaveLength(0);
+      expect(listener).not.toHaveBeenCalled();
+      expect(target.textContent).toContain("NInfer/llama.cpp");
+    } finally {
+      window.removeEventListener("fitz:resource-appeared", listener);
+    }
+  });
+
+  it("keeps explicit inline file references clickable while hiding backticks", () => {
+    const target = document.createElement("div");
+    const listener = vi.fn();
+    window.addEventListener("fitz:resource-appeared", listener);
+    try {
+      setMarkdown(target, "**File:** `storage/sqlite-store.ts`");
+      const link = target.querySelector<HTMLAnchorElement>("a.resource-link");
+      expect(link?.dataset.resource).toBe("storage/sqlite-store.ts");
+      expect(link?.textContent).toBe("storage/sqlite-store.ts");
+      expect(target.textContent).not.toContain("`");
+      expect(listener).toHaveBeenCalledWith(expect.objectContaining({ detail: { reference: "storage/sqlite-store.ts" } }));
+    } finally {
+      window.removeEventListener("fitz:resource-appeared", listener);
+    }
+  });
+
   it("strips stray delimiters from streamed path fragments", () => {
     const target = document.createElement("div");
     const listener = vi.fn();

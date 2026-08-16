@@ -668,8 +668,11 @@ describe("InspectorPanel", () => {
     }));
 
     const rows = view.element.querySelectorAll<HTMLButtonElement>(".inspector-repository-item");
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(1);
     const metas = [...rows].map((row) => row.querySelector("small")?.textContent);
-    expect(metas).toEqual(["a.txt", "llama.cpp/tests/test-unified-mixed-replay.cpp"]);
+    expect(metas).toEqual(["a.txt"]);
+    expect(JSON.parse(localStorage.getItem("fitz-inspector-repository")!)).toEqual([
+      { path: "/project/a.txt", name: "a.txt", addedAt: 3 },
+    ]);
   });
 });

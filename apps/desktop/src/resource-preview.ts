@@ -1,4 +1,4 @@
-import { readFile, realpath, stat } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, relative, resolve } from "node:path";
 import { maxPreviewBytes } from "@fitz/media";
 
@@ -12,6 +12,9 @@ const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".sv
 const PDF_EXTENSIONS = new Set([".pdf"]);
 const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".ogg", ".oga", ".m4a", ".aac", ".flac", ".opus"]);
 const VIDEO_EXTENSIONS = new Set([".mp4", ".webm", ".mov", ".m4v", ".mkv", ".ogv"]);
+const PROJECT_SEARCH_IGNORED_DIRECTORIES = new Set([".git", ".hg", ".svn", "node_modules", "dist", "build", "coverage", ".cache"]);
+const MAX_PROJECT_SEARCH_FILES = 100_000;
+const MAX_PROJECT_SEARCH_DEPTH = 24;
 
 export type PreviewKind = "markdown" | "html" | "code" | "text" | "image" | "pdf" | "audio" | "video";
 export interface ResourcePreview {
@@ -83,7 +86,54 @@ async function resolveRelativeReference(projectRoot: string, reference: string, 
       return filePath;
     } catch { /* Try the next directory disclosed by an agent tool. */ }
   }
+  const discovered = await findProjectReference(projectRoot, reference);
+  if (discovered) return discovered;
   throw new Error(`File not found: ${reference}`);
+}
+
+/**
+ * Resolve a concise path from the selected project when no live tool
+ * disclosure is available (for example after reopening a long chat). This is
+ * deliberately bounded to the project root, skips generated/dependency
+ * trees, and refuses ambiguous matches rather than guessing at a file.
+ */
+async function findProjectReference(projectRoot: string, reference: string): Promise<string | undefined> {
+  const requested = normalizePathSegments(reference);
+  if (!requested || requested.some((segment) => segment === "..")) return undefined;
+  const matches: string[] = [];
+  let inspectedFiles = 0;
+
+  const visit = async (directory: string, depth: number): Promise<void> => {
+    if (depth > MAX_PROJECT_SEARCH_DEPTH || inspectedFiles >= MAX_PROJECT_SEARCH_FILES) return;
+    let entries;
+    try { entries = await readdir(directory, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (inspectedFiles >= MAX_PROJECT_SEARCH_FILES) return;
+      if (entry.isDirectory() && !PROJECT_SEARCH_IGNORED_DIRECTORIES.has(entry.name.toLowerCase())) {
+        await visit(resolve(directory, entry.name), depth + 1);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      inspectedFiles += 1;
+      const candidate = resolve(directory, entry.name);
+      if (pathSuffixMatches(candidate, requested.join("/"))) matches.push(candidate);
+    }
+  };
+
+  await visit(projectRoot, 0);
+  if (matches.length === 0) return undefined;
+  const canonicalMatches = [...new Set(await Promise.all(matches.map((match) => realpath(match).catch(() => match))))];
+  if (canonicalMatches.length > 1) {
+    const listed = canonicalMatches.slice(0, 3).map((match) => relative(projectRoot, match)).join(", ");
+    throw new Error(`Ambiguous file reference: ${reference} (${canonicalMatches.length} matches: ${listed})`);
+  }
+  return canonicalMatches[0];
+}
+
+function normalizePathSegments(value: string): string[] | undefined {
+  const normalized = value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/^\/+|\/+$/g, "");
+  const segments = normalized.split("/").filter(Boolean).map((segment) => segment.toLowerCase());
+  return segments.length > 0 ? segments : undefined;
 }
 
 /**
@@ -93,9 +143,23 @@ async function resolveRelativeReference(projectRoot: string, reference: string, 
  */
 function pathSuffixMatches(absolutePath: string, reference: string): boolean {
   const normalize = (value: string) => value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/^\/+|\/+$/g, "").toLowerCase();
-  const full = normalize(absolutePath);
-  const suffix = normalize(reference);
-  return Boolean(suffix) && (full === suffix || full.endsWith(`/${suffix}`));
+  const fullSegments = normalize(absolutePath).split("/").filter(Boolean);
+  const suffixSegments = normalize(reference).split("/").filter(Boolean);
+  if (!suffixSegments.length || !fullSegments.length) return false;
+  if (fullSegments.slice(-suffixSegments.length).every((segment, index) => segment === suffixSegments[index])) return true;
+
+  // A concise package reference can omit an intermediate source directory:
+  // `storage/sqlite-store.ts` still identifies the disclosed
+  // `packages/storage/src/sqlite-store.ts`. Match the segments in order from
+  // the end, but never match a different filename or an arbitrary basename.
+  if (fullSegments.at(-1) !== suffixSegments.at(-1)) return false;
+  let fullIndex = fullSegments.length - 1;
+  for (let suffixIndex = suffixSegments.length - 1; suffixIndex >= 0; suffixIndex -= 1) {
+    while (fullIndex >= 0 && fullSegments[fullIndex] !== suffixSegments[suffixIndex]) fullIndex -= 1;
+    if (fullIndex < 0) return false;
+    fullIndex -= 1;
+  }
+  return true;
 }
 
 async function resolveExistingFile(path: string, reference: string): Promise<string> {

@@ -53,6 +53,19 @@ describe("desktop resource previews", () => {
 
     await expect(readProjectResource(root, "storage/src/sqlite-store.ts", [actual]))
       .resolves.toMatchObject({ kind: "code", path: actual, name: "sqlite-store.ts" });
+    await expect(readProjectResource(root, "storage/sqlite-store.ts", [actual]))
+      .resolves.toMatchObject({ kind: "code", path: actual, name: "sqlite-store.ts" });
+  });
+
+  it("resolves shortened package paths from the project after the disclosure is no longer live", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "fitz-preview-project-search-"));
+    const root = join(parent, "project");
+    const actual = join(root, "packages", "storage", "src", "sqlite-store.ts");
+    await mkdir(join(root, "packages", "storage", "src"), { recursive: true });
+    await writeFile(actual, "export const store = true;\n");
+
+    await expect(readProjectResource(root, "storage/sqlite-store.ts"))
+      .resolves.toMatchObject({ kind: "code", path: actual, name: "sqlite-store.ts" });
   });
 
   it("previews images as base64 with their MIME type instead of failing on NUL bytes", async () => {
