@@ -23,7 +23,15 @@ type PiEvent =
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type ThinkingFormat = "openai" | "openrouter" | "deepseek" | "together" | "zai" | "qwen" | "chat-template" | "qwen-chat-template" | "string-thinking" | "ant-ling" | "ninfer";
 export interface PiImageContent { type: "image"; data: string; mimeType: string }
-export interface PiSession { subscribe(listener: (event: PiEvent) => void): () => void; prompt(text: string, images?: PiImageContent[]): Promise<void>; steer(text: string): Promise<void>; abort(): Promise<void>; dispose(): void }
+export interface PiSession {
+  subscribe(listener: (event: PiEvent) => void): () => void;
+  prompt(text: string, images?: PiImageContent[]): Promise<void>;
+  steer(text: string): Promise<void>;
+  /** Remove a draft that Fitz deliberately withheld from both of Pi's active histories. */
+  discardLastAssistantDraft?(): boolean;
+  abort(): Promise<void>;
+  dispose(): void;
+}
 type PiWorkContext = AgentRuntimeRunOptions;
 export interface PiToolCall { toolCallId: string; toolName: string; input: unknown }
 export interface PiToolApprovalResult { allowed: boolean; reason?: string }
@@ -306,6 +314,14 @@ export class PiAgentRuntime implements AgentRuntime {
         if (!runPlan || planAnswerFinalized || !sawFinalAssistant) return;
         planAnswerFinalized = true;
       };
+      const discardBufferedAssistant = () => {
+        if (!bufferedAssistant.length) return;
+        // Suppressing the UI event alone is not enough: Pi keeps the assistant
+        // message in its model context. Remove it there as well or the next
+        // completion can refer to a draft the user never received.
+        activeSession.discardLastAssistantDraft?.();
+        bufferedAssistant = [];
+      };
       const settlePlanOutputAfterPrompt = () => {
         if (!runPlan || planAnswerFinalized) return;
         if (!planRequired() && runPlan.phase() === "missing") {
@@ -321,9 +337,9 @@ export class PiAgentRuntime implements AgentRuntime {
           return;
         }
         // A model that tries to answer while prerequisite work remains does not
-        // get to leak that draft into the transcript. The continuation prompt
+        // get to leak that draft into either transcript. The continuation prompt
         // gives it the concrete outstanding plan state instead.
-        bufferedAssistant = [];
+        discardBufferedAssistant();
       };
       // The first user message_start is the initial prompt; any later one is a steering
       // message Pi has pulled off its steer queue, i.e. the point where the user's text is
@@ -658,6 +674,21 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
     subscribe: (listener) => session.subscribe((event) => listener(event as PiEvent)),
     prompt: (text, images) => session.prompt(text, images?.length ? { images } : undefined),
     steer: (text) => session.steer(text),
+    discardLastAssistantDraft: () => {
+      const messages = session.agent.state.messages;
+      const lastMessage = messages.at(-1);
+      const leaf = session.sessionManager.getLeafEntry();
+      if (lastMessage?.role !== "assistant" || leaf?.type !== "message" || leaf.message.role !== "assistant") return false;
+
+      // Agent.state is the live completion context. SessionManager owns the
+      // parallel append-only tree used by AgentSession. Repointing its leaf
+      // preserves the discarded node for diagnostics while excluding it from
+      // the branch used by every subsequent completion.
+      session.agent.state.messages = messages.slice(0, -1);
+      if (leaf.parentId === null) session.sessionManager.resetLeaf();
+      else session.sessionManager.branch(leaf.parentId);
+      return true;
+    },
     abort: () => session.abort(),
     dispose: () => {
       for (const release of activeToolLeases.values()) release();

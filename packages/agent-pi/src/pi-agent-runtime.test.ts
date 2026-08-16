@@ -206,6 +206,54 @@ describe("PiAgentRuntime", () => {
     expect(phase).toBe("ready_for_answer");
   });
 
+  it("evicts a withheld draft from Pi context before requesting the replacement answer", async () => {
+    let phase: "active" | "ready_for_answer" = "active";
+    let prompts = 0;
+    const privateHistory: Array<{ role: "user" | "assistant"; text: string }> = [];
+    const discardLastAssistantDraft = vi.fn(() => {
+      if (privateHistory.at(-1)?.role !== "assistant") return false;
+      privateHistory.pop();
+      return true;
+    });
+    const runtime = new PiAgentRuntime({
+      runPlan: () => ({
+        initialInstruction: "PLAN FIRST",
+        admissionReason: () => undefined,
+        completionIssue: () => phase === "active" ? "FINISH OPEN WORK" : undefined,
+        phase: () => phase,
+      }),
+      createSession: async () => {
+        let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+        return {
+          subscribe: (next) => { listener = next; return () => undefined; },
+          prompt: async (prompt) => {
+            prompts += 1;
+            privateHistory.push({ role: "user", text: prompt });
+            if (prompts === 1) {
+              privateHistory.push({ role: "assistant", text: "Hidden answer that was never shown." });
+              listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Hidden answer that was never shown." } });
+              return;
+            }
+
+            expect(privateHistory.some((message) => message.text === "Hidden answer that was never shown.")).toBe(false);
+            phase = "ready_for_answer";
+            privateHistory.push({ role: "assistant", text: "Complete standalone replacement answer." });
+            listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Complete standalone replacement answer." } });
+          },
+          steer: async () => undefined,
+          discardLastAssistantDraft,
+          abort: async () => undefined,
+          dispose: () => undefined,
+        };
+      },
+    });
+
+    const events = []; for await (const event of runtime.run({ model: "default", messages: [{ role: "user", content: "regenerate" }] })) events.push(event);
+
+    expect(discardLastAssistantDraft).toHaveBeenCalledOnce();
+    expect(events).toEqual([{ type: "assistant.delta", text: "Complete standalone replacement answer." }]);
+  });
+
   it("passes workspace mutation leasing through the session boundary", async () => {
     const release = vi.fn();
     const acquire = vi.fn(async () => release);
