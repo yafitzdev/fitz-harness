@@ -4,6 +4,7 @@ import type { NInferRuntimeLayout } from "./ninfer-runtime.js";
 
 export const NINFER_PLAYBOOK_ID = "ninfer";
 export const QWEN38_ORCHESTRATOR_RECIPE_ID = "qwen38-27b-mtp3-agent-pool-c3";
+export const QWEN36_35B_RECIPE_ID = "qwen36-35b-a3b-mtp4-100k";
 export const QWEN38_MODEL_CONTEXT_TOKENS = 262_144;
 export const NINFER_MAX_CONCURRENT_AGENTS = LOCAL_MAX_CONCURRENT_AGENTS;
 
@@ -39,21 +40,11 @@ export function createNInferPlaybook(runtime: NInferRuntimeLayout): NInferPlaybo
       },
     ),
     recipe(
-      "qwen36-35b-a3b-mtp4-100k",
+      QWEN36_35B_RECIPE_ID,
       "Qwen 3.6 35B A3B · Best",
       "qwen3.6-35b-a3b",
       `${modelRoot}/qwen3_6_35b_a3b.ninfer`,
       4,
-      executable,
-      runtime,
-      configurableWorkerPool(),
-    ),
-    recipe(
-      "qwen36-27b-mtp3-100k",
-      "Qwen 3.6 27B · Fast",
-      "qwen3.6-27b",
-      `${modelRoot}/qwen3_6_27b_nvfp4.ninfer`,
-      3,
       executable,
       runtime,
       configurableWorkerPool(),

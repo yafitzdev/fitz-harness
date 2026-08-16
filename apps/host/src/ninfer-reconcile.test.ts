@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SqliteStore } from "@fitz/storage";
-import { createNInferPlaybook, QWEN38_ORCHESTRATOR_RECIPE_ID } from "./ninfer-playbook.js";
+import { createNInferPlaybook, QWEN36_35B_RECIPE_ID, QWEN38_ORCHESTRATOR_RECIPE_ID } from "./ninfer-playbook.js";
 import { reconcileNInferConfiguration } from "./ninfer-reconcile.js";
 
 const runtime = {
@@ -19,7 +19,7 @@ describe("reconcileNInferConfiguration", () => {
   it("upgrades every NInfer model to the global runtime policy", () => {
     const store = SqliteStore.memory();
     try {
-      const current = createNInferPlaybook(runtime).recipes.find((recipe) => recipe.modelId === "qwen3.6-27b")!;
+      const current = createNInferPlaybook(runtime).recipes.find((recipe) => recipe.modelId === "qwen3.6-35b-a3b")!;
       store.upsertRecipe({
         ...current,
         displayName: "My renamed Qwen",
@@ -35,6 +35,22 @@ describe("reconcileNInferConfiguration", () => {
         configuration: { maxConcurrency: 3, kvCapacity: "auto", maxContext: 131_072, thinking: true },
       });
       expect(store.listRecipes().find((recipe) => recipe.id === current.id)).not.toHaveProperty("agentTopology");
+    } finally {
+      store.close();
+    }
+  });
+
+  it("removes the retired Qwen 3.6 27B recipe and migrates its route to 35B", () => {
+    const store = SqliteStore.memory();
+    try {
+      const replacement = createNInferPlaybook(runtime).recipes.find((recipe) => recipe.id === QWEN36_35B_RECIPE_ID)!;
+      store.upsertRecipe({ ...replacement, id: "qwen36-27b-mtp3-100k", modelId: "qwen3.6-27b" });
+      store.upsertRoute({ id: "default", displayName: "Local", recipeId: "qwen36-27b-mtp3-100k", enabled: true, isDefault: true });
+
+      reconcileNInferConfiguration(store, runtime);
+
+      expect(store.listRoutes().find((route) => route.id === "default")?.recipeId).toBe(QWEN36_35B_RECIPE_ID);
+      expect(store.listRecipes().some((recipe) => recipe.id === "qwen36-27b-mtp3-100k")).toBe(false);
     } finally {
       store.close();
     }
