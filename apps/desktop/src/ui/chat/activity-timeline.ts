@@ -27,6 +27,17 @@ export interface ActivityTimelineOptions {
   showStatus: ActionFeedback;
 }
 
+/** Keeps the animated highlight sized to the label's intrinsic text instead
+ * of the full flex row. The outer label still owns truncation and hit-testing
+ * (for file targets); the inner span is only the visual text surface. */
+function setActivityLabel(label: HTMLElement, text: string): void {
+  const textSurface = document.createElement("span");
+  textSurface.className = "activity-label-text";
+  textSurface.textContent = text;
+  label.replaceChildren(textSurface);
+  label.title = text;
+}
+
 function isMediaTool(toolName: string | undefined): boolean {
   return toolName === "generate_image" || toolName === "generate_video" || toolName === "generate_audio";
 }
@@ -72,8 +83,7 @@ export class ActivityTimeline {
     icon.append(svgIcon('<path d="M12 11.5a4.25 4.25 0 1 0-4.25-4.25A4.25 4.25 0 0 0 12 11.5Zm0 2.25c-3.55 0-6.5 1.95-6.5 4.4V19.5h13v-1.35c0-2.45-2.95-4.4-6.5-4.4Z"></path>'));
     const label = document.createElement("span");
     label.className = "agent-activity-label";
-    label.textContent = text;
-    label.title = text;
+    setActivityLabel(label, text);
     row.append(icon, label);
     this.appendWork(row, createdAt);
     return row;
@@ -114,8 +124,7 @@ export class ActivityTimeline {
     icon.append(svgIcon(iconPathFor(toolName)));
     const label = document.createElement("span");
     label.className = "agent-activity-label";
-    label.textContent = describeTool(toolName, input, running, this.#options.projectRoot?.() ?? "");
-    label.title = label.textContent;
+    setActivityLabel(label, describeTool(toolName, input, running, this.#options.projectRoot?.() ?? ""));
     this.#registerSearchRoot(input);
     const resource = this.#resourceReference(toolName, input);
     if (resource) {
@@ -166,7 +175,7 @@ export class ActivityTimeline {
     const mediaJobId = mediaJobIdFromToolResult(result);
     if (mediaJobId) row.dataset.mediaJobId = mediaJobId;
     const label = row.querySelector<HTMLElement>(".agent-activity-label");
-    if (label) { const description = describeTool(toolName, input, false, this.#options.projectRoot?.() ?? ""); label.textContent = isError ? `${description} (failed)` : description; label.title = label.textContent; }
+    if (label) { const description = describeTool(toolName, input, false, this.#options.projectRoot?.() ?? ""); setActivityLabel(label, isError ? `${description} (failed)` : description); }
     const resultValue = row.querySelector<HTMLElement>(".tool-activity-result .tool-activity-value");
     if (resultValue) resultValue.textContent = this.#formatPayload(result, "No result returned");
     const shellOutput = row.querySelector<HTMLElement>(".shell-output");
@@ -187,7 +196,7 @@ export class ActivityTimeline {
     icon.append(svgIcon('<path d="M4 3.5h8l3 3v10H4z"></path><path d="M12 3.5v3h3M6.5 10h6M6.5 13h4"></path><path d="m2.5 12-1.2 1.2L2.5 14.4"></path>'));
     const label = document.createElement("span");
     label.className = "agent-activity-label";
-    label.textContent = text;
+    setActivityLabel(label, text);
     row.append(icon, label);
     this.#options.messages.append(row);
     this.#scroll();
@@ -256,7 +265,7 @@ export class ActivityTimeline {
       ? work.lastAt
       : Math.max(work.lastAt, this.#timestamp(completedAt));
     const label = work.toggle.querySelector<HTMLElement>(".work-summary-label");
-    if (label) label.textContent = `Worked for ${this.#formatElapsed(endedAt - work.startedAt)}`;
+    if (label) setActivityLabel(label, `Worked for ${this.#formatElapsed(endedAt - work.startedAt)}`);
     work.root.classList.toggle("completed", boundary === "completed");
     work.details.hidden = true;
     work.root.classList.remove("open");
@@ -271,7 +280,7 @@ export class ActivityTimeline {
     if (this.#work) return this.#work;
     const root = document.createElement("section"); root.className = "work-summary";
     const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "work-summary-toggle"; toggle.setAttribute("aria-expanded", "false");
-    const label = document.createElement("span"); label.className = "work-summary-label"; label.textContent = "Working…";
+    const label = document.createElement("span"); label.className = "work-summary-label"; setActivityLabel(label, "Working…");
     const chevron = document.createElement("span"); chevron.className = "work-summary-chevron"; chevron.append(svgIcon('<path d="m8 5.5 4.5 4.5L8 14.5"></path>'));
     const details = document.createElement("div"); details.className = "work-summary-details"; details.hidden = true;
     toggle.append(label, chevron);
@@ -297,6 +306,7 @@ export class ActivityTimeline {
     icon.append(svgIcon(iconPathFor("bash")));
     const label = document.createElement("span");
     label.className = "activity-burst-label";
+    setActivityLabel(label, "Working commands");
     const chevron = document.createElement("span");
     chevron.className = "activity-burst-chevron";
     chevron.append(svgIcon('<path d="m8 5.5 4.5 4.5L8 14.5"></path>'));
@@ -322,7 +332,7 @@ export class ActivityTimeline {
 
   #updateBurst(burst: ActivityBurst): void {
     const running = burst.running > 0;
-    burst.label.textContent = summarizeBurst(burst.tools, running);
+    setActivityLabel(burst.label, summarizeBurst(burst.tools, running));
     burst.icon.replaceChildren(svgIcon(burstIconPath(burst.edits, burst.commands)));
     burst.root.classList.toggle("running", running);
   }

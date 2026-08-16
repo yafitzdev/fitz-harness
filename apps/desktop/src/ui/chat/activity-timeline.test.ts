@@ -152,6 +152,8 @@ describe("ActivityTimeline", () => {
   it("keeps commands hidden behind the burst summary until it is opened", () => {
     const { messages, timeline } = setup();
     const row = timeline.appendTool("bash", { command: "git status --short" }, "tool-1", true);
+    expect(row.querySelector<HTMLElement>(".agent-activity-label > .activity-label-text")?.textContent).toBe("Running git status --short");
+    expect(messages.querySelector<HTMLElement>(".activity-burst-label > .activity-label-text")).toBeTruthy();
     timeline.completeTool(row, "bash", { command: "git status --short" }, "clean", false);
 
     const toggle = messages.querySelector<HTMLButtonElement>(".activity-burst-toggle")!;
