@@ -1,4 +1,4 @@
-import { PluginCatalogController, type PluginCatalogApi } from "./plugin-catalog.js";
+import { createPluginCatalogClient, PluginCatalogController, type PluginCatalogApi } from "./plugin-catalog.js";
 import type { ActionFeedback } from "../primitives/action-status.js";
 
 export interface PluginsPageOptions {
@@ -40,7 +40,7 @@ export class PluginsPageController {
       refresh: require("refresh-plugins"),
       typeTabs,
     }, {
-      api: options.api,
+      api: createPluginCatalogClient(options.api),
       openExternal: options.openExternal,
       showStatus: options.showStatus,
       errorMessage: options.errorMessage,

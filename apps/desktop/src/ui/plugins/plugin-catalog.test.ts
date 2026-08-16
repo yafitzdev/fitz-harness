@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PluginCatalogController, type PluginCatalogApi, type PluginCatalogElements } from "./plugin-catalog.js";
+import { createPluginCatalogClient, PluginCatalogController, type PluginCatalogApi, type PluginCatalogElements } from "./plugin-catalog.js";
 
 function node<T extends HTMLElement>(tag: string): T {
   const element = document.createElement(tag) as T;
@@ -71,7 +71,7 @@ function setup(api: PluginCatalogApi, searchDelayMs = 250) {
     typeTabs,
   };
   const calls = { openExternal: vi.fn(), showStatus: vi.fn(), errorMessage: vi.fn((error: unknown) => error instanceof Error ? error.message : String(error)) };
-  const controller = new PluginCatalogController(elements, { api, ...calls, searchDelayMs });
+  const controller = new PluginCatalogController(elements, { api: createPluginCatalogClient(api), ...calls, searchDelayMs });
   return { controller, elements, calls };
 }
 
@@ -98,6 +98,11 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("PluginCatalogController", () => {
+  it("rejects malformed catalog envelopes at the typed API boundary", async () => {
+    const client = createPluginCatalogClient(async () => ({ data: { packages: [] } }));
+    await expect(client.searchCatalog("/api/v1/management/pi/catalog")).rejects.toThrow("catalog page is invalid");
+  });
+
   it("loads installed packages, catalog entries, skills, and opens package websites", async () => {
     const api = vi.fn(async (path: string) => {
       if (path === "/api/v1/management/pi/packages") return { data: [{ source: "npm:pi-tools@1.0.0", displayName: "Pi Tools", version: "1.0.0", enabled: true, resources: { extensions: 1 } }] };
@@ -141,7 +146,7 @@ describe("PluginCatalogController", () => {
       if (path === "/api/v1/management/pi/packages") return { data: [] };
       if (path === "/api/v1/management/pi/skills") return { data: [] };
       if (path.includes("/catalog?")) return { data: { total: 1, packages: [{ name: "pi-extra", description: "Extra", version: "2.0.0", links: {} }] } };
-      return { data: {} };
+      return { data: { source: "npm:pi-extra" } };
     });
     const { controller, elements, calls } = setup(api);
     await controller.load();

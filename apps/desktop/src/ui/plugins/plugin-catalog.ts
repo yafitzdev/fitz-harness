@@ -4,7 +4,8 @@ import { CatalogFilterBar } from "../catalog/catalog-filter-bar.js";
 import { catalogQueryString, type CatalogSortOption } from "../catalog/catalog-filters.js";
 import type { ActionFeedback } from "../primitives/action-status.js";
 
-export type PluginCatalogApi = (path: string, method?: string, body?: unknown) => Promise<Record<string, any>>;
+/** Raw host request boundary used by the page adapter. */
+export type PluginCatalogApi = (path: string, method?: string, body?: unknown) => Promise<unknown>;
 
 export interface PiCatalogPackage {
   name: string;
@@ -22,7 +23,7 @@ export interface InstalledPiPackage {
   version?: string;
   description?: string;
   enabled: boolean;
-  resources: Record<string, number>;
+  resources: { extensions: number; skills: number; prompts: number; themes: number };
 }
 
 export interface PiSkillSummary {
@@ -31,6 +32,38 @@ export interface PiSkillSummary {
   source: string;
   enabled: boolean;
   filePath: string;
+}
+
+export interface PluginCatalogPage {
+  total: number;
+  packages: PiCatalogPackage[];
+}
+
+/** Typed endpoint client consumed by the plugin controller. */
+export interface PluginCatalogClient {
+  listInstalledPackages(): Promise<InstalledPiPackage[]>;
+  listSkills(): Promise<PiSkillSummary[]>;
+  searchCatalog(path: string): Promise<PluginCatalogPage>;
+  install(source: string): Promise<void>;
+  update(source: string): Promise<void>;
+  setEnabled(source: string, enabled: boolean): Promise<void>;
+  remove(source: string): Promise<void>;
+}
+
+/**
+ * Converts raw JSON responses into the endpoint-specific plugin contract.
+ * The controller therefore deals only in validated package and skill models.
+ */
+export function createPluginCatalogClient(request: PluginCatalogApi): PluginCatalogClient {
+  return {
+    listInstalledPackages: async () => parseEnvelope(await request("/api/v1/management/pi/packages"), parseInstalledPackages),
+    listSkills: async () => parseEnvelope(await request("/api/v1/management/pi/skills"), parseSkills),
+    searchCatalog: async (path) => parseEnvelope(await request(path), parseCatalogPage),
+    install: async (source) => { parseEnvelope(await request("/api/v1/management/pi/packages/install", "POST", { source }), parseSourceMutation); },
+    update: async (source) => { parseEnvelope(await request("/api/v1/management/pi/packages/update", "POST", { source }), parseSourceMutation); },
+    setEnabled: async (source, enabled) => { parseEnvelope(await request("/api/v1/management/pi/packages/enabled", "PUT", { source, enabled }), parseEnabledMutation); },
+    remove: async (source) => { await request("/api/v1/management/pi/packages", "DELETE", { source }); },
+  };
 }
 
 export interface PluginCatalogElements {
@@ -53,7 +86,7 @@ export interface PluginCatalogElements {
 }
 
 export interface PluginCatalogOptions {
-  api: PluginCatalogApi;
+  api: PluginCatalogClient;
   openExternal: (url: string) => void | Promise<void>;
   showStatus: ActionFeedback;
   errorMessage: (error: unknown) => string;
@@ -68,7 +101,7 @@ const PLUGIN_SORT_OPTIONS: CatalogSortOption[] = [
 ];
 
 /** Installed-resource key per type tab (package resources are plural). */
-const TYPE_RESOURCES: Record<string, string> = {
+const TYPE_RESOURCES: Record<string, keyof InstalledPiPackage["resources"]> = {
   extension: "extensions",
   skill: "skills",
   prompt: "prompts",
@@ -112,12 +145,12 @@ export class PluginCatalogController {
     try {
       if (!appendCatalog) {
         const [packages, skills] = await Promise.all([
-          this.options.api("/api/v1/management/pi/packages"),
-          this.options.api("/api/v1/management/pi/skills"),
+          this.options.api.listInstalledPackages(),
+          this.options.api.listSkills(),
         ]);
         if (generation !== this.loadGeneration) return;
-        this.installedPackages = packages.data ?? [];
-        this.installedSkills = skills.data ?? [];
+        this.installedPackages = packages;
+        this.installedSkills = skills;
         this.renderInstalledPackages();
         this.renderSkills();
       }
@@ -155,10 +188,10 @@ export class PluginCatalogController {
     // The active header tab's type is pushed into the npm query so the page
     // fills with matching packages instead of a blank client-side filter.
     const typeParam = this.catalogType ? `&type=${encodeURIComponent(this.catalogType)}` : "";
-    const response = await this.options.api(`/api/v1/management/pi/catalog?query=${query}&offset=${offset}&limit=30&${catalogQueryString(this.filterBar.filters)}${typeParam}`);
+    const response = await this.options.api.searchCatalog(`/api/v1/management/pi/catalog?query=${query}&offset=${offset}&limit=30&${catalogQueryString(this.filterBar.filters)}${typeParam}`);
     if (generation !== this.loadGeneration) return;
-    this.catalogTotal = response.data?.total ?? 0;
-    this.catalogPackages = append ? [...this.catalogPackages, ...(response.data?.packages ?? [])] : (response.data?.packages ?? []);
+    this.catalogTotal = response.total;
+    this.catalogPackages = append ? [...this.catalogPackages, ...response.packages] : response.packages;
     this.renderCatalog();
   }
 
@@ -182,9 +215,9 @@ export class PluginCatalogController {
       if (counts.length) card.querySelector(".plugin-meta")?.append(document.createTextNode(` · ${counts.join(" · ")}`));
       const actions = card.querySelector(".plugin-actions") as HTMLElement;
       actions.append(
-        this.action(entry.enabled ? "Disable" : "Enable", () => this.mutate("PUT", "/api/v1/management/pi/packages/enabled", { source: entry.source, enabled: !entry.enabled })),
-        this.action("Update", () => this.mutate("POST", "/api/v1/management/pi/packages/update", { source: entry.source })),
-        this.action("Remove", () => this.mutate("DELETE", "/api/v1/management/pi/packages", { source: entry.source }), true),
+        this.action(entry.enabled ? "Disable" : "Enable", () => this.mutate(() => this.options.api.setEnabled(entry.source, !entry.enabled))),
+        this.action("Update", () => this.mutate(() => this.options.api.update(entry.source))),
+        this.action("Remove", () => this.mutate(() => this.options.api.remove(entry.source)), true),
       );
       this.elements.installedPlugins.append(card);
     }
@@ -290,7 +323,7 @@ export class PluginCatalogController {
       }
       button.disabled = true;
       button.textContent = "Installing…";
-      try { await this.mutate("POST", "/api/v1/management/pi/packages/install", { source: `npm:${name}` }); }
+      try { await this.mutate(() => this.options.api.install(`npm:${name}`)); }
       finally { button.disabled = false; button.dataset.confirm = "false"; button.textContent = "Install"; }
     });
     button.addEventListener("mouseleave", () => {
@@ -299,13 +332,115 @@ export class PluginCatalogController {
     return button;
   }
 
-  private async mutate(method: string, path: string, body: unknown): Promise<void> {
+  private async mutate(operation: () => Promise<void>): Promise<void> {
     try {
-      await this.options.api(path, method, body);
+      await operation();
       await this.load(false);
       this.options.showStatus("Plugin configuration updated", "success");
     } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
   }
+}
+
+function parseEnvelope<T>(value: unknown, parse: (value: unknown) => T): T {
+  if (!isRecord(value) || !("data" in value)) throw invalidResponse("missing data envelope");
+  return parse(value.data);
+}
+
+function parseCatalogPage(value: unknown): PluginCatalogPage {
+  if (!isRecord(value) || !isFiniteNumber(value.total) || !Array.isArray(value.packages)) {
+    throw invalidResponse("catalog page is invalid");
+  }
+  return { total: value.total, packages: value.packages.map(parseCatalogPackage) };
+}
+
+function parseCatalogPackage(value: unknown): PiCatalogPackage {
+  if (!isRecord(value) || typeof value.name !== "string" || typeof value.description !== "string" || typeof value.version !== "string") {
+    throw invalidResponse("catalog package is invalid");
+  }
+  return {
+    name: value.name,
+    description: value.description,
+    version: value.version,
+    publisher: typeof value.publisher === "string" ? value.publisher : "npm",
+    keywords: stringArray(value.keywords),
+    types: stringArray(value.types),
+    links: stringMap(value.links),
+  };
+}
+
+function parseInstalledPackages(value: unknown): InstalledPiPackage[] {
+  if (!Array.isArray(value)) throw invalidResponse("installed packages are invalid");
+  return value.map((entry) => {
+    if (!isRecord(entry) || typeof entry.source !== "string" || typeof entry.displayName !== "string" || typeof entry.enabled !== "boolean") {
+      throw invalidResponse("installed package is invalid");
+    }
+    return {
+      source: entry.source,
+      displayName: entry.displayName,
+      ...(typeof entry.version === "string" ? { version: entry.version } : {}),
+      ...(typeof entry.description === "string" ? { description: entry.description } : {}),
+      enabled: entry.enabled,
+      resources: resourceCounts(entry.resources),
+    };
+  });
+}
+
+function parseSkills(value: unknown): PiSkillSummary[] {
+  if (!Array.isArray(value)) throw invalidResponse("skills are invalid");
+  return value.map((entry) => {
+    if (!isRecord(entry) || typeof entry.name !== "string" || typeof entry.description !== "string"
+      || typeof entry.source !== "string" || typeof entry.enabled !== "boolean" || typeof entry.filePath !== "string") {
+      throw invalidResponse("skill is invalid");
+    }
+    return { name: entry.name, description: entry.description, source: entry.source, enabled: entry.enabled, filePath: entry.filePath };
+  });
+}
+
+function parseSourceMutation(value: unknown): { source: string } {
+  if (!isRecord(value) || typeof value.source !== "string") throw invalidResponse("package mutation is invalid");
+  return { source: value.source };
+}
+
+function parseEnabledMutation(value: unknown): { source: string; enabled: boolean } {
+  if (!isRecord(value) || typeof value.source !== "string" || typeof value.enabled !== "boolean") {
+    throw invalidResponse("enabled mutation is invalid");
+  }
+  return { source: value.source, enabled: value.enabled };
+}
+
+function resourceCounts(value: unknown): InstalledPiPackage["resources"] {
+  const record = isRecord(value) ? value : {};
+  return {
+    extensions: nonNegativeCount(record.extensions),
+    skills: nonNegativeCount(record.skills),
+    prompts: nonNegativeCount(record.prompts),
+    themes: nonNegativeCount(record.themes),
+  };
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+function stringMap(value: unknown): Record<string, string> {
+  if (!isRecord(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+}
+
+function nonNegativeCount(value: unknown): number {
+  return isFiniteNumber(value) && value >= 0 ? value : 0;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function invalidResponse(detail: string): TypeError {
+  return new TypeError(`The plugin catalog returned an invalid response: ${detail}`);
 }
 
 function emptyState(message: string): HTMLElement {
