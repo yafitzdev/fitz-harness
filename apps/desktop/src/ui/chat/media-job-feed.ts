@@ -36,6 +36,18 @@ export class MediaJobFeed {
 
   reset(): void { this.#rows.clear(); this.#anchors.clear(); this.#jobsById.clear(); this.#jobsByArtifactId.clear(); }
 
+  /** Regenerates a durable media result from the message-level regenerate
+   * action. Media answers are jobs, not agent runs, so they must use the media
+   * retry endpoint instead of the transcript regeneration endpoint. */
+  async regenerate(jobId: string): Promise<void> {
+    const job = this.#jobsById.get(jobId);
+    if (!job) {
+      this.#options.showStatus("The original media job is unavailable.", "error");
+      return;
+    }
+    await this.#retry(job);
+  }
+
   render(job: MediaJobSummary, failure?: string, artifact?: Json): void {
     const { messages } = this.#options;
     if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren();
@@ -134,6 +146,7 @@ export class MediaJobFeed {
       const answer = content.closest<HTMLElement>(".message.assistant");
       if (answer) {
         answer.classList.add("media-result-message");
+        answer.dataset.mediaRegenerateJobId = job.id;
         const actions = answer.querySelector<HTMLElement>(":scope > .message-actions");
         answer.insertBefore(row, actions);
         if (anchor?.isConnected) anchor.after(answer);
@@ -366,14 +379,14 @@ export class MediaJobFeed {
     }
   }
 
-  async #retry(job: MediaJobSummary, button: HTMLButtonElement): Promise<void> {
-    button.disabled = true;
+  async #retry(job: MediaJobSummary, button?: HTMLButtonElement): Promise<void> {
+    if (button) button.disabled = true;
     try {
       const retried = await this.#options.retry(job);
       this.render(retried);
       this.#options.watch(retried.id);
     } catch (error) {
-      button.disabled = false;
+      if (button) button.disabled = false;
       this.#options.showStatus(this.#options.errorMessage(error), "error");
     }
   }

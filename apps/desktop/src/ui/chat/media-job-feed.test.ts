@@ -49,9 +49,20 @@ describe("MediaJobFeed", () => {
     feed.render({ id: "job-1", modality: "video", status: "completed", completedAt: "now" }, undefined, { id: "artifact-1", name: "clip.mp4" });
     expect(calls.appendAssistant).toHaveBeenCalledWith("Here is your video!", "now");
     expect(messages.querySelector(".media-result-message .media-job-notice.completed")).not.toBeNull();
+    expect(messages.querySelector<HTMLElement>(".media-result-message")?.dataset.mediaRegenerateJobId).toBe("job-1");
     expect(messages.textContent).toContain("Video ready");
     expect(messages.textContent).toContain("clip.mp4");
     expect(calls.finishWork).toHaveBeenCalledWith("now");
+  });
+
+  it("regenerates a media answer through the durable media retry path", async () => {
+    const { feed, calls } = setup();
+    feed.render({ id: "job-1", modality: "video", status: "completed" }, undefined, { id: "artifact-1", name: "clip.mp4" });
+
+    await feed.regenerate("job-1");
+
+    expect(calls.retry).toHaveBeenCalledWith(expect.objectContaining({ id: "job-1" }));
+    expect(calls.watch).toHaveBeenCalledWith("job-2");
   });
 
   it("promotes restored terminal failures outside agent work", () => {

@@ -1095,6 +1095,8 @@ function appendMessage(role: string, text: string, createdAt?: string, runId?: s
 
 async function regenerateAssistantResponse(article: HTMLElement): Promise<void> {
   if (agentRuns.active) { showStatus("Wait for the current response before regenerating.", "error"); return; }
+  const mediaJobId = article.dataset.mediaRegenerateJobId;
+  if (mediaJobId) { await mediaJobFeed.regenerate(mediaJobId); return; }
   const sessionId = projects.currentSessionId;
   const runId = article.dataset.runId;
   if (!sessionId || !runId) { showStatus("This response cannot be regenerated.", "error"); return; }
