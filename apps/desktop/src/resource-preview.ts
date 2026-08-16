@@ -60,7 +60,19 @@ async function resolveRelativeReference(projectRoot: string, reference: string, 
     let canonicalRoot: string;
     try { canonicalRoot = await realpath(suppliedRoot); } catch { continue; }
     let base = canonicalRoot;
-    try { if ((await stat(canonicalRoot)).isFile()) base = dirname(canonicalRoot); } catch { continue; }
+    let suppliedRootIsFile = false;
+    try {
+      suppliedRootIsFile = (await stat(canonicalRoot)).isFile();
+      if (suppliedRootIsFile) {
+        // Agents often summarize a disclosed path by dropping one or more
+        // package directories (for example `storage/src/sqlite-store.ts` for
+        // `packages/storage/src/sqlite-store.ts`). The exact absolute path is
+        // already an authoritative disclosure, so accept a matching suffix
+        // before trying to resolve the shortened reference from its directory.
+        if (pathSuffixMatches(canonicalRoot, reference)) return canonicalRoot;
+        base = dirname(canonicalRoot);
+      }
+    } catch { continue; }
     const candidate = resolve(base, reference);
     const fromBase = relative(base, candidate);
     if (!fromBase || fromBase.startsWith("..") || isAbsolute(fromBase)) continue;
@@ -72,6 +84,18 @@ async function resolveRelativeReference(projectRoot: string, reference: string, 
     } catch { /* Try the next directory disclosed by an agent tool. */ }
   }
   throw new Error(`File not found: ${reference}`);
+}
+
+/**
+ * Returns true when an already-disclosed absolute file ends with the relative
+ * reference. This supports concise package-relative mentions while keeping
+ * resolution bounded to paths explicitly disclosed by the agent or project.
+ */
+function pathSuffixMatches(absolutePath: string, reference: string): boolean {
+  const normalize = (value: string) => value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/^\/+|\/+$/g, "").toLowerCase();
+  const full = normalize(absolutePath);
+  const suffix = normalize(reference);
+  return Boolean(suffix) && (full === suffix || full.endsWith(`/${suffix}`));
 }
 
 async function resolveExistingFile(path: string, reference: string): Promise<string> {

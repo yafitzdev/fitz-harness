@@ -44,6 +44,17 @@ describe("desktop resource previews", () => {
     await expect(readProjectResource(root, "missing.ts", [listedDirectory])).rejects.toThrow("File not found: missing.ts");
   });
 
+  it("resolves shortened package paths from an absolute file disclosed by an agent tool", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "fitz-preview-suffix-"));
+    const root = join(parent, "project");
+    const actual = join(root, "packages", "storage", "src", "sqlite-store.ts");
+    await mkdir(join(root, "packages", "storage", "src"), { recursive: true });
+    await writeFile(actual, "export const store = true;\n");
+
+    await expect(readProjectResource(root, "storage/src/sqlite-store.ts", [actual]))
+      .resolves.toMatchObject({ kind: "code", path: actual, name: "sqlite-store.ts" });
+  });
+
   it("previews images as base64 with their MIME type instead of failing on NUL bytes", async () => {
     const parent = await mkdtemp(join(tmpdir(), "fitz-preview-image-"));
     const root = join(parent, "project");
