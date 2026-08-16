@@ -42,6 +42,8 @@ export class ConversationLayout {
     workspace.style.setProperty("--conversation-width", `${conversationWidth}px`);
     workspace.style.setProperty("--conversation-gutter", `${gutter}px`);
     workspace.style.setProperty("--composer-height", `${composer.offsetHeight}px`);
+    const composerCard = composer.querySelector<HTMLElement>(".composer-card");
+    workspace.style.setProperty("--composer-card-height", `${composerCard?.offsetHeight ?? composer.offsetHeight}px`);
     this.updateScrollButton();
   };
 

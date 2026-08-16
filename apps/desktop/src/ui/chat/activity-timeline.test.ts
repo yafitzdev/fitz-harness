@@ -122,6 +122,23 @@ describe("ActivityTimeline", () => {
     expect(messages.querySelector(".reasoning-activity .agent-activity-summary")).toBeNull();
   });
 
+  it("keeps live reasoning collapsed unless the user opens the work disclosure", () => {
+    const { messages, timeline } = setup();
+    timeline.appendReasoning(true);
+
+    const summary = messages.querySelector<HTMLElement>(".work-summary")!;
+    const toggle = summary.querySelector<HTMLButtonElement>(".work-summary-toggle")!;
+    const details = summary.querySelector<HTMLElement>(".work-summary-details")!;
+    expect(summary.classList.contains("open")).toBe(false);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(details.hidden).toBe(true);
+
+    toggle.click();
+    expect(summary.classList.contains("open")).toBe(true);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(details.hidden).toBe(false);
+  });
+
   it("ends the previous tool burst when a reasoning segment starts", () => {
     const { messages, timeline } = setup();
     timeline.appendTool("bash", { command: "pnpm test" }, "tool-1", true, "2026-08-03T08:00:00.000Z");

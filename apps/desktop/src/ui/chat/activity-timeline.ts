@@ -269,11 +269,11 @@ export class ActivityTimeline {
 
   #ensureWork(createdAt?: string): WorkSummary {
     if (this.#work) return this.#work;
-    const root = document.createElement("section"); root.className = "work-summary open";
-    const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "work-summary-toggle"; toggle.setAttribute("aria-expanded", "true");
+    const root = document.createElement("section"); root.className = "work-summary";
+    const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "work-summary-toggle"; toggle.setAttribute("aria-expanded", "false");
     const label = document.createElement("span"); label.className = "work-summary-label"; label.textContent = "Working…";
     const chevron = document.createElement("span"); chevron.className = "work-summary-chevron"; chevron.append(svgIcon('<path d="m8 5.5 4.5 4.5L8 14.5"></path>'));
-    const details = document.createElement("div"); details.className = "work-summary-details";
+    const details = document.createElement("div"); details.className = "work-summary-details"; details.hidden = true;
     toggle.append(label, chevron);
     toggle.addEventListener("click", () => { const open = details.hasAttribute("hidden"); details.hidden = !open; root.classList.toggle("open", open); toggle.setAttribute("aria-expanded", String(open)); });
     root.append(toggle, details);
