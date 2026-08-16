@@ -11,9 +11,8 @@ describe("ReasoningView", () => {
     document.body.append(view.element);
 
     expect(view.element.className).toContain("reasoning-activity");
-    expect(view.element).toBeInstanceOf(HTMLDetailsElement);
-    expect((view.element as HTMLDetailsElement).open).toBe(false);
-    expect(view.element.querySelector("summary")?.textContent).toBe("Reasoning");
+    expect(view.element).toBeInstanceOf(HTMLDivElement);
+    expect(view.element.querySelector("summary")).toBeNull();
     expect(view.element.classList.contains("running")).toBe(true);
     expect(view.element.querySelector(".agent-activity-summary")).toBeNull();
     expect(view.element.querySelector(".reasoning-content")?.textContent).toBe("");

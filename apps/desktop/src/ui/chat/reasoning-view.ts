@@ -9,13 +9,11 @@ export class ReasoningView {
   readonly #content: HTMLDivElement;
 
   constructor(running: boolean) {
-    const element = document.createElement("details");
+    const element = document.createElement("div");
     element.className = `message agent-activity reasoning-activity${running ? " running" : ""}`;
-    const summary = document.createElement("summary");
-    summary.textContent = "Reasoning";
     const content = document.createElement("div");
     content.className = "reasoning-content";
-    element.append(summary, content);
+    element.append(content);
     this.#element = element;
     this.#content = content;
   }
