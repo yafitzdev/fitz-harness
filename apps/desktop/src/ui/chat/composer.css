@@ -9,7 +9,6 @@
 .scroll-to-bottom:hover { background: var(--grey-200); }
 .scroll-to-bottom svg { width: 22px; height: 22px; stroke-width: 1.6; }
 .composer-card { position: relative; z-index: 30; isolation: isolate; overflow: visible; border: 1px solid var(--new-chat-outline); border-radius: var(--radius-lg); background: var(--new-chat-base); container-type: inline-size; container-name: composer; }
-.composer-dock:has(.agent-plan-panel:not([hidden])) .composer-card { border-top-left-radius: 0; border-top-right-radius: 0; }
 .composer-card:focus-within { background: var(--new-chat-base); }
 .workspace.new-chat-open .composer-card, .workspace.new-chat-open .composer-card:focus-within { background: var(--new-chat-base); }
 .composer-outline-shine { position: absolute; z-index: 2; inset: -1px; display: none; padding: 1px; border-radius: inherit; background: conic-gradient(from var(--new-chat-shine-angle, 0deg), transparent 0deg, transparent 285deg, var(--shine-medium) 315deg, var(--brand-white) 336deg, var(--shine-medium) 354deg, transparent 360deg); -webkit-mask: linear-gradient(var(--mask-solid) 0 0) content-box, linear-gradient(var(--mask-solid) 0 0); -webkit-mask-composite: xor; mask-composite: exclude; animation: new-chat-outline-shine 4.2s linear infinite; pointer-events: none; }

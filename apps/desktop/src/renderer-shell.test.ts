@@ -635,7 +635,7 @@ describe("desktop renderer shell", () => {
     expect(styles).toContain(".messages > * { grid-column: 2; }");
     expect(styles).toContain("left: var(--conversation-gutter)");
     expect(styles).toContain("bottom: 20px");
-    expect(styles).toContain("clip-path: inset(0 0 calc(var(--composer-height) + 20px) 0)");
+    expect(styles).not.toContain("clip-path: inset(0 0 calc(var(--composer-height) + 20px) 0)");
     expect(styles).toContain("--conversation-space: var(--conversation-viewport)");
     expect(styles).not.toContain("--conversation-scrollbar");
     expect(styles).toContain(".workspace.inspector-open { --conversation-viewport: calc(100% - var(--inspector-width))");
@@ -771,8 +771,8 @@ describe("desktop renderer shell", () => {
     expect(composer).toContain('<div class="composer-halo" aria-hidden="true"></div>\n  <form id="composer"');
     expect(composerCss).not.toContain("clip-path: inset(0 -120px -120px -120px)");
     expect(styles).toContain(".agent-plan-panel { position: relative; z-index: 31;");
-    expect(styles).toContain("margin: 0 0 -1px");
-    expect(composerCss).toContain(".composer-dock:has(.agent-plan-panel:not([hidden])) .composer-card");
+    expect(styles).toContain("margin: 0 0 8px");
+    expect(composerCss).not.toContain(".composer-dock:has(.agent-plan-panel:not([hidden])) .composer-card");
     expect(conversationLayout).toContain('workspace.style.setProperty("--composer-card-height"');
     expect(composerCss).not.toContain(":has(.popover");
     expect(overlayHostCss).toContain("z-index: var(--layer-overlay)");
