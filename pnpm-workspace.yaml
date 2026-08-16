@@ -4,6 +4,12 @@ packages:
 
 injectWorkspacePackages: true
 
+# Injected workspace packages are physical snapshots when peer dependency graphs
+# prevent pnpm from deduplicating them to symlinks. Keep those snapshots aligned
+# with TypeScript output whenever a workspace package is built.
+syncInjectedDepsAfterScripts:
+  - build
+
 # Keep vulnerable transitive production ranges on their patched, API-compatible
 # release lines without forcing unrelated framework or agent upgrades.
 overrides:

@@ -93,15 +93,31 @@ function startDevelopmentProcesses(engineMode, session) {
 // of dev-time "does not provide an export named ..." / "module not found" failures.
 async function buildPackages() {
   await new Promise((resolveBuild, reject) => {
+    const invocation = packageManagerInvocation(["--recursive", "--if-present", "run", "build"]);
     const child = spawn(
-      process.execPath,
-      [join(root, "node_modules", "typescript", "lib", "tsc.js"), "-b"],
+      invocation.command,
+      invocation.args,
       { cwd: root, stdio: "inherit" },
     );
     child.once("error", reject);
     child.once("exit", (code) => {
       if (code === 0) resolveBuild();
-      else reject(new Error(`tsc -b failed with exit code ${code}`));
+      else reject(new Error(`workspace build failed with exit code ${code}`));
     });
   });
+}
+
+function packageManagerInvocation(args) {
+  // pnpm exposes the exact JS entry point to lifecycle scripts. Reusing it
+  // avoids Windows .cmd/shell quoting and keeps the configured pnpm version.
+  if (process.env.npm_execpath) {
+    return { command: process.execPath, args: [process.env.npm_execpath, ...args] };
+  }
+  if (process.platform === "win32") {
+    return {
+      command: process.env.ComSpec ?? "cmd.exe",
+      args: ["/d", "/s", "/c", `pnpm ${args.join(" ")}`],
+    };
+  }
+  return { command: "pnpm", args };
 }
