@@ -5,7 +5,7 @@ import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SessionForensicsBundle, SessionQueryService } from "@fitz/protocol";
-import { broadFilesystemScanReason, buildFitzSystemInstructions, createSessionLookupTool, createTrashTool, formatSessionSnapshot, limitToolResultContent, PiAgentRuntime, readEnabledExtensionDirs, SESSION_LOOKUP_TOOL, TRASH_TOOL, type PiSession, type PiSessionFactory, type PiSessionReader, type PiSessionSnapshot } from "./pi-agent-runtime.js";
+import { broadFilesystemScanReason, buildFitzSystemInstructions, createSessionLookupTool, createTrashTool, formatSessionSnapshot, limitToolResultContent, PiAgentRuntime, readEnabledExtensionDirs, SESSION_LOOKUP_TOOL, TRASH_TOOL, type PiSession, type PiSessionFactory, type PiSessionSnapshot } from "./pi-agent-runtime.js";
 
 describe("PiAgentRuntime", () => {
   it("passes Fitz runtime locations to the session factory", async () => {
@@ -645,7 +645,7 @@ describe("PiAgentRuntime", () => {
         cwd,
         baseUrl: `http://127.0.0.1:${address.port}/v1`,
         apiKey: "private-pi-token",
-        sessionReader: async () => undefined,
+        sessionQuery: { query: async () => undefined } as unknown as SessionQueryService,
         customTools: () => [createTrashTool(async () => ({ moved: 0, entries: [] }))],
       });
       const events = [];
@@ -1119,29 +1119,18 @@ describe("fitz_session session lookup tool", () => {
   });
 
   it("returns the formatted transcript when the session exists", async () => {
-    const tool = createSessionLookupTool(async (sessionId) => (sessionId === "abc-123" ? snapshot : undefined));
+    const service = {
+      query: async (request: { sessionId: string }) => request.sessionId === "abc-123"
+        ? { snapshot } as any
+        : undefined,
+    } as unknown as SessionQueryService;
+    const tool = createSessionLookupTool(service);
     expect(tool.name).toBe(SESSION_LOOKUP_TOOL);
     const result = await tool.execute("call-1", { sessionId: "abc-123" });
     expect(result).toEqual({
       content: [{ type: "text", text: formatSessionSnapshot(snapshot) }],
       details: { source: "fitz_session" },
     });
-  });
-
-  it("accepts the canonical SessionQueryService directly", async () => {
-    let seen: unknown;
-    const service = {
-      query: async (request: unknown) => {
-        seen = request;
-        return {
-          session: {}, section: "overview", transcript: [], page: { direction: "none", limit: 200, returned: 0, hasMore: false }, snapshot,
-        };
-      },
-    } as unknown as SessionQueryService;
-    const tool = createSessionLookupTool(service);
-    const result = await tool.execute("call-1", { sessionId: "abc-123", section: "overview", includeArtifactContent: true });
-    expect(seen).toEqual({ sessionId: "abc-123", section: "overview", includeArtifactContent: true });
-    expect(result.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("Session: Find the session") });
   });
 
   it("forwards and formats a requested forensic section", async () => {
@@ -1153,41 +1142,29 @@ describe("fitz_session session lookup tool", () => {
       transcript: [], evidence: [], runs: [], approvals: [], artifacts: [], mediaJobs: [], usage: [], auditEvents: [], lifecycleEvents: [], legacyInferenceRequests: [], gpuWork: [],
       coverage: { normalizedAdapterEvidence: true, rawProviderWirePayloads: "not-captured", externalProcessLogs: "not-captured", reasoning: "emitted-events-only", artifactContent: "metadata-only" },
     } as SessionForensicsBundle;
-    const tool = createSessionLookupTool(async (_sessionId, options) => {
-      seen = options;
-      return { ...snapshot, forensics };
-    });
+    const service = {
+      query: async (request: { section?: string; includeArtifactContent?: boolean }) => {
+        seen = request;
+        return { snapshot: { ...snapshot, forensics } } as any;
+      },
+    } as unknown as SessionQueryService;
+    const tool = createSessionLookupTool(service);
     const result = await tool.execute("call-1", { sessionId: "abc-123", section: "overview", includeArtifactContent: true });
-    expect(seen).toEqual({ section: "overview", includeArtifactContent: true });
+    expect(seen).toEqual({ sessionId: "abc-123", section: "overview", includeArtifactContent: true });
     expect(result.details).toEqual({ source: "fitz_session", section: "overview" });
     expect(result.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("Inference evidence: 0") });
   });
 
   it("reports a missing session gracefully", async () => {
-    const tool = createSessionLookupTool(async () => undefined);
+    const tool = createSessionLookupTool({ query: async () => undefined } as unknown as SessionQueryService);
     const result = await tool.execute("call-1", { sessionId: "missing" });
     expect(result.content[0]).toMatchObject({ type: "text", text: "No Fitz session found with id missing." });
   });
 
-  it("turns reader failures into an agent-readable message instead of crashing the tool", async () => {
-    const tool = createSessionLookupTool(async () => { throw new Error("store locked"); });
+  it("turns query failures into an agent-readable message instead of crashing the tool", async () => {
+    const tool = createSessionLookupTool({ query: async () => { throw new Error("store locked"); } } as unknown as SessionQueryService);
     const result = await tool.execute("call-1", { sessionId: "abc-123" });
     expect(result.content[0]).toMatchObject({ type: "text", text: "Could not read Fitz session abc-123: store locked" });
-  });
-
-  it("forwards the session reader to the session factory boundary", async () => {
-    const reader: PiSessionReader = async () => snapshot;
-    let seenReader: PiSessionReader | undefined;
-    const runtime = new PiAgentRuntime({
-      sessionReader: reader,
-      createSession: async (options) => {
-        seenReader = options.sessionReader;
-        return { subscribe: (listener) => { listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "ok" } }); return () => undefined; }, prompt: async () => undefined, abort: async () => undefined, dispose: () => undefined };
-      },
-    });
-    const events = []; for await (const event of runtime.run({ model: "fast", messages: [{ role: "user", content: "hi" }] })) events.push(event);
-    expect(seenReader).toBe(reader);
-    expect(events).toEqual([{ type: "assistant.delta", text: "ok" }]);
   });
 
   it("forwards the canonical session query and enforces the run owner", async () => {
@@ -1211,23 +1188,23 @@ describe("fitz_session session lookup tool", () => {
     expect(events).toEqual([{ type: "assistant.delta", text: "ok" }]);
   });
 
-  it("does not surface a session reader when none is configured", async () => {
-    let seenReader: unknown = "unset";
+  it("does not surface a session query when none is configured", async () => {
+    let seenQuery: unknown = "unset";
     const runtime = new PiAgentRuntime({
       createSession: async (options) => {
-        seenReader = options.sessionReader;
+        seenQuery = options.sessionQuery;
         return { subscribe: (listener) => { listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "ok" } }); return () => undefined; }, prompt: async () => undefined, abort: async () => undefined, dispose: () => undefined };
       },
     });
     const events = []; for await (const event of runtime.run({ model: "fast", messages: [{ role: "user", content: "hi" }] })) events.push(event);
-    expect(seenReader).toBeUndefined();
+    expect(seenQuery).toBeUndefined();
     expect(events).toEqual([{ type: "assistant.delta", text: "ok" }]);
   });
 
   it("is treated as read-only by the approval gate", async () => {
     let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
     const runtime = new PiAgentRuntime({
-      sessionReader: async () => snapshot,
+      sessionQuery: { query: async () => undefined } as unknown as SessionQueryService,
       createSession: async (options) => ({
         subscribe: (next) => { listener = next; return () => undefined; },
         prompt: async () => {

@@ -53,8 +53,7 @@ shared `SessionQueryService`. The service owns canonical transcript/forensics re
 artifact-content opt-in, and owner filtering; the tool only formats the returned snapshot for the
 agent and turns service failures into a readable message instead of a crashed tool call. The tool
 is registered only when the service is supplied, and it is exempt from Ask first / Read only gating
-because it never mutates state. The old `createSessionReader` callback remains only as a temporary
-compatibility boundary for extensions.
+because it never mutates state.
 
 ## Data locations
 

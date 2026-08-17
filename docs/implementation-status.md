@@ -58,7 +58,7 @@
   processes, lifecycle teardown, and the model-facing `lsp` tool.
 - One bounded, owner-aware SessionQueryService over canonical transcript/forensics stores, shared by
   the agent session tool, HTTP query/transcript/forensics routes, and future inspector/export clients;
-  the Pi runtime receives the service directly, with the old callback retained only for compatibility.
+  the Pi runtime receives the service directly with no duplicate reader boundary.
 - Electron 43 shell with sandboxing, context isolation, Node-disabled renderer, restrictive CSP,
   an application navigation controller for access-gated page transitions and generalized nested
   back/forward history, path-limited IPC fetch proxy, main-process device credentials, and a bundled

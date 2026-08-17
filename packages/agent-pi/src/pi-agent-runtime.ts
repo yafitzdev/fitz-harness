@@ -67,12 +67,6 @@ export type TrashToolHandler = (input: { paths: string[] }) => Promise<TrashMove
 export type PiSessionMessage = SessionQueryMessage;
 export type PiSessionSnapshot = SessionQuerySnapshot;
 export type PiSessionLookupSection = SessionQuerySection;
-/**
- * Reads a past conversation from the Fitz session store. The host provides the store-backed
- * implementation; the pi package owns the contract and the tool that uses it.
- */
-/** @deprecated Prefer SessionQueryService. Kept for extensions compiled against the previous boundary. */
-export type PiSessionReader = (sessionId: string, options?: { after?: number; limit?: number; section?: PiSessionLookupSection; includeArtifactContent?: boolean; ownerUserId?: string }) => Promise<PiSessionSnapshot | undefined>;
 export type SubagentRoute = "default" | "fast" | "smart";
 export type SubagentRouteBudget = Readonly<Record<SubagentRoute, number>>;
 export interface PiRunPlanPolicy {
@@ -115,8 +109,6 @@ export type PiSessionFactory = (options: {
   approveTool: (request: PiToolCall) => Promise<PiToolApprovalResult>;
   /** Canonical session query boundary. */
   sessionQuery?: SessionQueryService;
-  /** @deprecated Compatibility callback; sessionQuery takes precedence. */
-  sessionReader?: PiSessionReader;
   /** Deterministic policy evaluation. When present it runs before `approveTool` for every tool call. */
   evaluateTool?: (request: PiToolCall) => Promise<ToolEvaluation>;
   /** Acquire an exclusive lease immediately before an allowed mutating tool executes. */
@@ -148,8 +140,6 @@ export interface PiAgentRuntimeOptions {
   llmRoot?: string;
   /** Canonical session query boundary for the read-only fitz_session tool. */
   sessionQuery?: SessionQueryService;
-  /** @deprecated Compatibility callback; sessionQuery takes precedence. */
-  sessionReader?: PiSessionReader;
   /** Deterministic host policy engine; evaluated for every non-read-only tool call before any approval gate. */
   toolPolicy?: ToolEvaluator;
   /** Coordinates workspace-mutating tools across concurrent agent runs. */
@@ -206,7 +196,6 @@ export class PiAgentRuntime implements AgentRuntime {
   readonly #agentDir: string;
   readonly #llmRoot: string;
   readonly #sessionQuery: SessionQueryService | undefined;
-  readonly #sessionReader: PiSessionReader | undefined;
   readonly #toolPolicy: ToolEvaluator | undefined;
   readonly #toolLease: ToolLeaseAcquirer | undefined;
   readonly #redactToolResult: ToolResultRedactor | undefined;
@@ -228,7 +217,6 @@ export class PiAgentRuntime implements AgentRuntime {
     this.#agentDir = options.agentDir ?? process.env.FITZ_PI_AGENT_DIR ?? `${process.cwd()}/.fitz-pi`;
     this.#llmRoot = options.llmRoot ?? process.env.FITZ_LLM_ROOT ?? `${process.cwd()}/.llm`;
     this.#sessionQuery = options.sessionQuery;
-    this.#sessionReader = options.sessionReader;
     this.#toolPolicy = options.toolPolicy;
     this.#toolLease = options.toolLease;
     this.#redactToolResult = options.redactToolResult;
@@ -283,12 +271,7 @@ export class PiAgentRuntime implements AgentRuntime {
             return decision;
           });
         },
-        ...(this.#sessionQuery ? { sessionQuery: scopedSessionQuery(this.#sessionQuery, options?.ownerUserId) }
-          : this.#sessionReader ? {
-              sessionReader: options?.ownerUserId
-                ? (sessionId: string, lookup?: Parameters<PiSessionReader>[1]) => this.#sessionReader!(sessionId, { ...lookup, ownerUserId: options.ownerUserId! })
-                : this.#sessionReader,
-            } : {}),
+        ...(this.#sessionQuery ? { sessionQuery: scopedSessionQuery(this.#sessionQuery, options?.ownerUserId) } : {}),
         ...(this.#toolPolicy || this.#requestToolApproval
           ? { evaluateTool: async (toolCall) => {
               const admissionReason = runPlan?.admissionReason(toolCall) ?? delegation.admissionReason(toolCall) ?? workTools.admissionReason(toolCall);
@@ -605,9 +588,8 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
   // The SDK treats `tools` as a strict allowlist that also filters custom tools, so every
   // custom tool we register (fitz_trash, fitz_session, the sandboxed bash) must be named
   // here or it is silently dropped from the session's tool registry.
-  const sessionLookup = options.sessionQuery ?? options.sessionReader;
   const customToolNames = [
-    ...(sessionLookup ? [SESSION_LOOKUP_TOOL] : []),
+    ...(options.sessionQuery ? [SESSION_LOOKUP_TOOL] : []),
     ...(options.customTools?.map((tool) => tool.name) ?? []),
   ];
   const enabledTools = options.activeTools
@@ -621,8 +603,8 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
     modelRuntime,
     resourceLoader,
     settingsManager,
-    ...(sessionLookup || options.customTools?.length
-      ? { customTools: [...(sessionLookup ? [createSessionLookupTool(sessionLookup)] : []), ...(options.customTools ?? [])] }
+    ...(options.sessionQuery || options.customTools?.length
+      ? { customTools: [...(options.sessionQuery ? [createSessionLookupTool(options.sessionQuery)] : []), ...(options.customTools ?? [])] }
       : {}),
     sessionManager: sdk.SessionManager.inMemory(options.cwd),
   });
@@ -666,12 +648,9 @@ function workContextHeaders(context: PiWorkContext): Record<string, string> {
 /**
  * The `fitz_session` read-only tool: lets the agent read a past conversation from the Fitz
  * session store (the host SQLite store) by session id. Registered only when the host supplies
- * a query service (or the deprecated reader adapter), so sessions without store access never see
- * a dead tool.
+ * a query service, so sessions without store access never see a dead tool.
  */
-export type SessionLookupSource = SessionQueryService | PiSessionReader;
-
-export function createSessionLookupTool(source: SessionLookupSource): ToolDefinition {
+export function createSessionLookupTool(source: SessionQueryService): ToolDefinition {
   const parameters = Type.Object({
     sessionId: Type.String({ description: "The Fitz session id (a UUID, e.g. shown in the session header popover) to read" }),
     after: Type.Optional(Type.Number({ description: "Only return transcript entries with sequence greater than this value" })),
@@ -704,15 +683,7 @@ export function createSessionLookupTool(source: SessionLookupSource): ToolDefini
           ...(params.section !== undefined ? { section: params.section } : {}),
           ...(params.includeArtifactContent !== undefined ? { includeArtifactContent: params.includeArtifactContent } : {}),
         };
-        const querySource = isSessionQueryService(source);
-        const snapshot = querySource
-          ? (await (source as SessionQueryService).query(request))?.snapshot
-          : await (source as PiSessionReader)(params.sessionId, {
-              ...(params.after !== undefined ? { after: params.after } : {}),
-              ...(params.limit !== undefined ? { limit: params.limit } : {}),
-              ...(params.section !== undefined ? { section: params.section } : {}),
-              ...(params.includeArtifactContent !== undefined ? { includeArtifactContent: params.includeArtifactContent } : {}),
-            });
+        const snapshot = (await source.query(request))?.snapshot;
         return snapshot
           ? toolResult(formatSessionSnapshot(snapshot, params.section), { source: "fitz_session", ...(params.section ? { section: params.section } : {}) })
           : toolResult(`No Fitz session found with id ${params.sessionId}.`);
@@ -722,10 +693,6 @@ export function createSessionLookupTool(source: SessionLookupSource): ToolDefini
     },
   };
   return tool;
-}
-
-function isSessionQueryService(source: SessionLookupSource): source is SessionQueryService {
-  return typeof source === "object" && source !== null && typeof source.query === "function";
 }
 
 function scopedSessionQuery(service: SessionQueryService, ownerUserId: string | undefined): SessionQueryService {
