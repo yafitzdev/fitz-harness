@@ -7,7 +7,7 @@ export interface MessageActionsOptions {
   canEdit: () => boolean;
   onEditBlocked: () => void;
   copyText: (text: string) => void | Promise<void>;
-  resend: (text: string, article: HTMLElement) => void | Promise<void>;
+  resend: (text: string, article: HTMLElement, originalText: string) => void | Promise<void>;
   regenerate: (article: HTMLElement) => void | Promise<void>;
 }
 
@@ -83,7 +83,7 @@ export class MessageActions {
       if (!revised) { editor.focus(); return; }
       content.textContent = revised;
       restore();
-      void this.#options.resend(revised, article);
+      void Promise.resolve(this.#options.resend(revised, article, originalText)).catch(() => { content.textContent = originalText; });
     };
     cancel.addEventListener("click", restore);
     send.addEventListener("click", submit);

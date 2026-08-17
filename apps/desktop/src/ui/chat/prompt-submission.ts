@@ -185,7 +185,7 @@ export class PromptSubmissionController {
       else this.#options.appendUser(content);
     }
     if (content && !existingUserMessage) this.#options.pushHistory(content);
-    this.#options.addTokenEstimate(content);
+    if (!existingUserMessage) this.#options.addTokenEstimate(content);
     this.#options.refreshContext();
     await this.#options.startRun({
       model: settings.routeId,

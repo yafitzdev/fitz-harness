@@ -54,7 +54,10 @@ export class ContextManager {
     if (messages.length === 0) throw new TypeError("The session has no conversation to compact");
     const estimatedInputTokens = this.estimate(messages); const summaryBudget = Math.max(128, Math.min(4096, Math.floor(contextTokens * 0.2))); const summary = await this.summarizer.summarize(messages, summaryBudget); const throughSequence = entries.at(-1)?.sequence ?? 0;
     const entry = this.store.appendTranscriptEntry({ id: randomUUID(), sessionId, kind: "compaction", role: "system", content: { summary, manual: true, throughSequence, originalMessageCount: messages.length, compactedMessageCount: messages.length, estimatedInputTokens, budgetTokens: contextTokens }, createdAt: new Date().toISOString() });
-    return { entry, originalMessageCount: messages.length, estimatedInputTokens, estimatedContextTokens: this.estimate([{ role: "system", content: `Conversation summary:\n${summary}` }]) };
+    // Recalculate from the durable checkpoint rather than returning only the
+    // summary's size. This includes any entries that raced the compaction and
+    // makes the value identical to the transcript endpoint and context meter.
+    return { entry, originalMessageCount: messages.length, estimatedInputTokens, estimatedContextTokens: this.estimateSession(sessionId) };
   }
 }
 

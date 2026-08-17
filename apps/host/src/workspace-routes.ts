@@ -310,12 +310,39 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
     }
   });
 
+  app.post("/api/v1/sessions/:sessionId/edit", async (request, reply) => {
+    try {
+      const session = sessionFor((request.params as { sessionId: string }).sessionId);
+      if (!session) return reply.code(404).send({ error: "Session not found" });
+      const principal = principalFor(request);
+      if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" });
+      const body = requireRecord(request.body);
+      const result = conversationTurns.editUserTurn(session.id, {
+        text: requireString(body.text, "text"),
+        ...(typeof body.originalText === "string" ? { originalText: body.originalText } : {}),
+        ...(typeof body.messageId === "string" ? { messageId: requireString(body.messageId, "messageId") } : {}),
+        ...(body.sequence !== undefined ? { sequence: requireNonNegativeInteger(body.sequence, "sequence") } : {}),
+      });
+      security?.audit("session.user-message-edited", principal?.user.id, "session", session.id, { messageId: result.messageId, removedTranscriptEntries: result.removedTranscriptEntries });
+      return { data: result };
+    } catch (error) {
+      const status = error instanceof ConversationTurnError
+        ? error.code === "user-message-not-found" || error.code === "transcript-not-found" ? 404 : 409
+        : 400;
+      return reply.code(status).send({ error: errorMessage(error) });
+    }
+  });
+
   app.post("/api/v1/sessions/:sessionId/compact", async (request, reply) => {
     try {
       const session = sessionFor((request.params as { sessionId: string }).sessionId);
       if (!session) return reply.code(404).send({ error: "Session not found" });
       const principal = principalFor(request);
       if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" });
+      const activeRun = store.latestSessionAgentRun(session.id);
+      if (activeRun?.status === "queued" || activeRun?.status === "running") {
+        return reply.code(409).send({ error: "Stop the current response before compacting" });
+      }
       const body = isRecord(request.body) ? request.body : {};
       const publicRouteId = typeof body.model === "string" ? requireString(body.model, "model") : session.routeId ?? "default";
       const routeId = publicRouteId;
@@ -502,6 +529,12 @@ function requireRecord(value: unknown): Record<string, unknown> {
 function requireString(value: unknown, name: string): string {
   if (typeof value !== "string" || !value.trim()) throw new TypeError(`${name} must be a non-empty string`);
   return value.trim();
+}
+
+function requireNonNegativeInteger(value: unknown, name: string): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) throw new TypeError(`${name} must be a non-negative integer`);
+  return parsed;
 }
 
 function requirePublicRouteId(value: unknown): "default" | "fast" | "smart" {

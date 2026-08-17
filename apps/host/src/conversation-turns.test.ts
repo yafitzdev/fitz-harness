@@ -63,6 +63,35 @@ describe("ConversationTurnService", () => {
     expect(store.transcriptAfter("session-1", 0)).toHaveLength(4);
     store.close();
   });
+
+  it("truncates the conversation at an edited user message, including stopped work", () => {
+    const store = sessionStore();
+    const context = new ContextManager(store);
+    const service = new ConversationTurnService(store, context);
+    createRun(store, "run-stopped", "2026-01-01T00:00:01.000Z");
+    append(store, "user-before", "message", "user", { text: "before" });
+    append(store, "edited-user", "message", "user", { text: "old prompt" });
+    append(store, "stopped-reasoning", "reasoning", "assistant", { text: "stopped thought", runId: "run-stopped" });
+    append(store, "stopped-tool", "tool-call", "tool", { toolName: "read", runId: "run-stopped" });
+
+    const result = service.editUserTurn("session-1", { messageId: "edited-user", text: "new prompt", originalText: "old prompt" });
+
+    expect(result).toEqual({ prompt: "new prompt", messageId: "edited-user", sequence: 2, removedTranscriptEntries: 3, estimatedContextTokens: expect.any(Number) });
+    expect(store.transcriptAfter("session-1", 0).map((entry) => entry.id)).toEqual(["user-before"]);
+    store.close();
+  });
+
+  it("falls back to the latest matching user text when a live article has no durable id", () => {
+    const store = sessionStore();
+    const service = new ConversationTurnService(store, new ContextManager(store));
+    append(store, "user-1", "message", "user", { text: "same" });
+    append(store, "answer-1", "message", "assistant", { text: "old", runId: "run-1", phase: "final" });
+    append(store, "user-2", "message", "user", { text: "same" });
+    const result = service.editUserTurn("session-1", { originalText: "same", text: "replacement" });
+    expect(result.messageId).toBe("user-2");
+    expect(store.transcriptAfter("session-1", 0).map((entry) => entry.id)).toEqual(["user-1", "answer-1"]);
+    store.close();
+  });
 });
 
 function sessionStore(): SqliteStore {

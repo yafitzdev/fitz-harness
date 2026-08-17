@@ -45,7 +45,7 @@ import { ArtifactController } from "./ui/artifacts/artifact-controller.js";
 import { assertHostContract, HostRequestError } from "./client-error.js";
 import { HostApiClient } from "./host-api-client.js";
 import { parseManagementConfiguration, parseManagementRoute, type ChatDefaults, type ManagementConfiguration } from "./management-configuration.js";
-import type { RegenerateAssistantTurnRequest, RegeneratedAssistantTurn } from "@fitz/protocol";
+import type { EditUserTurnRequest, RegenerateAssistantTurnRequest, RegeneratedAssistantTurn } from "@fitz/protocol";
 
 type Json = Record<string, any>;
 type ApiData<T> = { data: T };
@@ -223,7 +223,6 @@ const conversationContext = new ConversationContextController({
   updateMeter: (tokens, limit) => composer.controls.updateContext(tokens, limit),
   currentSessionId: () => projects.currentSessionId,
   routeId: () => composer.controls.routeId,
-  runActive: () => agentRuns.active,
   compact: async (sessionId, routeId) => (await api(`/api/v1/sessions/${sessionId}/compact`, "POST", { model: routeId })).data,
   refreshSessionEstimate: async (sessionId) => {
     const response = await querySessionTranscript(api, sessionId, { limit: 1 });
@@ -575,7 +574,7 @@ const messageActions = new MessageActions({
   canEdit: () => !agentRuns.active,
   onEditBlocked: () => showStatus("Wait for the current response before editing a message.", "error"),
   copyText: (text) => window.fitz.copyText(text),
-  resend: (text, article) => sendPrompt(text, article),
+  resend: (text, article, originalText) => editUserMessage(text, article, originalText),
   regenerate: (article) => regenerateAssistantResponse(article),
 });
 const assistantPerformance = new AssistantPerformance({
@@ -1041,8 +1040,8 @@ function showLanding(hasTask = false): void {
   conversationLanding.showHome(hasTask);
 }
 
-function appendMessage(role: string, text: string, createdAt?: string, runId?: string, attachments: readonly MessageAttachment[] = []): HTMLElement {
-  const content = conversationMessages.append(role, text, createdAt, attachments);
+function appendMessage(role: string, text: string, createdAt?: string, runId?: string, attachments: readonly MessageAttachment[] = [], metadata?: { id?: string; sequence?: number }): HTMLElement {
+  const content = conversationMessages.append(role, text, createdAt, attachments, metadata);
   if (role === "assistant" && runId) {
     const article = content.closest<HTMLElement>("article.message");
     if (article) article.dataset.runId = runId;
@@ -1070,10 +1069,41 @@ async function regenerateAssistantResponse(article: HTMLElement): Promise<void> 
     if (!Number.isFinite(retainedContextTokens) || retainedContextTokens < 0) throw new Error("The regenerated context estimate is unavailable");
     let next = userArticle.nextElementSibling;
     while (next) { const remove = next; next = next.nextElementSibling; remove.remove(); }
+    activityTimeline.clear();
     agentPlanPanel.reset();
     conversationContext.recalibrate(retainedContextTokens);
     await sendPrompt(prompt, userArticle);
   } catch (error) { showStatus(errorMessage(error), "error"); }
+}
+
+async function editUserMessage(text: string, article: HTMLElement, originalText: string): Promise<void> {
+  try {
+    if (agentRuns.active) throw new Error("Wait for the current response before editing a message.");
+    const sessionId = projects.currentSessionId;
+    if (!sessionId) throw new Error("This message is not attached to a session.");
+    const request: EditUserTurnRequest = {
+      text,
+      originalText,
+      ...(article.dataset.transcriptId ? { messageId: article.dataset.transcriptId } : {}),
+      ...(article.dataset.transcriptSequence ? { sequence: Number(article.dataset.transcriptSequence) } : {}),
+    };
+    const response = await hostApi.request<ApiData<{ sequence: number; estimatedContextTokens: number }>>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/edit`, "POST", request);
+    const editSequence = Number(response.data.sequence);
+    if (!Number.isSafeInteger(editSequence) || editSequence < 0) throw new Error("The edited transcript position is unavailable");
+    const retainedContextTokens = Number(response.data.estimatedContextTokens);
+    if (!Number.isFinite(retainedContextTokens) || retainedContextTokens < 0) throw new Error("The edited context estimate is unavailable");
+    let next = article.nextElementSibling;
+    while (next) { const remove = next; next = next.nextElementSibling; remove.remove(); }
+    conversationTranscript.truncateFrom(editSequence);
+    activityTimeline.clear();
+    agentPlanPanel.reset();
+    conversationContext.recalibrate(retainedContextTokens);
+    await sendPrompt(text, article);
+    composer.pushHistory(text);
+  } catch (error) {
+    showStatus(errorMessage(error), "error");
+    throw error;
+  }
 }
 
 function appendCommentary(text: string, createdAt?: string): HTMLElement {

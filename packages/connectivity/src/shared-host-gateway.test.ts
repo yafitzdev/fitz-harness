@@ -21,6 +21,8 @@ describe("Fitz Hosting gateway", () => {
     expect(isAllowedSharedRequest("GET", "/api/v1/cloud-routes")).toBe(true);
     expect(isAllowedSharedRequest("PUT", "/api/v1/cloud-routes/smart")).toBe(true);
     expect(isAllowedSharedRequest("DELETE", "/api/v1/cloud-routes/fast")).toBe(true);
+    expect(isAllowedSharedRequest("POST", "/api/v1/sessions/session-1/edit")).toBe(true);
+    expect(isAllowedSharedRequest("POST", "/api/v1/sessions/session-1/regenerate")).toBe(true);
   });
 
   it("proxies consumer connection setup while retaining consumer authentication", async () => {

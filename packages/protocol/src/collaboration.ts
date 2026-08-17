@@ -6,6 +6,8 @@ export type TranscriptEntryKind = "message" | "reasoning" | "tool-call" | "tool-
 export interface TranscriptEntryRecord { id: string; sessionId: string; sequence: number; kind: TranscriptEntryKind; role?: "system" | "user" | "assistant" | "tool"; content: Readonly<Record<string, unknown>>; createdAt: string }
 export interface RegenerateAssistantTurnRequest { runId: string }
 export interface RegeneratedAssistantTurn { prompt: string; removedTranscriptEntries: number; estimatedContextTokens: number }
+export interface EditUserTurnRequest { text: string; originalText?: string; messageId?: string; sequence?: number }
+export interface EditedUserTurn { prompt: string; messageId: string; sequence: number; removedTranscriptEntries: number; estimatedContextTokens: number }
 export type ToolPolicyDecision = "allow" | "deny" | "ask";
 export interface ToolPolicyRecord { subjectType: "role" | "user"; subjectId: string; toolName: string; decision: ToolPolicyDecision; updatedAt: string }
 export type ToolApprovalStatus = "pending" | "approved" | "denied" | "cancelled";

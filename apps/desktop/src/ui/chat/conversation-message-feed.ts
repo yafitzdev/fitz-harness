@@ -31,30 +31,37 @@ export interface MessageAttachment {
   dataUrl?: string;
 }
 
+export interface TranscriptMessageMetadata {
+  id?: string;
+  sequence?: number;
+}
+
 /** Owns durable user/assistant/commentary messages and file-change summaries. */
 export class ConversationMessageFeed {
   readonly #options: ConversationMessageFeedOptions;
 
   constructor(options: ConversationMessageFeedOptions) { this.#options = options; }
 
-  append(role: string, text: string, createdAt?: string, attachments: readonly MessageAttachment[] = []): HTMLElement {
-    return this.#append(role, text, createdAt, true, attachments);
+  append(role: string, text: string, createdAt?: string, attachments: readonly MessageAttachment[] = [], metadata?: TranscriptMessageMetadata): HTMLElement {
+    return this.#append(role, text, createdAt, true, attachments, metadata);
   }
 
   /** Appends a peer message without treating it as an agent-run boundary.
    * Durable asynchronous results use this after their originating run has
    * already closed (or while a restored transcript is still being rebuilt). */
-  appendDetached(role: string, text: string, createdAt?: string): HTMLElement {
-    return this.#append(role, text, createdAt, false, []);
+  appendDetached(role: string, text: string, createdAt?: string, metadata?: TranscriptMessageMetadata): HTMLElement {
+    return this.#append(role, text, createdAt, false, [], metadata);
   }
 
-  #append(role: string, text: string, createdAt: string | undefined, closesWork: boolean, attachments: readonly MessageAttachment[]): HTMLElement {
+  #append(role: string, text: string, createdAt: string | undefined, closesWork: boolean, attachments: readonly MessageAttachment[], metadata?: TranscriptMessageMetadata): HTMLElement {
     this.clearLanding();
     if (closesWork && role !== "commentary" && !this.#options.runActive()) {
       this.#options.activity.finishWork(createdAt, role === "user" ? "next-message" : "completed");
     }
     const article = document.createElement("article");
     article.className = `message ${role}`;
+    if (metadata?.id) article.dataset.transcriptId = metadata.id;
+    if (metadata?.sequence !== undefined && Number.isFinite(metadata.sequence)) article.dataset.transcriptSequence = String(metadata.sequence);
     if (role === "system") {
       article.setAttribute("role", "alert");
       article.setAttribute("aria-live", "polite");

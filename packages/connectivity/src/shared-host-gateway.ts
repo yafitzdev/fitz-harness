@@ -162,7 +162,7 @@ export function isAllowedSharedRequest(method: string, path: string): boolean {
   if (/^\/api\/v1\/projects\/[^/]+(?:\/sessions)?$/.test(path)) return method === "GET";
   if (/^\/api\/v1\/sessions\/[^/]+$/.test(path)) return ["GET", "PATCH", "DELETE"].includes(method);
   if (/^\/api\/v1\/sessions\/[^/]+\/(?:transcript|agent-run-state)$/.test(path)) return method === "GET";
-  if (/^\/api\/v1\/sessions\/[^/]+\/(?:messages|compact)$/.test(path)) return method === "POST";
+  if (/^\/api\/v1\/sessions\/[^/]+\/(?:messages|compact|edit|regenerate)$/.test(path)) return method === "POST";
   if (/^\/api\/v1\/sessions\/[^/]+\/(?:artifacts|tool-approvals)$/.test(path)) return method === "GET" || method === "POST";
   if (path === "/api/v1/agent/runs") return method === "GET" || method === "POST";
   if (/^\/api\/v1\/agent\/runs\/[^/]+$/.test(path)) return method === "GET" || method === "DELETE";

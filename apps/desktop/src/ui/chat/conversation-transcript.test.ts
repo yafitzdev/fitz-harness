@@ -111,4 +111,20 @@ describe("ConversationTranscript", () => {
     expect(rebuildHistory).toHaveBeenLastCalledWith(["old prompt", "recent prompt"]);
     expect(messages.querySelector(".transcript-load-earlier")).toBeNull();
   });
+
+  it("prunes the discarded branch after an edited user message", () => {
+    const rebuildHistory = vi.fn();
+    const view = new ConversationTranscript({
+      messages: document.createElement("main"),
+      activity: { clear: vi.fn(), appendTool: vi.fn(() => document.createElement("div")), completeTool: vi.fn(), appendReasoning: vi.fn(() => document.createElement("div")), appendReasoningDelta: vi.fn(), completeReasoning: vi.fn(), appendContext: vi.fn() },
+      appendMessage: vi.fn(() => document.createElement("div")), appendCommentary: vi.fn(), rebuildHistory,
+    });
+    view.restore([
+      { sequence: 1, kind: "message", role: "user", content: { text: "before" } },
+      { sequence: 2, kind: "message", role: "user", content: { text: "edited" } },
+      { sequence: 3, kind: "message", role: "assistant", content: { text: "discarded" } },
+    ]);
+    view.truncateFrom(2);
+    expect(rebuildHistory).toHaveBeenLastCalledWith(["before"]);
+  });
 });

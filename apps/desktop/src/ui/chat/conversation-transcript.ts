@@ -1,6 +1,6 @@
 import { estimateTranscriptContext } from "../../context-estimate.js";
 import { TranscriptWindow } from "./transcript-window.js";
-import type { MessageAttachment } from "./conversation-message-feed.js";
+import type { MessageAttachment, TranscriptMessageMetadata } from "./conversation-message-feed.js";
 
 type Json = Record<string, any>;
 
@@ -18,7 +18,7 @@ export interface ConversationTranscriptOptions {
   messages: HTMLElement;
   activity: TranscriptActivity;
   registerGeneratedFile?: (path: string, action: "edited" | "created") => void;
-  appendMessage: (role: string, text: string, createdAt?: string, runId?: string, attachments?: readonly MessageAttachment[]) => HTMLElement;
+  appendMessage: (role: string, text: string, createdAt?: string, runId?: string, attachments?: readonly MessageAttachment[], metadata?: TranscriptMessageMetadata) => HTMLElement;
   appendCommentary: (text: string, createdAt?: string) => HTMLElement;
   rebuildHistory: (messages: string[]) => void;
   resetPlan?: () => void;
@@ -58,6 +58,15 @@ export class ConversationTranscript {
   }
 
   eventSequenceForRun(runId: string): number { return this.#runSequences.get(runId) ?? 0; }
+
+  /** Removes the discarded branch after an in-place user-message edit. */
+  truncateFrom(sequence: number): void {
+    if (!Number.isFinite(sequence)) return;
+    this.#window.truncateFrom(sequence);
+    this.#runSequences.clear();
+    this.#recordSequences(this.#window.entries);
+    this.#rebuildHistory();
+  }
 
   #earlierButton(): HTMLButtonElement {
     const button = document.createElement("button"); button.type = "button"; button.className = "transcript-load-earlier"; button.textContent = "Show earlier events";
@@ -108,8 +117,18 @@ export class ConversationTranscript {
       else {
         const runId = typeof entry.content?.runId === "string" ? entry.content.runId : undefined;
         const attachments = Array.isArray(entry.content?.attachments) ? entry.content.attachments as MessageAttachment[] : [];
-        if (attachments.length) this.#options.appendMessage(entry.role ?? "system", text, entry.createdAt, runId, attachments);
-        else if (runId) this.#options.appendMessage(entry.role ?? "system", text, entry.createdAt, runId);
+        const metadata: TranscriptMessageMetadata = {
+          ...(typeof entry.id === "string" ? { id: entry.id } : {}),
+          ...(Number.isFinite(Number(entry.sequence)) ? { sequence: Number(entry.sequence) } : {}),
+        };
+        const hasMetadata = Object.keys(metadata).length > 0;
+        if (attachments.length) {
+          if (hasMetadata) this.#options.appendMessage(entry.role ?? "system", text, entry.createdAt, runId, attachments, metadata);
+          else this.#options.appendMessage(entry.role ?? "system", text, entry.createdAt, runId, attachments);
+        } else if (runId) {
+          if (hasMetadata) this.#options.appendMessage(entry.role ?? "system", text, entry.createdAt, runId, undefined, metadata);
+          else this.#options.appendMessage(entry.role ?? "system", text, entry.createdAt, runId);
+        } else if (hasMetadata) this.#options.appendMessage(entry.role ?? "system", text, entry.createdAt, undefined, undefined, metadata);
         else this.#options.appendMessage(entry.role ?? "system", text, entry.createdAt);
       }
       return;

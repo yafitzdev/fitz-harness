@@ -1,4 +1,4 @@
-import type { RegeneratedAssistantTurn, TranscriptEntryRecord } from "@fitz/protocol";
+import type { EditUserTurnRequest, EditedUserTurn, RegeneratedAssistantTurn, TranscriptEntryRecord } from "@fitz/protocol";
 import type { SqliteStore } from "@fitz/storage";
 
 export type ConversationTurnErrorCode =
@@ -6,6 +6,7 @@ export type ConversationTurnErrorCode =
   | "run-active"
   | "not-latest-assistant"
   | "transcript-not-found"
+  | "user-message-not-found"
   | "prompt-unavailable";
 
 export class ConversationTurnError extends Error {
@@ -71,6 +72,24 @@ export class ConversationTurnService {
       };
     });
   }
+
+  editUserTurn(sessionId: string, request: EditUserTurnRequest): EditedUserTurn {
+    return this.store.withImmediateTransaction(() => {
+      const active = this.store.latestSessionAgentRun(sessionId);
+      if (active?.status === "running" || active?.status === "queued") {
+        throw new ConversationTurnError("run-active", "Wait for the current response before editing");
+      }
+
+      const entries = allTranscriptEntries(this.store, sessionId);
+      const target = findUserMessage(entries, request);
+      if (!target) throw new ConversationTurnError("user-message-not-found", "The message to edit was not found");
+      const prompt = request.text.trim();
+      if (!prompt) throw new ConversationTurnError("prompt-unavailable", "The replacement message cannot be empty");
+      const removedTranscriptEntries = this.store.deleteTranscriptFrom(sessionId, target.sequence);
+      if (removedTranscriptEntries < 1) throw new ConversationTurnError("transcript-not-found", "The message to edit is no longer present");
+      return { prompt, messageId: target.id, sequence: target.sequence, removedTranscriptEntries, estimatedContextTokens: this.context.estimateSession(sessionId) };
+    });
+  }
 }
 
 function isFinalAssistantMessage(entry: TranscriptEntryRecord): boolean {
@@ -79,6 +98,21 @@ function isFinalAssistantMessage(entry: TranscriptEntryRecord): boolean {
 
 function isUserMessage(entry: TranscriptEntryRecord): boolean {
   return entry.kind === "message" && entry.role === "user";
+}
+
+function findUserMessage(entries: TranscriptEntryRecord[], request: EditUserTurnRequest): TranscriptEntryRecord | undefined {
+  if (request.messageId) {
+    const exact = entries.find((entry) => entry.id === request.messageId);
+    return exact && isUserMessage(exact) ? exact : undefined;
+  }
+  if (request.sequence !== undefined) {
+    const exact = entries.find((entry) => entry.sequence === request.sequence);
+    return exact && isUserMessage(exact) ? exact : undefined;
+  }
+  if (request.originalText !== undefined) {
+    return entries.findLast((entry) => isUserMessage(entry) && entry.content.text === request.originalText);
+  }
+  return entries.findLast(isUserMessage);
 }
 
 function allTranscriptEntries(store: SqliteStore, sessionId: string): TranscriptEntryRecord[] {

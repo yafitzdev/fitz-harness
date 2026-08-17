@@ -10,6 +10,15 @@ export class TranscriptWindow {
   reset(entries: Json[]): readonly Json[] { this.#entries = entries; this.#start = this.#boundary(Math.max(0, entries.length - this.chunkSize)); return this.visible }
   prepend(entries: Json[]): readonly Json[] { this.#entries = [...entries, ...this.#entries]; this.#start = 0; return this.visible }
   expand(): readonly Json[] { this.#start = this.#boundary(Math.max(0, this.#start - this.chunkSize)); return this.visible }
+  truncateFrom(sequence: number): readonly Json[] {
+    this.#entries = this.#entries.filter((entry) => {
+      const entrySequence = Number(entry.sequence);
+      return !Number.isFinite(entrySequence) || entrySequence < sequence;
+    });
+    this.#start = this.#boundary(Math.min(this.#start, this.#entries.length));
+    return this.visible;
+  }
+  get entries(): readonly Json[] { return this.#entries; }
   get hiddenCount(): number { return this.#start }
   get visible(): readonly Json[] { return this.#entries.slice(this.#start) }
   get oldestSequence(): number | undefined { const value = Number(this.#entries.at(0)?.sequence); return Number.isFinite(value) ? value : undefined }

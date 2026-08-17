@@ -5,8 +5,9 @@ export interface ConversationContextOptions {
   updateMeter: (tokens: number, limit: number) => void;
   currentSessionId: () => string | undefined;
   routeId: () => string;
-  runActive: () => boolean;
   compact: (sessionId: string, routeId: string) => Promise<{ estimatedContextTokens?: number; estimatedInputTokens?: number }>;
+  /** Re-read the host's authoritative post-compaction estimate. */
+  refreshSessionEstimate?: (sessionId: string) => Promise<number | undefined>;
   setStatus: (message: string, loading?: boolean) => void;
   appendContext: (message: string) => void;
   refreshControls: () => void;
@@ -34,15 +35,40 @@ export class ConversationContextController {
 
   async compact(): Promise<void> {
     const sessionId = this.#options.currentSessionId();
-    if (!sessionId || this.#options.runActive()) return;
+    if (!sessionId) {
+      this.#options.setStatus("Open a chat before compacting");
+      this.#options.refreshControls();
+      return;
+    }
     this.#options.setStatus("Compacting…", true);
     try {
       const response = await this.#options.compact(sessionId, this.#options.routeId() || "default");
-      this.#tokenEstimate = Number(response.estimatedContextTokens ?? this.#tokenEstimate);
+      // The host is the authority for both the checkpoint and its resulting
+      // context estimate. A renderer can be stale after a reconnect or chat
+      // switch, so never accept a malformed response as a successful reset.
+      let estimatedContextTokens = Number(response.estimatedContextTokens);
+      if (this.#options.refreshSessionEstimate) {
+        try {
+          const refreshed = await this.#options.refreshSessionEstimate(sessionId);
+          if (refreshed !== undefined) estimatedContextTokens = refreshed;
+        } catch {
+          // The POST response remains authoritative when the follow-up read
+          // is unavailable; the checkpoint has already been durably written.
+        }
+      }
+      if (!Number.isFinite(estimatedContextTokens) || estimatedContextTokens < 0) {
+        throw new Error("The host returned an invalid compaction estimate");
+      }
+      // Do not let a late response from an old chat overwrite the current
+      // chat's meter or activity feed.
+      if (this.#options.currentSessionId() !== sessionId) return;
+      this.#tokenEstimate = estimatedContextTokens;
       this.refresh();
       this.#options.appendContext("Context compacted");
       this.#options.setStatus(`Reduced ${formatTokenCount(Number(response.estimatedInputTokens ?? 0))} to ${formatTokenCount(this.#tokenEstimate)} tokens`);
-    } catch (error) { this.#options.setStatus(this.#options.errorMessage(error)); }
+    } catch (error) {
+      if (this.#options.currentSessionId() === sessionId) this.#options.setStatus(this.#options.errorMessage(error));
+    }
     finally { this.#options.refreshControls(); }
   }
 }
