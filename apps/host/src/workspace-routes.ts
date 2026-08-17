@@ -187,7 +187,11 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
         ...queryOwner(principalFor(request)),
       });
       if (!result) return reply.code(404).send({ error: "Session not found" });
-      return { data: result };
+      return {
+        data: result.section === "transcript"
+          ? { ...result, page: { ...result.page, estimatedContextTokens: context.estimateSession(session.id) } }
+          : result,
+      };
     } catch (error) {
       return reply.code(400).send({ error: errorMessage(error) });
     }

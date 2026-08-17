@@ -45,6 +45,8 @@ export interface SessionQueryPage {
   limit: number;
   returned: number;
   hasMore: boolean;
+  /** HTTP/UI adapters may attach the host's current context estimate. */
+  estimatedContextTokens?: number;
   after?: number;
   before?: number;
   nextAfter?: number;

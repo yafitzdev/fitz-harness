@@ -72,7 +72,7 @@ describe("ConversationSessionController", () => {
     const { controller, options, setSessionId } = harness();
     setSessionId("session-2");
     vi.mocked(options.api)
-      .mockResolvedValueOnce({ data: [{ kind: "message" }], page: {} })
+      .mockResolvedValueOnce({ data: { transcript: [{ kind: "message" }], page: { direction: "backward", hasMore: false } } })
       .mockResolvedValueOnce({ data: [{ id: "approval-1" }] })
       .mockResolvedValueOnce({ data: { id: "run-1", status: "running" } })
       .mockResolvedValueOnce({ data: { runId: "run-1", revision: 2, status: "active", items: [] } })
@@ -95,7 +95,7 @@ describe("ConversationSessionController", () => {
     const { controller, options, setSessionId } = harness();
     setSessionId("session-done");
     vi.mocked(options.api)
-      .mockResolvedValueOnce({ data: [], page: {} })
+      .mockResolvedValueOnce({ data: { transcript: [], page: { direction: "backward", hasMore: false } } })
       .mockResolvedValueOnce({ data: [] })
       .mockResolvedValueOnce({ data: { status: "completed" } })
       .mockResolvedValueOnce({ data: [] });

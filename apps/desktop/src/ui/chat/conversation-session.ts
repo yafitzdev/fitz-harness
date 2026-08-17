@@ -1,6 +1,7 @@
 import { isActiveMediaJobStatus } from "@fitz/protocol";
 import type { MediaJobSummary } from "./media-job-tracker.js";
 import type { AppLocation } from "../navigation/navigation-history.js";
+import { querySessionTranscript } from "./session-query-client.js";
 
 type Json = Record<string, any>;
 
@@ -147,7 +148,7 @@ export class ConversationSessionController {
     context.refresh();
     messages.replaceChildren(this.#options.loadingMessage("Loading conversation…"));
     try {
-      const transcript = await this.#options.api(`/api/v1/sessions/${sessionId}/transcript`);
+      const transcript = await querySessionTranscript(this.#options.api, sessionId);
       if (!isCurrent()) return;
       context.restore(this.#options.transcript.restore(transcript.data ?? [], transcript.page ?? {}));
       const pendingApprovals = await this.#options.api(`/api/v1/sessions/${sessionId}/tool-approvals?status=pending`);

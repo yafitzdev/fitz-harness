@@ -14,6 +14,7 @@ import { ConversationMessageFeed, type MessageAttachment } from "./ui/chat/conve
 import { ConversationTranscript } from "./ui/chat/conversation-transcript.js";
 import { ConversationContextController } from "./ui/chat/conversation-context.js";
 import { ConversationSessionController } from "./ui/chat/conversation-session.js";
+import { querySessionTranscript } from "./ui/chat/session-query-client.js";
 import { PromptSubmissionController } from "./ui/chat/prompt-submission.js";
 import { MediaCreationForm } from "./ui/chat/media-creation-form.js";
 import { ConnectionWorkspaceController, type FixedRouteId } from "./ui/connections/connection-workspace.js";
@@ -224,6 +225,11 @@ const conversationContext = new ConversationContextController({
   routeId: () => composer.controls.routeId,
   runActive: () => agentRuns.active,
   compact: async (sessionId, routeId) => (await api(`/api/v1/sessions/${sessionId}/compact`, "POST", { model: routeId })).data,
+  refreshSessionEstimate: async (sessionId) => {
+    const response = await querySessionTranscript(api, sessionId, { limit: 1 });
+    const estimate = Number(response.page.estimatedContextTokens);
+    return Number.isFinite(estimate) && estimate >= 0 ? estimate : undefined;
+  },
   setStatus: (message, loading) => composer.controls.setContextStatus(message, loading),
   appendContext: (message) => activityTimeline.appendContext(message),
   refreshControls: refreshComposerState,
@@ -296,8 +302,7 @@ const conversationTranscript = new ConversationTranscript({
   loadEarlier: async (beforeSequence) => {
     const sessionId = projects.currentSessionId;
     if (!sessionId) return { data: [], page: { hasEarlier: false } };
-    const response = await api(`/api/v1/sessions/${sessionId}/transcript?before=${beforeSequence}&limit=250`);
-    return { data: Array.isArray(response.data) ? response.data : [], page: response.page ?? {} };
+    return querySessionTranscript(api, sessionId, { before: beforeSequence, limit: 250 });
   },
 });
 const conversationLanding = new ConversationLanding({
@@ -376,12 +381,12 @@ const agentRuns = new AgentRunController({
   loadFinalAssistant: async (runId) => {
     const sessionId = projects.currentSessionId;
     if (!sessionId) return undefined;
-    const response = await api(`/api/v1/sessions/${encodeURIComponent(sessionId)}/transcript`);
-    const entry = [...(response.data ?? [])].reverse().find((candidate: Json) =>
+    const response = await querySessionTranscript(api, sessionId);
+    const entry = [...response.data].reverse().find((candidate: Json) =>
       candidate.kind === "message" && candidate.role === "assistant"
       && candidate.content?.runId === runId && candidate.content?.phase === "final");
     const text = typeof entry?.content?.text === "string" ? entry.content.text : "";
-    return text ? { text, ...(typeof entry.createdAt === "string" ? { createdAt: entry.createdAt } : {}) } : undefined;
+    return text ? { text, ...(typeof entry?.createdAt === "string" ? { createdAt: entry.createdAt } : {}) } : undefined;
   },
   appendSystem: (message) => { appendMessage("system", message); },
   appendChangeSummary: (files) => appendChangeSummary(files),
