@@ -97,7 +97,9 @@ export class OpenAICompatibleClient {
         model: modelId,
         messages: request.messages,
         stream: true,
-        stream_options: { include_usage: true },
+        // Preserve the caller's OpenAI stream option while retaining the
+        // historical default that lets Fitz collect provider token telemetry.
+        stream_options: { include_usage: request.streamOptions?.includeUsage ?? true },
         ...(request.maxTokens !== undefined ? { max_tokens: request.maxTokens } : {}),
         ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
         ...(request.topP !== undefined ? { top_p: request.topP } : {}),

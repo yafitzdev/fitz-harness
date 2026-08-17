@@ -31,9 +31,33 @@ describe("Fitz host", () => {
     expect(health.statusCode).toBe(200);
     expect(health.json().engine.state).toBe("READY");
     expect((await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" })).json().hostName).toEqual(expect.any(String));
-    expect(models.json().data.map((model: { id: string }) => model.id)).toEqual(["default"]);
-    expect(models.body).not.toContain("fake-best");
+    expect(models.json().data.map((model: { id: string }) => model.id)).toEqual(["fake-best-v1"]);
+    expect(models.body).not.toContain('"fake-best"');
     await runtime.app.close();
+  });
+
+  it("exposes the recipe model ID while keeping the internal Default route as a legacy alias", async () => {
+    const runtime = createHost();
+    try {
+      const catalog = await runtime.app.inject({ method: "GET", url: "/v1/models" });
+      expect(catalog.headers["cache-control"]).toBe("no-store");
+      expect(catalog.headers.vary).toBe("authorization");
+      expect(catalog.json().data).toEqual([
+        expect.objectContaining({ id: "fake-best-v1", display_name: "fake-best-v1" }),
+      ]);
+
+      for (const model of ["fake-best-v1", "default"]) {
+        const completion = await runtime.app.inject({
+          method: "POST",
+          url: "/v1/chat/completions",
+          payload: { model, stream: false, messages: [{ role: "user", content: "identify yourself" }] },
+        });
+        expect(completion.statusCode, completion.body).toBe(200);
+        expect(completion.json().model).toBe("fake-best-v1");
+      }
+    } finally {
+      await runtime.app.close();
+    }
   });
 
   it("repairs an invalid cloud-backed Default to the local host seed", async () => {
@@ -329,7 +353,7 @@ describe("Fitz host", () => {
     try {
       const assigned = await runtime.app.inject({ method: "PUT", url: "/api/v1/management/routes/consumer--default", payload: { displayName: "Default", recipeId: "fake-best", enabled: true, isDefault: true } });
       expect(assigned.statusCode, assigned.body).toBe(400);
-      expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((item: { id: string }) => item.id)).toEqual(["default"]);
+      expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((item: { id: string }) => item.id)).toEqual(["fake-best-v1"]);
       const completion = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "consumer--default", stream: false, messages: [{ role: "user", content: "hosted locally" }] } });
       expect(completion.statusCode, completion.body).toBe(404);
     } finally { await runtime.app.close(); }
@@ -399,14 +423,14 @@ describe("Fitz host", () => {
       expect(consumerModel).toEqual({ id: "upstream-model", recipeId: expect.any(String) });
       expect(saved.json().data.models.map((model: { id: string }) => model.id)).toEqual(["upstream-model", "explicit-chat-model"]);
       expect(runtime.routes.resolveRecipe(consumerModel.recipeId)).not.toHaveProperty("agentTopology");
-      expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((item: { id: string }) => item.id).sort()).toEqual(["default"]);
+      expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((item: { id: string }) => item.id).sort()).toEqual(["fake-best-v1"]);
       const models = await runtime.app.inject({ method: "GET", url: "/v1/models" });
-      expect(models.json().data.map((item: { id: string }) => item.id)).toEqual(["default"]);
+      expect(models.json().data.map((item: { id: string }) => item.id)).toEqual(["fake-best-v1"]);
       const recipeTest = await runtime.app.inject({ method: "POST", url: `/api/v1/management/recipes/${consumerModel.recipeId}/test` });
       expect(recipeTest.statusCode, recipeTest.body).toBe(200); expect(recipeTest.json().data.working).toBe(true);
       expect((await runtime.app.inject({ method: "PUT", url: "/api/v1/cloud-routes/smart", payload: { recipeId: consumerModel.recipeId } })).statusCode).toBe(200);
       expect((await runtime.app.inject({ method: "PUT", url: "/api/v1/cloud-routes/fast", payload: { recipeId: consumerModel.recipeId } })).statusCode).toBe(200);
-      expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((item: { id: string }) => item.id)).toEqual(["default", "fast", "smart"]);
+      expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((item: { id: string }) => item.id)).toEqual(["fake-best-v1", "upstream-model"]);
       const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Connection routing" } });
       const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "External", connectionId: "test-api", routeId: "smart" } });
       const run = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "smart", sessionId: session.json().data.id, messages: [{ role: "user", content: "hello" }] } });
@@ -417,12 +441,17 @@ describe("Fitz host", () => {
       const scopedCompletion = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "smart", stream: false, messages: [{ role: "user", content: "hello" }] } });
       expect(scopedCompletion.statusCode, scopedCompletion.body).toBe(200);
       expect(scopedCompletion.json().choices[0].message.content).toContain("upstream ok");
+      expect(scopedCompletion.json().model).toBe("upstream-model");
+      const canonicalCloudCompletion = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "upstream-model", stream: false, messages: [{ role: "user", content: "hello" }] } });
+      expect(canonicalCloudCompletion.statusCode, canonicalCloudCompletion.body).toBe(200);
+      expect(canonicalCloudCompletion.json().model).toBe("upstream-model");
       const fastSession = await runtime.app.inject({ method: "POST", url: "/api/v1/chats", payload: { title: "Fast cloud", routeId: "fast" } });
       expect(fastSession.statusCode, fastSession.body).toBe(201);
       expect(fastSession.json().data.routeId).toBe("fast");
       const fastCompletion = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", payload: { model: "fast", stream: false, messages: [{ role: "user", content: "hello" }] } });
       expect(fastCompletion.statusCode, fastCompletion.body).toBe(200);
       expect(fastCompletion.json().choices[0].message.content).toContain("upstream ok");
+      expect(fastCompletion.json().model).toBe("upstream-model");
       await runtime.app.inject({ method: "PUT", url: "/api/v1/connections/test-api", payload: { displayName: "Test API", baseUrl: `http://127.0.0.1:${address.port}/v1`, authType: "none" } });
       expect(runtime.routes.resolveRecipe(consumerModel.recipeId)).not.toHaveProperty("agentTopology");
       const refreshedStatus = await runtime.app.inject({ method: "GET", url: "/api/v1/management/status" });
@@ -535,8 +564,8 @@ describe("Fitz host", () => {
 
       expect((await runtime.app.inject({ method: "GET", url: "/api/v1/connections", headers: aliceHeaders })).json().data).toHaveLength(1);
       expect((await runtime.app.inject({ method: "GET", url: "/api/v1/connections", headers: bobHeaders })).json().data).toEqual([]);
-      expect((await runtime.app.inject({ method: "GET", url: "/v1/models", headers: aliceHeaders })).json().data.map((model: { id: string }) => model.id)).toEqual(["default", "fast", "smart"]);
-      expect((await runtime.app.inject({ method: "GET", url: "/v1/models", headers: bobHeaders })).json().data.map((model: { id: string }) => model.id)).toEqual(["default"]);
+      expect((await runtime.app.inject({ method: "GET", url: "/v1/models", headers: aliceHeaders })).json().data.map((model: { id: string }) => model.id)).toEqual(["fake-best-v1", "private-cloud-model"]);
+      expect((await runtime.app.inject({ method: "GET", url: "/v1/models", headers: bobHeaders })).json().data.map((model: { id: string }) => model.id)).toEqual(["fake-best-v1"]);
       expect((await runtime.app.inject({ method: "PUT", url: "/api/v1/cloud-routes/smart", headers: bobHeaders, payload: { recipeId } })).statusCode).toBe(404);
       expect((await runtime.app.inject({ method: "GET", url: "/api/v1/cloud-routes", headers: bobHeaders })).json().data).toEqual({});
     } finally {
@@ -709,7 +738,7 @@ describe("Fitz host", () => {
 
     expect(response.statusCode).toBe(400);
     expect(runtime.routes.listRoutes(true)).not.toContainEqual(expect.objectContaining({ id: "subagent" }));
-    expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((model: { id: string }) => model.id)).toEqual(["default"]);
+    expect((await runtime.app.inject({ method: "GET", url: "/v1/models" })).json().data.map((model: { id: string }) => model.id)).toEqual(["fake-best-v1"]);
     await runtime.app.close();
   });
 
@@ -852,13 +881,55 @@ describe("Fitz host", () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers["content-type"]).toContain("text/event-stream");
     expect(response.body).toContain("chat.completion.chunk");
+    expect(response.body).toContain('"model":"fake-best-v1"');
+    expect(response.body).not.toContain('"model":"default"');
     const content = response.body
       .split("\n")
       .filter((line) => line.startsWith("data: {") && line.includes("chat.completion.chunk"))
       .map((line) => JSON.parse(line.slice(6)).choices[0].delta.content ?? "")
       .join("");
     expect(content).toContain("stream this");
+    expect(response.body).not.toContain('"usage"');
     expect(response.body).toContain("data: [DONE]");
+    await runtime.app.close();
+  });
+
+  it("emits a final OpenAI usage chunk before DONE when requested", async () => {
+    const adapter = new FakeEngineAdapter();
+    const runtime = createHost({ fakeAdapter: adapter });
+    const response = await runtime.app.inject({
+      method: "POST",
+      url: "/v1/chat/completions",
+      payload: {
+        model: "default",
+        stream: true,
+        stream_options: { include_usage: true },
+        messages: [{ role: "user", content: "report streamed usage" }],
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const events = response.body
+      .split("\n")
+      .filter((line) => line.startsWith("data: "))
+      .map((line) => line.slice("data: ".length));
+    const doneIndex = events.indexOf("[DONE]");
+    const usageIndex = events.findIndex((event) => {
+      if (event === "[DONE]") return false;
+      const parsed = JSON.parse(event) as { choices?: unknown[]; usage?: Record<string, number> };
+      return Array.isArray(parsed.choices) && parsed.choices.length === 0 && parsed.usage !== undefined;
+    });
+
+    expect(usageIndex).toBeGreaterThanOrEqual(0);
+    expect(usageIndex).toBeLessThan(doneIndex);
+    const usageEvent = JSON.parse(events[usageIndex]!) as { choices: unknown[]; usage: Record<string, number> };
+    expect(usageEvent.choices).toEqual([]);
+    expect(usageEvent.usage.prompt_tokens).toBeGreaterThan(0);
+    expect(usageEvent.usage.completion_tokens).toBeGreaterThan(0);
+    expect(usageEvent.usage.total_tokens).toBe(
+      usageEvent.usage.prompt_tokens + usageEvent.usage.completion_tokens,
+    );
+    expect(adapter.requests[0]?.streamOptions).toEqual({ includeUsage: true });
     await runtime.app.close();
   });
 
@@ -993,7 +1064,7 @@ describe("Fitz host", () => {
     const privateHealth = await runtime.app.inject({ method: "GET", url: "/health", headers: { authorization: `Bearer ${token}` } });
     const models = await runtime.app.inject({ method: "GET", url: "/v1/models", headers: { authorization: `Bearer ${token}` } });
     const completion = await runtime.app.inject({ method: "POST", url: "/v1/chat/completions", headers: { authorization: `Bearer ${token}` }, payload: { model: "default", stream: false, messages: [{ role: "user", content: "hello" }] } });
-    expect(publicHealth.json()).not.toHaveProperty("resources"); expect(privateHealth.json()).toHaveProperty("resources"); expect(denied.statusCode).toBe(401); expect(models.json().data.map((model: { id: string }) => model.id)).toEqual(["default"]); expect(completion.statusCode).toBe(200); await runtime.app.close();
+    expect(publicHealth.json()).not.toHaveProperty("resources"); expect(privateHealth.json()).toHaveProperty("resources"); expect(denied.statusCode).toBe(401); expect(models.json().data.map((model: { id: string }) => model.id)).toEqual(["fake-best-v1"]); expect(completion.statusCode).toBe(200); await runtime.app.close();
   });
 
   it("accepts the private Pi credential only on chat completions", async () => {
@@ -1424,8 +1495,30 @@ describe("Fitz host", () => {
 
   it("manually compacts a session into a reusable context checkpoint", async () => {
     const runtime = createHost(); const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Context" } }); const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "Long" } }); const sessionId = session.json().data.id;
-    runtime.store.appendTranscriptEntry({ id: "manual-context", sessionId, kind: "message", role: "user", content: { text: "preserve this context" }, createdAt: new Date().toISOString() }); const compacted = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/compact`, payload: { model: "default" } });
-    expect(compacted.statusCode).toBe(200); expect(compacted.json().data).toEqual(expect.objectContaining({ originalMessageCount: 1, estimatedContextTokens: expect.any(Number) })); expect(runtime.store.transcriptAfter(sessionId, 0).at(-1)).toEqual(expect.objectContaining({ kind: "compaction", content: expect.objectContaining({ manual: true, throughSequence: 1 }) })); await runtime.app.close();
+    runtime.store.appendTranscriptEntry({ id: "manual-context", sessionId, kind: "message", role: "user", content: { text: "preserve this context ".repeat(2_000) }, createdAt: new Date().toISOString() }); const compacted = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/compact`, payload: { model: "default" } });
+    const result = compacted.json().data;
+    const transcript = await runtime.app.inject({ method: "GET", url: `/api/v1/sessions/${sessionId}/transcript?limit=1` });
+    expect(compacted.statusCode).toBe(200); expect(result).toEqual(expect.objectContaining({ originalMessageCount: 1, estimatedInputTokens: expect.any(Number), estimatedContextTokens: expect.any(Number) })); expect(result.estimatedContextTokens).toBeLessThan(result.estimatedInputTokens); expect(transcript.json().page.estimatedContextTokens).toBe(result.estimatedContextTokens); expect(runtime.store.transcriptAfter(sessionId, 0).at(-1)).toEqual(expect.objectContaining({ kind: "compaction", content: expect.objectContaining({ manual: true, throughSequence: 1 }) })); await runtime.app.close();
+  });
+
+  it("rejects manual compaction while the session has an active run", async () => {
+    const runtime = createHost();
+    try {
+      const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Busy context" } });
+      const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "Busy" } });
+      const sessionId = session.json().data.id as string;
+      runtime.store.appendTranscriptEntry({ id: "busy-context", sessionId, kind: "message", role: "user", content: { text: "keep this" }, createdAt: new Date().toISOString() });
+      const now = Date.now();
+      runtime.store.createAgentRun({ id: "busy-context-run", routeId: "default", sessionId, status: "running", createdAt: now, updatedAt: now, lastSequence: 0 }, { model: "default", sessionId, accessMode: "full", messages: [{ role: "user", content: "working" }] });
+
+      const response = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/compact`, payload: { model: "default" } });
+
+      expect(response.statusCode).toBe(409);
+      expect(response.json().error).toEqual(expect.objectContaining({ code: "resource_busy", message: "Stop the current response before compacting", retryable: true }));
+      expect(runtime.store.transcriptAfter(sessionId, 0).some((entry) => entry.kind === "compaction")).toBe(false);
+    } finally {
+      await runtime.app.close();
+    }
   });
 
   it("has no pairing-code onboarding API", async () => { const runtime = createHost({ adminToken: "test-token" }); const headers = { "x-fitz-admin-token": "test-token" }; expect((await runtime.app.inject({ method: "POST", url: "/api/v1/management/pairing-codes", headers, payload: {} })).statusCode).toBe(404); expect((await runtime.app.inject({ method: "POST", url: "/api/v1/pairing/redeem-shared", payload: {} })).statusCode).toBe(404); await runtime.app.close(); });

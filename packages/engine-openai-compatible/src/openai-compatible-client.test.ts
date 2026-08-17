@@ -81,6 +81,21 @@ describe("OpenAICompatibleClient model discovery", () => {
     });
   });
 
+  it("forwards an explicit include_usage choice to the provider", async () => {
+    let body: Record<string, unknown> | undefined;
+    const client = new OpenAICompatibleClient({
+      fetch: async (_url, init) => {
+        body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return new Response("data: [DONE]\n\n", { status: 200, headers: { "content-type": "text/event-stream" } });
+      },
+    });
+    for await (const _delta of client.streamChat("https://example.test/v1", "qwen", {
+      id: "req-usage", routeId: "default", messages: [{ role: "user", content: "hello" }],
+      streamOptions: { includeUsage: true },
+    }, new AbortController().signal)) { /* consume */ }
+    expect(body).toMatchObject({ stream_options: { include_usage: true } });
+  });
+
   it.each(["reasoning", "reasoning_text"])("normalizes provider %s deltas as reasoning", async (field) => {
     const client = new OpenAICompatibleClient({
       fetch: async () => new Response(

@@ -28,6 +28,11 @@ export type ChatToolChoice = "none" | "auto" | "required" | {
   function: { name: string };
 };
 
+/** OpenAI-compatible controls for the terminal stream usage event. */
+export interface ChatCompletionStreamOptions {
+  include_usage?: boolean;
+}
+
 export type ChatContentPart =
   | { type: "text"; text: string }
   | { type: "image_url"; image_url: { url: string } };
@@ -54,6 +59,7 @@ export interface ChatCompletionRequest {
   tools?: ChatCompletionTool[];
   tool_choice?: ChatToolChoice;
   parallel_tool_calls?: boolean;
+  stream_options?: ChatCompletionStreamOptions;
   chat_template_kwargs?: { preserve_thinking?: boolean; enable_thinking?: boolean };
 }
 
@@ -69,6 +75,7 @@ export interface InferenceRequest {
   tools?: ChatCompletionTool[];
   toolChoice?: ChatToolChoice;
   parallelToolCalls?: boolean;
+  streamOptions?: { includeUsage?: boolean };
   chatTemplateKwargs?: { preserve_thinking?: boolean; enable_thinking?: boolean };
 }
 
@@ -163,6 +170,14 @@ export function parseChatCompletionRequest(value: unknown): ChatCompletionReques
   if (value.parallel_tool_calls !== undefined) {
     if (typeof value.parallel_tool_calls !== "boolean") throw new TypeError("parallel_tool_calls must be a boolean");
     request.parallel_tool_calls = value.parallel_tool_calls;
+  }
+  if (value.stream_options !== undefined) {
+    if (!isRecord(value.stream_options)) throw new TypeError("stream_options must be an object");
+    const includeUsage = value.stream_options.include_usage;
+    if (includeUsage !== undefined && typeof includeUsage !== "boolean") {
+      throw new TypeError("stream_options.include_usage must be a boolean");
+    }
+    request.stream_options = includeUsage === undefined ? {} : { include_usage: includeUsage };
   }
   if (value.chat_template_kwargs !== undefined) {
     if (!isRecord(value.chat_template_kwargs)) throw new TypeError("chat_template_kwargs must be an object");

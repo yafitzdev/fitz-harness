@@ -27,6 +27,16 @@ describe("UserRouteResolver", () => {
     store.close();
   });
 
+  it("projects chat routes to model IDs while retaining legacy route aliases", () => {
+    const store = SqliteStore.memory();
+    const resolver = new UserRouteResolver(store, new RouteResolver([defaultRoute], [defaultRecipe]));
+
+    expect(resolver.publicChatModels().map((entry) => entry.modelId)).toEqual(["local-model"]);
+    expect(resolver.resolvePublicModel("local-model").route.id).toBe("default");
+    expect(resolver.resolvePublicModel("default").recipe.modelId).toBe("local-model");
+    store.close();
+  });
+
   it("isolates Smart and Fast bindings by connection owner", () => {
     const store = SqliteStore.memory();
     const aliceRecipe = recipe("alice-cloud", "openai-compatible", "alice-model");

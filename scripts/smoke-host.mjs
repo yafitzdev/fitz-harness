@@ -30,13 +30,17 @@ try {
     initialEngineState: health.engine.state,
     models: models.data.map((model) => model.id),
     completionObject: chat.object,
+    model: chat.model,
     completion: chat.choices[0].message.content,
   };
 
   if (
     result.health !== "ok" ||
     result.initialEngineState !== "READY" ||
-    !result.models.includes("default") ||
+    !result.models.includes("fake-best-v1") ||
+    result.models.includes("default") ||
+    !chat.model ||
+    chat.model === "default" ||
     !result.completion.includes("compiled smoke test")
   ) {
     throw new Error(`Unexpected smoke result: ${JSON.stringify(result)}`);

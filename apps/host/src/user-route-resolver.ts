@@ -1,4 +1,4 @@
-import { LOCAL_MAIN_CONTEXT_TOKENS, type HostAccessClass, type InferenceExecutionClass, type Route } from "@fitz/protocol";
+import { LOCAL_MAIN_CONTEXT_TOKENS, type HostAccessClass, type InferenceExecutionClass, type Recipe, type Route } from "@fitz/protocol";
 import { RecipeNotFoundError, RouteNotFoundError, type ResolvedRoute, type RouteResolver } from "@fitz/inference-core";
 import type { SqliteStore } from "@fitz/storage";
 
@@ -42,6 +42,14 @@ export interface ConsumerCloudRouteBinding {
   updatedAt: string;
 }
 
+/** Public OpenAI model projection. The route is deliberately retained only as
+ * internal routing metadata; external callers use the recipe's model ID. */
+export interface PublicChatModel {
+  modelId: string;
+  route: Route;
+  recipe: Recipe;
+}
+
 const CONNECTIONS_SETTING = "consumerConnections";
 const CLOUD_ROUTES_SETTING = "consumerCloudRoutes";
 
@@ -67,6 +75,15 @@ export class UserRouteResolver {
     throw new RouteNotFoundError(routeId);
   }
 
+  /** Resolve an OpenAI-facing model ID while retaining legacy route aliases.
+   * Route IDs remain accepted for existing clients, but are never required by
+   * the public model catalog or emitted in OpenAI completion responses. */
+  resolvePublicModel(modelId: string, ownerUserId = LOCAL_OWNER_ID): ResolvedRoute {
+    const canonical = this.publicChatModels(ownerUserId).find((entry) => entry.modelId === modelId);
+    if (canonical) return { route: canonical.route, recipe: canonical.recipe };
+    return this.resolve(modelId, ownerUserId);
+  }
+
   publicRoutes(ownerUserId = LOCAL_OWNER_ID): Route[] {
     const result: Route[] = [this.routes.resolve("default").route];
     for (const role of ["fast", "smart"] as const) {
@@ -74,6 +91,21 @@ export class UserRouteResolver {
       if (binding) result.push(this.#resolvedCloudRoute(role, binding.recipeId).route);
     }
     return result;
+  }
+
+  /** Returns the visible chat models using provider/model identity instead of
+   * the internal route names used by sessions and scheduler state. Duplicate
+   * model IDs represent the same external model and are exposed once, with
+   * the first route in the stable default/fast/smart order owning resolution. */
+  publicChatModels(ownerUserId = LOCAL_OWNER_ID): PublicChatModel[] {
+    const seen = new Set<string>();
+    return this.publicRoutes(ownerUserId).flatMap((route) => {
+      const recipe = this.routes.resolveRecipe(route.recipeId);
+      const modelId = recipe.modelId.trim();
+      if (!modelId || seen.has(modelId)) return [];
+      seen.add(modelId);
+      return [{ modelId, route, recipe }];
+    });
   }
 
   publicMediaRoutes(): Route[] {

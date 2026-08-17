@@ -66,4 +66,18 @@ describe("parseChatCompletionRequest", () => {
       model: "default", messages: [{ role: "user", content: "hi", reasoning_content: "invalid" }],
     })).toThrow("requires an assistant string");
   });
+
+  it("accepts the OpenAI streaming usage option", () => {
+    expect(parseChatCompletionRequest({
+      model: "default",
+      messages: [{ role: "user", content: "hello" }],
+      stream: true,
+      stream_options: { include_usage: true },
+    })).toMatchObject({ stream_options: { include_usage: true } });
+    expect(() => parseChatCompletionRequest({
+      model: "default",
+      messages: [{ role: "user", content: "hello" }],
+      stream_options: { include_usage: "yes" },
+    })).toThrow("stream_options.include_usage must be a boolean");
+  });
 });

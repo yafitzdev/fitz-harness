@@ -34,21 +34,34 @@ export interface OpenAIRouteOptions {
 export function registerOpenAIRoutes(options: OpenAIRouteOptions): void {
   const { app, scheduler, userRoutes, principals, internalWorkContexts, security } = options;
 
-  app.get("/v1/models", async (request): Promise<ModelListResponse> => ({
-    object: "list",
-    data: [...userRoutes.publicRoutes(principals.get(request)?.user.id ?? LOCAL_OWNER_ID), ...userRoutes.publicMediaRoutes()].filter((route) => {
-      const principal = principals.get(request);
-      return !principal || security?.authorizeRoute(principal, route.id);
-    }).map((route) => ({
+  app.get("/v1/models", async (request, reply): Promise<ModelListResponse> => {
+    // The catalog is owner-scoped and changes when a route/recipe is rebound.
+    // Never let a client or shared gateway cache the old route aliases.
+    reply.header("cache-control", "no-store");
+    reply.header("vary", "authorization");
+    const principal = principals.get(request);
+    const ownerUserId = principal?.user.id ?? LOCAL_OWNER_ID;
+    const chatModels = userRoutes.publicChatModels(ownerUserId)
+      .filter((entry) => !principal || security?.authorizeRoute(principal, entry.route.id))
+      .map((entry) => ({
+        id: entry.modelId,
+        object: "model" as const,
+        created: 0,
+        owned_by: "fitz" as const,
+        display_name: entry.modelId,
+        ...(entry.route.description ? { description: entry.route.description } : {}),
+      }));
+    const mediaModels = userRoutes.publicMediaRoutes().filter((route) => !principal || security?.authorizeRoute(principal, route.id)).map((route) => ({
       id: route.id,
-      object: "model",
+      object: "model" as const,
       created: 0,
-      owned_by: "fitz",
+      owned_by: "fitz" as const,
       display_name: route.displayName,
       ...(route.description ? { description: route.description } : {}),
       ...(route.kind && route.kind !== "chat" ? { endpoints: [`${route.kind === "audio" ? "audio" : `${route.kind}s`}/generations`] } : {}),
-    })),
-  }));
+    }));
+    return { object: "list", data: [...chatModels, ...mediaModels] };
+  });
 
   app.post("/v1/chat/completions", async (request, reply) => {
     let body;
@@ -60,8 +73,8 @@ export function registerOpenAIRoutes(options: OpenAIRouteOptions): void {
       const principal = principals.get(request);
       const internalContext = internalWorkContexts.get(request);
       const ownerUserId = principal?.user.id ?? internalContext?.ownerUserId ?? LOCAL_OWNER_ID;
-      resolved = userRoutes.resolve(model, ownerUserId, Boolean(internalContext));
-      if (principal && !security?.authorizeRoute(principal, model)) {
+      resolved = userRoutes.resolvePublicModel(model, ownerUserId);
+      if (principal && !security?.authorizeRoute(principal, resolved.route.id)) {
         return reply.code(403).send(openAIError(new SecurityPolicyError("Route access denied"), "permission_error"));
       }
       if (principal) {
@@ -78,9 +91,10 @@ export function registerOpenAIRoutes(options: OpenAIRouteOptions): void {
 
     const principal = principals.get(request);
     const internalContext = internalWorkContexts.get(request);
+    const responseModel = resolved.recipe.modelId;
     let stream: ReturnType<InferenceScheduler["enqueueResolved"]>;
     try {
-      stream = scheduler.enqueueResolved(model, resolved.recipe.id, {
+      stream = scheduler.enqueueResolved(resolved.route.id, resolved.recipe.id, {
         messages: body.messages,
         ...(body.max_tokens !== undefined ? { maxTokens: body.max_tokens } : {}),
         ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),
@@ -89,9 +103,10 @@ export function registerOpenAIRoutes(options: OpenAIRouteOptions): void {
         ...(body.tools !== undefined ? { tools: body.tools } : {}),
         ...(body.tool_choice !== undefined ? { toolChoice: body.tool_choice } : {}),
         ...(body.parallel_tool_calls !== undefined ? { parallelToolCalls: body.parallel_tool_calls } : {}),
+        ...(body.stream_options?.include_usage !== undefined ? { streamOptions: { includeUsage: body.stream_options.include_usage } } : {}),
         ...(body.chat_template_kwargs !== undefined ? { chatTemplateKwargs: body.chat_template_kwargs } : {}),
         ...(principal ? { userId: principal.user.id } : internalContext?.ownerUserId ? { userId: internalContext.ownerUserId } : body.user !== undefined ? { userId: body.user } : {}),
-      }, undefined, { ...(principal ? { ownerUserId: principal.user.id } : {}), ...internalContext, label: `${model} completion` });
+      }, undefined, { ...(principal ? { ownerUserId: principal.user.id } : {}), ...internalContext, label: `${responseModel} completion` });
     } catch (error) {
       if (error instanceof InferenceAdmissionError) reply.header("retry-after", "2");
       return reply.code(error instanceof InferenceAdmissionError ? 429 : 502).send(openAIError(error, error instanceof InferenceAdmissionError ? "resource_busy" : "server_error"));
@@ -99,7 +114,7 @@ export function registerOpenAIRoutes(options: OpenAIRouteOptions): void {
 
     if (body.stream === false) {
       try {
-        return await collectCompletion(stream.requestId, model, stream);
+        return await collectCompletion(stream.requestId, responseModel, stream);
       } catch (error) {
         return reply.code(error instanceof RouteNotFoundError ? 404 : 502).send(openAIError(error, "server_error"));
       }
@@ -115,6 +130,8 @@ export function registerOpenAIRoutes(options: OpenAIRouteOptions): void {
 
     const created = Math.floor(Date.now() / 1_000);
     const completionId = `chatcmpl-${stream.requestId}`;
+    let promptTokens: number | undefined;
+    let completionTokens: number | undefined;
     const responseController = new AbortController();
     const abort = () => {
       if (responseController.signal.aborted) return;
@@ -126,13 +143,18 @@ export function registerOpenAIRoutes(options: OpenAIRouteOptions): void {
     reply.raw.once("close", onClose);
 
     try {
-      await writeSse(reply.raw, streamChunk(completionId, created, model, { role: "assistant" }, null), responseController.signal);
+      await writeSse(reply.raw, streamChunk(completionId, created, responseModel, { role: "assistant" }, null), responseController.signal);
       for await (const delta of stream) {
-        await writeSse(reply.raw, streamChunk(completionId, created, model, {
+        if (delta.promptTokens !== undefined) promptTokens = delta.promptTokens;
+        if (delta.completionTokens !== undefined) completionTokens = delta.completionTokens;
+        await writeSse(reply.raw, streamChunk(completionId, created, responseModel, {
           ...(delta.text ? { content: delta.text } : {}),
           ...(delta.reasoning ? { reasoning_content: delta.reasoning } : {}),
           ...(delta.toolCalls?.length ? { tool_calls: delta.toolCalls } : {}),
         }, delta.finishReason ?? null), responseController.signal);
+      }
+      if (body.stream_options?.include_usage === true) {
+        await writeSse(reply.raw, streamUsageChunk(completionId, created, responseModel, promptTokens ?? 0, completionTokens ?? 0), responseController.signal);
       }
       await writeSseDone(reply.raw, responseController.signal);
     } catch (error) {
@@ -181,6 +203,21 @@ async function collectCompletion(requestId: string, model: string, stream: Async
 
 function streamChunk(id: string, created: number, model: string, delta: Record<string, unknown>, finishReason: string | null): Record<string, unknown> {
   return { id, object: "chat.completion.chunk", created, model, choices: [{ index: 0, delta, finish_reason: finishReason }] };
+}
+
+function streamUsageChunk(id: string, created: number, model: string, promptTokens: number, completionTokens: number): Record<string, unknown> {
+  return {
+    id,
+    object: "chat.completion.chunk",
+    created,
+    model,
+    choices: [],
+    usage: {
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: promptTokens + completionTokens,
+    },
+  };
 }
 
 function openAIError(error: unknown, type: string): OpenAIErrorResponse {
