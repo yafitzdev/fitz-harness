@@ -198,9 +198,9 @@ export class SqliteMediaStore {
       this.database
         .prepare("INSERT INTO media_job_events (job_id, sequence, timestamp, type, event_json) VALUES (?, ?, ?, ?, ?)")
         .run(jobId, row.sequence, timestamp, event.type, JSON.stringify(event));
-      this.database.exec("COMMIT");
       const envelope = { jobId, sequence: row.sequence, timestamp, event };
       this.jobs.appendEvent(jobId, mediaJobEventToJobEvent(event), timestamp);
+      this.database.exec("COMMIT");
       return envelope;
     } catch (error) {
       if (this.database.isTransaction) this.database.exec("ROLLBACK");
