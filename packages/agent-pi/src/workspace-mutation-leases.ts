@@ -87,6 +87,27 @@ export function isWorkspaceMutation(toolName: string): boolean {
   return !READ_ONLY_TOOLS.has(toolName) && !NON_WORKSPACE_TOOLS.has(toolName);
 }
 
+interface ExecutionModeTool {
+  name: string;
+  executionMode?: "sequential" | "parallel";
+}
+
+/**
+ * Pi prepares every call in a parallel batch before it executes any call. Fitz
+ * acquires workspace leases from that preparation hook, so two mutating calls
+ * in one parallel batch would otherwise deadlock: the second preparation waits
+ * for the lease that the first call cannot release until execution begins.
+ *
+ * Marking every workspace-mutating definition sequential makes Pi prepare,
+ * execute, and release each mutation before preparing the next one. Read-only
+ * batches remain parallel.
+ */
+export function serializeWorkspaceMutationTools(tools: readonly ExecutionModeTool[]): void {
+  for (const tool of tools) {
+    if (isWorkspaceMutation(tool.name)) tool.executionMode = "sequential";
+  }
+}
+
 function workspaceKey(cwd: string): string {
   const absolute = resolve(cwd);
   const canonical = (existsSync(absolute) ? realpathSync.native(absolute) : absolute).replaceAll("\\", "/").replace(/\/$/, "");

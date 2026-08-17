@@ -21,7 +21,7 @@ import {
   delegatedCompaction,
 } from "./pi-delegation-policy.js";
 import { PiTurnOutputState, type PiInternalPromptPurpose } from "./pi-turn-output-state.js";
-import type { ToolLeaseAcquirer, ToolLeaseRelease } from "./workspace-mutation-leases.js";
+import { serializeWorkspaceMutationTools, type ToolLeaseAcquirer, type ToolLeaseRelease } from "./workspace-mutation-leases.js";
 
 type PiEvent =
   | { type: "message_start"; message: { role?: string; content?: unknown } }
@@ -609,6 +609,7 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
     sessionManager: sdk.SessionManager.inMemory(options.cwd),
   });
   const session = result.session;
+  serializeWorkspaceMutationTools(session.agent.state.tools);
   return {
     subscribe: (listener) => session.subscribe((event) => listener(event as PiEvent)),
     prompt: (text, images) => session.prompt(text, images?.length ? { images } : undefined),

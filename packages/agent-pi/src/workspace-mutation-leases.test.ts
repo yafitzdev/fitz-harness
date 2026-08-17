@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { WorkspaceMutationLeaseManager, isWorkspaceMutation } from "./workspace-mutation-leases.js";
+import { WorkspaceMutationLeaseManager, isWorkspaceMutation, serializeWorkspaceMutationTools } from "./workspace-mutation-leases.js";
 
 describe("WorkspaceMutationLeaseManager", () => {
   it("serializes mutations in one workspace while allowing other workspaces", async () => {
@@ -30,5 +30,23 @@ describe("WorkspaceMutationLeaseManager", () => {
     first();
     const release = await leases.acquire({ cwd: "C:/work/a", toolCallId: "t3", toolName: "read" }, new AbortController().signal);
     release();
+  });
+
+  it("forces mutating tools through Pi's sequential execution path", () => {
+    const tools: Array<{ name: string; executionMode?: "parallel" | "sequential" }> = [
+      { name: "read" },
+      { name: "bash", executionMode: "parallel" },
+      { name: "edit" },
+      { name: "agent_plan", executionMode: "parallel" },
+    ];
+
+    serializeWorkspaceMutationTools(tools);
+
+    expect(tools).toEqual([
+      { name: "read" },
+      { name: "bash", executionMode: "sequential" },
+      { name: "edit", executionMode: "sequential" },
+      { name: "agent_plan", executionMode: "parallel" },
+    ]);
   });
 });
