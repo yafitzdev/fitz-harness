@@ -8,6 +8,8 @@ on:
 jobs:
   package:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -17,12 +19,22 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - run: pnpm smoke
+      - name: Set desktop version from release tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: node scripts/set-desktop-release-version.mjs "${{ github.ref_name }}"
       - run: pnpm host:pack:win
       - run: pnpm host:smoke:packaged
       - run: pnpm --filter @fitz/desktop pack:win
       - name: Smoke packaged executable
         run: pnpm desktop:smoke:packaged
-      - run: pnpm --filter @fitz/desktop dist:win
+      - name: Build Windows installer for pull requests
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: pnpm --filter @fitz/desktop dist:win
+      - name: Build and publish Windows release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm --filter @fitz/desktop dist:win:publish
       - uses: actions/upload-artifact@v4
         with:
           name: fitz-codex-windows
