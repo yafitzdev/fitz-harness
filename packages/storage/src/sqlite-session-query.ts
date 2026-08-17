@@ -49,11 +49,13 @@ export class SqliteSessionQueryService implements SessionQueryService {
       forensics = await this.withArtifactContent(forensics);
     }
     const project = session.projectId ? this.store.getProject(session.projectId) : undefined;
+    const projection = this.store.getSessionProjection(session.id);
     const snapshot: SessionQuerySnapshot = {
       title: session.title,
       status: session.status,
       updatedAt: session.updatedAt,
       messages: transcript.flatMap(toMessages),
+      ...(projection ? { projection } : {}),
       ...(forensics ? { forensics } : {}),
     };
     return {

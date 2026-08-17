@@ -26,6 +26,7 @@ describe("SqliteStore agent-run persistence", () => {
       expect.objectContaining({ kind: "reasoning", content: expect.objectContaining({ text: "durable thought", eventSequence: 2 }) }),
       expect.objectContaining({ kind: "tool-call", content: expect.objectContaining({ toolCallId: "call-1", eventSequence: 3 }) }),
     ]));
+    expect(store.getSessionProjection("s")).toMatchObject({ sourceRevision: 2, transcriptEntryCount: 2, reasoningCount: 1, toolCallCount: 1 });
     expect(store.claimAgentRunResume("run-1")).toBe(true);
     expect(store.claimAgentRunResume("run-1")).toBe(false);
     store.createAgentRun({ id: "run-2", routeId: "fast", sessionId: "s", status: "queued", createdAt: now, updatedAt: now, lastSequence: 0 }, request, "run-1");

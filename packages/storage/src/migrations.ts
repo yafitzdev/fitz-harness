@@ -782,4 +782,32 @@ export const MIGRATIONS: readonly Migration[] = [
       FROM media_jobs;
     `,
   },
+  {
+    version: 28,
+    // Session transcript revisions make rebuildable projections exact even
+    // when regeneration deletes the tail and later reuses sequence numbers.
+    // The projection itself is a cache; canonical transcript rows remain the
+    // source of truth and can recreate it at any time.
+    sql: `
+      ALTER TABLE sessions ADD COLUMN transcript_revision INTEGER NOT NULL DEFAULT 0;
+
+      CREATE TABLE IF NOT EXISTS session_projections (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+        version INTEGER NOT NULL,
+        source_revision INTEGER NOT NULL,
+        source_transcript_sequence INTEGER NOT NULL,
+        transcript_entry_count INTEGER NOT NULL,
+        message_count INTEGER NOT NULL,
+        reasoning_count INTEGER NOT NULL,
+        tool_call_count INTEGER NOT NULL,
+        tool_result_count INTEGER NOT NULL,
+        compaction_count INTEGER NOT NULL,
+        latest_compaction_sequence INTEGER,
+        latest_compaction_through_sequence INTEGER,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_session_projections_revision
+        ON session_projections(source_revision, updated_at DESC);
+    `,
+  },
 ] as const;

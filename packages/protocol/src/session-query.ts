@@ -1,6 +1,25 @@
 import type { SessionForensicsBundle } from "./forensics.js";
 import type { ProjectRecord, SessionRecord, TranscriptEntryRecord } from "./collaboration.js";
 
+/** Rebuildable read model metadata. Canonical transcript rows remain the source
+ * of truth; this projection only makes bounded counts/checkpoint boundaries
+ * cheap to inspect and can always be rebuilt from those rows. */
+export interface SessionProjection {
+  sessionId: string;
+  version: number;
+  sourceRevision: number;
+  sourceTranscriptSequence: number;
+  transcriptEntryCount: number;
+  messageCount: number;
+  reasoningCount: number;
+  toolCallCount: number;
+  toolResultCount: number;
+  compactionCount: number;
+  latestCompactionSequence?: number;
+  latestCompactionThroughSequence?: number;
+  updatedAt: string;
+}
+
 /** The durable sections that can be queried from a session. */
 export type SessionQuerySection =
   | "overview"
@@ -24,6 +43,7 @@ export interface SessionQuerySnapshot {
   status: string;
   updatedAt: string;
   messages: SessionQueryMessage[];
+  projection?: SessionProjection;
   forensics?: SessionForensicsBundle;
 }
 

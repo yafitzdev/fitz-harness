@@ -20,6 +20,7 @@ describe("SqliteSessionQueryService", () => {
     expect(first?.transcript.map((entry) => entry.sequence)).toEqual([2, 3]);
     expect(first?.page).toMatchObject({ direction: "backward", hasMore: true, nextBefore: 2 });
     expect(first?.snapshot.messages.map((message) => message.text)).toEqual(["[reasoning] checking", "done"]);
+    expect(first?.snapshot.projection).toMatchObject({ transcriptEntryCount: 3, messageCount: 2, reasoningCount: 1 });
 
     const overview = await service.query({ sessionId: "query-session", section: "overview", ownerUserId: "owner" });
     expect(overview?.snapshot.forensics?.transcript).toHaveLength(3);

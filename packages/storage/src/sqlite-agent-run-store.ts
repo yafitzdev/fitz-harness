@@ -406,7 +406,8 @@ export class SqliteAgentRunStore {
   private appendTranscriptEntryOnce(entry: Omit<TranscriptEntryRecord, "sequence">): void {
     const exists = this.database.prepare("SELECT 1 AS found FROM transcript_entries WHERE id = ?").get(entry.id) as { found: number } | undefined;
     if (exists) return;
-    this.database.exec("BEGIN IMMEDIATE");
+    const ownsTransaction = !this.database.isTransaction;
+    if (ownsTransaction) this.database.exec("BEGIN IMMEDIATE");
     try {
       const row = this.database
         .prepare("SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM transcript_entries WHERE session_id = ?")
@@ -414,10 +415,10 @@ export class SqliteAgentRunStore {
       this.database
         .prepare("INSERT INTO transcript_entries (id, session_id, sequence, kind, role, content_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .run(entry.id, entry.sessionId, row.sequence, entry.kind, entry.role ?? null, JSON.stringify(entry.content), entry.createdAt);
-      this.database.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(entry.createdAt, entry.sessionId);
-      this.database.exec("COMMIT");
+      this.database.prepare("UPDATE sessions SET updated_at = ?, transcript_revision = transcript_revision + 1 WHERE id = ?").run(entry.createdAt, entry.sessionId);
+      if (ownsTransaction) this.database.exec("COMMIT");
     } catch (error) {
-      this.database.exec("ROLLBACK");
+      if (ownsTransaction) this.database.exec("ROLLBACK");
       throw error;
     }
   }
