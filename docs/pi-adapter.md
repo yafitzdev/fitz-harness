@@ -48,12 +48,13 @@ events return through the native run protocol. Cancellation propagates to `Agent
 and the session is disposed after completion or failure.
 
 The current session's history is injected automatically by the context manager. For earlier
-conversations, the agent gets the read-only `fitz_session` tool, backed by the host's
-`createSessionReader(store)` adapter (`apps/host/src/session-reader.ts`). The reader maps canonical
-transcript entries into a compact, truncation-safe text transcript; the tool formats it for the
-agent and turns store failures into a readable message instead of a crashed tool call. The tool is
-registered only when a session reader is supplied, and it is exempt from Ask first / Read only
-gating because it never mutates state.
+conversations, the agent gets the read-only `fitz_session` tool, backed directly by the host's
+shared `SessionQueryService`. The service owns canonical transcript/forensics reads, pagination,
+artifact-content opt-in, and owner filtering; the tool only formats the returned snapshot for the
+agent and turns service failures into a readable message instead of a crashed tool call. The tool
+is registered only when the service is supplied, and it is exempt from Ask first / Read only gating
+because it never mutates state. The old `createSessionReader` callback remains only as a temporary
+compatibility boundary for extensions.
 
 ## Data locations
 

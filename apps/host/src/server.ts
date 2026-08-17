@@ -19,7 +19,6 @@ import { createNInferPlaybook } from "./ninfer-playbook.js";
 import { createComfyUIPlaybook } from "./comfyui-playbook.js";
 import { reconcileNInferConfiguration } from "./ninfer-reconcile.js";
 import { createToolApprovalRequester } from "./tool-approval-gate.js";
-import { createSessionReader } from "./session-reader.js";
 import { contextTokensForAgentRequest, contextTokensForRoute, executionClassForRoute, thinkingFormatForAgentRequest } from "./route-context.js";
 import { WindowsStartupManager } from "@fitz/connectivity";
 import { SharedHostGateway, TailscaleFunnelManager } from "@fitz/connectivity";
@@ -192,7 +191,7 @@ const runtime = createHost({
         return project?.rootPath ?? process.cwd();
       },
       requestToolApproval: createToolApprovalRequester(store),
-      sessionReader: createSessionReader(sessionQuery),
+      sessionQuery,
       toolPolicy: safety.createToolEvaluator(),
       toolLease: workspaceMutationLeases.acquire,
       redactToolResult: safety.createResultRedactor(),

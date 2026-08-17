@@ -1462,6 +1462,9 @@ describe("Fitz host", () => {
       expect(data.transcript).toEqual(expect.arrayContaining([expect.objectContaining({ id: "forensics-message" })]));
       expect(data.evidence).toEqual(expect.arrayContaining([expect.objectContaining({ id: "forensics-request", status: "failed", error: { name: "EngineError", message: "fixture failure" } })]));
       expect(data.artifacts).toEqual(expect.arrayContaining([expect.objectContaining({ id: artifact.json().data.id, contentBase64: Buffer.from("proof").toString("base64") })]));
+      const queried = await runtime.app.inject({ method: "GET", url: `/api/v1/sessions/${sessionId}/query?section=overview` });
+      expect(queried.statusCode, queried.body).toBe(200);
+      expect(queried.json().data.snapshot.forensics.evidence).toEqual(expect.arrayContaining([expect.objectContaining({ id: "forensics-request" })]));
       const metadataOnly = await runtime.app.inject({ method: "GET", url: `/api/v1/sessions/${sessionId}/forensics?includeArtifactContent=false` });
       expect(metadataOnly.json().data.coverage.artifactContent).toBe("metadata-only");
       expect(metadataOnly.json().data.artifacts[0]).not.toHaveProperty("contentBase64");

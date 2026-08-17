@@ -122,7 +122,7 @@ export interface CreateHostOptions {
   safety?: AgentSafetyService;
   /** Host-owned read-only language-server registry. Providers are configured outside model requests. */
   lsp?: LspService;
-  /** Shared read-only session query service used by routes and agent adapters. */
+  /** Shared read-only session query service used by routes and the agent runtime. */
   sessionQuery?: SessionQueryService;
   artifacts?: ArtifactRepository;
   /** Coordinated database/artifact backup, restore, and storage maintenance. */

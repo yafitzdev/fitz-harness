@@ -37,10 +37,10 @@
 - Consolidated Pi implementation: all Fitz-owned Pi code (runtime adapter, delegation policy,
   registry-backed `PiPackageService`, pinned SDK version) lives in `packages/agent-pi`; its public
   surface exports from the index, while the host only wires runtime paths, the approval gate, and the
-  session reader.
-- Cross-session conversation lookup for the agent: the host's `createSessionReader` serves canonical
-  transcripts from the SQLite store to the read-only `fitz_session` tool, registered only when a
-  reader is supplied, with truncation-safe formatting and reader-failure handling.
+  shared session query service.
+- Cross-session conversation lookup for the agent: the host's `SessionQueryService` serves canonical
+  transcripts and forensic sections from SQLite to the read-only `fitz_session` tool, registered
+  only when the service is supplied, with bounded formatting and query-failure handling.
 - Unified dev data root: `FITZ_DATA_ROOT` derives database, pi packages, logs, and cache from one
   root (repo-contained `data/` in dev); the legacy `data/fitz-ninfer.db` store was migrated into
   `data/database/fitz.db` once and the migration tooling has since been removed.
@@ -57,7 +57,8 @@
   containment, UTF-16 cursor normalization, bounded source reads, serialized per-workspace server
   processes, lifecycle teardown, and the model-facing `lsp` tool.
 - One bounded, owner-aware SessionQueryService over canonical transcript/forensics stores, shared by
-  the agent session tool, HTTP query/transcript/forensics routes, and future inspector/export clients.
+  the agent session tool, HTTP query/transcript/forensics routes, and future inspector/export clients;
+  the Pi runtime receives the service directly, with the old callback retained only for compatibility.
 - Electron 43 shell with sandboxing, context isolation, Node-disabled renderer, restrictive CSP,
   an application navigation controller for access-gated page transitions and generalized nested
   back/forward history, path-limited IPC fetch proxy, main-process device credentials, and a bundled

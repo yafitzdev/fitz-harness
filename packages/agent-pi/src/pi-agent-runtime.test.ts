@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { SessionForensicsBundle } from "@fitz/protocol";
+import type { SessionForensicsBundle, SessionQueryService } from "@fitz/protocol";
 import { broadFilesystemScanReason, buildFitzSystemInstructions, createSessionLookupTool, createTrashTool, formatSessionSnapshot, limitToolResultContent, PiAgentRuntime, readEnabledExtensionDirs, SESSION_LOOKUP_TOOL, TRASH_TOOL, type PiSession, type PiSessionFactory, type PiSessionReader, type PiSessionSnapshot } from "./pi-agent-runtime.js";
 
 describe("PiAgentRuntime", () => {
@@ -1128,6 +1128,22 @@ describe("fitz_session session lookup tool", () => {
     });
   });
 
+  it("accepts the canonical SessionQueryService directly", async () => {
+    let seen: unknown;
+    const service = {
+      query: async (request: unknown) => {
+        seen = request;
+        return {
+          session: {}, section: "overview", transcript: [], page: { direction: "none", limit: 200, returned: 0, hasMore: false }, snapshot,
+        };
+      },
+    } as unknown as SessionQueryService;
+    const tool = createSessionLookupTool(service);
+    const result = await tool.execute("call-1", { sessionId: "abc-123", section: "overview", includeArtifactContent: true });
+    expect(seen).toEqual({ sessionId: "abc-123", section: "overview", includeArtifactContent: true });
+    expect(result.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("Session: Find the session") });
+  });
+
   it("forwards and formats a requested forensic section", async () => {
     let seen: { section?: string; includeArtifactContent?: boolean } | undefined;
     const forensics = {
@@ -1171,6 +1187,27 @@ describe("fitz_session session lookup tool", () => {
     });
     const events = []; for await (const event of runtime.run({ model: "fast", messages: [{ role: "user", content: "hi" }] })) events.push(event);
     expect(seenReader).toBe(reader);
+    expect(events).toEqual([{ type: "assistant.delta", text: "ok" }]);
+  });
+
+  it("forwards the canonical session query and enforces the run owner", async () => {
+    let seenRequest: unknown;
+    let seenQuery: SessionQueryService | undefined;
+    const service = {
+      query: async (request: unknown) => { seenRequest = request; return undefined; },
+    } as unknown as SessionQueryService;
+    const runtime = new PiAgentRuntime({
+      sessionQuery: service,
+      createSession: async (options) => {
+        seenQuery = options.sessionQuery;
+        return { subscribe: (listener) => { listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "ok" } }); return () => undefined; }, prompt: async () => undefined, abort: async () => undefined, dispose: () => undefined };
+      },
+    });
+    const events = [];
+    for await (const event of runtime.run({ model: "fast", messages: [{ role: "user", content: "hi" }] }, undefined, { ownerUserId: "owner-1" })) events.push(event);
+    expect(seenQuery).toBeDefined();
+    await seenQuery!.query({ sessionId: "other-session" });
+    expect(seenRequest).toEqual({ sessionId: "other-session", ownerUserId: "owner-1" });
     expect(events).toEqual([{ type: "assistant.delta", text: "ok" }]);
   });
 
