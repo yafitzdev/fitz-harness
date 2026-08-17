@@ -53,6 +53,9 @@
 - Fitz-owned token estimation and context budgeting, canonical-session reconstruction, injectable
   summarization, deterministic initial compaction, recent-message preservation, and durable
   compaction transcript records.
+- Engine-neutral read-only LSP capability with administrator-configured stdio providers, workspace
+  containment, UTF-16 cursor normalization, bounded source reads, serialized per-workspace server
+  processes, lifecycle teardown, and the model-facing `lsp` tool.
 - Electron 43 shell with sandboxing, context isolation, Node-disabled renderer, restrictive CSP,
   an application navigation controller for access-gated page transitions and generalized nested
   back/forward history, path-limited IPC fetch proxy, main-process device credentials, and a bundled

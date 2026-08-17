@@ -94,6 +94,9 @@ importers:
       '@fitz/inference-core':
         specifier: workspace:*
         version: link:../../packages/inference-core
+      '@fitz/lsp':
+        specifier: workspace:*
+        version: link:../../packages/lsp
       '@fitz/media':
         specifier: workspace:*
         version: link:../../packages/media
@@ -146,6 +149,9 @@ importers:
       '@fitz/agent-core':
         specifier: workspace:*
         version: link:../agent-core
+      '@fitz/lsp':
+        specifier: workspace:*
+        version: link:../lsp
       '@fitz/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -238,6 +244,8 @@ importers:
       '@fitz/protocol':
         specifier: workspace:*
         version: link:../protocol
+
+  packages/lsp: {}
 
   packages/media:
     dependencies:
@@ -804,6 +812,9 @@ packages:
 
   '@fitz/agent-pi@file:packages/agent-pi':
     resolution: {directory: packages/agent-pi, type: directory}
+
+  '@fitz/lsp@file:packages/lsp':
+    resolution: {directory: packages/lsp, type: directory}
 
   '@fitz/protocol@file:packages/protocol':
     resolution: {directory: packages/protocol, type: directory}
@@ -3677,6 +3688,7 @@ snapshots:
       '@earendil-works/pi-ai': 0.83.0(ws@8.21.1)(zod@4.4.3)
       '@earendil-works/pi-coding-agent': 0.83.0(ws@8.21.1)(zod@4.4.3)
       '@fitz/agent-core': file:packages/agent-core
+      '@fitz/lsp': file:packages/lsp
       '@fitz/protocol': file:packages/protocol
       typebox: 1.3.7
     transitivePeerDependencies:
@@ -3686,6 +3698,8 @@ snapshots:
       - utf-8-validate
       - ws
       - zod
+
+  '@fitz/lsp@file:packages/lsp': {}
 
   '@fitz/protocol@file:packages/protocol': {}
 

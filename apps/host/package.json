@@ -22,6 +22,7 @@
     "@fitz/engine-ninfer": "workspace:*",
     "@fitz/engine-openai-compatible": "workspace:*",
     "@fitz/inference-core": "workspace:*",
+    "@fitz/lsp": "workspace:*",
     "@fitz/media": "workspace:*",
     "@fitz/media-providers": "workspace:*",
     "@fitz/observability": "workspace:*",

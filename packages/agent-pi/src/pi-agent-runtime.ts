@@ -3,6 +3,7 @@ import type { AgentRunRequest, SessionForensicsBundle, ToolAccessMode } from "@f
 import type { Model } from "@earendil-works/pi-ai/compat";
 import type { AgentToolResult, ToolDefinition } from "@earendil-works/pi-coding-agent";
 export type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { LSP_TOOL_NAME } from "./lsp-tool.js";
 import { Type } from "typebox";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -173,7 +174,7 @@ const READ_ONLY_TOOLS = new Set([
   "agent_plan",
   // Fitz's bundled research extension tools only fetch public content and are
   // safe in researcher/reviewer read-only child sessions.
-  "web_search", "fetch_content", "get_search_content",
+  LSP_TOOL_NAME, "web_search", "fetch_content", "get_search_content",
 ]);
 
 export class PiAgentRuntime implements AgentRuntime {

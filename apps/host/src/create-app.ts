@@ -74,6 +74,7 @@ import { CHAT_ROUTE_IDS, hasCloudRouteBinding, LOCAL_OWNER_ID, UserRouteResolver
 import { contextTokensForAgentRequest } from "./route-context.js";
 import { CLOUD_SUBAGENT_EFFORT_BUDGETS } from "./agent-effort-policy.js";
 import { ConversationTurnService } from "./conversation-turns.js";
+import { LspRegistry, type LspService } from "@fitz/lsp";
 
 export { ensureMediaRoutes } from "./model-management-routes.js";
 
@@ -118,6 +119,8 @@ export interface CreateHostOptions {
   ninferRuntime?: NInferRuntimeManager;
   /** The host safety layer (policy engine, snapshots, trash, redaction). Optional so tests can run without it. */
   safety?: AgentSafetyService;
+  /** Host-owned read-only language-server registry. Providers are configured outside model requests. */
+  lsp?: LspService;
   artifacts?: ArtifactRepository;
   /** Coordinated database/artifact backup, restore, and storage maintenance. */
   storageDurability?: StorageDurabilityService;
@@ -140,6 +143,7 @@ export interface HostRuntime {
   security?: SecurityService;
   fakeAdapter?: FakeEngineAdapter;
   safety?: AgentSafetyService;
+  lsp: LspService;
   artifacts: ArtifactRepository;
   storageDurability?: StorageDurabilityService;
 }
@@ -166,6 +170,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const store = options.store ?? SqliteStore.memory();
   const artifacts = options.artifacts ?? new ArtifactRepository(store, new MemoryBlobStore());
   const storageDurability = options.storageDurability;
+  const lsp = options.lsp ?? new LspRegistry();
   const authMode = options.authMode ?? "disabled";
   const security = options.security ?? (authMode === "required" ? new SecurityService(store, options.authPepper ?? "") : undefined);
   const recoveredInterruptedRequests = store.recoverInterruptedRequests();
@@ -657,6 +662,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   registerSafetyAdministrationRoutes({ app, principals, administratorGuard, ...(safety ? { safety } : {}), ...(security ? { security } : {}) });
 
   app.addHook("onClose", async () => {
+    await lsp.dispose();
     await agentRuns.shutdown();
     await mediaJobs.shutdown();
     await lifecycle.cancelPreparations();
@@ -683,6 +689,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     ...(security ? { security } : {}),
     ...(fakeAdapter ? { fakeAdapter } : {}),
     ...(safety ? { safety } : {}),
+    lsp,
   };
 }
 

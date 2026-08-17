@@ -4,6 +4,7 @@
     { "path": "packages/protocol" },
     { "path": "packages/agent-core" },
     { "path": "packages/agent-pi" },
+    { "path": "packages/lsp" },
     { "path": "packages/context" },
     { "path": "packages/config" },
     { "path": "packages/connectivity" },

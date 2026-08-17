@@ -40,6 +40,18 @@ describe("FitzConfigService", () => {
     expect(service.get("artifactStorageQuotaBytes")).toBe(1024);
   });
 
+  it("defaults older documents to no language-server providers and validates provider descriptors", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "fitz-config-")), "fitz.config.json");
+    const service = new FitzConfigService({ path });
+    const legacy = { ...service.read() } as Record<string, unknown>;
+    delete legacy.lsp;
+    expect(parseFitzConfig(JSON.stringify(legacy)).lsp).toEqual({ providers: [] });
+    expect(() => service.update({ lsp: { providers: [{ id: "bad", command: "server", args: [], extensionToLanguage: { ts: "typescript" } }] } })).toThrow(/Invalid lsp extension/);
+    expect(() => service.update({ lsp: { providers: [{ id: "ts", command: "typescript-language-server", args: ["--stdio"], extensionToLanguage: { ".ts": "typescript" }, requestTimeoutMs: 0 }] } })).toThrow(/requestTimeoutMs/);
+    service.update({ lsp: { providers: [{ id: "ts", command: "typescript-language-server", args: ["--stdio"], extensionToLanguage: { ".ts": "typescript" } }] } });
+    expect(service.read().lsp.providers[0]).toMatchObject({ id: "ts", command: "typescript-language-server" });
+  });
+
   it("observes validated external edits", async () => {
     const path = join(mkdtempSync(join(tmpdir(), "fitz-config-")), "fitz.config.json");
     const service = new FitzConfigService({ path });

@@ -13,7 +13,8 @@ import { createHost } from "./create-app.js";
 import { createMediaTools } from "./media-tools.js";
 import type { MediaJobCoordinator } from "./media-jobs.js";
 import { ModelCatalogService } from "./model-catalog.js";
-import { PiAgentRuntime, PiPackageService, WorkspaceMutationLeaseManager, requiredInitialSubagentRoutes } from "@fitz/agent-pi";
+import { createLspTool, PiAgentRuntime, PiPackageService, WorkspaceMutationLeaseManager, requiredInitialSubagentRoutes } from "@fitz/agent-pi";
+import { LspRegistry, StdioLspProvider } from "@fitz/lsp";
 import { createNInferPlaybook } from "./ninfer-playbook.js";
 import { createComfyUIPlaybook } from "./comfyui-playbook.js";
 import { reconcileNInferConfiguration } from "./ninfer-reconcile.js";
@@ -92,6 +93,9 @@ runtimePaths.engineRoot = desiredConfiguration.inference.engineRoot ?? runtimePa
 const reserveVramMiB = desiredConfiguration.inference.reserveVramMiB;
 const agentConcurrency = desiredConfiguration.inference.agentConcurrency;
 const agentConcurrencyPerOwner = desiredConfiguration.inference.agentConcurrencyPerUser;
+const lsp = new LspRegistry();
+for (const provider of desiredConfiguration.lsp.providers) lsp.registerProvider(new StdioLspProvider(provider));
+const lspEnabled = desiredConfiguration.lsp.providers.length > 0;
 const startupManager = new WindowsStartupManager(process.env.FITZ_STARTUP_LAUNCHER ?? resolve(moduleDirectory, "../start-host.ps1"));
 const sharingGateway = new SharedHostGateway({ target: new URL(`http://127.0.0.1:${port}`), port: desiredConfiguration.hosting.gatewayPort });
 const funnelManager = new TailscaleFunnelManager({ target: new URL(sharingGateway.origin), httpsPort: desiredConfiguration.hosting.publicPort });
@@ -143,6 +147,7 @@ const runtime = createHost({
   ...(security ? { security } : {}),
   ...(internalAgentToken ? { internalAgentToken } : {}),
   ...(process.env.FITZ_DEV_SESSION_TOKEN ? { devSessionToken: process.env.FITZ_DEV_SESSION_TOKEN } : {}),
+  lsp,
   localPort: port,
   hostingService: hosting,
   engineRoot: runtimePaths.engineRoot,
@@ -199,6 +204,7 @@ const runtime = createHost({
         const subagentBudget = subagentRouteBudget(store, ownerUserId, parentRoute, parentRequest?.effort ?? "normal", loadedLocalTopology);
         return [
           ...safety.createCustomTools()(context),
+          ...(lspEnabled ? [createLspTool(lsp, context)] : []),
           ...(!delegated ? [createAgentPlanTool({
             store,
             ...(parentRequest && subagentBudget ? { requiredWorkerRoutes: [...requiredInitialSubagentRoutes(parentRequest, subagentBudget)] } : {}),

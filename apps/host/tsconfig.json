@@ -17,6 +17,7 @@
     { "path": "../../packages/media" },
     { "path": "../../packages/protocol" },
     { "path": "../../packages/inference-core" },
+    { "path": "../../packages/lsp" },
     { "path": "../../packages/engine-fake" },
     { "path": "../../packages/engine-media-fake" },
     { "path": "../../packages/engine-ninfer" },

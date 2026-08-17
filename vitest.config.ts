@@ -6,6 +6,7 @@ export default defineConfig({
     alias: {
       "@fitz/agent-core": fileURLToPath(new URL("./packages/agent-core/src/index.ts", import.meta.url)),
       "@fitz/agent-pi": fileURLToPath(new URL("./packages/agent-pi/src/index.ts", import.meta.url)),
+      "@fitz/lsp": fileURLToPath(new URL("./packages/lsp/src/index.ts", import.meta.url)),
       "@fitz/context": fileURLToPath(new URL("./packages/context/src/index.ts", import.meta.url)),
       "@fitz/connectivity/reconnect": fileURLToPath(new URL("./packages/connectivity/src/reconnect.ts", import.meta.url)),
       "@fitz/connectivity": fileURLToPath(new URL("./packages/connectivity/src/index.ts", import.meta.url)),

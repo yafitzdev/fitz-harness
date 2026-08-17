@@ -6,6 +6,21 @@ export const FITZ_CONFIG_VERSION = 1 as const;
 export type HostingProvider = "tailscale-funnel";
 export type EffortLevel = "light" | "normal" | "high";
 
+/** A trusted, administrator-configured local language-server process. The model never supplies these values. */
+export interface FitzLspProviderConfig {
+  id: string;
+  command: string;
+  args: string[];
+  extensionToLanguage: Record<string, string>;
+  maxDocumentBytes?: number;
+  requestTimeoutMs?: number;
+  initializationOptions?: unknown;
+}
+
+export interface FitzLspConfig {
+  providers: FitzLspProviderConfig[];
+}
+
 export interface FitzConfigDocument {
   version: typeof FITZ_CONFIG_VERSION;
   hosting: {
@@ -39,6 +54,7 @@ export interface FitzConfigDocument {
     agentConcurrency: number;
     agentConcurrencyPerUser: number;
   };
+  lsp: FitzLspConfig;
   /** Extensible non-secret settings. Credential material is rejected here. */
   settings: Record<string, unknown>;
 }
@@ -56,6 +72,7 @@ export interface FitzConfigPatch {
   };
   interface?: Record<string, unknown>;
   inference?: Partial<FitzConfigDocument["inference"]>;
+  lsp?: Partial<FitzConfigDocument["lsp"]>;
   settings?: Record<string, unknown>;
 }
 
@@ -186,6 +203,7 @@ export function defaultFitzConfig(): FitzConfigDocument {
     storage: { artifactQuotaBytes: null, mediaArtifactLimits: {} },
     interface: {},
     inference: { engineRoot: null, reserveVramMiB: 2048, agentConcurrency: 4, agentConcurrencyPerUser: 1 },
+    lsp: { providers: [] },
     settings: {},
   };
 }
@@ -208,7 +226,7 @@ export function parseFitzConfig(source: string): FitzConfigDocument {
 export function validateFitzConfig(value: unknown): FitzConfigDocument {
   if (!isRecord(value)) throw new Error("fitz.config.json must contain an object");
   rejectSensitiveValues(value);
-  assertKnownKeys(value, ["version", "hosting", "defaults", "users", "storage", "interface", "inference", "settings"], "configuration");
+  assertKnownKeys(value, ["version", "hosting", "defaults", "users", "storage", "interface", "inference", "lsp", "settings"], "configuration");
   if (value.version !== FITZ_CONFIG_VERSION) throw new Error(`Unsupported Fitz configuration version: ${String(value.version)}`);
   const document = value as unknown as FitzConfigDocument;
   if (!isRecord(document.hosting) || typeof document.hosting.enabled !== "boolean" || document.hosting.provider !== "tailscale-funnel") throw new Error("Invalid hosting configuration");
@@ -226,9 +244,10 @@ export function validateFitzConfig(value: unknown): FitzConfigDocument {
   if (!isRecord(document.interface) || !isRecord(document.inference) || !isRecord(document.settings)) throw new Error("Invalid interface, inference, or settings configuration");
   assertKnownKeys(document.inference, ["engineRoot", "reserveVramMiB", "agentConcurrency", "agentConcurrencyPerUser"], "inference");
   if (!(document.inference.engineRoot === null || typeof document.inference.engineRoot === "string") || !nonNegativeInteger(document.inference.reserveVramMiB) || !positiveInteger(document.inference.agentConcurrency) || !positiveInteger(document.inference.agentConcurrencyPerUser)) throw new Error("Invalid inference configuration");
+  const lsp = parseLspConfig(value.lsp);
   assertJsonValue(document.interface, "interface");
   assertJsonValue(document.settings, "settings");
-  return structuredClone(document);
+  return structuredClone({ ...document, lsp });
 }
 
 function mergeDocument(base: FitzConfigDocument, patch: FitzConfigPatch): FitzConfigDocument {
@@ -242,6 +261,7 @@ function mergeDocument(base: FitzConfigDocument, patch: FitzConfigPatch): FitzCo
     storage: { ...base.storage, ...(patch.storage ?? {}), mediaArtifactLimits: patch.storage?.mediaArtifactLimits === undefined ? base.storage.mediaArtifactLimits : { ...patch.storage.mediaArtifactLimits } },
     interface: patch.interface === undefined ? base.interface : { ...patch.interface },
     inference: { ...base.inference, ...(patch.inference ?? {}) },
+    lsp: { ...base.lsp, ...(patch.lsp ?? {}) },
     settings: patch.settings === undefined ? base.settings : { ...patch.settings },
   };
 }
@@ -259,6 +279,58 @@ function rejectSensitiveValues(value: unknown, path = ""): void {
   }
 }
 function requireMediaLimits(value: unknown): Partial<Record<"image" | "video" | "audio", number>> { if (!isRecord(value)) throw new Error("mediaArtifactLimits must be an object"); assertKnownKeys(value, ["image", "video", "audio"], "storage.mediaArtifactLimits"); const result: Partial<Record<"image" | "video" | "audio", number>> = {}; for (const key of ["image", "video", "audio"] as const) { const item = value[key]; if (item !== undefined) { if (!positiveInteger(item)) throw new Error(`${key} media artifact limit must be a positive integer`); result[key] = item; } } return result; }
+function parseLspConfig(value: unknown): FitzLspConfig {
+  if (value === undefined) return { providers: [] };
+  if (!isRecord(value) || !Array.isArray(value.providers)) throw new Error("Invalid lsp configuration");
+  const providers: FitzLspProviderConfig[] = value.providers.map((raw, index) => {
+    if (!isRecord(raw) || typeof raw.id !== "string" || !raw.id.trim() || typeof raw.command !== "string" || !raw.command.trim() || !Array.isArray(raw.args) || raw.args.some((arg) => typeof arg !== "string") || !isRecord(raw.extensionToLanguage)) {
+      throw new Error(`Invalid lsp provider at index ${index}`);
+    }
+    assertKnownKeys(raw, ["id", "command", "args", "extensionToLanguage", "maxDocumentBytes", "requestTimeoutMs", "initializationOptions"], `lsp.providers[${index}]`);
+    const extensionToLanguage: Record<string, string> = {};
+    for (const [extension, language] of Object.entries(raw.extensionToLanguage)) {
+      const normalizedExtension = validateLspExtension(extension, `lsp.providers[${index}]`);
+      if (typeof language !== "string" || !language.trim()) throw new Error(`Invalid lsp language mapping at ${index}:${extension}`);
+      if (Object.keys(extensionToLanguage).some((candidate) => candidate.toLowerCase() === normalizedExtension)) {
+        throw new Error(`Duplicate lsp extension at ${index}:${extension}`);
+      }
+      extensionToLanguage[normalizedExtension] = language;
+    }
+    if (Object.keys(extensionToLanguage).length === 0) throw new Error(`lsp provider ${raw.id} must configure at least one extension`);
+    for (const [key, candidate] of [["maxDocumentBytes", raw.maxDocumentBytes], ["requestTimeoutMs", raw.requestTimeoutMs]] as const) {
+      if (candidate !== undefined && !positiveInteger(candidate)) throw new Error(`Invalid lsp provider ${raw.id} ${key}`);
+    }
+    if (raw.initializationOptions !== undefined) assertJsonValue(raw.initializationOptions, `lsp.providers[${index}].initializationOptions`);
+    return {
+      id: raw.id,
+      command: raw.command,
+      args: [...raw.args] as string[],
+      extensionToLanguage,
+      ...(raw.maxDocumentBytes === undefined ? {} : { maxDocumentBytes: raw.maxDocumentBytes }),
+      ...(raw.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: raw.requestTimeoutMs }),
+      ...(raw.initializationOptions === undefined ? {} : { initializationOptions: raw.initializationOptions }),
+    };
+  });
+  const ids = new Set<string>();
+  const extensions = new Set<string>();
+  for (const provider of providers) {
+    if (ids.has(provider.id)) throw new Error(`Duplicate lsp provider id: ${provider.id}`);
+    ids.add(provider.id);
+    for (const extension of Object.keys(provider.extensionToLanguage)) {
+      const normalized = validateLspExtension(extension, `lsp.provider.${provider.id}`);
+      if (extensions.has(normalized)) throw new Error(`Duplicate lsp extension: ${extension}`);
+      extensions.add(normalized);
+    }
+  }
+  return { providers };
+}
+function validateLspExtension(extension: string, path: string): string {
+  const normalized = extension.trim().toLowerCase();
+  if (!normalized.startsWith(".") || normalized.length < 2 || normalized.includes("/") || normalized.includes("\\")) {
+    throw new Error(`Invalid lsp extension at ${path}: ${extension}`);
+  }
+  return normalized;
+}
 function assertKnownKeys(value: Record<string, unknown>, allowed: readonly string[], path: string): void { const known = new Set(allowed); for (const key of Object.keys(value)) if (!known.has(key)) throw new Error(`Unknown ${path} setting: ${key}`); }
 function assertJsonValue(value: unknown, path: string): void { if (value === null || typeof value === "string" || typeof value === "boolean") return; if (typeof value === "number") { if (!Number.isFinite(value)) throw new Error(`${path} must contain only finite JSON numbers`); return; } if (Array.isArray(value)) { value.forEach((item, index) => assertJsonValue(item, `${path}[${index}]`)); return; } if (isRecord(value)) { for (const [key, nested] of Object.entries(value)) assertJsonValue(nested, `${path}.${key}`); return; } throw new Error(`${path} must contain only JSON values`); }
 function requireNullablePositiveInteger(value: unknown, name: string): number | null { if (value === undefined || value === null) return null; if (!positiveInteger(value)) throw new Error(`${name} must be a positive integer or null`); return value; }
