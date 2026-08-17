@@ -4,3 +4,4 @@ export * from "./blob-store.js";
 export * from "./artifact-repository.js";
 export * from "./storage-durability.js";
 export * from "./sqlite-forensics-store.js";
+export * from "./sqlite-session-query.js";

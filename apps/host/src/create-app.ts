@@ -30,10 +30,11 @@ import {
   type AgentTopologyPresentation,
   type Recipe,
   type Route,
+  type SessionQueryService,
 } from "@fitz/protocol";
 import { MetricsRegistry, redactSecrets } from "@fitz/observability";
 import { SecurityPolicyError, SecurityService, type AuthenticatedPrincipal } from "@fitz/security";
-import { ArtifactRepository, MemoryBlobStore, SqliteStore, type StorageDurabilityService } from "@fitz/storage";
+import { ArtifactRepository, MemoryBlobStore, SqliteSessionQueryService, SqliteStore, type StorageDurabilityService } from "@fitz/storage";
 import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
 import type { ModelCatalogService } from "./model-catalog.js";
 import type { NInferRuntimeManager } from "./ninfer-runtime.js";
@@ -121,6 +122,8 @@ export interface CreateHostOptions {
   safety?: AgentSafetyService;
   /** Host-owned read-only language-server registry. Providers are configured outside model requests. */
   lsp?: LspService;
+  /** Shared read-only session query service used by routes and agent adapters. */
+  sessionQuery?: SessionQueryService;
   artifacts?: ArtifactRepository;
   /** Coordinated database/artifact backup, restore, and storage maintenance. */
   storageDurability?: StorageDurabilityService;
@@ -144,6 +147,7 @@ export interface HostRuntime {
   fakeAdapter?: FakeEngineAdapter;
   safety?: AgentSafetyService;
   lsp: LspService;
+  sessionQuery: SessionQueryService;
   artifacts: ArtifactRepository;
   storageDurability?: StorageDurabilityService;
 }
@@ -171,6 +175,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const artifacts = options.artifacts ?? new ArtifactRepository(store, new MemoryBlobStore());
   const storageDurability = options.storageDurability;
   const lsp = options.lsp ?? new LspRegistry();
+  const sessionQuery = options.sessionQuery ?? new SqliteSessionQueryService(store, { artifacts });
   const authMode = options.authMode ?? "disabled";
   const security = options.security ?? (authMode === "required" ? new SecurityService(store, options.authPepper ?? "") : undefined);
   const recoveredInterruptedRequests = store.recoverInterruptedRequests();
@@ -460,6 +465,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     app,
     store,
     artifacts,
+    sessionQuery,
     routes,
     context,
     conversationTurns,
@@ -690,6 +696,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     ...(fakeAdapter ? { fakeAdapter } : {}),
     ...(safety ? { safety } : {}),
     lsp,
+    sessionQuery,
   };
 }
 

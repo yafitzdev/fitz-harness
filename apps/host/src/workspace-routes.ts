@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { RouteNotFoundError, type RouteResolver } from "@fitz/inference-core";
 import { classifyArtifact, normalizeMimeType } from "@fitz/media";
-import { LOCAL_MAIN_CONTEXT_TOKENS, type SessionRecord } from "@fitz/protocol";
+import { LOCAL_MAIN_CONTEXT_TOKENS, type SessionQuerySection, type SessionQueryService, type SessionRecord } from "@fitz/protocol";
 import type { AuthenticatedPrincipal, SecurityService } from "@fitz/security";
 import type { ArtifactRepository, SqliteStore } from "@fitz/storage";
 import type { ContextManager } from "@fitz/context";
@@ -16,6 +16,7 @@ export interface WorkspaceRouteOptions {
   app: FastifyInstance;
   store: SqliteStore;
   artifacts: ArtifactRepository;
+  sessionQuery: SessionQueryService;
   routes: RouteResolver;
   context: ContextManager;
   conversationTurns: ConversationTurnService;
@@ -24,7 +25,7 @@ export interface WorkspaceRouteOptions {
 }
 
 export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
-  const { app, store, artifacts, routes, context, conversationTurns, security, principals } = options;
+  const { app, store, artifacts, sessionQuery, routes, context, conversationTurns, security, principals } = options;
   const principalFor = (request: object) => principals.get(request);
   const sessionFor = (sessionId: string) => store.getSession(sessionId);
   const canAccess = (ownerUserId: string | undefined, request: object) => canAccessOwner(principalFor(request), ownerUserId);
@@ -155,23 +156,41 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
     if (!canAccess(session.ownerUserId, request)) return reply.code(403).send({ error: "Session access denied" });
     const query = request.query as { includeArtifactContent?: string; download?: string };
     const includeArtifactContent = query.includeArtifactContent !== "false";
-    const bundle = store.sessionForensics(session.id);
+    const result = await sessionQuery.query({
+      sessionId: session.id,
+      section: "all",
+      includeArtifactContent,
+      ...queryOwner(principalFor(request)),
+    });
+    const bundle = result?.snapshot.forensics;
     if (!bundle) return reply.code(404).send({ error: "Session not found" });
-    if (includeArtifactContent) {
-      bundle.artifacts = await Promise.all(bundle.artifacts.map(async (artifact) => {
-        try {
-          const content = await artifacts.read(artifact.id);
-          return content ? { ...artifact, contentBase64: Buffer.from(content).toString("base64") } : { ...artifact, contentReadError: "content_not_found" };
-        } catch (error) {
-          return { ...artifact, contentReadError: errorMessage(error) };
-        }
-      }));
-    }
-    bundle.coverage.artifactContent = includeArtifactContent ? "included" : "metadata-only";
     if (query.download === "true") {
       reply.header("content-disposition", `attachment; filename="fitz-session-${safeFilename(session.id)}-forensics.json"`);
     }
     return { data: bundle };
+  });
+
+  app.get("/api/v1/sessions/:sessionId/query", async (request, reply) => {
+    const session = sessionFor((request.params as { sessionId: string }).sessionId);
+    if (!session) return reply.code(404).send({ error: "Session not found" });
+    if (!canAccess(session.ownerUserId, request)) return reply.code(403).send({ error: "Session access denied" });
+    try {
+      const query = request.query as { section?: string; after?: string; before?: string; limit?: string; includeArtifactContent?: string };
+      const section = parseSessionQuerySection(query.section);
+      const result = await sessionQuery.query({
+        sessionId: session.id,
+        section,
+        ...(query.after === undefined ? {} : { after: toNonNegativeInteger(query.after, 0) }),
+        ...(query.before === undefined ? {} : { before: Math.max(1, toNonNegativeInteger(query.before, Number.MAX_SAFE_INTEGER)) }),
+        ...(query.limit === undefined ? {} : { limit: toNonNegativeInteger(query.limit, 0) }),
+        ...(query.includeArtifactContent === "true" ? { includeArtifactContent: true } : {}),
+        ...queryOwner(principalFor(request)),
+      });
+      if (!result) return reply.code(404).send({ error: "Session not found" });
+      return { data: result };
+    } catch (error) {
+      return reply.code(400).send({ error: errorMessage(error) });
+    }
   });
 
   app.patch("/api/v1/sessions/:sessionId", async (request, reply) => {
@@ -216,12 +235,19 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
     const limit = Math.min(Math.max(toNonNegativeInteger(query.limit, 250), 1), 500);
     const after = query.after === undefined ? undefined : toNonNegativeInteger(query.after, 0);
     const before = query.before === undefined ? Number.MAX_SAFE_INTEGER : Math.max(1, toNonNegativeInteger(query.before, Number.MAX_SAFE_INTEGER));
-    const data = after === undefined ? store.transcriptBefore(session.id, before, limit) : store.transcriptAfter(session.id, after, limit);
-    const oldestSequence = data.at(0)?.sequence ?? before;
+    const result = await sessionQuery.query({
+      sessionId: session.id,
+      section: "transcript",
+      ...(after === undefined ? { before } : { after }),
+      limit,
+      ...queryOwner(principalFor(request)),
+    });
+    if (!result) return reply.code(404).send({ error: "Session not found" });
+    const data = result.transcript;
     return {
       data,
       page: {
-        hasEarlier: store.hasTranscriptBefore(session.id, oldestSequence),
+        hasEarlier: after === undefined ? result.page.hasMore : false,
         oldestSequence: data.at(0)?.sequence ?? null,
         newestSequence: data.at(-1)?.sequence ?? null,
         estimatedContextTokens: context.estimateSession(session.id),
@@ -448,6 +474,16 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
       ...(principal ? { ownerUserId: principal.user.id } : {}),
     };
   }
+}
+
+function queryOwner(principal: AuthenticatedPrincipal | undefined): { ownerUserId?: string } {
+  return principal && principal.user.role !== "administrator" ? { ownerUserId: principal.user.id } : {};
+}
+
+function parseSessionQuerySection(value: string | undefined): SessionQuerySection {
+  if (value === undefined || value === "") return "transcript";
+  if (["overview", "transcript", "runs", "evidence", "artifacts", "media", "audit", "all"].includes(value)) return value as SessionQuerySection;
+  throw new TypeError(`Unknown session query section: ${value}`);
 }
 
 function canAccessOwner(principal: AuthenticatedPrincipal | undefined, ownerUserId: string | undefined): boolean {

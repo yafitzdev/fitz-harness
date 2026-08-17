@@ -1,5 +1,11 @@
 import type { AgentRuntime, AgentRuntimeEvent, AgentRuntimeRun, AgentRuntimeRunOptions } from "@fitz/agent-core";
-import type { AgentRunRequest, SessionForensicsBundle, ToolAccessMode } from "@fitz/protocol";
+import type {
+  AgentRunRequest,
+  SessionQueryMessage,
+  SessionQuerySection,
+  SessionQuerySnapshot,
+  ToolAccessMode,
+} from "@fitz/protocol";
 import type { Model } from "@earendil-works/pi-ai/compat";
 import type { AgentToolResult, ToolDefinition } from "@earendil-works/pi-coding-agent";
 export type { ToolDefinition } from "@earendil-works/pi-coding-agent";
@@ -55,11 +61,10 @@ export type ToolResultRedactor = (event: { toolName: string; content: unknown[] 
 /** Outcome of moving paths to the agent trash. */
 export interface TrashMoveResult { moved: number; entries: Array<{ originalPath: string; trashPath: string }> }
 export type TrashToolHandler = (input: { paths: string[] }) => Promise<TrashMoveResult | { error: string }>;
-/** One canonical transcript entry, reduced to what an agent needs to read. */
-export interface PiSessionMessage { sequence: number; role: "user" | "assistant" | "tool" | "system"; text: string }
-/** A past Fitz Codex conversation, as served to the agent's `fitz_session` tool. */
-export interface PiSessionSnapshot { title: string; status: string; updatedAt: string; messages: PiSessionMessage[]; forensics?: SessionForensicsBundle }
-export type PiSessionLookupSection = "overview" | "transcript" | "runs" | "evidence" | "artifacts" | "media" | "audit" | "all";
+/** Canonical query message/snapshot aliases kept for the Pi adapter boundary. */
+export type PiSessionMessage = SessionQueryMessage;
+export type PiSessionSnapshot = SessionQuerySnapshot;
+export type PiSessionLookupSection = SessionQuerySection;
 /**
  * Reads a past conversation from the Fitz session store. The host provides the store-backed
  * implementation; the pi package owns the contract and the tool that uses it.

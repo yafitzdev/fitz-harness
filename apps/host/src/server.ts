@@ -7,7 +7,7 @@ import { FakeEngineAdapter } from "@fitz/engine-fake";
 import { FakeMediaEngineAdapter } from "@fitz/engine-media-fake";
 import { ManagedOpenAIEngineAdapter, OpenAICompatibleEngineAdapter } from "@fitz/engine-openai-compatible";
 import { ComfyUIEngineAdapter } from "@fitz/engine-comfyui";
-import { applyPendingStorageRestore, ArtifactRepository, LocalBlobStore, SqliteStore, StorageDurabilityService } from "@fitz/storage";
+import { applyPendingStorageRestore, ArtifactRepository, LocalBlobStore, SqliteSessionQueryService, SqliteStore, StorageDurabilityService } from "@fitz/storage";
 import { SecurityService } from "@fitz/security";
 import { createHost } from "./create-app.js";
 import { createMediaTools } from "./media-tools.js";
@@ -105,6 +105,7 @@ const vllmModels = new VllmModelReconciler(store, runtimePaths, linuxRuntimeLayo
 const artifacts = new ArtifactRepository(store, new LocalBlobStore(runtimePaths.artifactsDir), { quotaBytes: () => store.getSetting<number>("artifactStorageQuotaBytes") });
 const artifactRecovery = await artifacts.initialize();
 if (artifactRecovery.migrated || artifactRecovery.collected) console.info("Artifact store reconciled", artifactRecovery);
+const sessionQuery = new SqliteSessionQueryService(store, { artifacts });
 const storageDurability = new StorageDurabilityService(artifacts, runtimePaths);
 const storeInitiallyEmpty = store.listRecipes().length === 0;
 const authPepper = authMode === "required" ? resolveAuthPepper(store) : undefined;
@@ -148,6 +149,7 @@ const runtime = createHost({
   ...(internalAgentToken ? { internalAgentToken } : {}),
   ...(process.env.FITZ_DEV_SESSION_TOKEN ? { devSessionToken: process.env.FITZ_DEV_SESSION_TOKEN } : {}),
   lsp,
+  sessionQuery,
   localPort: port,
   hostingService: hosting,
   engineRoot: runtimePaths.engineRoot,
@@ -190,7 +192,7 @@ const runtime = createHost({
         return project?.rootPath ?? process.cwd();
       },
       requestToolApproval: createToolApprovalRequester(store),
-      sessionReader: createSessionReader(store, { artifacts }),
+      sessionReader: createSessionReader(sessionQuery),
       toolPolicy: safety.createToolEvaluator(),
       toolLease: workspaceMutationLeases.acquire,
       redactToolResult: safety.createResultRedactor(),
