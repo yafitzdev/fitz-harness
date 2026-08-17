@@ -70,6 +70,8 @@ export class ComposerControls {
   private mode: AccessMode;
   private defaultRoute = "default";
   private defaultEffort: AgentEffort = "normal";
+  private hasSession = false;
+  private compactionBusy = false;
 
   constructor(elements: ComposerControlsElements, options: ComposerControlsOptions) {
     this.elements = elements;
@@ -165,13 +167,17 @@ export class ComposerControls {
 
   updateState(state: ComposerControlState): void {
     const { running, hasSession } = state;
+    this.hasSession = hasSession;
     this.elements.model.disabled = !this.hasRoutes || running;
     this.elements.effort.disabled = running;
     this.elements.temperature.disabled = running;
     this.elements.advancedSettings.disabled = running;
     this.elements.modelToggle.disabled = !this.hasRoutes || running;
     this.elements.accessModeToggle.disabled = running;
-    this.elements.contextCompactButton.disabled = !hasSession || running;
+    // The host owns the authoritative run state. Keep this action clickable
+    // while a renderer-side run is active so a stale controller cannot turn
+    // compaction into a silent no-op; the host rejects genuinely active runs.
+    this.elements.contextCompactButton.disabled = !hasSession || this.compactionBusy;
   }
 
   openContextUsage(): void {
@@ -180,14 +186,17 @@ export class ComposerControls {
   }
 
   resetContextStatus(): void {
+    this.compactionBusy = false;
     this.elements.contextCompactStatus.hidden = true;
     this.elements.contextCompactStatus.textContent = "";
+    this.elements.contextCompactButton.disabled = !this.hasSession;
   }
 
   setContextStatus(text: string, busy = false): void {
+    this.compactionBusy = busy;
     this.elements.contextCompactStatus.hidden = false;
     this.elements.contextCompactStatus.textContent = text;
-    this.elements.contextCompactButton.disabled = busy;
+    this.elements.contextCompactButton.disabled = !this.hasSession || busy;
   }
 
   closePopovers(): void {

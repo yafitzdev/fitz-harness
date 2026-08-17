@@ -139,6 +139,28 @@ describe("ActivityTimeline", () => {
     expect(details.hidden).toBe(false);
   });
 
+  it("keeps the live work timer beside the disclosure arrow", () => {
+    vi.useFakeTimers();
+    try {
+      const { messages, timeline } = setup();
+      const startedAt = Date.now();
+      timeline.appendRun("Working",);
+      const summary = messages.querySelector<HTMLElement>(".work-summary")!;
+      const toggle = summary.querySelector<HTMLButtonElement>(".work-summary-toggle")!;
+      const label = summary.querySelector<HTMLElement>(".work-summary-label")!;
+      const chevron = summary.querySelector<HTMLElement>(".work-summary-chevron")!;
+      expect(label.textContent).toBe("Working · 0s");
+      vi.advanceTimersByTime(2_000);
+      expect(label.textContent).toBe("Working · 2s");
+      expect(toggle.firstElementChild).toBe(label);
+      expect(toggle.lastElementChild).toBe(chevron);
+      expect(toggle.textContent).toContain("Working · 2s");
+      timeline.finishWork(new Date(startedAt + 2_000).toISOString());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("ends the previous tool burst when a reasoning segment starts", () => {
     const { messages, timeline } = setup();
     timeline.appendTool("bash", { command: "pnpm test" }, "tool-1", true, "2026-08-03T08:00:00.000Z");

@@ -6,7 +6,7 @@ import { activityKind, burstIconPath, describeTool, iconPathFor, projectRelative
 import { scrollToLatestIfFollowing } from "./conversation-scroll.js";
 
 type Json = Record<string, any>;
-type WorkSummary = { root: HTMLElement; toggle: HTMLButtonElement; details: HTMLElement; startedAt: number; lastAt: number };
+type WorkSummary = { root: HTMLElement; toggle: HTMLButtonElement; label: HTMLElement; details: HTMLElement; startedAt: number; lastAt: number; status: string; timer: ReturnType<typeof setInterval> };
 type ActivityBurst = {
   root: HTMLElement;
   toggle: HTMLButtonElement;
@@ -54,7 +54,13 @@ export class ActivityTimeline {
 
   constructor(options: ActivityTimelineOptions) { this.#options = options; }
 
-  clear(): void { this.#work = undefined; this.#burst = undefined; this.#searchRoots.clear(); }
+  clear(): void {
+    this.#stopWorkTimer();
+    this.#work?.root.remove();
+    this.#work = undefined;
+    this.#burst = undefined;
+    this.#searchRoots.clear();
+  }
   searchRoots(): string[] { return [...this.#searchRoots]; }
 
   markAssistantAsCommentary(content: HTMLElement): void {
@@ -246,6 +252,7 @@ export class ActivityTimeline {
     value.className = "message run-activity";
     value.textContent = text;
     this.appendWork(value);
+    this.#setWorkStatus(text);
     return value;
   }
 
@@ -270,17 +277,24 @@ export class ActivityTimeline {
     work.details.hidden = true;
     work.root.classList.remove("open");
     work.toggle.setAttribute("aria-expanded", "false");
+    this.#stopWorkTimer();
     this.#work = undefined;
     this.#burst = undefined;
   }
 
-  setRun(activity: HTMLElement, label: string, startedAt: number): void { activity.textContent = `${label}… ${this.#formatElapsed(Date.now() - startedAt)}`; }
+  setRun(activity: HTMLElement, label: string, startedAt: number): void {
+    activity.textContent = `${label}… ${this.#formatElapsed(Date.now() - startedAt)}`;
+    if (this.#work) {
+      this.#work.startedAt = startedAt;
+      this.#setWorkStatus(label);
+    }
+  }
 
   #ensureWork(createdAt?: string): WorkSummary {
     if (this.#work) return this.#work;
     const root = document.createElement("section"); root.className = "work-summary";
     const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "work-summary-toggle"; toggle.setAttribute("aria-expanded", "false");
-    const label = document.createElement("span"); label.className = "work-summary-label"; setActivityLabel(label, "Working…");
+    const label = document.createElement("span"); label.className = "work-summary-label";
     const chevron = document.createElement("span"); chevron.className = "work-summary-chevron"; chevron.append(svgIcon('<path d="m8 5.5 4.5 4.5L8 14.5"></path>'));
     const details = document.createElement("div"); details.className = "work-summary-details"; details.hidden = true;
     toggle.append(label, chevron);
@@ -288,7 +302,10 @@ export class ActivityTimeline {
     root.append(toggle, details);
     this.#options.messages.append(root);
     const timestamp = this.#timestamp(createdAt);
-    this.#work = { root, toggle, details, startedAt: timestamp, lastAt: timestamp };
+    const timer = setInterval(() => this.#renderWorkStatus(), 1_000);
+    if (typeof timer === "object" && "unref" in timer && typeof timer.unref === "function") timer.unref();
+    this.#work = { root, toggle, label, details, startedAt: timestamp, lastAt: timestamp, status: "Working", timer };
+    this.#renderWorkStatus();
     return this.#work;
   }
 
@@ -328,6 +345,22 @@ export class ActivityTimeline {
 
   #touchWork(createdAt?: string): void {
     if (this.#work) this.#work.lastAt = Math.max(this.#work.lastAt, this.#timestamp(createdAt));
+  }
+
+  #setWorkStatus(status: string): void {
+    if (!this.#work) return;
+    this.#work.status = status.replace(/…+$/, "").trim();
+    this.#renderWorkStatus();
+  }
+
+  #renderWorkStatus(): void {
+    const work = this.#work;
+    if (!work) return;
+    setActivityLabel(work.label, `${work.status} · ${this.#formatElapsed(Math.max(0, Date.now() - work.startedAt))}`);
+  }
+
+  #stopWorkTimer(): void {
+    if (this.#work) clearInterval(this.#work.timer);
   }
 
   #updateBurst(burst: ActivityBurst): void {

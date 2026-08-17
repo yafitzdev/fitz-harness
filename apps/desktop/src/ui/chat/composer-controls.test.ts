@@ -150,7 +150,7 @@ describe("ComposerControls", () => {
     expect(elements.contextPercent.textContent).toBe("25% full");
     expect(elements.contextTokens.textContent).toBe("≈33k / 131k tokens used");
     expect(elements.modelToggle.disabled).toBe(true);
-    expect(elements.contextCompactButton.disabled).toBe(true);
+    expect(elements.contextCompactButton.disabled).toBe(false);
 
     controls.updateState({ running: false, hasSession: true });
     expect(elements.modelToggle.disabled).toBe(false);

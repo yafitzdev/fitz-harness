@@ -7,7 +7,13 @@ const states = new WeakMap<HTMLElement, FollowState>();
 function stateFor(messages: HTMLElement): FollowState {
   const existing = states.get(messages);
   if (existing) return existing;
-  const state = { following: true };
+  // Do not assume that a newly attached viewport is already at the end. This
+  // matters when a layout controller is attached to a restored transcript: a
+  // user who is reading older content must not be pulled to the latest turn by
+  // the controller's first geometry pass.
+  const state = {
+    following: messages.scrollHeight - messages.scrollTop - messages.clientHeight < FOLLOW_THRESHOLD,
+  };
   messages.addEventListener("scroll", () => {
     state.following = messages.scrollHeight - messages.scrollTop - messages.clientHeight < FOLLOW_THRESHOLD;
   }, { passive: true });

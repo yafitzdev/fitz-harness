@@ -73,6 +73,22 @@ describe("ConversationLayout", () => {
     expect(scrollButton.hidden).toBe(true);
   });
 
+  it("keeps the reader's current transcript offset through a layout pass", () => {
+    const { layout, messages } = setup();
+    messages.scrollTop = 220;
+    messages.dispatchEvent(new Event("scroll"));
+    layout.sync();
+    expect(messages.scrollTop).toBe(220);
+  });
+
+  it("keeps a reader at the latest message when the viewport reflows", () => {
+    const { layout, messages } = setup();
+    messages.scrollTop = 590;
+    messages.dispatchEvent(new Event("scroll"));
+    layout.sync();
+    expect(messages.scrollTop).toBe(messages.scrollHeight);
+  });
+
   it("resumes follow mode and scrolls smoothly when requested", () => {
     const { layout, messages } = setup();
     layout.scrollToBottom();

@@ -22,6 +22,7 @@ beforeEach(() => document.body.replaceChildren());
 describe("conversation follow mode", () => {
   it("keeps new live output pinned while the reader is at the bottom", () => {
     const { messages, setHeight } = transcript();
+    isFollowingLatest(messages);
     messages.scrollTop = 600;
     messages.dispatchEvent(new Event("scroll"));
     setHeight(1_240);

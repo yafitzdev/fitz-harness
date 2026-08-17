@@ -1,4 +1,4 @@
-import { isFollowingLatest, resumeFollowingLatest } from "../chat/conversation-scroll.js";
+import { isFollowingLatest, resumeFollowingLatest, scrollToLatestIfFollowing } from "../chat/conversation-scroll.js";
 
 export interface ConversationLayoutOptions {
   workspace: HTMLElement;
@@ -27,6 +27,8 @@ export class ConversationLayout {
 
   readonly sync = (): void => {
     const { workspace, messages, composer } = this.#options;
+    const following = isFollowingLatest(messages);
+    const scrollTop = messages.scrollTop;
     const workspaceWidth = workspace.clientWidth;
     const panelWidth = workspace.classList.contains("inspector-open") ? this.#options.inspectorWidth() : 0;
     const viewportWidth = Math.max(280, workspaceWidth - panelWidth);
@@ -44,6 +46,17 @@ export class ConversationLayout {
     workspace.style.setProperty("--composer-height", `${composer.offsetHeight}px`);
     const composerCard = composer.querySelector<HTMLElement>(".composer-card");
     workspace.style.setProperty("--composer-card-height", `${composerCard?.offsetHeight ?? composer.offsetHeight}px`);
+    // Width/height changes reflow wrapped messages and can change the
+    // transcript's scroll range. Keep a live run pinned when the reader was
+    // already following the latest turn; otherwise restore the exact reading
+    // offset if this geometry pass disturbed it.
+    if (following) {
+      // Reassert the captured follow state in case the browser emitted a
+      // scroll event while applying the new dimensions.
+      resumeFollowingLatest(messages);
+      scrollToLatestIfFollowing(messages);
+    }
+    else if (messages.scrollTop !== scrollTop) messages.scrollTop = scrollTop;
     this.updateScrollButton();
   };
 
