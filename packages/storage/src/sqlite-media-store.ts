@@ -7,7 +7,9 @@ import type {
   MediaJobRecord,
   MediaJobStatus,
   MediaModality,
+  JobEvent,
 } from "@fitz/protocol";
+import { SqliteJobStore } from "./sqlite-job-store.js";
 
 export interface MediaJobEventEnvelope {
   jobId: string;
@@ -45,7 +47,7 @@ export interface ListMediaJobsOptions {
 }
 
 export class SqliteMediaStore {
-  constructor(private readonly database: DatabaseSync) {}
+  constructor(private readonly database: DatabaseSync, private readonly jobs = new SqliteJobStore(database)) {}
 
   createJob(job: MediaJobRecord): void {
     this.database
@@ -76,6 +78,22 @@ export class SqliteMediaStore {
         job.createdByUserId ?? null,
         job.creditCostCents ?? null,
       );
+    this.jobs.create({
+      id: job.id,
+      kind: "media",
+      status: mediaStatusToJobStatus(job.status),
+      ...(job.createdByUserId ? { ownerUserId: job.createdByUserId } : {}),
+      ...(job.sessionId ? { sessionId: job.sessionId } : {}),
+      ...(job.sourceJobId ? { parentJobId: job.sourceJobId } : {}),
+      routeId: job.routeId,
+      ...(job.progress !== undefined ? { progress: job.progress } : {}),
+      ...(job.errorCode ? { error: job.errorCode } : {}),
+      createdAt: job.enqueuedAt,
+      updatedAt: job.completedAt ?? job.startedAt ?? job.enqueuedAt,
+      ...(job.startedAt ? { startedAt: job.startedAt } : {}),
+      ...(job.completedAt ? { completedAt: job.completedAt } : {}),
+      metadata: { modality: job.modality },
+    });
   }
 
   getJob(id: string): MediaJobRecord | undefined {
@@ -116,6 +134,8 @@ export class SqliteMediaStore {
     set("credit_cost_cents", patch.creditCostCents);
     if (assignments.length === 0) return;
     this.database.prepare(`UPDATE media_jobs SET ${assignments.join(", ")} WHERE id = ?`).run(...values, id);
+    const current = this.getJob(id);
+    if (current) this.jobs.update(id, mediaJobToJobPatch(current));
   }
 
   listJobs(options: ListMediaJobsOptions = {}): MediaJobRecord[] {
@@ -164,7 +184,9 @@ export class SqliteMediaStore {
          WHERE status IN ('queued', 'started', 'progressing')`,
       )
       .run(now);
-    return Number(result.changes);
+    const changed = Number(result.changes);
+    if (changed > 0) this.jobs.recoverInterrupted("media", now);
+    return changed;
   }
 
   appendJobEvent(jobId: string, event: MediaJobEvent, timestamp: string): MediaJobEventEnvelope {
@@ -177,9 +199,11 @@ export class SqliteMediaStore {
         .prepare("INSERT INTO media_job_events (job_id, sequence, timestamp, type, event_json) VALUES (?, ?, ?, ?, ?)")
         .run(jobId, row.sequence, timestamp, event.type, JSON.stringify(event));
       this.database.exec("COMMIT");
-      return { jobId, sequence: row.sequence, timestamp, event };
+      const envelope = { jobId, sequence: row.sequence, timestamp, event };
+      this.jobs.appendEvent(jobId, mediaJobEventToJobEvent(event), timestamp);
+      return envelope;
     } catch (error) {
-      this.database.exec("ROLLBACK");
+      if (this.database.isTransaction) this.database.exec("ROLLBACK");
       throw error;
     }
   }
@@ -239,4 +263,31 @@ function mapMediaJob(row: MediaJobRow): MediaJobRecord {
     ...(row.created_by_user_id ? { createdByUserId: row.created_by_user_id } : {}),
     ...(row.credit_cost_cents !== null ? { creditCostCents: row.credit_cost_cents } : {}),
   };
+}
+
+function mediaJobToJobPatch(job: MediaJobRecord): Parameters<SqliteJobStore["update"]>[1] {
+  return {
+    status: job.status === "started" ? "running" : job.status,
+    ...(job.createdByUserId ? { ownerUserId: job.createdByUserId } : {}),
+    ...(job.sessionId ? { sessionId: job.sessionId } : {}),
+    ...(job.sourceJobId ? { parentJobId: job.sourceJobId } : {}),
+    routeId: job.routeId,
+    ...(job.progress !== undefined ? { progress: job.progress } : {}),
+    ...(job.errorCode ? { error: job.errorCode } : {}),
+    updatedAt: new Date().toISOString(),
+    ...(job.startedAt ? { startedAt: job.startedAt } : {}),
+    ...(job.completedAt ? { completedAt: job.completedAt } : {}),
+  };
+}
+
+function mediaJobEventToJobEvent(event: MediaJobEvent): JobEvent {
+  if (event.type === "started") return { type: "started", status: "running", sourceType: event.type, data: { providerJobId: event.providerJobId } };
+  if (event.type === "progress") return { type: "progress", status: "progressing", progress: event.progress, sourceType: event.type };
+  if (event.type === "completed") return { type: "completed", status: "completed", sourceType: event.type, data: { mimeType: event.result.mimeType, byteSize: event.result.byteSize } };
+  if (event.type === "failed") return { type: "failed", status: "failed", sourceType: event.type, data: { error: event.error } };
+  return { type: "cancelled", status: "cancelled", sourceType: event.type };
+}
+
+function mediaStatusToJobStatus(status: MediaJobStatus): Exclude<JobEvent["status"], undefined> {
+  return status === "started" ? "running" : status;
 }

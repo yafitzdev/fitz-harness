@@ -54,6 +54,7 @@ import { MediaProviderEngineAdapter } from "./media-provider-adapter.js";
 import type { AgentSafetyService } from "./agent-safety/index.js";
 import { registerAgentRoutes } from "./agent-routes.js";
 import { registerMediaRoutes } from "./media-routes.js";
+import { registerJobRoutes } from "./job-routes.js";
 import { registerWorkspaceRoutes } from "./workspace-routes.js";
 import { classifyHostError } from "./host-error.js";
 import { registerOpenAIRoutes } from "./openai-routes.js";
@@ -460,6 +461,8 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     ...(security ? { security } : {}),
     imageTimeoutMs: mediaImageTimeoutMs,
   });
+
+  registerJobRoutes({ app, store, principals });
 
   registerWorkspaceRoutes({
     app,

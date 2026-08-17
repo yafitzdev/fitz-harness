@@ -60,6 +60,9 @@ Python/API initialization or ModelOpt-to-Marlin materialization is instantaneous
 ## Queue identity, visibility, and cancellation
 
 - Every local or remote work item has one stable id and one trusted owner/session/run context.
+- Durable agent and media work is indexed by the engine-neutral `jobs` contract. `GET /api/v1/jobs`
+  and its detail/event endpoints provide one read-only control-plane view; specialized records remain
+  authoritative for payloads, checkpoints, artifacts, and quota state.
 - Internal Pi model calls carry that context through authenticated localhost-only headers. External
   agent endpoints never receive these headers.
 - `GET /api/v1/work/queue` is the single user-facing queue view. Internal Pi model calls are folded

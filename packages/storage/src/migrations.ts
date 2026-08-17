@@ -728,4 +728,58 @@ export const MIGRATIONS: readonly Migration[] = [
         ON request_usage(session_id, enqueued_at, id);
     `,
   },
+  {
+    version: 27,
+    // A compact, engine-neutral lifecycle registry. Agent and media tables
+    // remain the source of truth for their specialized payloads; this table
+    // makes all durable background work queryable through one contract.
+    sql: `
+      CREATE TABLE IF NOT EXISTS jobs (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('agent', 'media', 'maintenance')),
+        status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'progressing', 'completed', 'failed', 'cancelled', 'interrupted')),
+        owner_user_id TEXT,
+        session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+        parent_job_id TEXT,
+        route_id TEXT,
+        progress REAL CHECK (progress IS NULL OR (progress >= 0 AND progress <= 1)),
+        error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        started_at TEXT,
+        completed_at TEXT,
+        metadata_json TEXT NOT NULL DEFAULT '{}'
+      );
+
+      CREATE TABLE IF NOT EXISTS job_events (
+        job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+        sequence INTEGER NOT NULL CHECK (sequence > 0),
+        timestamp TEXT NOT NULL,
+        event_json TEXT NOT NULL,
+        PRIMARY KEY (job_id, sequence)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_jobs_owner_updated ON jobs(owner_user_id, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_jobs_session_updated ON jobs(session_id, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_jobs_kind_status_updated ON jobs(kind, status, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_job_events_job_sequence ON job_events(job_id, sequence);
+
+      INSERT OR IGNORE INTO jobs (
+        id, kind, status, owner_user_id, session_id, route_id, error,
+        created_at, updated_at, metadata_json
+      )
+      SELECT id, 'agent', status, owner_user_id, session_id, route_id, error,
+        created_at, updated_at, '{}'
+      FROM agent_runs;
+
+      INSERT OR IGNORE INTO jobs (
+        id, kind, status, owner_user_id, session_id, route_id, error,
+        created_at, updated_at, started_at, completed_at, progress, metadata_json
+      )
+      SELECT id, 'media', CASE WHEN status = 'started' THEN 'running' ELSE status END, created_by_user_id, session_id, route_id, error_code,
+        enqueued_at, COALESCE(completed_at, started_at, enqueued_at), started_at,
+        completed_at, progress, '{}'
+      FROM media_jobs;
+    `,
+  },
 ] as const;

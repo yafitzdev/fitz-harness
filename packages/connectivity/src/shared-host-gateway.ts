@@ -170,6 +170,8 @@ export function isAllowedSharedRequest(method: string, path: string): boolean {
   if (/^\/api\/v1\/agent\/runs\/[^/]+\/(?:steer|resume)$/.test(path)) return method === "POST";
   if (path === "/api/v1/work/queue") return method === "GET";
   if (/^\/api\/v1\/work\/queue\/[^/]+$/.test(path)) return method === "DELETE";
+  if (path === "/api/v1/jobs") return method === "GET";
+  if (/^\/api\/v1\/jobs\/[^/]+(?:\/events)?$/.test(path)) return method === "GET";
   if (path === "/api/v1/media/jobs") return method === "GET" || method === "POST";
   if (/^\/api\/v1\/media\/jobs\/[^/]+$/.test(path) || /^\/api\/v1\/media\/jobs\/[^/]+\/(?:lineage|events)$/.test(path)) return method === "GET";
   if (/^\/api\/v1\/media\/jobs\/[^/]+\/(?:edits|animations|cancel|retry)$/.test(path)) return method === "POST";

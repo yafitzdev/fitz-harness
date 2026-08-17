@@ -35,6 +35,10 @@ import type {
   SubagentRoleDefinition,
   InferenceDelta,
   InferenceEvidenceRecord,
+  JobEvent,
+  JobEventEnvelope,
+  JobRecord,
+  ListJobsOptions,
 } from "@fitz/protocol";
 import { MIGRATIONS } from "./migrations.js";
 import { SqliteAgentRunStore } from "./sqlite-agent-run-store.js";
@@ -44,6 +48,7 @@ import { SqliteInferenceTelemetryStore } from "./sqlite-inference-telemetry-stor
 import { SqliteInferenceEvidenceStore } from "./sqlite-inference-evidence-store.js";
 import { SqliteForensicsStore } from "./sqlite-forensics-store.js";
 import { SqliteMediaStore, type MediaJobEventEnvelope } from "./sqlite-media-store.js";
+import { SqliteJobStore } from "./sqlite-job-store.js";
 import { SqliteSafetyStore } from "./sqlite-safety-store.js";
 import { SqliteSettingsStore } from "./sqlite-settings-store.js";
 import {
@@ -71,6 +76,7 @@ export class SqliteStore {
   readonly #inferenceEvidence: SqliteInferenceEvidenceStore;
   readonly #forensics: SqliteForensicsStore;
   readonly #media: SqliteMediaStore;
+  readonly #jobs: SqliteJobStore;
   readonly #safety: SqliteSafetyStore;
   readonly #settings: SqliteSettingsStore;
   readonly #workspace: SqliteWorkspaceStore;
@@ -80,16 +86,17 @@ export class SqliteStore {
     this.#database = new DatabaseSync(path);
     this.#database.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
     this.migrate();
-    this.#agentRuns = new SqliteAgentRunStore(this.#database);
     this.#configuration = new SqliteConfigurationStore(this.#database);
     this.#identity = new SqliteIdentityStore(this.#database);
     this.#inferenceTelemetry = new SqliteInferenceTelemetryStore(this.#database);
     this.#inferenceEvidence = new SqliteInferenceEvidenceStore(this.#database);
     this.#forensics = new SqliteForensicsStore(this.#database);
-    this.#media = new SqliteMediaStore(this.#database);
+    this.#jobs = new SqliteJobStore(this.#database);
+    this.#media = new SqliteMediaStore(this.#database, this.#jobs);
     this.#safety = new SqliteSafetyStore(this.#database);
     this.#settings = new SqliteSettingsStore(this.#database);
     this.#workspace = new SqliteWorkspaceStore(this.#database);
+    this.#agentRuns = new SqliteAgentRunStore(this.#database, this.#jobs);
   }
 
   static memory(): SqliteStore {
@@ -223,6 +230,14 @@ export class SqliteStore {
   sumMediaLedgerForUser(userId: string, since: string): number {
     return this.#media.sumLedgerForUser(userId, since);
   }
+
+  createJob(job: JobRecord): void { this.#jobs.create(job); }
+  getJob(id: string): JobRecord | undefined { return this.#jobs.get(id); }
+  updateJob(id: string, patch: Partial<Omit<JobRecord, "id" | "kind" | "createdAt">>): void { this.#jobs.update(id, patch); }
+  listJobs(options: ListJobsOptions = {}): JobRecord[] { return this.#jobs.list(options); }
+  appendJobEvent(jobId: string, event: JobEvent, timestamp: string): JobEventEnvelope { return this.#jobs.appendEvent(jobId, event, timestamp); }
+  jobEventsAfter(jobId: string, sequence: number, limit = 1000): JobEventEnvelope[] { return this.#jobs.eventsAfter(jobId, sequence, limit); }
+  recoverInterruptedJobs(kind: JobRecord["kind"]): number { return this.#jobs.recoverInterrupted(kind); }
 
   createUser(user: UserRecord): void { this.#identity.createUser(user); }
   updateUser(user: UserRecord): void { this.#identity.updateUser(user); }

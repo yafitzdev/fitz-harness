@@ -6,7 +6,9 @@ import type {
   AgentRunRecord,
   AgentRunRequest,
   TranscriptEntryRecord,
+  JobEvent,
 } from "@fitz/protocol";
+import { SqliteJobStore } from "./sqlite-job-store.js";
 
 interface AgentRunRow {
   id: string;
@@ -45,7 +47,7 @@ interface TranscriptRow {
 const RUN_COLUMNS = "id, route_id, owner_user_id, session_id, status, created_at, updated_at, last_sequence, error";
 
 export class SqliteAgentRunStore {
-  constructor(private readonly database: DatabaseSync) {}
+  constructor(private readonly database: DatabaseSync, private readonly jobs = new SqliteJobStore(database)) {}
 
   createRun(run: AgentRunRecord, request?: AgentRunRequest, resumeOfRunId?: string): void {
     this.database.exec("BEGIN IMMEDIATE");
@@ -74,6 +76,18 @@ export class SqliteAgentRunStore {
             request.clientRequestId ?? null,
           );
       }
+      this.jobs.create({
+        id: run.id,
+        kind: "agent",
+        status: run.status,
+        ...(run.ownerUserId ? { ownerUserId: run.ownerUserId } : {}),
+        ...(run.sessionId ? { sessionId: run.sessionId } : {}),
+        ...(request?.delegation?.parentRunId ? { parentJobId: request.delegation.parentRunId } : {}),
+        routeId: run.routeId,
+        ...(run.error ? { error: run.error } : {}),
+        createdAt: run.createdAt,
+        updatedAt: run.updatedAt,
+      });
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
@@ -170,9 +184,11 @@ export class SqliteAgentRunStore {
   }
 
   updateRun(id: string, status: AgentRunRecord["status"], error?: string): void {
+    const updatedAt = new Date().toISOString();
     this.database
       .prepare("UPDATE agent_runs SET status = ?, updated_at = ?, error = ? WHERE id = ?")
-      .run(status, new Date().toISOString(), error ?? null, id);
+      .run(status, updatedAt, error ?? null, id);
+    this.jobs.update(id, { status, updatedAt, ...(error ? { error } : {}) });
   }
 
   appendEvent(event: AgentEventEnvelope): void {
@@ -187,6 +203,8 @@ export class SqliteAgentRunStore {
         .prepare("UPDATE agent_runs SET last_sequence = ?, updated_at = ?, status = COALESCE(?, status), error = CASE WHEN ? IS NOT NULL THEN ? WHEN ? IN ('completed', 'cancelled', 'running') THEN NULL ELSE error END WHERE id = ?")
         .run(event.sequence, event.timestamp, status ?? null, eventError, eventError, status ?? null, event.runId);
       this.advanceCheckpoint(event);
+      const jobEvent = normalizeAgentJobEvent(event);
+      if (jobEvent) this.jobs.appendEvent(event.runId, jobEvent, event.timestamp);
       this.database.exec("COMMIT");
     } catch (error) {
       this.database.exec("ROLLBACK");
@@ -438,6 +456,43 @@ function mapAgentRun(row: AgentRunRow): AgentRunRecord {
     ...(row.session_id ? { sessionId: row.session_id } : {}),
     ...(row.error ? { error: row.error } : {}),
   };
+}
+
+/** Keep high-volume assistant/reasoning/tool deltas in the specialized agent
+ * log. The common job stream carries only lifecycle transitions and queue
+ * state, which is enough for work dashboards without duplicating token data. */
+function normalizeAgentJobEvent(event: AgentEventEnvelope): JobEvent | undefined {
+  switch (event.type) {
+    case "run.created":
+      return undefined; // SqliteJobStore.create emits the canonical created event.
+    case "run.started":
+      return { type: "started", status: "running", sourceType: event.type };
+    case "run.queue.updated": {
+      const status = event.data.status === "running" || event.data.status === "queued" ? event.data.status : undefined;
+      return { type: "updated", ...(status ? { status } : {}), sourceType: event.type };
+    }
+    case "run.completed":
+      return { type: "completed", status: "completed", sourceType: event.type };
+    case "run.failed": {
+      const data = compactAgentEventData(event.data);
+      return { type: "failed", status: "failed", sourceType: event.type, ...(data ? { data } : {}) };
+    }
+    case "run.cancelled":
+      return { type: "cancelled", status: "cancelled", sourceType: event.type };
+    case "run.interrupted": {
+      const data = compactAgentEventData(event.data);
+      return { type: "interrupted", status: "interrupted", sourceType: event.type, ...(data ? { data } : {}) };
+    }
+    default:
+      return undefined;
+  }
+}
+
+function compactAgentEventData(data: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> | undefined {
+  const error = typeof data.error === "string" ? data.error : undefined;
+  const resumable = typeof data.resumable === "boolean" ? data.resumable : undefined;
+  if (error === undefined && resumable === undefined) return undefined;
+  return { ...(error !== undefined ? { error } : {}), ...(resumable !== undefined ? { resumable } : {}) };
 }
 
 function mapTranscript(row: TranscriptRow): TranscriptEntryRecord {
