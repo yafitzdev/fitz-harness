@@ -810,4 +810,22 @@ export const MIGRATIONS: readonly Migration[] = [
         ON session_projections(source_revision, updated_at DESC);
     `,
   },
+  {
+    version: 29,
+    // Evidence capture is fail-open for inference, but its failures must remain
+    // visible in the session artifact instead of masquerading as full coverage.
+    sql: `
+      CREATE TABLE IF NOT EXISTS forensics_persistence_errors (
+        id TEXT PRIMARY KEY,
+        timestamp TEXT NOT NULL,
+        operation TEXT NOT NULL CHECK (operation IN ('evidence-record', 'evidence-delta-batch')),
+        session_id TEXT,
+        request_ids_json TEXT NOT NULL,
+        error_name TEXT NOT NULL,
+        error_message TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_forensics_persistence_errors_session
+        ON forensics_persistence_errors(session_id, timestamp, id);
+    `,
+  },
 ] as const;

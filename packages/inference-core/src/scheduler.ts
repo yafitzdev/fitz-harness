@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { InferenceDelta, InferenceEvidenceRecord, InferenceLane, InferenceRequest, InstanceSnapshot, MediaGenerationRequest, MediaJobEvent, Recipe, RequestUsageRecord } from "@fitz/protocol";
+import type { InferenceDelta, InferenceEvidenceDelta, InferenceEvidenceRecord, InferenceLane, InferenceRequest, InstanceSnapshot, MediaGenerationRequest, MediaJobEvent, Recipe, RequestUsageRecord } from "@fitz/protocol";
 import { AsyncChannel } from "./async-channel.js";
 import { BoundedWorkLane, type WorkLaneStatus } from "./bounded-work-lane.js";
 import { LifecycleEventBus } from "./event-bus.js";
@@ -7,6 +7,7 @@ import { LifecycleManager } from "./lifecycle-manager.js";
 import { RemoteMediaExecutor } from "./remote-media-executor.js";
 import { RemoteTextExecutor } from "./remote-text-executor.js";
 import { RouteResolver } from "./route-resolver.js";
+import { EvidenceDeltaBuffer } from "./evidence-delta-buffer.js";
 
 export interface WorkContext {
   ownerUserId?: string;
@@ -70,9 +71,11 @@ export interface InferenceSchedulerOptions {
    * normalized request and every normalized adapter delta. Failures are
    * fail-open so diagnostics can never break inference. */
   recordEvidence?: (record: InferenceEvidenceRecord) => void;
-  /** Append-only stream sink for normalized deltas. Keeping this separate
-   * from recordEvidence avoids rewriting a growing response on every chunk. */
-  recordEvidenceDelta?: (evidenceId: string, sequence: number, delta: InferenceDelta, timestamp: string) => void;
+  /** Batched append-only sink for normalized deltas. It runs outside the
+   * stream delivery stack and is flushed before terminal evidence is saved. */
+  recordEvidenceDeltas?: (records: readonly InferenceEvidenceDelta[]) => void | Promise<void>;
+  evidenceDeltaBatchSize?: number;
+  evidenceDeltaFlushIntervalMs?: number;
 }
 
 export type InferenceAdmissionReason = "queue_capacity" | "scheduler_closed";
@@ -102,7 +105,7 @@ export class InferenceScheduler {
   readonly #streamBufferBytes: number;
   readonly #recordUsage: InferenceSchedulerOptions["recordUsage"];
   readonly #recordEvidence: InferenceSchedulerOptions["recordEvidence"];
-  readonly #recordEvidenceDelta: InferenceSchedulerOptions["recordEvidenceDelta"];
+  readonly #evidenceDeltas: EvidenceDeltaBuffer;
   #quiescing = false;
   #quiesceTask: Promise<void> | undefined;
 
@@ -118,7 +121,10 @@ export class InferenceScheduler {
     this.#streamBufferBytes = options.streamBufferBytes ?? 1024 * 1024;
     this.#recordUsage = options.recordUsage;
     this.#recordEvidence = options.recordEvidence;
-    this.#recordEvidenceDelta = options.recordEvidenceDelta;
+    this.#evidenceDeltas = new EvidenceDeltaBuffer(options.recordEvidenceDeltas, {
+      ...(options.evidenceDeltaBatchSize !== undefined ? { batchSize: options.evidenceDeltaBatchSize } : {}),
+      ...(options.evidenceDeltaFlushIntervalMs !== undefined ? { flushIntervalMs: options.evidenceDeltaFlushIntervalMs } : {}),
+    });
     this.#gpuLane = this.#createLane(options.gpuConcurrency ?? 1, options.gpuQueueCapacity ?? 256);
     this.#cloudLane = this.#createLane(options.cloudConcurrency ?? 4, options.cloudQueueCapacity ?? 64);
   }
@@ -295,7 +301,6 @@ export class InferenceScheduler {
     let promptTokens: number | undefined;
     let completionTokens: number | undefined;
     const localTelemetry: LocalChatTelemetry = { generatedText: "", outputChunks: 0 };
-    const evidenceDeltas: InferenceDelta[] = [];
     let evidenceDeltaSequence = 0;
     let evidenceRecipe: Recipe | undefined;
     try {
@@ -315,8 +320,7 @@ export class InferenceScheduler {
           }
           if (delta.promptTokens !== undefined) promptTokens = delta.promptTokens;
           if (delta.completionTokens !== undefined) completionTokens = delta.completionTokens;
-          evidenceDeltas.push(delta);
-          this.#safeRecordEvidenceDelta(job.id, ++evidenceDeltaSequence, delta);
+          this.#evidenceDeltas.enqueue({ evidenceId: job.id, sequence: ++evidenceDeltaSequence, timestamp: new Date().toISOString(), delta });
           await job.output.push(delta, job.controller.signal);
         }
         if (job.unloadAfterCompletion && job.lane === "gpu") {
@@ -346,9 +350,10 @@ export class InferenceScheduler {
       }
       closeJob(job);
       if (job.kind === "chat") {
+        await this.#evidenceDeltas.flush(job.id);
         this.#safeRecordEvidence(this.#evidenceFor(job, "completed", evidenceRecipe ?? chatRecipe, {
           completedAt: new Date().toISOString(),
-          response: evidenceResponse(evidenceDeltas, promptTokens, completionTokens),
+          response: evidenceResponse(promptTokens, completionTokens),
           engine: this.#engineEvidence(job.lane),
         }));
         await this.#safeRecordUsage(this.#chatUsage(job, chatRecipe, "completed", started, firstOutput, promptTokens, completionTokens, undefined, localTelemetry));
@@ -356,10 +361,11 @@ export class InferenceScheduler {
     } catch (error) {
       failJob(job, error);
       if (job.kind === "chat") {
+        await this.#evidenceDeltas.flush(job.id);
         const status = isAbort(error) ? "cancelled" : "failed" as const;
         this.#safeRecordEvidence(this.#evidenceFor(job, status, evidenceRecipe ?? chatRecipe, {
           completedAt: new Date().toISOString(),
-          response: evidenceResponse(evidenceDeltas, promptTokens, completionTokens),
+          response: evidenceResponse(promptTokens, completionTokens),
           error: serializeError(error),
           engine: this.#engineEvidence(job.lane),
         }));
@@ -408,10 +414,6 @@ export class InferenceScheduler {
 
   #safeRecordEvidence(record: InferenceEvidenceRecord): void {
     try { this.#recordEvidence?.(record); } catch { /* diagnostics are fail-open */ }
-  }
-
-  #safeRecordEvidenceDelta(evidenceId: string, sequence: number, delta: InferenceDelta): void {
-    try { this.#recordEvidenceDelta?.(evidenceId, sequence, delta, new Date().toISOString()); } catch { /* diagnostics are fail-open */ }
   }
 
   #engineEvidence(lane: InferenceLane): Record<string, unknown> {
@@ -493,9 +495,8 @@ function serializeError(error: unknown): Record<string, unknown> {
 function recordableRequest(request: InferenceRequest): Record<string, unknown> {
   return JSON.parse(JSON.stringify(request)) as Record<string, unknown>;
 }
-function evidenceResponse(deltas: InferenceDelta[], promptTokens?: number, completionTokens?: number): Record<string, unknown> {
+function evidenceResponse(promptTokens?: number, completionTokens?: number): Record<string, unknown> {
   return {
-    deltas: JSON.parse(JSON.stringify(deltas)) as InferenceDelta[],
     ...(promptTokens !== undefined ? { promptTokens } : {}),
     ...(completionTokens !== undefined ? { completionTokens } : {}),
   };

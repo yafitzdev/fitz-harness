@@ -18,6 +18,7 @@ import { SqliteIdentityStore } from "./sqlite-identity-store.js";
 import { SqliteMediaStore } from "./sqlite-media-store.js";
 import { SqliteSafetyStore } from "./sqlite-safety-store.js";
 import { SqliteWorkspaceStore } from "./sqlite-workspace-store.js";
+import { ForensicsPersistenceTracker } from "./forensics-persistence-tracker.js";
 
 interface JsonRow { event_json: string }
 interface AuditRow { id: string; timestamp: string; actor_user_id: string | null; action: string; target_type: string | null; target_id: string | null; detail_json: string }
@@ -36,7 +37,7 @@ export class SqliteForensicsStore {
   readonly #safety: SqliteSafetyStore;
   readonly #workspace: SqliteWorkspaceStore;
 
-  constructor(private readonly database: DatabaseSync) {
+  constructor(private readonly database: DatabaseSync, private readonly persistence: ForensicsPersistenceTracker) {
     this.#agent = new SqliteAgentRunStore(database);
     this.#evidence = new SqliteInferenceEvidenceStore(database);
     this.#telemetry = new SqliteInferenceTelemetryStore(database);
@@ -74,6 +75,7 @@ export class SqliteForensicsStore {
       const diagnostics = item.engine?.diagnostics;
       return typeof diagnostics === "object" && diagnostics !== null && Array.isArray((diagnostics as Record<string, unknown>).logs);
     }) ? "best-effort" as const : "not-captured" as const;
+    const persistenceErrors = this.persistence.listForSession(sessionId);
 
     return {
       schemaVersion: 1,
@@ -92,7 +94,8 @@ export class SqliteForensicsStore {
       legacyInferenceRequests: this.#legacyRequests(correlatedRequestIds),
       gpuWork: this.#gpuWork(correlatedRequestIds),
       coverage: {
-        normalizedAdapterEvidence: true,
+        normalizedAdapterEvidence: persistenceErrors.length === 0,
+        persistenceErrors,
         rawProviderWirePayloads: "not-captured",
         externalProcessLogs,
         reasoning: "emitted-events-only",

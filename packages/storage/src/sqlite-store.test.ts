@@ -1,4 +1,7 @@
-import type { EngineRegistration, Recipe, Route } from "@fitz/protocol";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { EngineRegistration, InferenceDelta, Recipe, Route } from "@fitz/protocol";
 import { describe, expect, it } from "vitest";
 import { SqliteStore } from "./sqlite-store.js";
 import { ArtifactRepository } from "./artifact-repository.js";
@@ -314,7 +317,80 @@ describe("SqliteStore", () => {
     expect(bundle?.lifecycleEvents).toHaveLength(1);
     expect(bundle?.legacyInferenceRequests[0]).toEqual(expect.objectContaining({ id: "forensic-request", status: "completed" }));
     expect(bundle?.gpuWork[0]).toEqual(expect.objectContaining({ id: "forensic-request", status: "completed" }));
+    expect(bundle?.coverage).toEqual(expect.objectContaining({ normalizedAdapterEvidence: true, persistenceErrors: [] }));
     store.close();
+  });
+
+  it("marks session forensics degraded when normalized evidence cannot be persisted", () => {
+    const store = SqliteStore.memory();
+    const now = new Date(0).toISOString();
+    store.createProject({ id: "degraded-project", name: "Degraded", createdAt: now, updatedAt: now });
+    store.createSession({ id: "degraded-session", projectId: "degraded-project", title: "Degraded", status: "active", createdAt: now, updatedAt: now });
+
+    expect(() => store.recordInferenceEvidence({
+      id: "failed-evidence-write",
+      kind: "chat",
+      status: "running",
+      routeId: "default",
+      sessionId: "degraded-session",
+      executionLane: "gpu",
+      enqueuedAt: now,
+      request: { unserializable: 1n },
+    })).toThrow();
+
+    const coverage = store.sessionForensics("degraded-session")?.coverage;
+    expect(coverage?.normalizedAdapterEvidence).toBe(false);
+    expect(coverage?.persistenceErrors).toEqual([
+      expect.objectContaining({
+        operation: "evidence-record",
+        sessionId: "degraded-session",
+        requestIds: ["failed-evidence-write"],
+        errorName: "TypeError",
+        errorMessage: expect.stringContaining("BigInt"),
+      }),
+    ]);
+    store.close();
+  });
+
+  it("retains delta-persistence degradation across a store restart", () => {
+    const directory = mkdtempSync(join(tmpdir(), "fitz-forensics-"));
+    const path = join(directory, "fitz.sqlite");
+    try {
+      const now = new Date(0).toISOString();
+      const store = new SqliteStore(path);
+      store.createProject({ id: "durable-project", name: "Durable", createdAt: now, updatedAt: now });
+      store.createSession({ id: "durable-session", projectId: "durable-project", title: "Durable", status: "active", createdAt: now, updatedAt: now });
+      store.recordInferenceEvidence({
+        id: "durable-request",
+        kind: "chat",
+        status: "running",
+        routeId: "default",
+        sessionId: "durable-session",
+        executionLane: "gpu",
+        enqueuedAt: now,
+        request: { messages: [] },
+      });
+      expect(() => store.recordInferenceEvidenceDeltas([{
+        evidenceId: "durable-request",
+        sequence: 1,
+        timestamp: now,
+        delta: { text: 1n } as unknown as InferenceDelta,
+      }])).toThrow();
+      store.close();
+
+      const reopened = new SqliteStore(path);
+      expect(reopened.sessionForensics("durable-session")?.coverage).toEqual(expect.objectContaining({
+        normalizedAdapterEvidence: false,
+        persistenceErrors: [expect.objectContaining({
+          operation: "evidence-delta-batch",
+          requestIds: ["durable-request"],
+          errorName: "TypeError",
+        })],
+      }));
+      reopened.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("turns in-flight evidence into an explicit restart fact", () => {
@@ -329,6 +405,31 @@ describe("SqliteStore", () => {
       response: { deltas: [{ reasoning: "partial" }] },
       observedDeltas: [{ evidenceId: "in-flight", sequence: 1, timestamp: now, delta: { reasoning: "partial" } }],
     }));
+    store.close();
+  });
+
+  it("persists a buffered inference-delta batch in sequence order", () => {
+    const store = SqliteStore.memory();
+    const now = new Date(0).toISOString();
+    store.recordInferenceEvidence({
+      id: "batched-request",
+      kind: "chat",
+      status: "running",
+      routeId: "default",
+      executionLane: "gpu",
+      enqueuedAt: now,
+      request: { messages: [] },
+    });
+
+    store.recordInferenceEvidenceDeltas([
+      { evidenceId: "batched-request", sequence: 1, timestamp: now, delta: { reasoning: "inspect" } },
+      { evidenceId: "batched-request", sequence: 2, timestamp: now, delta: { text: "done" } },
+    ]);
+
+    expect(store.getInferenceEvidence("batched-request")?.observedDeltas).toEqual([
+      { evidenceId: "batched-request", sequence: 1, timestamp: now, delta: { reasoning: "inspect" } },
+      { evidenceId: "batched-request", sequence: 2, timestamp: now, delta: { text: "done" } },
+    ]);
     store.close();
   });
 });

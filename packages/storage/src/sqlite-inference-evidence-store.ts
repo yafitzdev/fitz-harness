@@ -79,9 +79,7 @@ export class SqliteInferenceEvidenceStore {
       record.engine === undefined ? null : JSON.stringify(record.engine),
       JSON.stringify(record.metadata ?? {}),
     );
-    for (const observed of record.observedDeltas ?? []) {
-      this.recordDelta(record.id, observed.sequence, observed.delta, observed.timestamp);
-    }
+    this.recordDeltas(record.observedDeltas ?? []);
   }
 
   /** Appends one observed normalized adapter delta. This is intentionally a
@@ -89,12 +87,33 @@ export class SqliteInferenceEvidenceStore {
    * would be quadratic in output size, while an append-only row survives a
    * host crash between two terminal lifecycle updates. */
   recordDelta(evidenceId: string, sequence: number, delta: InferenceDelta, timestamp = new Date().toISOString()): void {
-    if (!Number.isInteger(sequence) || sequence < 1) throw new RangeError("Inference evidence delta sequence must be a positive integer");
-    this.database.prepare(`
+    this.recordDeltas([{ evidenceId, sequence, timestamp, delta }]);
+  }
+
+  /** Persists one buffered stream batch with one prepared statement and one
+   * transaction instead of parsing and committing SQL for every token. */
+  recordDeltas(records: readonly InferenceEvidenceDelta[]): void {
+    if (!records.length) return;
+    for (const record of records) {
+      if (!Number.isInteger(record.sequence) || record.sequence < 1) throw new RangeError("Inference evidence delta sequence must be a positive integer");
+    }
+    const statement = this.database.prepare(`
       INSERT INTO inference_evidence_deltas (evidence_id, sequence, timestamp, delta_json)
       VALUES (?, ?, ?, ?)
       ON CONFLICT(evidence_id, sequence) DO UPDATE SET timestamp = excluded.timestamp, delta_json = excluded.delta_json
-    `).run(evidenceId, sequence, timestamp, JSON.stringify(delta));
+    `);
+    const write = () => {
+      for (const record of records) statement.run(record.evidenceId, record.sequence, record.timestamp, JSON.stringify(record.delta));
+    };
+    if (this.database.isTransaction) { write(); return; }
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      write();
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   get(id: string): InferenceEvidenceRecord | undefined {

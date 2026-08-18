@@ -268,9 +268,9 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       store.recordInferenceEvidence(record);
       options.schedulerOptions?.recordEvidence?.(record);
     },
-    recordEvidenceDelta: (evidenceId, sequence, delta, timestamp) => {
-      store.recordInferenceEvidenceDelta(evidenceId, sequence, delta, timestamp);
-      options.schedulerOptions?.recordEvidenceDelta?.(evidenceId, sequence, delta, timestamp);
+    recordEvidenceDeltas: async (records) => {
+      store.recordInferenceEvidenceDeltas(records);
+      await options.schedulerOptions?.recordEvidenceDeltas?.(records);
     },
   });
   const agentRuns = new AgentRunCoordinator(

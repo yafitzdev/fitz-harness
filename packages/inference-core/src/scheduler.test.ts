@@ -5,6 +5,7 @@ import { EngineAdapterRegistry } from "./adapter.js";
 import { ManualClock } from "./clock.js";
 import { LifecycleEventBus } from "./event-bus.js";
 import { LifecycleManager } from "./lifecycle-manager.js";
+import { ResourceGovernor } from "./resources.js";
 import { RouteResolver } from "./route-resolver.js";
 import { InferenceScheduler } from "./scheduler.js";
 
@@ -432,14 +433,18 @@ describe("InferenceScheduler", () => {
 
   it("captures the normalized request, every adapter delta, and terminal error state", async () => {
     const adapter = new FakeEngineAdapter({ responseFactory: () => "captured" });
-    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]) });
+    const lifecycle = new LifecycleManager({ adapters: new EngineAdapterRegistry([adapter]), resources: testResources() });
     const records: import("@fitz/protocol").InferenceEvidenceRecord[] = [];
-    const deltas: Array<{ evidenceId: string; sequence: number; delta: InferenceDelta }> = [];
+    const deltas: import("@fitz/protocol").InferenceEvidenceDelta[] = [];
     const scheduler = new InferenceScheduler(
       new RouteResolver([route("default", "best")], [recipe("best", 60)]),
       lifecycle,
       undefined,
-      { recordEvidence: (record) => { records.push(record); }, recordEvidenceDelta: (evidenceId, sequence, delta) => { deltas.push({ evidenceId, sequence, delta }); } },
+      {
+        recordEvidence: (record) => { records.push(record); },
+        recordEvidenceDeltas: (batch) => { deltas.push(...batch); },
+        evidenceDeltaFlushIntervalMs: 60_000,
+      },
     );
     const stream = scheduler.enqueue("default", { messages: [{ role: "user", content: "capture me" }], temperature: 0.4 }, undefined, { sessionId: "session-evidence", runId: "run-evidence" });
     await collect(stream);
@@ -448,7 +453,7 @@ describe("InferenceScheduler", () => {
     expect(records.map((record) => record.status)).toEqual(expect.arrayContaining(["queued", "running", "completed"]));
     expect(terminal).toEqual(expect.objectContaining({ id: stream.requestId, sessionId: "session-evidence", runId: "run-evidence", routeId: "default", adapter: "fake" }));
     expect(terminal?.request).toEqual(expect.objectContaining({ messages: [{ role: "user", content: "capture me" }], temperature: 0.4 }));
-    expect(terminal?.response).toEqual(expect.objectContaining({ deltas: expect.arrayContaining([expect.objectContaining({ text: "captured" })]) }));
+    expect(terminal?.response).not.toHaveProperty("deltas");
     expect(deltas).toEqual(expect.arrayContaining([expect.objectContaining({ evidenceId: stream.requestId, sequence: 1, delta: expect.objectContaining({ text: "captured" }) })]));
     expect(terminal?.metadata).toEqual(expect.objectContaining({ recipeSnapshot: expect.objectContaining({ id: "best", adapter: "fake", modelId: "best-model" }) }));
     expect(terminal?.engine).toEqual(expect.objectContaining({ executionLane: "gpu", lifecycle: expect.objectContaining({ state: "READY" }), diagnostics: expect.any(Object) }));
@@ -548,4 +553,19 @@ async function waitFor(predicate: () => boolean): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 2));
   }
   throw new Error("Timed out waiting for test condition");
+}
+
+function testResources(): ResourceGovernor {
+  return new ResourceGovernor({
+    snapshot: async () => ({
+      capturedAt: new Date(0).toISOString(),
+      totalRamMiB: 64_000,
+      freeRamMiB: 48_000,
+      totalVramMiB: 32_000,
+      usedVramMiB: 4_000,
+      freeVramMiB: 28_000,
+      gpuTemperatureC: 35,
+      gpuTelemetryAvailable: true,
+    }),
+  });
 }

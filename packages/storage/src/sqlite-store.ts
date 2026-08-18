@@ -51,6 +51,7 @@ import { SqliteForensicsStore } from "./sqlite-forensics-store.js";
 import { SqliteMediaStore, type MediaJobEventEnvelope } from "./sqlite-media-store.js";
 import { SqliteJobStore } from "./sqlite-job-store.js";
 import { SqliteSessionProjectionStore } from "./sqlite-session-projection.js";
+import { ForensicsPersistenceTracker } from "./forensics-persistence-tracker.js";
 import { SqliteSafetyStore } from "./sqlite-safety-store.js";
 import { SqliteSettingsStore } from "./sqlite-settings-store.js";
 import {
@@ -76,6 +77,7 @@ export class SqliteStore {
   readonly #identity: SqliteIdentityStore;
   readonly #inferenceTelemetry: SqliteInferenceTelemetryStore;
   readonly #inferenceEvidence: SqliteInferenceEvidenceStore;
+  readonly #forensicsPersistence: ForensicsPersistenceTracker;
   readonly #forensics: SqliteForensicsStore;
   readonly #media: SqliteMediaStore;
   readonly #jobs: SqliteJobStore;
@@ -93,7 +95,8 @@ export class SqliteStore {
     this.#identity = new SqliteIdentityStore(this.#database);
     this.#inferenceTelemetry = new SqliteInferenceTelemetryStore(this.#database);
     this.#inferenceEvidence = new SqliteInferenceEvidenceStore(this.#database);
-    this.#forensics = new SqliteForensicsStore(this.#database);
+    this.#forensicsPersistence = new ForensicsPersistenceTracker(this.#database);
+    this.#forensics = new SqliteForensicsStore(this.#database, this.#forensicsPersistence);
     this.#jobs = new SqliteJobStore(this.#database);
     this.#sessionProjections = new SqliteSessionProjectionStore(this.#database);
     this.#media = new SqliteMediaStore(this.#database, this.#jobs);
@@ -183,8 +186,22 @@ export class SqliteStore {
   recoverInterruptedRequests(): number { return this.#inferenceTelemetry.recoverInterruptedRequests(); }
   listInferenceRequests(limit = 100): InferenceRequestRecord[] { return this.#inferenceTelemetry.listInferenceRequests(limit); }
   recordRequestUsage(record: RequestUsageRecord): void { this.#inferenceTelemetry.recordRequestUsage(record); }
-  recordInferenceEvidence(record: InferenceEvidenceRecord): void { this.#inferenceEvidence.record(record); }
-  recordInferenceEvidenceDelta(evidenceId: string, sequence: number, delta: InferenceDelta, timestamp?: string): void { this.#inferenceEvidence.recordDelta(evidenceId, sequence, delta, timestamp); }
+  recordInferenceEvidence(record: InferenceEvidenceRecord): void {
+    this.#forensicsPersistence.observe(record);
+    try { this.#inferenceEvidence.record(record); }
+    catch (error) { this.#forensicsPersistence.record("evidence-record", [record.id], error, record.sessionId); throw error; }
+    finally {
+      if (["completed", "failed", "cancelled", "interrupted"].includes(record.status)) this.#forensicsPersistence.forget(record.id);
+    }
+  }
+  recordInferenceEvidenceDelta(evidenceId: string, sequence: number, delta: InferenceDelta, timestamp?: string): void {
+    try { this.#inferenceEvidence.recordDelta(evidenceId, sequence, delta, timestamp); }
+    catch (error) { this.#forensicsPersistence.record("evidence-delta-batch", [evidenceId], error); throw error; }
+  }
+  recordInferenceEvidenceDeltas(records: readonly import("@fitz/protocol").InferenceEvidenceDelta[]): void {
+    try { this.#inferenceEvidence.recordDeltas(records); }
+    catch (error) { this.#forensicsPersistence.record("evidence-delta-batch", records.map((record) => record.evidenceId), error); throw error; }
+  }
   getInferenceEvidence(id: string): InferenceEvidenceRecord | undefined { return this.#inferenceEvidence.get(id); }
   listInferenceEvidenceForSession(sessionId: string): InferenceEvidenceRecord[] { return this.#inferenceEvidence.listForSession(sessionId); }
   listInferenceEvidenceForRun(runId: string): InferenceEvidenceRecord[] { return this.#inferenceEvidence.listForRun(runId); }

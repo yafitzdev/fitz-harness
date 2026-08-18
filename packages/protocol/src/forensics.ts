@@ -77,6 +77,20 @@ export interface SessionForensicsMediaJob {
   usage: RequestUsageRecord[];
 }
 
+export type ForensicsPersistenceOperation = "evidence-record" | "evidence-delta-batch";
+
+/** A failure observed while writing normalized adapter evidence. The record is
+ * intentionally compact and contains no prompt, response, or credential data. */
+export interface ForensicsPersistenceError {
+  id: string;
+  timestamp: string;
+  operation: ForensicsPersistenceOperation;
+  sessionId?: string;
+  requestIds: string[];
+  errorName: string;
+  errorMessage: string;
+}
+
 /** Versioned, session-rooted evidence document. The session ID is an opaque
  * lookup key; this object is the actual forensic artifact. */
 export interface SessionForensicsBundle {
@@ -100,7 +114,9 @@ export interface SessionForensicsBundle {
   /** Explicit coverage notes prevent a caller from mistaking absent data for
    * proof that a subsystem did not run. */
   coverage: {
-    normalizedAdapterEvidence: true;
+    /** False when one or more normalized evidence writes failed. */
+    normalizedAdapterEvidence: boolean;
+    persistenceErrors: ForensicsPersistenceError[];
     rawProviderWirePayloads: "not-captured";
     externalProcessLogs: "best-effort" | "not-captured";
     reasoning: "emitted-events-only";
