@@ -28,7 +28,7 @@ export function createNInferPlaybook(runtime: NInferRuntimeLayout): NInferPlaybo
       "Qwen 3.8 27B · Vision · Orchestrator + 2 Workers",
       "qwen3.8-27b",
       `${modelRoot}/qwen3_8_27b.ninfer`,
-      3,
+      4,
       executable,
       runtime,
       {
