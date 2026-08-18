@@ -4,9 +4,9 @@ import type { AgentEffort } from "@fitz/protocol";
 /** Engine-independent circuit breaker for root-agent exploration. These do not
  * change context size; they bound sequential tool-loop work at each effort. */
 export const ROOT_AGENT_TOOL_CALL_BUDGETS: Readonly<Record<AgentEffort, number>> = {
-  light: 16,
-  normal: 24,
-  high: 48,
+  light: 100,
+  normal: 100,
+  high: 100,
 };
 
 export const CLOUD_SUBAGENT_EFFORT_BUDGETS: Readonly<Record<AgentEffort, Readonly<Record<"fast" | "smart", SubagentRouteBudget>>>> = {
