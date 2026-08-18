@@ -13,6 +13,8 @@ export interface PiTurnOutputStateOptions {
   delegated: boolean;
   emit: (event: AgentRuntimeEvent) => void;
   discardAssistantDraft: () => void;
+  /** Removes held answer text while preserving the tool call that follows it. */
+  withholdAssistantDraftForTool: (toolCallId: string) => void;
 }
 
 /**
@@ -66,7 +68,14 @@ export class PiTurnOutputState {
     if (this.#options.plan && this.#bufferedAssistant.length) {
       const candidate = this.#bufferedAssistant;
       this.#bufferedAssistant = [];
-      if (capturesReadyAnswer) this.#readyCandidates.set(toolCallId, candidate);
+      if (capturesReadyAnswer) {
+        this.#readyCandidates.set(toolCallId, candidate);
+        // Pi has already committed the assistant message containing this text
+        // and the ready tool call. Strip only its text from active history now,
+        // before any tool result becomes the leaf. The candidate remains here
+        // until the host-owned plan accepts or rejects the transition.
+        this.#options.withholdAssistantDraftForTool(toolCallId);
+      }
       else {
         const phase = this.#options.plan.phase();
         if (phase !== "ready_for_answer" && phase !== "completed") this.#emitAssistant(candidate, false);

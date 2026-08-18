@@ -39,6 +39,8 @@ export interface PiSession {
   steer(text: string): Promise<void>;
   /** Remove a draft that Fitz deliberately withheld from both of Pi's active histories. */
   discardLastAssistantDraft?(): boolean;
+  /** Strip provisional text from an assistant message while retaining its tool calls. */
+  withholdLastAssistantText?(toolCallId: string): boolean;
   abort(): Promise<void>;
   dispose(): void;
 }
@@ -297,6 +299,7 @@ export class PiAgentRuntime implements AgentRuntime {
         delegated: Boolean(request.delegation),
         emit: (event) => channel.push(event),
         discardAssistantDraft: () => { activeSession.discardLastAssistantDraft?.(); },
+        withholdAssistantDraftForTool: (toolCallId) => { activeSession.withholdLastAssistantText?.(toolCallId); },
       });
       outputState = output;
       const failActiveSession = (error: Error) => {
@@ -609,6 +612,12 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
     sessionManager: sdk.SessionManager.inMemory(options.cwd),
   });
   const session = result.session;
+  const withheldAnswerToolCalls = new Set<string>();
+  const previousTransformContext = session.agent.transformContext;
+  session.agent.transformContext = async (messages, signal) => {
+    const transformed = previousTransformContext ? await previousTransformContext(messages, signal) : messages;
+    return withoutAssistantTextForTools(transformed, withheldAnswerToolCalls);
+  };
   serializeWorkspaceMutationTools(session.agent.state.tools);
   return {
     subscribe: (listener) => session.subscribe((event) => listener(event as PiEvent)),
@@ -629,6 +638,28 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
       else session.sessionManager.branch(leaf.parentId);
       return true;
     },
+    withholdLastAssistantText: (toolCallId) => {
+      const messages = session.agent.state.messages;
+      const lastMessage = messages.at(-1);
+      const leaf = session.sessionManager.getLeafEntry();
+      if (lastMessage?.role !== "assistant" || leaf?.type !== "message" || leaf.message.role !== "assistant") return false;
+      if (!Array.isArray(lastMessage.content) || !lastMessage.content.some((part) => part.type === "toolCall" && part.id === toolCallId)) return false;
+      withheldAnswerToolCalls.add(toolCallId);
+      const content = lastMessage.content.filter((part) => part.type !== "text");
+      if (content.length === lastMessage.content.length) return true;
+      const withheld = { ...lastMessage, content };
+
+      // The SDK session is append-only. Preserve the original node as forensic
+      // history, repoint the active branch to its parent, and append a sanitized
+      // assistant message containing the exact same reasoning/tool calls but no
+      // provisional answer. The imminent tool result is then attached to this
+      // sanitized branch and every retry sees only valid history.
+      session.agent.state.messages = [...messages.slice(0, -1), withheld];
+      if (leaf.parentId === null) session.sessionManager.resetLeaf();
+      else session.sessionManager.branch(leaf.parentId);
+      session.sessionManager.appendMessage(withheld);
+      return true;
+    },
     abort: () => session.abort(),
     dispose: () => {
       for (const release of activeToolLeases.values()) release();
@@ -636,6 +667,28 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
       session.dispose();
     },
   };
+}
+
+/**
+ * The core agent loop works from a snapshot created when prompt() starts, so
+ * rewriting Agent.state alone cannot affect a continuation already in flight.
+ * This context transform is applied immediately before every engine request
+ * and mechanically removes provisional answer text associated with a held
+ * plan-ready tool call while preserving reasoning and tool protocol records.
+ */
+export function withoutAssistantTextForTools<T extends { role?: string; content?: unknown }>(messages: readonly T[], toolCallIds: ReadonlySet<string>): T[] {
+  if (!toolCallIds.size) return [...messages];
+  return messages.map((message) => {
+    if (message.role !== "assistant" || !Array.isArray(message.content)) return message;
+    const ownsWithheldTool = message.content.some((part: unknown) =>
+      part !== null && typeof part === "object"
+      && (part as { type?: unknown }).type === "toolCall"
+      && typeof (part as { id?: unknown }).id === "string"
+      && toolCallIds.has((part as { id: string }).id));
+    if (!ownsWithheldTool) return message;
+    return { ...message, content: message.content.filter((part: unknown) =>
+      part === null || typeof part !== "object" || (part as { type?: unknown }).type !== "text") } as T;
+  });
 }
 
 function workContextHeaders(context: PiWorkContext): Record<string, string> {
@@ -770,7 +823,7 @@ function formatForensics(snapshot: PiSessionSnapshot, section: PiSessionLookupSe
     ].join("\n");
   }
   const value = section === "runs" ? { runs: bundle.runs }
-    : section === "evidence" ? { evidence: bundle.evidence, usage: bundle.usage }
+    : section === "evidence" ? { coverage: bundle.coverage, evidence: bundle.evidence, usage: bundle.usage }
       : section === "artifacts" ? { artifacts: bundle.artifacts }
         : section === "media" ? { mediaJobs: bundle.mediaJobs }
           : section === "audit" ? { auditEvents: bundle.auditEvents, lifecycleEvents: bundle.lifecycleEvents, legacyInferenceRequests: bundle.legacyInferenceRequests, gpuWork: bundle.gpuWork }

@@ -16,9 +16,13 @@ function plan(initialPhase: ReturnType<PiTurnOutputPlan["phase"]>, required = tr
 }
 
 describe("PiTurnOutputState", () => {
+  function options(overrides: Partial<ConstructorParameters<typeof PiTurnOutputState>[0]> = {}): ConstructorParameters<typeof PiTurnOutputState>[0] {
+    return { delegated: false, emit: vi.fn(), discardAssistantDraft: vi.fn(), withholdAssistantDraftForTool: vi.fn(), ...overrides };
+  }
+
   it("emits ordinary assistant output immediately and finalizes it", () => {
     const emit = vi.fn();
-    const state = new PiTurnOutputState({ delegated: false, emit, discardAssistantDraft: vi.fn() });
+    const state = new PiTurnOutputState(options({ emit }));
 
     state.accept(assistant("answer"));
 
@@ -32,7 +36,7 @@ describe("PiTurnOutputState", () => {
     const activePlan = plan("active");
     const emit = vi.fn();
     const discardAssistantDraft = vi.fn();
-    const state = new PiTurnOutputState({ plan: activePlan.value, delegated: false, emit, discardAssistantDraft });
+    const state = new PiTurnOutputState(options({ plan: activePlan.value, emit, discardAssistantDraft }));
 
     state.accept(assistant("premature"));
     state.settleAfterPrompt();
@@ -46,7 +50,7 @@ describe("PiTurnOutputState", () => {
   it("releases a buffered answer only after the plan becomes answerable", () => {
     const activePlan = plan("active");
     const emit = vi.fn();
-    const state = new PiTurnOutputState({ plan: activePlan.value, delegated: false, emit, discardAssistantDraft: vi.fn() });
+    const state = new PiTurnOutputState(options({ plan: activePlan.value, emit }));
     state.accept(assistant("final"));
     activePlan.setPhase("ready_for_answer");
 
@@ -60,20 +64,40 @@ describe("PiTurnOutputState", () => {
   it("holds an answer across the plan-ready tool and requests Pi abort after success", () => {
     const activePlan = plan("active");
     const emit = vi.fn();
-    const state = new PiTurnOutputState({ plan: activePlan.value, delegated: false, emit, discardAssistantDraft: vi.fn() });
+    const withholdAssistantDraftForTool = vi.fn();
+    const state = new PiTurnOutputState(options({ plan: activePlan.value, emit, withholdAssistantDraftForTool }));
     state.accept(assistant("answer before ready call"));
     state.beforeToolStart("plan-1", true);
     activePlan.setPhase("ready_for_answer");
 
+    expect(withholdAssistantDraftForTool).toHaveBeenCalledOnce();
+    expect(withholdAssistantDraftForTool).toHaveBeenCalledWith("plan-1");
     expect(state.afterToolEnd("plan-1")).toBe(true);
     expect(emit).toHaveBeenCalledWith(assistant("answer before ready call"));
     expect(state.phase).toBe("finalized");
   });
 
+  it("evicts a rejected plan-ready draft before the next completion", () => {
+    const activePlan = plan("active");
+    const emit = vi.fn();
+    const withholdAssistantDraftForTool = vi.fn();
+    const state = new PiTurnOutputState(options({ plan: activePlan.value, emit, withholdAssistantDraftForTool }));
+    state.accept(assistant("invalid answer before rejected ready call"));
+
+    state.beforeToolStart("plan-rejected", true);
+
+    expect(withholdAssistantDraftForTool).toHaveBeenCalledOnce();
+    expect(withholdAssistantDraftForTool).toHaveBeenCalledWith("plan-rejected");
+    expect(state.afterToolEnd("plan-rejected")).toBe(false);
+    expect(emit).not.toHaveBeenCalled();
+    expect(state.sawAssistant).toBe(false);
+    expect(state.phase).toBe("working");
+  });
+
   it("lets optional direct chats answer without creating a plan", () => {
     const optionalPlan = plan("missing", false);
     const emit = vi.fn();
-    const state = new PiTurnOutputState({ plan: optionalPlan.value, delegated: false, emit, discardAssistantDraft: vi.fn() });
+    const state = new PiTurnOutputState(options({ plan: optionalPlan.value, emit }));
     state.accept(assistant("direct answer"));
 
     state.settleAfterPrompt();
@@ -83,7 +107,7 @@ describe("PiTurnOutputState", () => {
   });
 
   it("tracks internal prompt echoes and delegated report eligibility mechanically", () => {
-    const state = new PiTurnOutputState({ delegated: true, emit: vi.fn(), discardAssistantDraft: vi.fn() });
+    const state = new PiTurnOutputState(options({ delegated: true }));
     state.expectInternalPrompt("worker-report");
     expect(state.consumeInternalUserEcho()).toBe(true);
     expect(state.consumeInternalUserEcho()).toBe(false);
@@ -95,7 +119,7 @@ describe("PiTurnOutputState", () => {
   });
 
   it("clears an internal prompt marker when Pi omits its user-message echo", () => {
-    const state = new PiTurnOutputState({ delegated: false, emit: vi.fn(), discardAssistantDraft: vi.fn() });
+    const state = new PiTurnOutputState(options());
     state.expectInternalPrompt("plan");
     state.completeInternalPrompt("plan");
 
@@ -103,7 +127,7 @@ describe("PiTurnOutputState", () => {
   });
 
   it("allows exactly one terminal owner", () => {
-    const state = new PiTurnOutputState({ delegated: false, emit: vi.fn(), discardAssistantDraft: vi.fn() });
+    const state = new PiTurnOutputState(options());
     expect(state.beginFailure()).toBe(true);
     expect(state.beginFailure()).toBe(false);
     state.beginMediaHandoff();

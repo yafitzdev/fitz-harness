@@ -5,7 +5,7 @@ import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SessionForensicsBundle, SessionQueryService } from "@fitz/protocol";
-import { broadFilesystemScanReason, buildFitzSystemInstructions, createSessionLookupTool, createTrashTool, formatSessionSnapshot, limitToolResultContent, PiAgentRuntime, readEnabledExtensionDirs, SESSION_LOOKUP_TOOL, TRASH_TOOL, type PiSession, type PiSessionFactory, type PiSessionSnapshot } from "./pi-agent-runtime.js";
+import { broadFilesystemScanReason, buildFitzSystemInstructions, createSessionLookupTool, createTrashTool, formatSessionSnapshot, limitToolResultContent, PiAgentRuntime, readEnabledExtensionDirs, SESSION_LOOKUP_TOOL, TRASH_TOOL, withoutAssistantTextForTools, type PiSession, type PiSessionFactory, type PiSessionSnapshot } from "./pi-agent-runtime.js";
 
 describe("PiAgentRuntime", () => {
   it("passes Fitz runtime locations to the session factory", async () => {
@@ -171,6 +171,13 @@ describe("PiAgentRuntime", () => {
   it("never publishes a draft attached to a rejected ready transition", async () => {
     let phase: "active" | "ready_for_answer" | "completed" = "active";
     let prompts = 0;
+    const privateHistory: string[] = [];
+    const withholdLastAssistantText = vi.fn((_toolCallId: string) => {
+      const index = privateHistory.lastIndexOf("Premature hidden draft.");
+      if (index < 0) return false;
+      privateHistory.splice(index, 1);
+      return true;
+    });
     const runtime = new PiAgentRuntime({
       runPlan: () => ({
         initialInstruction: "PLAN FIRST",
@@ -185,15 +192,18 @@ describe("PiAgentRuntime", () => {
           prompt: async () => {
             prompts += 1;
             if (prompts === 1) {
+              privateHistory.push("Premature hidden draft.");
               listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Premature hidden draft." } });
               listener({ type: "tool_execution_start", toolCallId: "ready-rejected", toolName: "agent_plan", args: { action: "ready" } });
               listener({ type: "tool_execution_end", toolCallId: "ready-rejected", toolName: "agent_plan", result: { details: { status: "rejected" } }, isError: true });
               return;
             }
+            expect(privateHistory).not.toContain("Premature hidden draft.");
             phase = "ready_for_answer";
             listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Verified final answer." } });
           },
           steer: async () => undefined,
+          withholdLastAssistantText,
           abort: async () => undefined,
           dispose: () => undefined,
         };
@@ -204,7 +214,31 @@ describe("PiAgentRuntime", () => {
 
     expect(events).not.toContainEqual({ type: "assistant.delta", text: "Premature hidden draft." });
     expect(events).toContainEqual({ type: "assistant.delta", text: "Verified final answer." });
+    expect(withholdLastAssistantText).toHaveBeenCalledOnce();
     expect(phase).toBe("ready_for_answer");
+  });
+
+  it("removes held answer text from an in-flight loop snapshot without breaking its tool protocol", () => {
+    const history = [
+      { role: "user", content: [{ type: "text", text: "work" }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "I should verify the plan." },
+          { type: "text", text: "Unverified answer." },
+          { type: "toolCall", id: "ready-rejected", name: "agent_plan", arguments: { action: "ready" } },
+        ],
+      },
+      { role: "toolResult", content: [{ type: "text", text: "Plan is not complete" }] },
+    ];
+
+    const sanitized = withoutAssistantTextForTools(history, new Set(["ready-rejected"]));
+
+    expect(sanitized[1]?.content).toEqual([
+      { type: "thinking", thinking: "I should verify the plan." },
+      { type: "toolCall", id: "ready-rejected", name: "agent_plan", arguments: { action: "ready" } },
+    ]);
+    expect(sanitized[2]).toBe(history[2]);
   });
 
   it("evicts a withheld draft from Pi context before requesting the replacement answer", async () => {
@@ -1140,7 +1174,7 @@ describe("fitz_session session lookup tool", () => {
       generatedAt: "2026-08-06T00:31:00Z",
       session: { id: "abc-123", title: "Find the session", status: "completed", createdAt: "2026-08-06T00:00:00Z", updatedAt: "2026-08-06T00:31:00Z" },
       transcript: [], evidence: [], runs: [], approvals: [], artifacts: [], mediaJobs: [], usage: [], auditEvents: [], lifecycleEvents: [], legacyInferenceRequests: [], gpuWork: [],
-      coverage: { normalizedAdapterEvidence: true, rawProviderWirePayloads: "not-captured", externalProcessLogs: "not-captured", reasoning: "emitted-events-only", artifactContent: "metadata-only" },
+      coverage: { normalizedAdapterEvidence: true, persistenceErrors: [], rawProviderWirePayloads: "not-captured", externalProcessLogs: "not-captured", reasoning: "emitted-events-only", artifactContent: "metadata-only" },
     } as SessionForensicsBundle;
     const service = {
       query: async (request: { section?: string; includeArtifactContent?: boolean }) => {
