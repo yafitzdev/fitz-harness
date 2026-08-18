@@ -48,7 +48,6 @@ export interface HostingPageElements {
   stateMessage: HTMLElement;
   publicUrl: HTMLElement;
   copyUrl: HTMLButtonElement;
-  statusCards: HTMLElement;
   repair: HTMLButtonElement;
   advancedStatus: HTMLElement;
   startAtLogin: HTMLInputElement;
@@ -123,11 +122,6 @@ export class HostingPageController {
     this.#elements.startAtLogin.disabled = status.startup?.available !== true;
     this.#elements.configPath.textContent = status.configPath ?? "Unavailable";
     this.#elements.copyConfigPath.disabled = !status.configPath;
-    this.#renderCards(this.#elements.statusCards, [
-      ["Endpoint", status.online ? "Public HTTPS online" : status.enabled ? "Unavailable" : "Disabled"],
-      ["Users", "API keys required"],
-      ["Protection", status.gateway?.running ? "Consumer gateway active" : "Gateway unavailable"],
-    ]);
     this.#renderCards(this.#elements.advancedStatus, [
       ["Tailscale", status.tailscale?.connected ? "Connected" : String(status.tailscale?.state ?? "Unknown")],
       ["Device", status.tailscale?.dnsName ?? "Not signed in"],

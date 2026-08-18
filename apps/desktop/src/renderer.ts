@@ -657,7 +657,6 @@ const hostingPageController = new HostingPageController({
   stateMessage: element("hosting-state-message"),
   publicUrl: element("hosting-public-url"),
   copyUrl: element("copy-hosting-url") as HTMLButtonElement,
-  statusCards: element("hosting-status-cards"),
   repair: element("repair-hosting") as HTMLButtonElement,
   advancedStatus: element("hosting-advanced-status"),
   startAtLogin: element("hosting-start-at-login") as HTMLInputElement,
