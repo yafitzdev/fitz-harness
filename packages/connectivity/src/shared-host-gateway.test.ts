@@ -23,6 +23,32 @@ describe("Fitz Hosting gateway", () => {
     expect(isAllowedSharedRequest("DELETE", "/api/v1/cloud-routes/fast")).toBe(true);
     expect(isAllowedSharedRequest("POST", "/api/v1/sessions/session-1/edit")).toBe(true);
     expect(isAllowedSharedRequest("POST", "/api/v1/sessions/session-1/regenerate")).toBe(true);
+    expect(isAllowedSharedRequest("GET", "/api/v1/sessions/session-1/query")).toBe(true);
+    expect(isAllowedSharedRequest("GET", "/api/v1/sessions/session-1/forensics")).toBe(true);
+    expect(isAllowedSharedRequest("POST", "/api/v1/sessions/session-1/forensics")).toBe(false);
+  });
+
+  it("proxies canonical session queries and forensic exports for hosted clients", async () => {
+    const proxied: string[] = [];
+    const origin = createServer((incoming, response) => {
+      if (incoming.url === "/api/v1/me") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ data: { user: { role: "consumer" } } }));
+        return;
+      }
+      proxied.push(incoming.url ?? "");
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ data: { schemaVersion: 1 } }));
+    });
+    servers.push(origin); await new Promise<void>((resolve) => origin.listen(19797, "127.0.0.1", resolve));
+    const gateway = new SharedHostGateway({ target: new URL("http://127.0.0.1:19797"), port: 19798 }); gateways.push(gateway); await gateway.start();
+
+    expect((await get("http://127.0.0.1:19798/api/v1/sessions/session-1/query?section=all", "consumer")).status).toBe(200);
+    expect((await get("http://127.0.0.1:19798/api/v1/sessions/session-1/forensics?download=true", "consumer")).status).toBe(200);
+    expect(proxied).toEqual([
+      "/api/v1/sessions/session-1/query?section=all",
+      "/api/v1/sessions/session-1/forensics?download=true",
+    ]);
   });
 
   it("proxies consumer connection setup while retaining consumer authentication", async () => {
