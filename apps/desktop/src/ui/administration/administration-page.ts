@@ -266,12 +266,6 @@ export class AdministrationPageController {
       activityLoaded = true;
       void this.loadUserActivity(user.id, activity);
     });
-    const routesHeading = document.createElement("h3");
-    routesHeading.textContent = "Model access";
-    const routeList = document.createElement("p");
-    routeList.className = "admin-routes";
-    routeList.textContent = "Local Default is available to every user. Smart and Fast use that user's own cloud connections.";
-
     const mediaHeading = document.createElement("h3");
     mediaHeading.textContent = "Media access";
     const mediaRoutes = document.createElement("div");
@@ -289,13 +283,14 @@ export class AdministrationPageController {
 
     const quotaHeading = document.createElement("h3");
     quotaHeading.textContent = "Quotas";
+    quotaHeading.title = "Queue depth is the maximum number of requests from this user that may be waiting or running at once.";
     const quota = document.createElement("div");
     quota.className = "admin-access";
     const quotaFields = [
       ["maxRequestsPerMinute", "Requests / minute"],
       ["maxPromptChars", "Prompt characters"],
       ["maxOutputTokens", "Output tokens"],
-      ["maxQueueDepth", "Queue depth"],
+      ["maxQueueDepth", "Queue depth (waiting + running)"],
     ];
     for (const [key, labelText] of quotaFields) {
       const label = document.createElement("label");
@@ -310,35 +305,40 @@ export class AdministrationPageController {
     }
 
     const devicesHeading = document.createElement("h3");
-    devicesHeading.textContent = "Devices";
+    devicesHeading.textContent = "API keys";
     const devices = document.createElement("div");
     devices.className = "admin-devices";
-    for (const device of access.devices ?? []) {
+    const activeDeviceRecords = (access.devices ?? []).filter((device: Json) => !device.revokedAt);
+    for (const device of activeDeviceRecords) {
       const item = document.createElement("span");
       item.className = "admin-device";
       const current = device.id === access.currentDeviceId;
       item.append(Object.assign(document.createElement("span"), {
-        textContent: `${device.name}${current ? " · current" : ""}${device.revokedAt ? " · revoked" : ""}`,
+        textContent: `${device.name}${current ? " · current" : ""}`,
       }));
-      if (!device.revokedAt && !current) {
+      if (!current) {
         const rotate = document.createElement("button");
         rotate.type = "button";
+        rotate.className = "admin-device-action";
         rotate.setAttribute("aria-label", `Rotate ${device.name} API key`);
-        rotate.textContent = "Rotate";
+        rotate.title = "Rotate API key";
+        rotate.textContent = "↻";
         const rotatedKey = document.createElement("span");
         rotatedKey.className = "admin-api-key-result";
         rotatedKey.hidden = true;
         rotate.addEventListener("click", () => void this.rotateAdminDevice(device.id, rotatedKey));
         const revoke = document.createElement("button");
         revoke.type = "button";
+        revoke.className = "admin-device-action danger";
         revoke.setAttribute("aria-label", `Revoke ${device.name}`);
-        revoke.textContent = "Revoke";
+        revoke.title = "Revoke API key";
+        revoke.textContent = "×";
         revoke.addEventListener("click", () => void this.revokeAdminDevice(device.id));
         item.append(rotate, revoke, rotatedKey);
       }
       devices.append(item);
     }
-    if (!(access.devices ?? []).length) devices.append(emptyState("No devices"));
+    if (!activeDeviceRecords.length) devices.append(emptyState("No active API keys"));
 
     const issueKey = document.createElement("form");
     issueKey.className = "admin-issue-key";
@@ -371,7 +371,7 @@ export class AdministrationPageController {
       toggle.addEventListener("click", () => user.status === "active" ? void this.removeAdminUser(user.id) : void this.updateAdminUser(user.id, { status: "active" }));
       actions.append(toggle);
     }
-    body.append(activityHeading, activity, routesHeading, routeList, mediaHeading, mediaRoutes, quotaHeading, quota, devicesHeading, devices, issueKey, keyResult, actions);
+    body.append(activityHeading, activity, mediaHeading, mediaRoutes, quotaHeading, quota, devicesHeading, devices, issueKey, keyResult, actions);
     details.append(summary, body);
     return details;
   }
@@ -476,7 +476,7 @@ export class AdministrationPageController {
     try {
       await this.options.api(`/api/v1/management/devices/${deviceId}`, "DELETE");
       await this.load();
-      this.options.showStatus("Device revoked", "success");
+      this.options.showStatus("API key revoked", "success");
     } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
   }
 

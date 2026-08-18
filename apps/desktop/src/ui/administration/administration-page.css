@@ -5,7 +5,7 @@
 .admin-inline-form { display: flex; align-items: end; gap: 10px; }
 .admin-inline-form label { min-width: 150px; display: grid; gap: 6px; color: var(--muted); font-size: 11px; }
 .admin-inline-form label.grow { flex: 1; }
-.admin-inline-form input, .admin-inline-form select, .admin-user select, .admin-access input { height: 38px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--grey-200); color: var(--text); outline: 0; }
+.admin-inline-form input, .admin-inline-form select, .admin-user select, .admin-access input[type="number"] { height: 38px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--grey-200); color: var(--text); outline: 0; }
 .admin-inline-form button, .admin-user button { height: 38px; padding: 0 13px; border-radius: var(--radius-md); background: var(--tint-5); color: var(--text); cursor: pointer; }
 .admin-inline-form button:hover, .admin-user button:hover { background: var(--tint-7); }
 .remote-access-confirmation button { height: 34px; padding: 0 12px; border-radius: var(--radius-md); background: var(--tint-5); color: var(--text); cursor: pointer; }
@@ -71,13 +71,18 @@
 .admin-user-status { color: var(--muted); font-size: 11px; }
 .admin-user-body { display: grid; gap: 18px; padding: 4px 13px 16px; border-top: 1px solid var(--border-soft); }
 .admin-user-body h3 { margin: 15px 0 8px; color: var(--muted); font-size: 11px; font-weight: 500; }
-.admin-routes, .admin-devices { display: flex; flex-wrap: wrap; gap: 8px; }
-.admin-route { display: flex; align-items: center; gap: 6px; padding: 7px 9px; border-radius: var(--radius-md); background: var(--tint-1); font-size: 11px; }
-.admin-route input { accent-color: var(--grey-650); }
+.admin-devices { display: flex; flex-wrap: wrap; gap: 8px; }
 .admin-access { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 8px; }
 .admin-access label { display: grid; gap: 5px; color: var(--subtle); font-size: 10px; }
+.admin-media-access { display: flex; flex-wrap: wrap; gap: 10px 24px; }
+.admin-access .admin-media-route { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; }
+.admin-access .admin-media-route input[type="checkbox"] { width: 16px; height: 16px; margin: 0; padding: 0; accent-color: var(--accent); }
 .admin-device { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: var(--radius-md); background: var(--tint-1); color: var(--muted); font-size: 11px; }
-.admin-device button { width: 24px; height: 24px; padding: 0; border-radius: 50%; }
+.admin-device > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-device .admin-device-action { width: 28px; height: 28px; display: grid; place-items: center; flex: 0 0 28px; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-md); background: transparent; color: var(--muted); font-size: 17px; line-height: 1; }
+.admin-device .admin-device-action:hover { background: var(--tint-4); color: var(--text); }
+.admin-device .admin-device-action.danger { color: var(--status-danger-soft); }
+.admin-device .admin-device-action.danger:hover { background: color-mix(in srgb, var(--status-danger) 14%, transparent); color: var(--status-danger); }
 .admin-user-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .admin-issue-key { display: flex; gap: 8px; margin-top: 10px; }
 .admin-issue-key input { flex: 1; min-width: 180px; height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--grey-200); color: var(--text); }
