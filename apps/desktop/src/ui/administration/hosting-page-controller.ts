@@ -44,9 +44,9 @@ export function createHostingPageClient(request: HostingPageApi): HostingPageCli
 
 export interface HostingPageElements {
   enabled: HTMLInputElement;
-  stateLabel: HTMLElement;
-  stateMessage: HTMLElement;
-  publicUrl: HTMLElement;
+  stateLabel: HTMLElement | undefined;
+  stateMessage: HTMLElement | undefined;
+  publicUrl?: HTMLElement;
   copyUrl: HTMLButtonElement;
   repair: HTMLButtonElement;
   advancedStatus: HTMLElement;
@@ -75,6 +75,7 @@ export class HostingPageController {
   #status: HostingStatus | undefined;
   #configuration: Json | undefined;
   #configDirty = false;
+  #copiedFlash: ReturnType<typeof setTimeout> | undefined;
 
   constructor(elements: HostingPageElements, options: HostingPageOptions) {
     this.#elements = elements;
@@ -82,7 +83,7 @@ export class HostingPageController {
     elements.enabled.addEventListener("change", () => void this.#toggleHosting());
     elements.startAtLogin.addEventListener("change", () => void this.#toggleStartup());
     elements.repair.addEventListener("click", () => void this.#repair());
-    elements.copyUrl.addEventListener("click", () => void this.#copy(this.#status?.publicUrl, "Hosting URL copied"));
+    elements.copyUrl.addEventListener("click", () => void this.#copy(this.#status?.publicUrl, "Hosting URL copied", elements.copyUrl));
     elements.copyConfigPath.addEventListener("click", () => void this.#copy(this.#status?.configPath, "Configuration path copied"));
     elements.reloadConfig.addEventListener("click", () => void this.load(true));
     elements.validateConfig.addEventListener("click", () => void this.#validate());
@@ -103,8 +104,8 @@ export class HostingPageController {
         this.#elements.configStatus.textContent = "Validated canonical configuration";
       }
     } catch (error) {
-      this.#elements.stateLabel.textContent = "Hosting unavailable";
-      this.#elements.stateMessage.textContent = this.#options.errorMessage(error);
+      if (this.#elements.stateLabel) this.#elements.stateLabel.textContent = "Hosting unavailable";
+      if (this.#elements.stateMessage) this.#elements.stateMessage.textContent = this.#options.errorMessage(error);
       this.#elements.enabled.disabled = true;
     }
   }
@@ -113,9 +114,9 @@ export class HostingPageController {
     this.#status = status;
     this.#elements.enabled.disabled = false;
     this.#elements.enabled.checked = status.enabled === true;
-    this.#elements.stateLabel.textContent = status.online ? "Online" : status.enabled ? "Needs attention" : "Off";
-    this.#elements.stateMessage.textContent = status.online ? "Friends can connect with the URL and their API key." : status.message ?? (status.enabled ? "The public endpoint is not reachable." : "Remote connections are disabled.");
-    this.#elements.publicUrl.textContent = status.publicUrl ?? "Not available yet";
+    if (this.#elements.stateLabel) this.#elements.stateLabel.textContent = status.online ? "Online" : status.enabled ? "Needs attention" : "Off";
+    if (this.#elements.stateMessage) this.#elements.stateMessage.textContent = status.online ? "Friends can connect with the URL and their API key." : status.message ?? (status.enabled ? "The public endpoint is not reachable." : "Remote connections are disabled.");
+    if (this.#elements.publicUrl) this.#elements.publicUrl.textContent = status.publicUrl ?? "Not available yet";
     this.#elements.copyUrl.disabled = !status.publicUrl;
     this.#elements.repair.disabled = !status.enabled || status.restartRequired === true;
     this.#elements.startAtLogin.checked = status.startup?.configured === true || this.#configuration?.hosting?.startAtLogin === true;
@@ -195,7 +196,21 @@ export class HostingPageController {
 
   #parseEditor(): Json { const value = JSON.parse(this.#elements.configJson.value) as unknown; if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Configuration must be a JSON object"); return value as Json; }
   async #statusFromApi(): Promise<HostingStatus> { return this.#options.api.status(); }
-  async #copy(value: unknown, message: string): Promise<void> { if (typeof value !== "string" || !value) return; await this.#options.copyText(value); this.#options.showStatus(message, "success"); }
+  async #copy(value: unknown, message: string, button?: HTMLButtonElement): Promise<void> { if (typeof value !== "string" || !value) return; await this.#options.copyText(value); this.#options.showStatus(message, "success"); if (button) this.#flashCopied(button); }
+  /** Brief in-button checkmark so the user can confirm the copy succeeded. */
+  #flashCopied(button: HTMLButtonElement): void {
+    if (this.#copiedFlash !== undefined) clearTimeout(this.#copiedFlash);
+    const original = button.textContent ?? "Copy URL";
+    button.textContent = "✓ Copied";
+    button.classList.add("is-copied");
+    button.disabled = true;
+    this.#copiedFlash = setTimeout(() => {
+      this.#copiedFlash = undefined;
+      button.textContent = original;
+      button.classList.remove("is-copied");
+      button.disabled = !this.#status?.publicUrl;
+    }, 1400);
+  }
   #renderCards(target: HTMLElement, values: Array<[string, string]>): void { target.replaceChildren(...values.map(([label, value]) => { const card = document.createElement("div"); card.append(Object.assign(document.createElement("small"), { textContent: label }), Object.assign(document.createElement("strong"), { textContent: value })); return card; })); }
 }
 

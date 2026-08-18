@@ -131,15 +131,14 @@ modelsLayout.addContent({
 });
 const administrationLayout = new ManagementPageLayout(administrationPage, {
   tabs: [
-    { id: "hosting-overview-tab", label: "Overview", active: true },
-    { id: "hosting-users-tab", label: "Users" },
+    { id: "hosting-users-tab", label: "Users", active: true },
     { id: "hosting-usage-tab", label: "Usage" },
     { id: "hosting-advanced-tab", label: "Advanced" },
   ],
   actions: [{ id: "refresh-administration", icon: managementRefreshIcon, label: "Refresh administration" }],
 });
 administrationLayout.addContent({
-  title: "Overview",
+  title: "Hosting",
   description: "Host your models, manage people, and understand how the service is used.",
   body: [element("administration-sections")],
 });
@@ -653,9 +652,8 @@ const administrationPageController = new AdministrationPageController({
 });
 const hostingPageController = new HostingPageController({
   enabled: element("hosting-enabled") as HTMLInputElement,
-  stateLabel: element("hosting-state-label"),
-  stateMessage: element("hosting-state-message"),
-  publicUrl: element("hosting-public-url"),
+  stateLabel: document.getElementById("hosting-state-label") ?? undefined,
+  stateMessage: document.getElementById("hosting-state-message") ?? undefined,
   copyUrl: element("copy-hosting-url") as HTMLButtonElement,
   repair: element("repair-hosting") as HTMLButtonElement,
   advancedStatus: element("hosting-advanced-status"),
@@ -681,7 +679,6 @@ const usagePageController = new UsagePageController({
   errorMessage,
 });
 const hostingPanels: Record<string, HTMLElement> = {
-  "hosting-overview-tab": element("hosting-overview-panel"),
   "hosting-users-tab": element("hosting-users-panel"),
   "hosting-usage-tab": element("hosting-usage-panel"),
   "hosting-advanced-tab": element("hosting-advanced-panel"),
@@ -689,7 +686,7 @@ const hostingPanels: Record<string, HTMLElement> = {
 administrationLayout.onTabSelect((id) => {
   for (const [panelId, panel] of Object.entries(hostingPanels)) panel.hidden = panelId !== id;
   if (id === "hosting-usage-tab") void usagePageController.load();
-  if (id === "hosting-overview-tab" || id === "hosting-advanced-tab") void hostingPageController.load();
+  if (id === "hosting-advanced-tab") void hostingPageController.load();
 });
 element("refresh-administration").addEventListener("click", () => { void hostingPageController.load(); });
 const conversationSessions = new ConversationSessionController({
@@ -887,6 +884,8 @@ async function initializeLocalWorkspace(): Promise<void> {
       openNewChat();
     }
     await loadManagementConfiguration(false);
+    // The hosting switch now lives in the sidebar, so refresh its state on boot.
+    void hostingPageController.load();
     initialized = true;
   } catch (error) {
     console.warn("Local Fitz services are not ready yet", error);
