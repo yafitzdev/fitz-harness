@@ -509,7 +509,7 @@ describe("InspectorPanel", () => {
     expect(view.tabBar.querySelector(".inspector-tab.active")).toBeNull();
   });
 
-  it("coalesces generated path aliases while retaining the specific path", () => {
+  it("does not merge an ambiguous short path with a different generated path", () => {
     const host = mount();
     const view = panel(host);
 
@@ -517,11 +517,34 @@ describe("InspectorPanel", () => {
     view.registerGeneratedFile("packages/sqlite.ts", "edited");
 
     const rows = view.element.querySelectorAll<HTMLButtonElement>(".inspector-repository-item");
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.querySelector("small")?.textContent).toBe("packages/sqlite.ts");
+    expect(rows).toHaveLength(2);
+    expect([...rows].map((row) => row.querySelector("small")?.textContent)).toEqual(["packages/sqlite.ts", "sqlite.ts"]);
     expect(JSON.parse(localStorage.getItem("fitz-inspector-repository")!)).toEqual([
       expect.objectContaining({ path: "packages/sqlite.ts", origin: "generated" }),
+      expect.objectContaining({ path: "sqlite.ts", origin: "generated" }),
     ]);
+  });
+
+  it("coalesces only canonical absolute and project-relative references", () => {
+    const host = mount();
+    const view = new InspectorPanel(options(host, { getProjectRoot: () => "/project" }));
+
+    view.registerGeneratedFile("packages/sqlite.ts", "created");
+    view.registerGeneratedFile("/project/packages/sqlite.ts", "edited");
+
+    const rows = view.element.querySelectorAll<HTMLButtonElement>(".inspector-repository-item");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.querySelector("small")?.textContent).toBe("packages/sqlite.ts");
+  });
+
+  it("does not merge an external absolute path with a similarly spelled relative path", () => {
+    const host = mount();
+    const view = new InspectorPanel(options(host, { getProjectRoot: () => "/project" }));
+
+    view.registerGeneratedFile("outside/file.ts", "created");
+    view.registerGeneratedFile("/outside/file.ts", "edited");
+
+    expect(view.element.querySelectorAll(".inspector-repository-item")).toHaveLength(2);
   });
 
   it("deduplicates uploaded artifacts by checksum in the repository", () => {
@@ -700,11 +723,12 @@ describe("InspectorPanel", () => {
     }));
 
     const rows = view.element.querySelectorAll<HTMLButtonElement>(".inspector-repository-item");
-    expect(rows).toHaveLength(1);
+    expect(rows).toHaveLength(2);
     const metas = [...rows].map((row) => row.querySelector("small")?.textContent);
-    expect(metas).toEqual(["packages/sqlite.ts"]);
+    expect(metas).toEqual(["sqlite.ts", "packages/sqlite.ts"]);
     expect(JSON.parse(localStorage.getItem("fitz-inspector-repository")!)).toEqual([
-      { path: "packages/sqlite.ts", name: "sqlite.ts", addedAt: 5, origin: "generated" },
+      { path: "sqlite.ts", name: "sqlite.ts", addedAt: 5, origin: "generated" },
+      { path: "packages/sqlite.ts", name: "sqlite.ts", addedAt: 4, origin: "generated" },
     ]);
   });
 });

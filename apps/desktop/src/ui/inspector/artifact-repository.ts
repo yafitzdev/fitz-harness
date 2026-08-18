@@ -91,8 +91,8 @@ export class ArtifactRepository {
 
   /**
    * Adds (or refreshes) a file created or modified by the agent. References
-   * that identify the same file through a longer/shorter path are coalesced;
-   * the most specific path is retained for reopening and display.
+   * with the same canonical project path are coalesced; ambiguous shortened
+   * paths remain separate, and an absolute path is retained for reopening.
    */
   registerGeneratedFile(path: string, action: "edited" | "created" = "edited"): void {
     if (!path || /^(?:https?|file):\/\//i.test(path)) return;
@@ -287,30 +287,35 @@ export class ArtifactRepository {
     return dirOf(left) === dirOf(right) && stemOf(left) === stemOf(right);
   }
 
-  /** Treat a concise path as an alias only when one normalized path is a
-   * suffix of the other (or is an in-progress extension of it). This keeps
-   * `packages/sqlite.ts` and `sqlite.ts` together without merging unrelated
-   * files that merely share a basename in different directories. */
+  /**
+   * File identity is exact after resolving an absolute path beneath the
+   * project root to its project-relative form. A short suffix is not an
+   * identity: `src/index.ts` and `packages/foo/src/index.ts` may both exist.
+   * The only non-exact case is a same-directory streaming extension fragment.
+   */
   static #sameFileReference(left: string, right: string, root: string): boolean {
     const normalizedLeft = ArtifactRepository.#relativeComparable(left, root);
     const normalizedRight = ArtifactRepository.#relativeComparable(right, root);
     if (normalizedLeft === normalizedRight) return true;
-    if (ArtifactRepository.#supersedes(normalizedLeft, normalizedRight) || ArtifactRepository.#supersedes(normalizedRight, normalizedLeft)) return true;
-    const leftSegments = normalizedLeft.split("/").filter(Boolean);
-    const rightSegments = normalizedRight.split("/").filter(Boolean);
-    if (!leftSegments.length || !rightSegments.length || leftSegments.at(-1) !== rightSegments.at(-1)) return false;
-    const suffix = (full: string[], short: string[]) => full.length >= short.length && full.slice(-short.length).every((segment, index) => segment === short[index]);
-    return suffix(leftSegments, rightSegments) || suffix(rightSegments, leftSegments);
+    return ArtifactRepository.#supersedes(normalizedLeft, normalizedRight)
+      || ArtifactRepository.#supersedes(normalizedRight, normalizedLeft);
   }
 
   static #relativeComparable(value: string, root: string): string {
-    const normalize = (input: string) => input.replaceAll("\\", "/").replace(/^\.\//, "").replace(/^\/+|\/+$/g, "").toLowerCase();
+    const windowsPath = /^[A-Za-z]:[\\/]/.test(value) || /^[A-Za-z]:[\\/]/.test(root) || /^\\\\/.test(value) || /^\\\\/.test(root);
+    const normalize = (input: string) => {
+      const normalized = input.replaceAll("\\", "/").replace(/^\.\//, "").replace(/^\/+|\/+$/g, "");
+      return windowsPath ? normalized.toLowerCase() : normalized;
+    };
     if (root && isAbsolutePath(value) && isAbsolutePath(root)) {
       const normalizedValue = normalize(value);
       const normalizedRoot = normalize(root);
-      if (normalizedValue === normalizedRoot || normalizedValue.startsWith(`${normalizedRoot}/`)) return normalizedValue.slice(normalizedRoot.length).replace(/^\/+/, "");
+      if (normalizedValue === normalizedRoot || normalizedValue.startsWith(`${normalizedRoot}/`)) {
+        return `project:${normalizedValue.slice(normalizedRoot.length).replace(/^\/+/, "")}`;
+      }
     }
-    return normalize(value);
+    if (!isAbsolutePath(value) && root) return `project:${normalize(value)}`;
+    return `${isAbsolutePath(value) ? "absolute" : "relative"}:${normalize(value)}`;
   }
 
   static #preferredPath(left: string, right: string, root: string): string {
