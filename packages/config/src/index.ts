@@ -199,7 +199,9 @@ export function defaultFitzConfig(): FitzConfigDocument {
     version: FITZ_CONFIG_VERSION,
     hosting: { enabled: false, provider: "tailscale-funnel", startAtLogin: false, publicPort: 443, gatewayPort: 8790 },
     defaults: { route: "default", effort: "normal" },
-    users: { defaultRole: "consumer", defaultQuota: { requestsPerMinute: 10, promptCharacters: 200_000, outputTokens: 32_768, queueDepth: 2 } },
+    // Hosted consumers get a generous request budget, while queue depth keeps
+    // one user from accumulating unbounded work on a modest single-GPU host.
+    users: { defaultRole: "consumer", defaultQuota: { requestsPerMinute: 360, promptCharacters: 200_000, outputTokens: 131_072, queueDepth: 16 } },
     storage: { artifactQuotaBytes: null, mediaArtifactLimits: {} },
     interface: {},
     inference: { engineRoot: null, reserveVramMiB: 2048, agentConcurrency: 4, agentConcurrencyPerUser: 1 },

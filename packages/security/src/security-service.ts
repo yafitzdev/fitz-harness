@@ -13,7 +13,7 @@ export const DEFAULT_QUOTAS: Readonly<Record<UserRole, UserQuota>> = {
     media: DEFAULT_MEDIA_QUOTA,
   },
   agent: { maxRequestsPerMinute: 60, maxPromptChars: 500_000, maxOutputTokens: 32_768, maxQueueDepth: 20 },
-  consumer: { maxRequestsPerMinute: 20, maxPromptChars: 100_000, maxOutputTokens: 8_192, maxQueueDepth: 5 },
+  consumer: { maxRequestsPerMinute: 360, maxPromptChars: 200_000, maxOutputTokens: 131_072, maxQueueDepth: 16 },
 };
 
 export interface AuthenticatedPrincipal { user: UserRecord; device?: DeviceRecord; routeGrants: readonly string[]; quota: UserQuota }
