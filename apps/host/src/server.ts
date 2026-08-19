@@ -74,7 +74,7 @@ const configuration = new FitzConfigService({
   defaults: {
     inference: {
       engineRoot: runtimePaths.engineRoot,
-      reserveVramMiB: parseNonNegativeInteger(process.env.FITZ_RESERVE_VRAM_MIB ?? "2048", "FITZ_RESERVE_VRAM_MIB"),
+      reserveVramMiB: parseNonNegativeInteger(process.env.FITZ_RESERVE_VRAM_MIB ?? "800", "FITZ_RESERVE_VRAM_MIB"),
       agentConcurrency: parsePositiveInteger(process.env.FITZ_AGENT_CONCURRENCY ?? "4", "FITZ_AGENT_CONCURRENCY"),
       agentConcurrencyPerUser: parsePositiveInteger(process.env.FITZ_AGENT_CONCURRENCY_PER_USER ?? "1", "FITZ_AGENT_CONCURRENCY_PER_USER"),
     },

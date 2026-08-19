@@ -204,7 +204,7 @@ export function defaultFitzConfig(): FitzConfigDocument {
     users: { defaultRole: "consumer", defaultQuota: { requestsPerMinute: 360, promptCharacters: 200_000, outputTokens: 131_072, queueDepth: 16 } },
     storage: { artifactQuotaBytes: null, mediaArtifactLimits: {} },
     interface: {},
-    inference: { engineRoot: null, reserveVramMiB: 2048, agentConcurrency: 4, agentConcurrencyPerUser: 1 },
+    inference: { engineRoot: null, reserveVramMiB: 800, agentConcurrency: 4, agentConcurrencyPerUser: 1 },
     lsp: { providers: [] },
     settings: {},
   };

@@ -31,7 +31,7 @@ export interface ResourcePolicy {
 }
 
 export const DEFAULT_RESOURCE_POLICY: ResourcePolicy = {
-  reserveVramMiB: 2_048,
+  reserveVramMiB: 800,
   minimumFreeRamMiB: 4_096,
   requireGpuTelemetry: false,
 };
