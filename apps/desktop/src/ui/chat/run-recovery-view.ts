@@ -29,8 +29,14 @@ export class RunRecoveryView {
       const confirmed = !review || window.confirm("A tool call was in flight when this task stopped. Fitz will tell the agent to inspect its effects before retrying. Continue?");
       if (!confirmed) return;
       button.disabled = true; button.textContent = "Resuming…";
-      try { await this.options.resume(String(run.id), review); row.remove(); }
-      catch { button.disabled = false; button.textContent = review ? "Review and continue" : "Continue"; }
+      // The interruption card is a boundary, not part of the resumed run. Drop
+      // it before the successor creates/continues the work disclosure so the
+      // reasoning feed carries on in place. The controller renders any
+      // submission/follow failure in the stream; the stale source boundary
+      // must never reappear after a successor has been attempted.
+      row.remove();
+      try { await this.options.resume(String(run.id), review); }
+      catch { /* AgentRunController owns visible resume failures. */ }
     });
     row.append(copy, button);
     this.options.messages.append(row);
