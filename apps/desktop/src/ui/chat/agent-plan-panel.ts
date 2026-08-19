@@ -22,7 +22,7 @@ export class AgentPlanPanel {
     this.#toggle = document.createElement("button");
     this.#toggle.type = "button";
     this.#toggle.className = "agent-plan-panel-toggle";
-    this.#toggle.setAttribute("aria-expanded", "true");
+    this.#toggle.setAttribute("aria-expanded", "false");
     const title = document.createElement("strong");
     title.textContent = "Tasks";
     this.#summary = document.createElement("span");
@@ -32,14 +32,19 @@ export class AgentPlanPanel {
     this.#chevron.textContent = "›";
     this.#list = document.createElement("ol");
     this.#list.className = "agent-plan-panel-list";
+    this.#list.id = "agent-plan-panel-list";
+    this.#list.hidden = true;
+    this.#toggle.setAttribute("aria-controls", this.#list.id);
+    this.root.classList.add("collapsed");
     this.#toggle.append(title, this.#summary, this.#chevron);
     this.#toggle.addEventListener("click", () => this.#setCollapsed(!this.root.classList.contains("collapsed")));
     header.append(this.#toggle);
     this.root.append(header, this.#list);
 
-    const composer = mount.querySelector("form");
+    const shell = mount.querySelector(".composer-shell") ?? mount;
+    const composer = shell.querySelector("form");
     if (composer) composer.before(this.root);
-    else mount.append(this.root);
+    else shell.append(this.root);
   }
 
   reset(): void {
@@ -47,6 +52,7 @@ export class AgentPlanPanel {
     this.#revision = -1;
     this.#summary.textContent = "";
     this.#list.replaceChildren();
+    this.#setCollapsed(true);
     this.root.hidden = true;
     this.root.classList.remove("completed");
   }
@@ -60,12 +66,14 @@ export class AgentPlanPanel {
 
   update(plan: AgentRunPlan): void {
     if (this.#runId === plan.runId && plan.revision < this.#revision) return;
+    const isNewPlan = this.#runId !== plan.runId;
     this.#runId = plan.runId;
     this.#revision = plan.revision;
     const completed = plan.items.filter((item) => item.status === "completed").length;
     this.#summary.textContent = `${completed} of ${plan.items.length} done`;
     this.root.classList.toggle("completed", plan.status === "completed");
     this.#list.replaceChildren(...plan.items.map((item) => this.#renderItem(item)));
+    if (isNewPlan) this.#setCollapsed(true);
     this.root.hidden = false;
   }
 

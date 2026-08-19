@@ -35,8 +35,9 @@ const COMPOSER_TEMPLATE = `
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v15M5.5 12.5 12 19l6.5-6.5"></path></svg>
   </button>
   <div class="composer-halo" aria-hidden="true"></div>
-  <form id="composer" class="composer-card">
+  <div class="composer-shell">
     <div class="composer-outline-shine" aria-hidden="true"></div>
+    <form id="composer" class="composer-card">
     <div id="composer-attachments" class="composer-attachments" hidden></div>
     <div id="new-chat-context" class="new-chat-context" hidden>
       <button id="new-chat-project-control" class="new-chat-context-item project-context-control" type="button" title="Don't work in a project" aria-label="Don't work in a project">
@@ -131,7 +132,8 @@ const COMPOSER_TEMPLATE = `
         </button>
       </div>
     </div>
-  </form>
+    </form>
+  </div>
 `;
 
 export class Composer {
