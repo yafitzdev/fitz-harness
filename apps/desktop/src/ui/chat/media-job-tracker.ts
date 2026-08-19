@@ -87,6 +87,7 @@ export class MediaJobTracker {
       while (generation === this.#generation) {
         try {
           const response = await this.#options.api(`/api/v1/media/jobs/${encodeURIComponent(jobId)}`);
+          if (generation !== this.#generation || this.#watched.get(jobId) !== generation) return;
           failures = 0;
           const job = response.data as MediaJobSummary;
           if (isTerminalMediaJobStatus(String(job.status))) {

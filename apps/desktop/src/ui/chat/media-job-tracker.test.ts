@@ -102,4 +102,22 @@ describe("MediaJobTracker", () => {
     expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({ progress: 0.25 }));
     expect(onProgress).not.toHaveBeenCalledWith(expect.objectContaining({ progress: 0.251 }));
   });
+
+  it("discards a poll response that arrives after reset", async () => {
+    let resolvePoll!: (value: Record<string, unknown>) => void;
+    const api = vi.fn(() => new Promise<Record<string, unknown>>((resolve) => { resolvePoll = resolve; }));
+    const onProgress = vi.fn();
+    const onTerminal = vi.fn();
+    const tracker = new MediaJobTracker({ api, onProgress, onTerminal });
+
+    tracker.watch("job-old-session");
+    tracker.reset();
+    resolvePoll({ data: { id: "job-old-session", sessionId: "session-old", modality: "image", status: "progressing", progress: 0.5 } });
+    await vi.waitFor(() => expect(api).toHaveBeenCalledOnce());
+    await Promise.resolve();
+
+    expect(onProgress).not.toHaveBeenCalled();
+    expect(onTerminal).not.toHaveBeenCalled();
+    expect(tracker.active).toBe(false);
+  });
 });

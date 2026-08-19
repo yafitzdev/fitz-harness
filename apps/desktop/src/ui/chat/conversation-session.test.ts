@@ -141,4 +141,36 @@ describe("ConversationSessionController", () => {
     expect(options.plan?.reset).toHaveBeenCalledTimes(2);
     expect(options.runs.attach).not.toHaveBeenCalled();
   });
+
+  it("preserves a restored transcript when every auxiliary section fails", async () => {
+    const { controller, options, setSessionId } = harness();
+    setSessionId("session-partial");
+    const restoredMessage = document.createElement("article");
+    restoredMessage.textContent = "Durable conversation";
+    vi.mocked(options.transcript.restore).mockImplementation(() => {
+      options.messages.replaceChildren(restoredMessage);
+      return 12;
+    });
+    vi.mocked(options.artifacts.load).mockRejectedValue(new Error("artifact store offline"));
+    vi.mocked(options.api).mockImplementation(async (path: string) => {
+      if (path.includes("/query?")) return { data: { transcript: [{ kind: "message" }], page: {} } };
+      if (path.includes("/tool-approvals?")) throw new Error("approval store offline");
+      if (path.endsWith("/agent-run-state")) throw new Error("run store offline");
+      if (path.startsWith("/api/v1/media/jobs?")) throw new Error("media store offline");
+      throw new Error(`Unexpected path: ${path}`);
+    });
+
+    await controller.selectSession("session-partial");
+
+    expect(options.messages.contains(restoredMessage)).toBe(true);
+    expect(options.appendSystem).not.toHaveBeenCalled();
+    expect(options.api).toHaveBeenCalledWith(expect.stringContaining("/tool-approvals?"));
+    expect(options.api).toHaveBeenCalledWith(expect.stringContaining("/agent-run-state"));
+    expect(options.api).toHaveBeenCalledWith(expect.stringContaining("/media/jobs?"));
+    expect(options.showStatus).toHaveBeenCalledWith("Could not load pending approvals: Error: approval store offline", "error");
+    expect(options.showStatus).toHaveBeenCalledWith("Could not load run state: Error: run store offline", "error");
+    expect(options.showStatus).toHaveBeenCalledWith("Could not load artifacts: Error: artifact store offline", "error");
+    expect(options.showStatus).toHaveBeenCalledWith("Could not load media jobs: Error: media store offline", "error");
+    expect(options.remember).toHaveBeenCalledWith({ view: "conversation", path: ["session", "session-partial"], context: { projectId: "project-1" } });
+  });
 });

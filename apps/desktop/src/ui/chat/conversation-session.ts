@@ -175,38 +175,79 @@ export class ConversationSessionController {
       const transcript = await querySessionTranscript(this.#options.api, sessionId);
       if (!isCurrent()) return;
       context.restore(this.#options.transcript.restore(transcript.data ?? [], transcript.page ?? {}));
-      const pendingApprovals = await this.#options.api(`/api/v1/sessions/${sessionId}/tool-approvals?status=pending`);
-      if (!isCurrent()) return;
-      for (const approval of pendingApprovals.data ?? []) this.#options.activity.appendApproval(approval);
-      const runState = await this.#options.api(`/api/v1/sessions/${sessionId}/agent-run-state`);
-      if (!isCurrent()) return;
-      if (runState.data?.status === "queued" || runState.data?.status === "running") {
-        try {
-          const plan = await this.#options.api(`/api/v1/agent/runs/${runState.data.id}/plan`);
-          if (!isCurrent()) return;
-          if (plan.data?.status !== "completed") this.#options.plan?.update(plan.data);
-        } catch {
-          // A newly queued run may not have created its first durable plan yet.
-        }
-        runs.attach(runState.data, this.#options.transcript.eventSequenceForRun(String(runState.data.id)));
-      } else {
-        this.#options.plan?.reset();
-        if (runState.data?.resumable) recovery.show(runState.data);
-      }
-      context.refresh();
-      if (!messages.childElementCount) this.#options.showLanding(true);
-      messages.scrollTop = messages.scrollHeight;
-      const sessionArtifacts = await this.#options.artifacts.load();
-      if (!isCurrent()) return;
-      await this.#loadMediaJobs(sessionId, sessionArtifacts, isCurrent);
     } catch (error) {
       if (!isCurrent()) return;
       messages.replaceChildren();
       this.#options.appendSystem(this.#options.errorMessage(error));
+      this.#finishSelection(sessionId, isCurrent);
+      return;
+    }
+
+    await this.#restorePendingApprovals(sessionId, isCurrent);
+    if (!isCurrent()) return;
+    await this.#restoreRunState(sessionId, isCurrent);
+    if (!isCurrent()) return;
+    context.refresh();
+    if (!messages.childElementCount) this.#options.showLanding(true);
+    messages.scrollTop = messages.scrollHeight;
+    const sessionArtifacts = await this.#restoreArtifacts(isCurrent);
+    if (!isCurrent()) return;
+    try { await this.#loadMediaJobs(sessionId, sessionArtifacts, isCurrent); }
+    catch (error) { this.#reportAuxiliaryFailure("Could not load media jobs", error, isCurrent); }
+    this.#finishSelection(sessionId, isCurrent);
+  }
+
+  async #restorePendingApprovals(sessionId: string, isCurrent: () => boolean): Promise<void> {
+    try {
+      const response = await this.#options.api(`/api/v1/sessions/${sessionId}/tool-approvals?status=pending`);
+      if (!isCurrent()) return;
+      for (const approval of response.data ?? []) this.#options.activity.appendApproval(approval);
+    } catch (error) {
+      this.#reportAuxiliaryFailure("Could not load pending approvals", error, isCurrent);
+    }
+  }
+
+  async #restoreRunState(sessionId: string, isCurrent: () => boolean): Promise<void> {
+    let runState: Json;
+    try { runState = await this.#options.api(`/api/v1/sessions/${sessionId}/agent-run-state`); }
+    catch (error) {
+      this.#reportAuxiliaryFailure("Could not load run state", error, isCurrent);
+      return;
     }
     if (!isCurrent()) return;
+    if (runState.data?.status === "queued" || runState.data?.status === "running") {
+      try {
+        const plan = await this.#options.api(`/api/v1/agent/runs/${runState.data.id}/plan`);
+        if (!isCurrent()) return;
+        if (plan.data?.status !== "completed") this.#options.plan?.update(plan.data);
+      } catch {
+        // A newly queued run may not have created its first durable plan yet.
+      }
+      this.#options.runs.attach(runState.data, this.#options.transcript.eventSequenceForRun(String(runState.data.id)));
+    } else {
+      this.#options.plan?.reset();
+      if (runState.data?.resumable) this.#options.recovery.show(runState.data);
+    }
+  }
+
+  async #restoreArtifacts(isCurrent: () => boolean): Promise<Json[]> {
+    try {
+      const artifacts = await this.#options.artifacts.load();
+      return isCurrent() ? artifacts : [];
+    } catch (error) {
+      this.#reportAuxiliaryFailure("Could not load artifacts", error, isCurrent);
+      return [];
+    }
+  }
+
+  #reportAuxiliaryFailure(label: string, error: unknown, isCurrent: () => boolean): void {
+    if (isCurrent()) this.#options.showStatus(`${label}: ${this.#options.errorMessage(error)}`, "error");
+  }
+
+  #finishSelection(sessionId: string, isCurrent: () => boolean): void {
+    if (!isCurrent()) return;
     this.#options.refreshControls();
-    composer.focus();
+    this.#options.composer.focus();
     this.#options.remember({
       view: "conversation",
       path: ["session", sessionId],
