@@ -181,9 +181,8 @@ export function reconcileAgentPlan(store: SqliteStore, runId: string): AgentRunP
           .join("");
         return { ...withoutError(item), status: "completed" as const, result: text || "Worker completed without a written report." };
       }
-      const stopped = withoutStartedAt(item);
       return {
-        ...stopped,
+        ...item,
         owner: "main" as const,
         status: "pending" as const,
         error: worker.error || `Worker ${worker.status}; reassigned to the main agent.`,
@@ -194,7 +193,6 @@ export function reconcileAgentPlan(store: SqliteStore, runId: string): AgentRunP
 }
 
 export function assignPlanItemToWorker(store: SqliteStore, runId: string, itemId: string, workerRunId: string): AgentRunPlan {
-  const startedAt = new Date().toISOString();
   const updated = mutatePlan(store, runId, (plan) => {
     const item = plan.items.find((candidate) => candidate.id === itemId);
     if (!item) throw new Error(`Plan item ${itemId} was not found`);
@@ -203,7 +201,7 @@ export function assignPlanItemToWorker(store: SqliteStore, runId: string, itemId
     const blockers = item.dependencies.filter((dependency) => plan.items.find((candidate) => candidate.id === dependency)?.status !== "completed");
     if (blockers.length) throw new Error(`Plan item ${itemId} is blocked by ${blockers.join(", ")}`);
     const items = plan.items.map((candidate) => candidate.id === itemId
-      ? { ...withoutError(candidate), owner: "worker" as const, status: "running" as const, attempts: candidate.attempts + 1, startedAt, workerRunId }
+      ? { ...withoutError(candidate), owner: "worker" as const, status: "running" as const, attempts: candidate.attempts + 1, workerRunId }
       : candidate);
     if (!items.some((candidate) => candidate.required && candidate.owner === "main")) {
       throw new Error("Cannot delegate every required plan item. Keep at least one required item owned by the main agent.");
@@ -250,7 +248,6 @@ function setPlan(store: SqliteStore, runId: string, inputs: Array<{ id: string; 
       required: input.required ?? true,
       status: prior?.status ?? "pending",
       attempts: prior?.attempts ?? 0,
-      ...(prior?.startedAt ? { startedAt: prior.startedAt } : {}),
       ...(prior?.workerRunId ? { workerRunId: prior.workerRunId } : {}),
       ...(prior?.result ? { result: prior.result } : {}),
       ...(prior?.error ? { error: prior.error } : {}),
@@ -262,7 +259,6 @@ function setPlan(store: SqliteStore, runId: string, inputs: Array<{ id: string; 
 }
 
 function updateMainItem(store: SqliteStore, runId: string, itemId: string, status: "pending" | "running" | "completed", itemResult?: string): AgentRunPlan {
-  const transitionStartedAt = new Date().toISOString();
   const updated = mutatePlan(store, runId, (plan) => {
     if (plan.status !== "active") throw new Error("A plan that is ready for its answer cannot be changed");
     const item = plan.items.find((candidate) => candidate.id === itemId);
@@ -274,13 +270,11 @@ function updateMainItem(store: SqliteStore, runId: string, itemId: string, statu
     }
     return { ...plan, items: plan.items.map((candidate) => {
       if (candidate.id !== itemId) return candidate;
-      const stopped = status === "pending" ? withoutStartedAt(candidate) : candidate;
-      const base = status === "completed" ? withoutError(stopped) : stopped;
+      const base = status === "completed" ? withoutError(candidate) : candidate;
       return {
         ...base,
         owner: "main",
         status,
-        ...(status === "running" ? { startedAt: candidate.status === "running" && candidate.startedAt ? candidate.startedAt : transitionStartedAt } : {}),
         ...(status === "completed" ? { result: itemResult?.trim() || candidate.result || "Completed by main agent." } : {}),
       };
     }) };
@@ -368,11 +362,6 @@ function result(text: string, plan?: AgentRunPlan, isError = false) {
 
 function withoutError(item: AgentPlanItem): Omit<AgentPlanItem, "error"> {
   const { error: _error, ...rest } = item;
-  return rest;
-}
-
-function withoutStartedAt(item: AgentPlanItem): Omit<AgentPlanItem, "startedAt"> {
-  const { startedAt: _startedAt, ...rest } = item;
   return rest;
 }
 
