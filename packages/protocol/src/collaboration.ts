@@ -5,7 +5,7 @@ export interface SessionRecord { id: string; projectId?: string; ownerUserId?: s
 export type TranscriptEntryKind = "message" | "reasoning" | "tool-call" | "tool-result" | "compaction" | "system";
 export interface TranscriptEntryRecord { id: string; sessionId: string; sequence: number; kind: TranscriptEntryKind; role?: "system" | "user" | "assistant" | "tool"; content: Readonly<Record<string, unknown>>; createdAt: string }
 export interface RegenerateAssistantTurnRequest { runId: string }
-export interface RegeneratedAssistantTurn { prompt: string; removedTranscriptEntries: number; estimatedContextTokens: number }
+export interface RegeneratedAssistantTurn { prompt: string; messageId: string; sequence: number; removedTranscriptEntries: number; estimatedContextTokens: number }
 export interface EditUserTurnRequest { text: string; originalText?: string; messageId?: string; sequence?: number }
 export interface EditedUserTurn { prompt: string; messageId: string; sequence: number; removedTranscriptEntries: number; estimatedContextTokens: number }
 export type ToolPolicyDecision = "allow" | "deny" | "ask";

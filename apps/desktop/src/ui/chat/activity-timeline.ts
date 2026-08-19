@@ -61,6 +61,23 @@ export class ActivityTimeline {
     this.#burst = undefined;
     this.#searchRoots.clear();
   }
+
+  /** Renders restored history without letting it join or replace the live run's
+   * mutable work group. ConversationTranscript moves the newly-created
+   * top-level nodes ahead of the existing feed after this callback returns. */
+  isolateHistory(render: () => void): void {
+    const liveWork = this.#work;
+    const liveBurst = this.#burst;
+    this.#work = undefined;
+    this.#burst = undefined;
+    try {
+      render();
+    } finally {
+      if (this.#work) this.finishWork();
+      this.#work = liveWork;
+      this.#burst = liveBurst;
+    }
+  }
   searchRoots(): string[] { return [...this.#searchRoots]; }
 
   markAssistantAsCommentary(content: HTMLElement): void {

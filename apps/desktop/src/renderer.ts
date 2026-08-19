@@ -12,6 +12,7 @@ import { Composer, type ComposerSubmission } from "./ui/chat/composer.js";
 import { ConversationLanding } from "./ui/chat/conversation-landing.js";
 import { ConversationMessageFeed, type MessageAttachment } from "./ui/chat/conversation-message-feed.js";
 import { ConversationTranscript } from "./ui/chat/conversation-transcript.js";
+import { findDurableUserArticle } from "./ui/chat/conversation-turn-dom.js";
 import { ConversationContextController } from "./ui/chat/conversation-context.js";
 import { ConversationSessionController } from "./ui/chat/conversation-session.js";
 import { querySessionTranscript } from "./ui/chat/session-query-client.js";
@@ -45,7 +46,7 @@ import { ArtifactController } from "./ui/artifacts/artifact-controller.js";
 import { assertHostContract, HostRequestError } from "./client-error.js";
 import { HostApiClient } from "./host-api-client.js";
 import { parseManagementConfiguration, parseManagementRoute, type ChatDefaults, type ManagementConfiguration } from "./management-configuration.js";
-import type { EditUserTurnRequest, RegenerateAssistantTurnRequest, RegeneratedAssistantTurn } from "@fitz/protocol";
+import type { EditedUserTurn, EditUserTurnRequest, RegenerateAssistantTurnRequest, RegeneratedAssistantTurn } from "@fitz/protocol";
 
 type Json = Record<string, any>;
 type ApiData<T> = { data: T };
@@ -417,6 +418,7 @@ const promptSubmission = new PromptSubmissionController({
   draft: () => composer.submission,
   consumeAttachments: () => composer.consumePastedAttachments(),
   sessionId: () => projects.currentSessionId,
+  isSessionCurrent: (sessionId) => projects.currentSessionId === sessionId,
   settings: () => ({
     routeId: composer.controls.routeId,
     effort: composer.controls.effort,
@@ -1015,8 +1017,8 @@ function closePopovers(): void {
   projectSidebar.resetMenuToggles();
 }
 
-async function sendPrompt(submittedContent?: string | ComposerSubmission, existingUserMessage?: HTMLElement): Promise<void> {
-  await promptSubmission.submit(submittedContent, existingUserMessage);
+async function sendPrompt(submittedContent?: string | ComposerSubmission, existingUserMessage?: HTMLElement, persistedMessageId?: string): Promise<void> {
+  await promptSubmission.submit(submittedContent, existingUserMessage, persistedMessageId);
 }
 
 // While the agent is reasoning the composer stays unlocked. Sending inserts the
@@ -1061,16 +1063,27 @@ async function regenerateAssistantResponse(article: HTMLElement): Promise<void> 
   try {
     const request = { runId } satisfies RegenerateAssistantTurnRequest;
     const response = await hostApi.request<ApiData<RegeneratedAssistantTurn>>(`/api/v1/sessions/${sessionId}/regenerate`, "POST", request);
+    if (projects.currentSessionId !== sessionId) return;
     const prompt = response.data.prompt.trim();
     if (!prompt) throw new Error("The original prompt is unavailable");
+    const promptSequence = Number(response.data.sequence);
+    if (!Number.isSafeInteger(promptSequence) || promptSequence < 1 || promptSequence >= Number.MAX_SAFE_INTEGER) throw new Error("The regenerated transcript position is unavailable");
     const retainedContextTokens = Number(response.data.estimatedContextTokens);
     if (!Number.isFinite(retainedContextTokens) || retainedContextTokens < 0) throw new Error("The regenerated context estimate is unavailable");
+    userArticle = findDurableUserArticle(messages, article, runId, {
+      messageId: response.data.messageId,
+      sequence: promptSequence,
+      prompt,
+    }) ?? userArticle;
+    userArticle.dataset.transcriptId = response.data.messageId;
+    userArticle.dataset.transcriptSequence = String(promptSequence);
     let next = userArticle.nextElementSibling;
     while (next) { const remove = next; next = next.nextElementSibling; remove.remove(); }
+    conversationTranscript.truncateFrom(promptSequence + 1);
     activityTimeline.clear();
     agentPlanPanel.reset();
     conversationContext.recalibrate(retainedContextTokens);
-    await sendPrompt(prompt, userArticle);
+    await sendPrompt(prompt, userArticle, response.data.messageId);
   } catch (error) { showStatus(errorMessage(error), "error"); }
 }
 
@@ -1085,18 +1098,21 @@ async function editUserMessage(text: string, article: HTMLElement, originalText:
       ...(article.dataset.transcriptId ? { messageId: article.dataset.transcriptId } : {}),
       ...(article.dataset.transcriptSequence ? { sequence: Number(article.dataset.transcriptSequence) } : {}),
     };
-    const response = await hostApi.request<ApiData<{ sequence: number; estimatedContextTokens: number }>>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/edit`, "POST", request);
+    const response = await hostApi.request<ApiData<EditedUserTurn>>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/edit`, "POST", request);
+    if (projects.currentSessionId !== sessionId) return;
     const editSequence = Number(response.data.sequence);
     if (!Number.isSafeInteger(editSequence) || editSequence < 0) throw new Error("The edited transcript position is unavailable");
     const retainedContextTokens = Number(response.data.estimatedContextTokens);
     if (!Number.isFinite(retainedContextTokens) || retainedContextTokens < 0) throw new Error("The edited context estimate is unavailable");
+    article.dataset.transcriptId = response.data.messageId;
+    article.dataset.transcriptSequence = String(editSequence);
     let next = article.nextElementSibling;
     while (next) { const remove = next; next = next.nextElementSibling; remove.remove(); }
     conversationTranscript.truncateFrom(editSequence);
     activityTimeline.clear();
     agentPlanPanel.reset();
     conversationContext.recalibrate(retainedContextTokens);
-    await sendPrompt(text, article);
+    await sendPrompt(text, article, response.data.messageId);
     composer.pushHistory(text);
   } catch (error) {
     showStatus(errorMessage(error), "error");

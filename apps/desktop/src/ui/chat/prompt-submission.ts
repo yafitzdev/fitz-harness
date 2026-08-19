@@ -17,6 +17,7 @@ export interface PromptSubmissionOptions {
   draft: () => ComposerSubmission;
   consumeAttachments: () => PastedAttachment[];
   sessionId: () => string | undefined;
+  isSessionCurrent?: (sessionId: string) => boolean;
   settings: () => PromptRunSettings;
   ensureSession: (title: string, routeId?: string) => Promise<string | undefined>;
   openNewChat: () => void;
@@ -40,6 +41,7 @@ export interface PromptSubmissionOptions {
     temperature: number;
     sessionId: string;
     accessMode: string;
+    persistedMessageId?: string;
     attachments?: Array<{ artifactId: string }>;
     messages: Array<{ role: "user"; content: PromptMessageContent }>;
   }) => Promise<void>;
@@ -82,14 +84,36 @@ const DEFAULT_MEDIA_PROMPTS: Record<MediaModality, string> = {
 /** Owns first-message session creation, attachment upload, run submission, and steering. */
 export class PromptSubmissionController {
   readonly #options: PromptSubmissionOptions;
+  #pendingSubmission: Promise<void> | undefined;
 
   constructor(options: PromptSubmissionOptions) { this.#options = options; }
 
-  async submit(submitted?: string | ComposerSubmission, existingUserMessage?: HTMLElement): Promise<void> {
+  async submit(submitted?: string | ComposerSubmission, existingUserMessage?: HTMLElement, persistedMessageId?: string): Promise<void> {
+    if (this.#pendingSubmission) { await this.#pendingSubmission; return; }
+    let resolveAdmission!: () => void;
+    const admission = new Promise<void>((resolve) => { resolveAdmission = resolve; });
+    this.#pendingSubmission = admission;
+    const releaseAdmission = () => {
+      if (this.#pendingSubmission !== admission) return;
+      this.#pendingSubmission = undefined;
+      resolveAdmission();
+    };
+    try { await this.#submitOnce(submitted, existingUserMessage, persistedMessageId, releaseAdmission); }
+    finally { releaseAdmission(); }
+  }
+
+  async #submitOnce(
+    submitted: string | ComposerSubmission | undefined,
+    existingUserMessage: HTMLElement | undefined,
+    persistedMessageId: string | undefined,
+    releaseAdmission: () => void,
+  ): Promise<void> {
     const draft = typeof submitted === "string" ? { content: submitted } : (submitted ?? this.#options.draft());
     const content = draft.content.trim();
     const mediaCommand = draft.mediaCommand;
-    const attachments = this.#options.consumeAttachments();
+    // Inline edit/regenerate reuses the durable user turn and must not consume
+    // unrelated attachments that are still sitting in the composer.
+    const attachments = existingUserMessage ? [] : this.#options.consumeAttachments();
     // A media command with no prompt text is still a valid submission: media
     // commands generate with a default prompt instead of being silently dropped.
     if (!content && attachments.length === 0 && !mediaCommand) return;
@@ -98,9 +122,13 @@ export class PromptSubmissionController {
     let sessionId = this.#options.sessionId();
     if (!sessionId) {
       try { sessionId = await this.#options.ensureSession(titleFrom(content), settings.routeId || undefined); }
-      catch (error) { this.#options.showError(this.#options.errorMessage(error)); return; }
+      catch (error) {
+        if (error instanceof Error && error.name === "AbortError") return;
+        this.#options.showError(this.#options.errorMessage(error)); return;
+      }
     }
     if (!sessionId) { this.#options.openNewChat(); return; }
+    if (this.#options.isSessionCurrent?.(sessionId) === false) return;
 
     this.#options.resetWarmup();
     // Media generation only consumes pasted reference images (and audio takes
@@ -112,6 +140,7 @@ export class PromptSubmissionController {
     for (const attachment of uploadable) {
       try {
         const artifact = await this.#options.uploadAttachment(sessionId, attachment);
+        if (this.#options.isSessionCurrent?.(sessionId) === false) return;
         uploaded.push({ artifact, attachment });
       } catch (error) {
         this.#options.showError(this.#options.errorMessage(error));
@@ -136,6 +165,7 @@ export class PromptSubmissionController {
           return;
         }
       }
+      if (this.#options.isSessionCurrent?.(sessionId) === false) return;
       this.#options.clearDraft();
       this.#options.clearLanding();
       if (!existingUserMessage) {
@@ -152,6 +182,7 @@ export class PromptSubmissionController {
         refs,
         submit: async (params) => {
           try {
+            if (this.#options.isSessionCurrent?.(sessionId) === false) throw staleConversationError();
             const job = await this.#options.submitMedia({
               routeId: mediaCommand,
               modality: mediaCommand,
@@ -167,8 +198,10 @@ export class PromptSubmissionController {
               ...(params.fps !== undefined ? { fps: params.fps } : {}),
               ...(refs.length > 0 && mediaCommand !== "audio" ? { refs } : {}),
             });
+            if (this.#options.isSessionCurrent?.(sessionId) === false) return;
             this.#options.onMediaJobSubmitted(job.id, mediaCommand);
           } catch (error) {
+            if (error instanceof Error && error.name === "AbortError") return;
             this.#options.showError(this.#options.errorMessage(error));
             throw error;
           }
@@ -187,6 +220,9 @@ export class PromptSubmissionController {
     if (content && !existingUserMessage) this.#options.pushHistory(content);
     if (!existingUserMessage) this.#options.addTokenEstimate(content);
     this.#options.refreshContext();
+    // The run controller marks itself active synchronously. Once it owns this
+    // request, media commands no longer need to wait for the run to finish.
+    releaseAdmission();
     await this.#options.startRun({
       model: settings.routeId,
       effort: settings.effort,
@@ -195,6 +231,7 @@ export class PromptSubmissionController {
       sessionId,
       accessMode: settings.accessMode,
       ...(uploaded.length ? { attachments: uploaded.map(({ artifact }) => ({ artifactId: artifact.id })) } : {}),
+      ...(persistedMessageId ? { persistedMessageId } : {}),
       messages: [{ role: "user", content }],
     });
   }
@@ -216,6 +253,10 @@ export class PromptSubmissionController {
       this.#options.setDraft(content);
     }
   }
+}
+
+function staleConversationError(): Error {
+  return Object.assign(new Error("Conversation changed before the request completed"), { name: "AbortError" });
 }
 
 function titleFrom(content: string): string {

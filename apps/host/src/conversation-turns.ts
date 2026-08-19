@@ -65,8 +65,11 @@ export class ConversationTurnService {
       if (removedTranscriptEntries < 1) {
         throw new ConversationTurnError("transcript-not-found", "Assistant response transcript not found");
       }
+      const replacement = this.#appendReplacement(sessionId, userEntry, prompt);
       return {
         prompt,
+        messageId: replacement.id,
+        sequence: replacement.sequence,
         removedTranscriptEntries,
         estimatedContextTokens: this.context.estimateSession(sessionId),
       };
@@ -87,7 +90,20 @@ export class ConversationTurnService {
       if (!prompt) throw new ConversationTurnError("prompt-unavailable", "The replacement message cannot be empty");
       const removedTranscriptEntries = this.store.deleteTranscriptFrom(sessionId, target.sequence);
       if (removedTranscriptEntries < 1) throw new ConversationTurnError("transcript-not-found", "The message to edit is no longer present");
-      return { prompt, messageId: target.id, sequence: target.sequence, removedTranscriptEntries, estimatedContextTokens: this.context.estimateSession(sessionId) };
+      const replacement = this.#appendReplacement(sessionId, target, prompt);
+      return { prompt, messageId: replacement.id, sequence: replacement.sequence, removedTranscriptEntries, estimatedContextTokens: this.context.estimateSession(sessionId) };
+    });
+  }
+
+  #appendReplacement(sessionId: string, target: TranscriptEntryRecord, prompt: string): TranscriptEntryRecord {
+    const { runId: _runId, eventSequence: _eventSequence, ...retainedContent } = target.content;
+    return this.store.appendTranscriptEntry({
+      id: target.id,
+      sessionId,
+      kind: "message",
+      role: "user",
+      content: { ...retainedContent, text: prompt },
+      createdAt: new Date().toISOString(),
     });
   }
 }

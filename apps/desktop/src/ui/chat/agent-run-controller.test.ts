@@ -194,6 +194,21 @@ describe("AgentRunController", () => {
     expect(api).toHaveBeenNthCalledWith(2, "/api/v1/agent/runs/run-successor/events?after=0");
   });
 
+  it("does not attach a resumed run whose response arrives after detach", async () => {
+    let resolveResume!: (value: Record<string, unknown>) => void;
+    const resume = new Promise<Record<string, unknown>>((resolve) => { resolveResume = resolve; });
+    const api = vi.fn(async (path: string) => path.endsWith("/resume") ? resume : { events: [] });
+    const { controller } = setup(api);
+
+    const pending = controller.resume("run-failed");
+    controller.detach();
+    resolveResume({ data: { id: "stale-successor" } });
+    await pending;
+
+    expect(controller.active).toBe(false);
+    expect(api.mock.calls.some(([path]) => String(path).includes("stale-successor/events"))).toBe(false);
+  });
+
   it("keeps continuation retryable when the resume request fails", async () => {
     const api = vi.fn(async () => { throw new Error("offline"); });
     const { controller, calls } = setup(api);
@@ -311,6 +326,56 @@ describe("AgentRunController", () => {
     expect(api).toHaveBeenCalledWith("/api/v1/agent/runs/run-late", "DELETE");
     expect(calls.setStatus).toHaveBeenCalledWith("Stopping", "loading");
     expect(controller.active).toBe(false);
+  });
+
+  it("does not resurrect a run whose creation resolves after detach", async () => {
+    let resolveStart!: (value: Record<string, unknown>) => void;
+    const start = new Promise<Record<string, unknown>>((resolve) => { resolveStart = resolve; });
+    const api = vi.fn(async (path: string, method?: string) => {
+      if (path === "/api/v1/agent/runs" && method === "POST") return start;
+      return { events: [] };
+    });
+    const { controller, calls } = setup(api);
+
+    const pending = controller.start(request());
+    controller.detach();
+    resolveStart({ data: { id: "stale-run" } });
+    await pending;
+
+    expect(controller.active).toBe(false);
+    expect(controller.runId).toBeUndefined();
+    expect(calls.appendSystem).not.toHaveBeenCalled();
+    expect(api.mock.calls.some(([path]) => String(path).includes("stale-run/events"))).toBe(false);
+  });
+
+  it("ignores late cancel and steering failures after the conversation detaches", async () => {
+    let resolveEvents!: (value: Record<string, unknown>) => void;
+    let rejectCancel!: (reason: Error) => void;
+    let rejectSteer!: (reason: Error) => void;
+    const events = new Promise<Record<string, unknown>>((resolve) => { resolveEvents = resolve; });
+    const cancel = new Promise<Record<string, unknown>>((_resolve, reject) => { rejectCancel = reject; });
+    const steer = new Promise<Record<string, unknown>>((_resolve, reject) => { rejectSteer = reject; });
+    const api = vi.fn(async (path: string, method?: string) => {
+      if (path === "/api/v1/agent/runs" && method === "POST") return { data: { id: "run-detached" } };
+      if (path.endsWith("/events?after=0")) return events;
+      if (method === "DELETE") return cancel;
+      if (path.endsWith("/steer")) return steer;
+      return { data: {} };
+    });
+    const { controller, calls } = setup(api);
+    const running = controller.start(request());
+    await vi.waitFor(() => { expect(controller.runId).toBe("run-detached"); });
+
+    const cancelling = controller.cancel();
+    const steering = controller.steer("old conversation");
+    controller.detach();
+    rejectCancel(new Error("cancel failed"));
+    rejectSteer(new Error("steer failed"));
+    await expect(Promise.all([cancelling, steering])).resolves.toEqual([undefined, undefined]);
+    expect(calls.showStatus).not.toHaveBeenCalled();
+
+    resolveEvents({ events: [] });
+    await running;
   });
 
   it("steers the active run through the host endpoint", async () => {

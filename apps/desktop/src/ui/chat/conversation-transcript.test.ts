@@ -87,13 +87,17 @@ describe("ConversationTranscript", () => {
     expect(view.eventSequenceForRun("run-2")).toBe(3);
   });
 
-  it("hydrates long transcripts in bounded turn-aligned windows", () => {
+  it("hydrates long transcripts in bounded turn-aligned windows without inserting pagination into the chat", async () => {
     const messages = document.createElement("main");
     const appendMessage = vi.fn(() => document.createElement("div"));
     const view = new ConversationTranscript({ messages, activity: { clear: vi.fn(), appendTool: vi.fn(() => document.createElement("div")), completeTool: vi.fn(), appendReasoning: vi.fn(() => document.createElement("div")), appendReasoningDelta: vi.fn(), completeReasoning: vi.fn(), appendContext: vi.fn() }, appendMessage, appendCommentary: vi.fn(), rebuildHistory: vi.fn() });
     view.restore(Array.from({ length: 600 }, (_, index) => ({ kind: "message", role: index % 3 === 0 ? "user" : "assistant", content: { text: String(index) } })));
     expect(appendMessage.mock.calls.length).toBeLessThanOrEqual(252);
-    expect(messages.querySelector(".transcript-load-earlier")?.textContent).toContain("earlier events");
+    expect(messages.querySelector(".transcript-load-earlier")).toBeNull();
+    const initiallyRendered = appendMessage.mock.calls.length;
+    messages.scrollTop = 0;
+    messages.dispatchEvent(new Event("scroll"));
+    await vi.waitFor(() => expect(appendMessage.mock.calls.length).toBeGreaterThan(initiallyRendered));
   });
 
   it("loads older server pages lazily while preserving recent prompt history", async () => {
@@ -106,10 +110,54 @@ describe("ConversationTranscript", () => {
       appendMessage: vi.fn(() => document.createElement("div")), appendCommentary: vi.fn(), rebuildHistory, loadEarlier,
     });
     expect(view.restore([{ sequence: 2, kind: "message", role: "user", content: { text: "recent prompt" } }], { hasEarlier: true, estimatedContextTokens: 999 })).toBe(999);
-    (messages.querySelector(".transcript-load-earlier") as HTMLButtonElement).click();
+    messages.scrollTop = 0;
+    messages.dispatchEvent(new Event("scroll"));
     await vi.waitFor(() => expect(loadEarlier).toHaveBeenCalledWith(2));
     expect(rebuildHistory).toHaveBeenLastCalledWith(["old prompt", "recent prompt"]);
-    expect(messages.querySelector(".transcript-load-earlier")).toBeNull();
+  });
+
+  it("keeps live nodes connected while revealing an older local window", async () => {
+    const messages = document.createElement("main");
+    const activity = {
+      clear: vi.fn(), isolateHistory: (render: () => void) => render(), finishWork: vi.fn(),
+      appendTool: vi.fn(() => document.createElement("div")), completeTool: vi.fn(),
+      appendReasoning: vi.fn(() => document.createElement("div")), appendReasoningDelta: vi.fn(), completeReasoning: vi.fn(), appendContext: vi.fn(),
+    };
+    const appendMessage = vi.fn((role: string, text: string) => {
+      const row = document.createElement("article"); row.className = role; row.textContent = text; messages.append(row); return row;
+    });
+    const view = new ConversationTranscript({ messages, activity, appendMessage, appendCommentary: vi.fn(), rebuildHistory: vi.fn() });
+    view.restore(Array.from({ length: 300 }, (_, index) => ({ sequence: index + 1, kind: "message", role: "user", content: { text: `message-${index + 1}` } })));
+    const live = document.createElement("article"); live.textContent = "live output"; messages.append(live);
+
+    messages.scrollTop = 0;
+    messages.dispatchEvent(new Event("scroll"));
+    await vi.waitFor(() => expect(appendMessage.mock.calls.length).toBe(300));
+
+    expect(live.parentElement).toBe(messages);
+    expect(messages.lastElementChild).toBe(live);
+    expect(activity.clear).toHaveBeenCalledOnce();
+  });
+
+  it("discards an older page that resolves after another chat is restored", async () => {
+    const messages = document.createElement("main");
+    let resolveEarlier!: (value: { data: Record<string, any>[]; page: { hasEarlier: boolean } }) => void;
+    const loadEarlier = vi.fn(() => new Promise<{ data: Record<string, any>[]; page: { hasEarlier: boolean } }>((resolve) => { resolveEarlier = resolve; }));
+    const appendMessage = vi.fn((_role: string, text: string) => {
+      const row = document.createElement("article"); row.textContent = text; messages.append(row); return row;
+    });
+    const activity = { clear: vi.fn(), appendTool: vi.fn(), completeTool: vi.fn(), appendReasoning: vi.fn(), appendReasoningDelta: vi.fn(), completeReasoning: vi.fn(), appendContext: vi.fn() };
+    const view = new ConversationTranscript({ messages, activity, appendMessage, appendCommentary: vi.fn(), rebuildHistory: vi.fn(), loadEarlier });
+    view.restore([{ sequence: 100, kind: "message", role: "user", content: { text: "chat A" } }], { hasEarlier: true });
+    messages.dispatchEvent(new Event("scroll"));
+    await vi.waitFor(() => expect(loadEarlier).toHaveBeenCalledWith(100));
+
+    view.restore([{ sequence: 200, kind: "message", role: "user", content: { text: "chat B" } }]);
+    resolveEarlier({ data: [{ sequence: 1, kind: "message", role: "user", content: { text: "chat A earlier" } }], page: { hasEarlier: false } });
+    await Promise.resolve(); await Promise.resolve();
+
+    expect(messages.textContent).toBe("chat B");
+    expect(appendMessage.mock.calls.some(([, text]) => text === "chat A earlier")).toBe(false);
   });
 
   it("prunes the discarded branch after an edited user message", () => {

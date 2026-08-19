@@ -40,6 +40,8 @@ export interface AgentEventProjectorOptions {
   findTool: (toolCallId: string) => { row: HTMLElement; toolName: string; input: unknown } | undefined;
   onMediaJobSubmitted?: (jobId: string, toolName: string) => void;
   yieldToPaint: () => Promise<void>;
+  /** False after the user leaves the conversation or another run replaces this projection. */
+  isCurrent?: () => boolean;
 }
 
 type ToolState = { row: HTMLElement; toolName: string; input: unknown };
@@ -72,7 +74,7 @@ export class AgentEventProjector {
   get mediaHandedOff(): boolean { return this.#mediaHandedOff; }
 
   async apply(event: Json): Promise<void> {
-    if (this.#done) return;
+    if (this.#done || this.#options.isCurrent?.() === false) return;
     const data = event.data as Json | undefined;
     if (event.type === "run.queue.updated") this.#queueUpdated(data);
     if (event.type === "run.started") this.#runStarted();
@@ -238,6 +240,7 @@ export class AgentEventProjector {
     this.#options.activityRoot.remove();
     if (!success && data?.error && event.type !== "run.cancelled") this.#options.appendSystem(String(data.error));
     if (success && !this.#mediaHandedOff && this.#options.loadFinalAssistant) await this.#reconcileFinalAssistant();
+    if (this.#options.isCurrent?.() === false) return;
     // A media tool ends Pi's turn after durable submission; its tracker owns
     // the eventual work disclosure and final answer.
     if (success && !this.#assistant && !this.#mediaHandedOff) this.#options.appendSystem("The model completed without returning a response.");
@@ -251,6 +254,7 @@ export class AgentEventProjector {
   async #reconcileFinalAssistant(): Promise<void> {
     try {
       const recovered = await this.#options.loadFinalAssistant?.(this.#options.runId);
+      if (this.#options.isCurrent?.() === false) return;
       if (!recovered?.text) return;
       if (!this.#assistant) {
         this.#assistant = this.#options.appendAssistant(this.#options.runId, recovered.createdAt);

@@ -13,6 +13,7 @@ export interface AgentRunRequest {
   sessionId: string;
   accessMode: string;
   clientRequestId?: string;
+  persistedMessageId?: string;
   messages: Array<{ role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> }>;
 }
 
@@ -103,7 +104,10 @@ export class AgentRunController {
     this.#options.setStatus("Reconnecting", "loading");
     this.#options.refreshControls();
     try { await this.#follow(run.id, activity, startedAt, generation); }
-    catch (error) { activity.remove(); this.#options.appendSystem(this.#options.errorMessage(error)); this.#options.setStatus("Disconnected", "error"); }
+    catch (error) {
+      if (this.#generation !== generation) return;
+      activity.remove(); this.#options.appendSystem(this.#options.errorMessage(error)); this.#options.setStatus("Disconnected", "error");
+    }
     finally { if (this.#generation === generation) { this.#runId = undefined; this.#cancelPending = false; this.#options.refreshControls(); } }
   }
 
@@ -117,10 +121,12 @@ export class AgentRunController {
     this.#options.refreshControls();
     try {
       const response = await this.#options.api(`/api/v1/agent/runs/${sourceRunId}/resume`, "POST", { confirmUnsafe });
+      if (this.#generation !== generation) return;
       const runId = String(response.data.id);
       this.#runId = runId; this.#starting = false;
       await this.#follow(runId, activity, Date.now(), generation);
     } catch (error) {
+      if (this.#generation !== generation) return;
       activity.remove();
       this.#options.appendSystem(this.#options.errorMessage(error));
       this.#options.setStatus("Resume failed", "error");
@@ -165,13 +171,16 @@ export class AgentRunController {
       const durableRequest = { ...request, clientRequestId: request.clientRequestId ?? crypto.randomUUID() };
       let response: Json | undefined;
       for (let attempt = 0; attempt < 4; attempt += 1) {
+        if (this.#generation !== generation) return;
         try { response = await this.#options.api("/api/v1/agent/runs", "POST", durableRequest); break; }
         catch (error) {
+          if (this.#generation !== generation) return;
           if (this.#options.terminalReplayError(error) || attempt === 3) throw error;
           this.#options.setStatus(`Submitting · retry ${attempt + 1}`, "loading");
           await this.#delay(reconnectDelay(attempt));
         }
       }
+      if (this.#generation !== generation) return;
       if (!response) throw new Error("The run could not be created");
       this.#runId = String(response.data.id);
       this.#starting = false;
@@ -184,6 +193,7 @@ export class AgentRunController {
       if (this.#cancelPending) await this.#options.api(`/api/v1/agent/runs/${this.#runId}`, "DELETE");
       await this.#follow(this.#runId, activity, startedAt, generation);
     } catch (error) {
+      if (this.#generation !== generation) return;
       activity.remove();
       this.#options.appendSystem(this.#options.errorMessage(error));
       this.#options.setStatus("Failed", "error");
@@ -200,13 +210,16 @@ export class AgentRunController {
 
   async cancel(): Promise<void> {
     if (!this.active) return;
+    const generation = this.#generation;
     this.#cancelPending = true;
     this.#options.setStatus("Stopping", "loading");
     this.#options.refreshControls();
-    if (!this.#runId) return;
+    const runId = this.#runId;
+    if (!runId) return;
     try {
-      await this.#options.api(`/api/v1/agent/runs/${this.#runId}`, "DELETE");
+      await this.#options.api(`/api/v1/agent/runs/${runId}`, "DELETE");
     } catch (error) {
+      if (this.#generation !== generation || this.#runId !== runId) return;
       this.#cancelPending = false;
       this.#options.showStatus(this.#options.errorMessage(error), "error");
       this.#options.refreshControls();
@@ -215,8 +228,14 @@ export class AgentRunController {
 
   /** Insert a message into the running conversation. The host forwards it to the active stream. */
   async steer(text: string): Promise<void> {
-    if (!this.#runId) throw new Error("No active run to steer");
-    await this.#options.api(`/api/v1/agent/runs/${this.#runId}/steer`, "POST", { text });
+    const runId = this.#runId;
+    const generation = this.#generation;
+    if (!runId) throw new Error("No active run to steer");
+    try { await this.#options.api(`/api/v1/agent/runs/${runId}/steer`, "POST", { text }); }
+    catch (error) {
+      if (this.#generation !== generation || this.#runId !== runId) return;
+      throw error;
+    }
   }
 
   async #follow(runId: string, activity: HTMLElement, startedAt: number, generation: number): Promise<void> {
@@ -249,6 +268,7 @@ export class AgentRunController {
       },
       ...(this.#options.onMediaJobSubmitted ? { onMediaJobSubmitted: this.#options.onMediaJobSubmitted } : {}),
       yieldToPaint: () => this.#yieldToPaint(),
+      isCurrent: () => this.#runId === runId && this.#generation === generation,
     });
     const connectEventStream = () => {
       if (!this.#options.subscribeAgentEvents) return;
@@ -279,6 +299,7 @@ export class AgentRunController {
             if (reconnectAttempt >= 12) throw error;
             this.#options.setStatus(`Reconnecting ${reconnectAttempt + 1}`, "loading");
             await this.#delay(reconnectDelay(reconnectAttempt++));
+            if (this.#runId !== runId || this.#generation !== generation) break;
             connectEventStream();
             continue;
           }
@@ -287,21 +308,26 @@ export class AgentRunController {
             replay = await this.#options.api(`/api/v1/agent/runs/${runId}/events?after=${this.#lastSequence}`);
             reconnectAttempt = 0;
           } catch (error) {
+            if (this.#runId !== runId || this.#generation !== generation) break;
             if (this.#options.terminalReplayError(error) || reconnectAttempt >= 12) throw error;
             this.#options.setStatus(`Reconnecting ${reconnectAttempt + 1}`, "loading");
             await this.#delay(reconnectDelay(reconnectAttempt++));
             continue;
           }
         }
+        if (this.#runId !== runId || this.#generation !== generation) break;
         for (const event of replay.events ?? []) {
+          if (this.#runId !== runId || this.#generation !== generation) break;
           this.#lastSequence = Number(event.sequence ?? this.#lastSequence);
           await projector.apply(event);
+          if (this.#runId !== runId || this.#generation !== generation) break;
           if (event.type === "run.queue.updated" && this.#options.queueVisible()) void this.#options.refreshQueue();
         }
         if (!projector.done && !projector.queued && !projector.hasOpenOutput && (!eventStream || (replay.events?.length ?? 0) === 0) && Date.now() >= nextEnginePoll) {
           nextEnginePoll = Date.now() + 1_000;
           try {
             const management = await this.#options.api("/api/v1/management/status");
+            if (this.#runId !== runId || this.#generation !== generation) break;
             const state = String(management.engine?.state ?? "");
             this.#options.setEngineState(state || "WORKING");
             if (state === "PREPARING" || state === "LOADING") {
@@ -312,15 +338,19 @@ export class AgentRunController {
             else if (state === "READY" || state === "BUSY") this.#options.activity.setRun(activity, "Thinking", startedAt);
             else if (state === "FAILED") activity.textContent = `Model failed: ${management.engine?.failureReason ?? "Unknown error"}`;
             else this.#options.activity.setRun(activity, "Working", startedAt);
-          } catch { this.#options.activity.setRun(activity, "Working", startedAt); }
+          } catch {
+            if (this.#runId !== runId || this.#generation !== generation) break;
+            this.#options.activity.setRun(activity, "Working", startedAt);
+          }
         }
         if (!projector.done && !eventStream) await this.#delay(350);
       }
     } finally {
       unsubscribeEventStream?.();
     }
-    if (projector.done) {
+    if (projector.done && this.#runId === runId && this.#generation === generation) {
       await this.#options.onRunSettled?.();
+      if (this.#runId !== runId || this.#generation !== generation) return;
       await this.#options.refreshAssistantPerformance?.(runId);
     }
   }

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { RouteNotFoundError, type InferenceScheduler } from "@fitz/inference-core";
-import { parseChatCompletionRequest, PROTOCOL_VERSION, type AgentRunCheckpoint, type AgentRunRequest } from "@fitz/protocol";
+import { parseChatCompletionRequest, PROTOCOL_VERSION, type AgentRunCheckpoint, type AgentRunRequest, type TranscriptEntryRecord } from "@fitz/protocol";
 import { SecurityPolicyError, type AuthenticatedPrincipal, type SecurityService } from "@fitz/security";
 import type { ArtifactRepository, SqliteStore } from "@fitz/storage";
 import type { ContextManager } from "@fitz/context";
@@ -27,6 +27,10 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
   app.post("/api/v1/agent/runs", async (request, reply) => {
     try {
       const body = parseAgentRunRequest(request.body);
+      const source = requireRecord(request.body);
+      const persistedMessageId = source.persistedMessageId === undefined
+        ? undefined
+        : requireString(source.persistedMessageId, "persistedMessageId");
       const principal = principals.get(request);
       const existing = body.clientRequestId ? store.agentRunForClientRequest(body.clientRequestId) : undefined;
       if (existing) {
@@ -41,18 +45,28 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
       if (principal && !security?.authorizeRoute(principal, body.model)) {
         return reply.code(403).send({ error: "Route access denied" });
       }
+      const persistedMessage = persistedMessageId ? requirePersistedUserMessage(persistedMessageId, body, store) : undefined;
+      if (persistedMessage) requireNoActiveReplacementRun(store, persistedMessage);
       const transcriptAttachments = attachmentRecords(body, store);
-      const executionMessages = await hydrateAttachments(body, store, artifacts);
+      const hydratedMessages = await hydrateAttachments(body, store, artifacts);
       if (principal) {
-        const promptChars = executionMessages.reduce((total, message) => total + contentTextLength(message.content), 0);
+        const promptChars = hydratedMessages.reduce((total, message) => total + contentTextLength(message.content), 0);
         security?.enforceQuota(principal, promptChars, body.maxTokens ?? principal.quota.maxOutputTokens, agentRuns.queue(principal.user.id).length);
       }
       const executionRouteId = body.model;
-      const durableRequest = { ...body, model: executionRouteId };
-      const executionRequest = { ...durableRequest, messages: executionMessages };
+      // Edit/regenerate already committed their replacement user entry. Build
+      // execution context from that canonical transcript and do not append the
+      // same prompt a second time when the run is admitted.
+      const durableRequest = { ...body, model: executionRouteId, ...(persistedMessage ? { messages: [] } : {}) };
+      const executionRequest = { ...durableRequest, messages: persistedMessage ? [] : hydratedMessages };
       const prepared = await context.prepare(executionRequest, contextTokensForRequest(executionRequest, principal?.user.id));
       let run;
-      try { run = agentRuns.start(prepared.request, principal?.user.id, body.messages, durableRequest, undefined, transcriptAttachments); }
+      try {
+        // Recheck after asynchronous context preparation to close the race
+        // between two callers trying to claim the same durable replacement.
+        if (persistedMessage) requireNoActiveReplacementRun(store, persistedMessage);
+        run = agentRuns.start(prepared.request, principal?.user.id, persistedMessage ? [] : body.messages, durableRequest, undefined, transcriptAttachments);
+      }
       catch (error) {
         const concurrent = body.clientRequestId ? store.agentRunForClientRequest(body.clientRequestId) : undefined;
         if (concurrent && canAccessOwner(principal, concurrent.ownerUserId)) return reply.code(200).send({ protocolVersion: PROTOCOL_VERSION, data: concurrent, idempotentReplay: true });
@@ -276,6 +290,42 @@ function parseAgentRunRequest(value: unknown): AgentRunRequest {
     accessMode,
     ...(typeof source.clientRequestId === "string" && source.clientRequestId.trim() ? { clientRequestId: validateClientRequestId(source.clientRequestId) } : {}),
   };
+}
+
+function requirePersistedUserMessage(messageId: string, request: AgentRunRequest, store: SqliteStore) {
+  if (!request.sessionId) throw new TypeError("persistedMessageId requires sessionId");
+  if (request.attachments?.length) throw new TypeError("persistedMessageId cannot be combined with new attachments");
+  if (request.messages.length !== 1 || request.messages[0]?.role !== "user" || typeof request.messages[0].content !== "string") {
+    throw new TypeError("persistedMessageId requires exactly one text user message");
+  }
+  const entry = store.getTranscriptEntry(messageId);
+  if (!entry || entry.sessionId !== request.sessionId || entry.kind !== "message" || entry.role !== "user") {
+    throw new TypeError("persistedMessageId does not identify a user message in this session");
+  }
+  if (hasNewerConversationActivity(store, entry)) {
+    throw new TypeError("persistedMessageId has newer conversation activity");
+  }
+  if (entry.content.text !== request.messages[0].content) {
+    throw new TypeError("persistedMessageId content does not match the submitted message");
+  }
+  return entry;
+}
+
+function hasNewerConversationActivity(store: SqliteStore, entry: TranscriptEntryRecord): boolean {
+  let after = entry.sequence;
+  while (true) {
+    const page = store.transcriptAfter(entry.sessionId, after, 1_000);
+    if (page.some((candidate) => candidate.kind !== "compaction")) return true;
+    if (page.length < 1_000) return false;
+    after = page.at(-1)!.sequence;
+  }
+}
+
+function requireNoActiveReplacementRun(store: SqliteStore, entry: TranscriptEntryRecord): void {
+  const active = store.latestSessionAgentRun(entry.sessionId);
+  if (active?.status === "queued" || active?.status === "running") {
+    throw new TypeError("The persisted replacement already has an active run");
+  }
 }
 
 function parseAttachmentReferences(value: unknown): Array<{ artifactId: string }> {

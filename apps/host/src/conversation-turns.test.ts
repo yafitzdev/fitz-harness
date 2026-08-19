@@ -21,10 +21,11 @@ describe("ConversationTurnService", () => {
 
     const result = service.regenerateLatestAssistant("session-1", "run-target");
 
-    expect(result).toEqual({ prompt: "regenerate me", removedTranscriptEntries: 5, estimatedContextTokens: expect.any(Number) });
+    expect(result).toEqual({ prompt: "regenerate me", messageId: "target-user", sequence: 3, removedTranscriptEntries: 5, estimatedContextTokens: expect.any(Number) });
     expect(result.estimatedContextTokens).toBeLessThan(retainedTokens);
     expect(result.estimatedContextTokens).toBe(context.estimateSession("session-1"));
-    expect(store.transcriptAfter("session-1", 0).map((entry) => entry.id)).toEqual(["old-user", "old-answer"]);
+    expect(store.transcriptAfter("session-1", 0).map((entry) => entry.id)).toEqual(["old-user", "old-answer", "target-user"]);
+    expect(store.getTranscriptEntry("target-user")?.content.text).toBe("regenerate me");
     store.close();
   });
 
@@ -77,7 +78,8 @@ describe("ConversationTurnService", () => {
     const result = service.editUserTurn("session-1", { messageId: "edited-user", text: "new prompt", originalText: "old prompt" });
 
     expect(result).toEqual({ prompt: "new prompt", messageId: "edited-user", sequence: 2, removedTranscriptEntries: 3, estimatedContextTokens: expect.any(Number) });
-    expect(store.transcriptAfter("session-1", 0).map((entry) => entry.id)).toEqual(["user-before"]);
+    expect(store.transcriptAfter("session-1", 0).map((entry) => entry.id)).toEqual(["user-before", "edited-user"]);
+    expect(store.getTranscriptEntry("edited-user")?.content.text).toBe("new prompt");
     store.close();
   });
 
@@ -89,7 +91,8 @@ describe("ConversationTurnService", () => {
     append(store, "user-2", "message", "user", { text: "same" });
     const result = service.editUserTurn("session-1", { originalText: "same", text: "replacement" });
     expect(result.messageId).toBe("user-2");
-    expect(store.transcriptAfter("session-1", 0).map((entry) => entry.id)).toEqual(["user-1", "answer-1"]);
+    expect(store.transcriptAfter("session-1", 0).map((entry) => entry.id)).toEqual(["user-1", "answer-1", "user-2"]);
+    expect(store.getTranscriptEntry("user-2")?.content.text).toBe("replacement");
     store.close();
   });
 });

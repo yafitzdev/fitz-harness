@@ -64,12 +64,15 @@ export class ConversationSessionController {
   readonly #options: ConversationSessionOptions;
   #newChat = false;
   #inspectorChatId: string | undefined;
+  #newChatGeneration = 0;
+  #pendingSession: { generation: number; promise: Promise<string | undefined> } | undefined;
 
   constructor(options: ConversationSessionOptions) { this.#options = options; }
 
   get newChat(): boolean { return this.#newChat; }
 
   leaveNewChat(): void {
+    if (this.#newChat) this.#newChatGeneration += 1;
     this.#newChat = false;
     this.#options.workspace.classList.remove("new-chat-open");
     this.#options.composer.exitNewChat();
@@ -81,6 +84,7 @@ export class ConversationSessionController {
       return;
     }
     this.#options.showConversation();
+    this.#newChatGeneration += 1;
     this.#scopeInspector(undefined, true);
     const { projects, sidebar } = this.#options;
     if (projectBound) {
@@ -121,12 +125,32 @@ export class ConversationSessionController {
     const { projects } = this.#options;
     if (projects.currentSessionId) return projects.currentSessionId;
     if (!this.#newChat) return undefined;
+    const generation = this.#newChatGeneration;
+    if (this.#pendingSession?.generation === generation) return this.#pendingSession.promise;
+    const projectId = projects.currentProjectId;
+    const promise = this.#materializePromptSession(generation, projectId, title, routeId);
+    this.#pendingSession = { generation, promise };
+    try { return await promise; }
+    finally {
+      if (this.#pendingSession?.promise === promise) this.#pendingSession = undefined;
+    }
+  }
+
+  async #materializePromptSession(generation: number, projectId: string | undefined, title: string, routeId?: string): Promise<string> {
     const payload = { title, ...(routeId ? { routeId } : {}) };
-    const response = projects.currentProjectId
-      ? await this.#options.api(`/api/v1/projects/${projects.currentProjectId}/sessions`, "POST", payload)
+    const response = projectId
+      ? await this.#options.api(`/api/v1/projects/${projectId}/sessions`, "POST", payload)
       : await this.#options.api("/api/v1/chats", "POST", payload);
-    this.leaveNewChat();
-    if (projects.currentProjectId) projects.startSessionInProject(projects.currentProjectId, response.data);
+    const { projects } = this.#options;
+    if (generation !== this.#newChatGeneration || !this.#newChat || projects.currentSessionId || projects.currentProjectId !== projectId) {
+      throw staleConversationError();
+    }
+    // Successful materialization exits the landing without invalidating the
+    // generation that owns this response.
+    this.#newChat = false;
+    this.#options.workspace.classList.remove("new-chat-open");
+    this.#options.composer.exitNewChat();
+    if (projectId) projects.startSessionInProject(projectId, response.data);
     else projects.startChat(response.data);
     this.#scopeInspector(response.data.id, false);
     return response.data.id as string;
@@ -235,4 +259,8 @@ export class ConversationSessionController {
     }
     this.#options.messages.scrollTop = this.#options.messages.scrollHeight;
   }
+}
+
+function staleConversationError(): Error {
+  return Object.assign(new Error("Conversation changed while the chat was being created"), { name: "AbortError" });
 }

@@ -47,7 +47,11 @@ function harness() {
     loadingMessage: (text) => Object.assign(document.createElement("p"), { textContent: text }),
     appendSystem: vi.fn(),
   };
-  return { controller: new ConversationSessionController(options), options, projects, setSessionId: (id: string | undefined) => { currentSessionId = id; } };
+  return {
+    controller: new ConversationSessionController(options), options, projects,
+    setSessionId: (id: string | undefined) => { currentSessionId = id; },
+    setProjectId: (id: string | undefined) => { currentProjectId = id; },
+  };
 }
 
 describe("ConversationSessionController", () => {
@@ -66,6 +70,38 @@ describe("ConversationSessionController", () => {
     expect(controller.newChat).toBe(false);
     expect(projects.startChat).toHaveBeenCalledWith({ id: "session-1" });
     expect(options.inspector.setChat).toHaveBeenLastCalledWith("session-1");
+  });
+
+  it("shares concurrent materialization and creates only one session", async () => {
+    const { controller, options } = harness();
+    controller.beginNewChat(false);
+    let resolveCreate!: (value: Record<string, unknown>) => void;
+    vi.mocked(options.api).mockImplementation(() => new Promise((resolve) => { resolveCreate = resolve; }));
+
+    const first = controller.ensurePromptSession("Hello", "fast");
+    const second = controller.ensurePromptSession("Hello", "fast");
+    expect(options.api).toHaveBeenCalledOnce();
+    resolveCreate({ data: { id: "session-shared" } });
+
+    await expect(Promise.all([first, second])).resolves.toEqual(["session-shared", "session-shared"]);
+    expect(options.projects.startChat).toHaveBeenCalledOnce();
+  });
+
+  it("discards session creation that resolves after navigation", async () => {
+    const { controller, options, projects, setProjectId } = harness();
+    controller.beginNewChat(true);
+    let resolveCreate!: (value: Record<string, unknown>) => void;
+    vi.mocked(options.api).mockImplementation(() => new Promise((resolve) => { resolveCreate = resolve; }));
+    const pending = controller.ensurePromptSession("Hello", "fast");
+
+    controller.leaveNewChat();
+    setProjectId(undefined);
+    resolveCreate({ data: { id: "stale-session" } });
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(projects.startSessionInProject).not.toHaveBeenCalled();
+    expect(projects.startChat).not.toHaveBeenCalled();
+    expect(options.inspector.setChat).not.toHaveBeenCalledWith("stale-session");
   });
 
   it("restores transcript, pending approvals, active run, and media lineage", async () => {

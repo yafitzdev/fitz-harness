@@ -46,6 +46,51 @@ describe("PromptSubmissionController", () => {
     })]);
   });
 
+  it("reuses a durable edited turn without consuming unrelated composer attachments", async () => {
+    const consumeAttachments = vi.fn(() => [{ kind: "file" as const, dataUrl: "data:text/plain;base64,QQ==", mimeType: "text/plain", name: "draft.txt" }]);
+    const { controller, options, row } = setup({ consumeAttachments });
+
+    await controller.submit("Edited prompt", row, "message-edited");
+
+    expect(consumeAttachments).not.toHaveBeenCalled();
+    expect(options.uploadAttachment).not.toHaveBeenCalled();
+    expect(options.startRun).toHaveBeenCalledWith(expect.objectContaining({
+      persistedMessageId: "message-edited",
+      messages: [{ role: "user", content: "Edited prompt" }],
+    }));
+  });
+
+  it("serializes duplicate submissions while the first chat is materializing", async () => {
+    let resolveSession!: (value: string) => void;
+    const ensureSession = vi.fn(() => new Promise<string>((resolve) => { resolveSession = resolve; }));
+    const consumeAttachments = vi.fn(() => []);
+    const { controller, options } = setup({ sessionId: () => undefined, ensureSession, consumeAttachments });
+
+    const first = controller.submit("Build it");
+    const second = controller.submit("Build it");
+    expect(ensureSession).toHaveBeenCalledOnce();
+    expect(consumeAttachments).toHaveBeenCalledOnce();
+    resolveSession("session-created");
+    await Promise.all([first, second]);
+
+    expect(options.appendUser).toHaveBeenCalledOnce();
+    expect(options.startRun).toHaveBeenCalledOnce();
+  });
+
+  it("accepts media commands after an admitted chat run while that run is still active", async () => {
+    let finishRun!: () => void;
+    const startRun = vi.fn(() => new Promise<void>((resolve) => { finishRun = resolve; }));
+    const { controller, options } = setup({ startRun });
+
+    const activeRun = controller.submit("Build it");
+    expect(startRun).toHaveBeenCalledOnce();
+    await controller.submit({ content: "a slow orbit", mediaCommand: "video" });
+
+    expect(options.showMediaCreation).toHaveBeenCalledOnce();
+    finishRun();
+    await activeRun;
+  });
+
   it("restores a steering draft when the active run rejects it", async () => {
     const { controller, options, row } = setup({ steerRun: vi.fn(async () => { throw new Error("finished"); }) });
     await controller.steer("one more thing");
@@ -100,6 +145,25 @@ describe("PromptSubmissionController", () => {
     expect(options.showError).toHaveBeenCalledWith("Error: upload failed");
     expect(options.startRun).not.toHaveBeenCalled();
     expect(options.clearDraft).not.toHaveBeenCalled();
+  });
+
+  it("does not submit an uploaded prompt into a conversation selected during the upload", async () => {
+    let current = true;
+    let resolveUpload!: (value: { id: string }) => void;
+    const uploadAttachment = vi.fn(() => new Promise<{ id: string }>((resolve) => { resolveUpload = resolve; }));
+    const attachment = { kind: "file" as const, dataUrl: "data:text/plain;base64,SGVsbG8=", mimeType: "text/plain", name: "note.txt" };
+    const { controller, options } = setup({
+      consumeAttachments: () => [attachment], uploadAttachment,
+      isSessionCurrent: () => current,
+    });
+
+    const pending = controller.submit("analyse this");
+    current = false;
+    resolveUpload({ id: "artifact-old-chat" });
+    await pending;
+
+    expect(options.appendUser).not.toHaveBeenCalled();
+    expect(options.startRun).not.toHaveBeenCalled();
   });
 
   it("shows the inline creation card for a bare media command with a default prompt", async () => {

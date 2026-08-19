@@ -6,6 +6,8 @@ type Json = Record<string, any>;
 
 export interface TranscriptActivity {
   clear(): void;
+  isolateHistory?(render: () => void): void;
+  finishWork?(completedAt?: string, boundary?: "completed" | "next-message"): void;
   appendTool(toolName: string, input: unknown, toolCallId: string, running: boolean, createdAt?: string): HTMLElement;
   completeTool(row: HTMLElement, toolName: string, input: unknown, result: unknown, isError: boolean, completedAt?: string): void;
   appendReasoning(running: boolean, createdAt?: string): HTMLElement;
@@ -34,10 +36,22 @@ export class ConversationTranscript {
   readonly #window = new TranscriptWindow();
   #hasServerHistory = false;
   #estimatedContextTokens: number | undefined;
+  #generation = 0;
+  #loadingEarlierGeneration: number | undefined;
 
-  constructor(options: ConversationTranscriptOptions) { this.#options = options; }
+  constructor(options: ConversationTranscriptOptions) {
+    this.#options = options;
+    // Older transcript pages are an implementation detail, not a chat event.
+    // Pull them in when the user reaches the top instead of inserting a
+    // "Show earlier events" control into the conversation.
+    this.#options.messages.addEventListener("scroll", () => {
+      if (this.#options.messages.scrollTop <= 64) void this.#expandEarlier();
+    }, { passive: true });
+  }
 
   restore(entries: Json[], page: TranscriptPageState = {}): number {
+    this.#generation += 1;
+    this.#loadingEarlierGeneration = undefined;
     this.#runSequences.clear();
     this.#hasServerHistory = page.hasEarlier === true;
     this.#estimatedContextTokens = Number.isFinite(Number(page.estimatedContextTokens)) ? Number(page.estimatedContextTokens) : undefined;
@@ -54,12 +68,11 @@ export class ConversationTranscript {
     for (const entry of entries) {
       this.#restoreEntry(entry, tools, planToolCalls);
     }
-    if (this.#window.hiddenCount > 0 || this.#hasServerHistory) this.#options.messages.prepend(this.#earlierButton());
   }
 
   eventSequenceForRun(runId: string): number { return this.#runSequences.get(runId) ?? 0; }
 
-  /** Removes the discarded branch after an in-place user-message edit. */
+  /** Removes a discarded branch from the given transcript sequence onward. */
   truncateFrom(sequence: number): void {
     if (!Number.isFinite(sequence)) return;
     this.#window.truncateFrom(sequence);
@@ -68,32 +81,55 @@ export class ConversationTranscript {
     this.#rebuildHistory();
   }
 
-  #earlierButton(): HTMLButtonElement {
-    const button = document.createElement("button"); button.type = "button"; button.className = "transcript-load-earlier"; button.textContent = "Show earlier events";
-    button.addEventListener("click", () => { void this.#expandEarlier(button) });
-    return button;
-  }
-
-  async #expandEarlier(button: HTMLButtonElement): Promise<void> {
-    if (button.disabled) return;
-    button.disabled = true;
-    const oldHeight = this.#options.messages.scrollHeight;
-    const oldTop = this.#options.messages.scrollTop;
+  async #expandEarlier(): Promise<void> {
+    const generation = this.#generation;
+    if (this.#loadingEarlierGeneration === generation || (this.#window.hiddenCount === 0 && !this.#hasServerHistory)) return;
+    this.#loadingEarlierGeneration = generation;
     try {
       if (this.#window.hiddenCount > 0) {
-        this.#render(this.#window.expand());
+        const previousLength = this.#window.visible.length;
+        const expanded = this.#window.expand();
+        this.#prepend(expanded.slice(0, Math.max(0, expanded.length - previousLength)));
       } else if (this.#hasServerHistory && this.#options.loadEarlier && this.#window.oldestSequence !== undefined) {
         const response = await this.#options.loadEarlier(this.#window.oldestSequence);
+        if (generation !== this.#generation) return;
         this.#hasServerHistory = response.page?.hasEarlier === true;
         this.#recordSequences(response.data);
-        this.#render(this.#window.prepend(response.data));
+        this.#window.prepend(response.data);
+        this.#prepend(response.data);
       }
+      if (generation !== this.#generation) return;
       this.#rebuildHistory();
-      this.#options.messages.scrollTop = oldTop + this.#options.messages.scrollHeight - oldHeight;
-    } catch {
-      button.textContent = "Could not load earlier events";
-      button.disabled = false;
+    } catch { /* Keep the current bounded page; the next top scroll retries. */ }
+    finally {
+      if (this.#loadingEarlierGeneration === generation) this.#loadingEarlierGeneration = undefined;
     }
+  }
+
+  /** Restores only the newly revealed prefix. Existing nodes stay connected so
+   * live projectors, message actions, media cards, and later turns retain their
+   * identity and event listeners. */
+  #prepend(entries: readonly Json[]): void {
+    if (entries.length === 0) return;
+    // Measure at insertion time. A server page can arrive while live output is
+    // still growing at the bottom or after the user has moved the viewport.
+    const oldHeight = this.#options.messages.scrollHeight;
+    const oldTop = this.#options.messages.scrollTop;
+    const existing = new Set(this.#options.messages.childNodes);
+    const anchor = this.#options.messages.firstChild;
+    const render = () => {
+      const tools = new Map<string, { row: HTMLElement; toolName: string; input: unknown }>();
+      const planToolCalls = new Set<string>();
+      for (const entry of entries) this.#restoreEntry(entry, tools, planToolCalls);
+    };
+    if (this.#options.activity.isolateHistory) this.#options.activity.isolateHistory(render);
+    else render();
+    const fragment = document.createDocumentFragment();
+    for (const node of [...this.#options.messages.childNodes]) {
+      if (!existing.has(node)) fragment.append(node);
+    }
+    this.#options.messages.insertBefore(fragment, anchor);
+    this.#options.messages.scrollTop = oldTop + this.#options.messages.scrollHeight - oldHeight;
   }
 
   #recordSequences(entries: readonly Json[]): void {
@@ -115,6 +151,7 @@ export class ConversationTranscript {
       const text = String(entry.content?.text ?? "");
       if (entry.role === "assistant" && entry.content?.phase === "commentary") this.#options.appendCommentary(text, entry.createdAt);
       else {
+        this.#options.activity.finishWork?.(entry.createdAt, entry.role === "user" ? "next-message" : "completed");
         const runId = typeof entry.content?.runId === "string" ? entry.content.runId : undefined;
         const attachments = Array.isArray(entry.content?.attachments) ? entry.content.attachments as MessageAttachment[] : [];
         const metadata: TranscriptMessageMetadata = {
