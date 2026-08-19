@@ -1,3 +1,5 @@
+import type { RecipeSpeculativeDecoding, SpeculativeDrafter } from "@fitz/protocol";
+
 type Json = Record<string, any>;
 type FieldType = "text" | "number" | "boolean" | "lines";
 interface Field { key: string; label: string; type: FieldType; placeholder?: string; help?: string; advanced?: boolean }
@@ -32,11 +34,17 @@ const FIELDS: Record<string, Field[]> = {
 export class RecipeConfigurationEditor {
   readonly #controls = new Map<string, HTMLInputElement | HTMLTextAreaElement>();
   #source: Json = {};
+  #speculativeDecoding: RecipeSpeculativeDecoding | undefined;
+  #speculativeDrafters: SpeculativeDrafter[] = [];
+  #speculativeSelect: HTMLSelectElement | undefined;
   constructor(readonly root: HTMLElement) {}
 
-  load(adapter: string, configuration: Json, _recipe: Json = {}, options: { showRuntimeSettings?: boolean } = {}): void {
+  load(adapter: string, configuration: Json, recipe: Json = {}, options: { showRuntimeSettings?: boolean; speculativeDrafters?: SpeculativeDrafter[] } = {}): void {
     this.#source = structuredClone(configuration ?? {});
-    this.#controls.clear(); this.root.replaceChildren();
+    this.#controls.clear(); this.#speculativeDecoding = readSpeculativeDecoding(recipe.speculativeDecoding);
+    this.#speculativeDrafters = [...(options.speculativeDrafters ?? [])];
+    this.#speculativeSelect = undefined;
+    this.root.replaceChildren();
     const fields = FIELDS[adapter];
     if (!fields) throw new TypeError(`Unsupported recipe adapter: ${adapter}`);
     if (options.showRuntimeSettings) {
@@ -48,6 +56,36 @@ export class RecipeConfigurationEditor {
       for (const field of fields) grid.append(this.#field(field, configuration[field.key]));
       this.root.append(heading, grid);
     }
+    if (adapter === "openai-managed" && recipe.playbookId === "llama.cpp" && (this.#speculativeDecoding || this.#speculativeDrafters.length > 0)) {
+      this.#renderSpeculativeDecoding();
+    }
+  }
+
+  /** Returns undefined when the recipe has no drafter control, an object when
+   * enabled, or null when an existing automatically-linked drafter was
+   * explicitly disabled. The null value is intentional: the host parser uses
+   * it to clear the persisted relationship instead of silently preserving it. */
+  speculativeDecodingValue(): RecipeSpeculativeDecoding | null | undefined {
+    if (!this.#speculativeSelect) return undefined;
+    const selectedId = this.#speculativeSelect.value;
+    if (!selectedId) return null;
+    if (selectedId === "native-mtp") {
+      return this.#speculativeDecoding?.strategy === "draft-mtp"
+        ? structuredClone(this.#speculativeDecoding)
+        : null;
+    }
+    const candidate = this.#speculativeDrafters.find((item) => item.id === selectedId);
+    if (candidate) {
+      const current = this.#speculativeDecoding?.strategy !== "draft-mtp" && this.#speculativeDecoding?.drafter.id === candidate.id ? this.#speculativeDecoding : undefined;
+      return {
+        strategy: current?.strategy ?? "draft-dflash",
+        drafter: structuredClone(candidate),
+        maxDraftTokens: current?.maxDraftTokens ?? 15,
+        ...(current?.gpuLayers !== undefined ? { gpuLayers: current.gpuLayers } : { gpuLayers: "all" as const }),
+        source: current?.source === "auto" ? "auto" : "manual",
+      };
+    }
+    return this.#speculativeDecoding ? structuredClone(this.#speculativeDecoding) : null;
   }
 
   value(): Json {
@@ -77,4 +115,43 @@ export class RecipeConfigurationEditor {
     this.#controls.set(field.key, control); return label;
   }
 
+  #renderSpeculativeDecoding(): void {
+    const heading = document.createElement("div"); heading.className = "configuration-section-heading speculative-section-heading";
+    const title = document.createElement("strong"); title.textContent = "Speculative decoding";
+    const description = document.createElement("small"); description.textContent = "The target can use built-in MTP heads or a compatible auxiliary drafter.";
+    heading.append(title, description);
+    const label = document.createElement("label"); label.className = "speculative-toggle";
+    const caption = document.createElement("span"); caption.textContent = "Drafter";
+    const select = document.createElement("select"); select.dataset.speculativeDrafter = "true";
+    const disabled = document.createElement("option"); disabled.value = ""; disabled.textContent = "Disabled"; select.append(disabled);
+    if (this.#speculativeDecoding?.strategy === "draft-mtp") {
+      const native = document.createElement("option"); native.value = "native-mtp"; native.textContent = `Native MTP · ${this.#speculativeDecoding.maxDraftTokens} tokens`; native.selected = true; select.append(native);
+    }
+    const candidates = [...this.#speculativeDrafters];
+    const currentDrafter = this.#speculativeDecoding?.strategy === "draft-mtp" ? undefined : this.#speculativeDecoding?.drafter;
+    if (currentDrafter && !candidates.some((item) => item.id === currentDrafter.id)) candidates.push(currentDrafter);
+    for (const candidate of candidates.sort((left, right) => left.modelId.localeCompare(right.modelId))) {
+      const option = document.createElement("option"); option.value = candidate.id; option.textContent = candidate.modelId; option.title = candidate.path;
+      if (candidate.id === currentDrafter?.id) option.selected = true;
+      select.append(option);
+    }
+    if (!this.#speculativeDecoding && candidates.length > 0) select.value = "";
+    const source = document.createElement("small"); source.textContent = this.#speculativeDecoding?.source === "manual" ? "Configured manually" : this.#speculativeDecoding ? "Detected automatically" : "Choose a compatible artifact";
+    label.append(caption, select, source);
+    this.#speculativeSelect = select;
+    this.root.append(heading, label);
+  }
+
+}
+
+function readSpeculativeDecoding(value: unknown): RecipeSpeculativeDecoding | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const candidate = value as Partial<RecipeSpeculativeDecoding>;
+  if (candidate.strategy !== "draft-model" && candidate.strategy !== "draft-dflash" && candidate.strategy !== "draft-mtp") return undefined;
+  if (!Number.isInteger(candidate.maxDraftTokens) || (candidate.maxDraftTokens as number) < 1) return undefined;
+  if (candidate.strategy === "draft-mtp") return structuredClone(candidate as RecipeSpeculativeDecoding);
+  if (!candidate.drafter || typeof candidate.drafter !== "object") return undefined;
+  const drafter = candidate.drafter as Partial<SpeculativeDrafter>;
+  if (typeof drafter.id !== "string" || typeof drafter.modelId !== "string" || typeof drafter.path !== "string") return undefined;
+  return structuredClone(candidate as RecipeSpeculativeDecoding);
 }

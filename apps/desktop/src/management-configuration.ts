@@ -1,4 +1,4 @@
-import type { AgentEffort, AgentTopologyPresentation, EngineRegistration, InstanceSnapshot, Recipe, Route } from "@fitz/protocol";
+import type { AgentEffort, AgentTopologyPresentation, EngineRegistration, InstanceSnapshot, Recipe, Route, SpeculativeDrafter } from "@fitz/protocol";
 
 export type CloudRouteRole = "smart" | "fast";
 
@@ -22,6 +22,7 @@ export interface ManagementConfiguration {
   resources: Record<string, unknown>;
   routes: Route[];
   recipes: Recipe[];
+  speculativeDrafters: SpeculativeDrafter[];
   engines: EngineRegistration[];
   cloudRoutes: Partial<Record<CloudRouteRole, string>>;
   chatDefaults: ChatDefaults;
@@ -67,6 +68,7 @@ export function parseManagementConfiguration(value: unknown): ManagementConfigur
     resources: value.resources,
     routes,
     recipes: value.recipes as Recipe[],
+    speculativeDrafters: Array.isArray(value.speculativeDrafters) ? value.speculativeDrafters as SpeculativeDrafter[] : [],
     engines: value.engines as EngineRegistration[],
     cloudRoutes,
     chatDefaults: { route: chatDefaults.route, effort: chatDefaults.effort },

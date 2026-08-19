@@ -89,7 +89,42 @@ describe("ManagedOpenAIEngineAdapter", () => {
     const handle = (logs: string[]) => ({ logs } as ManagedOpenAIHandle);
 
     await expect(adapter.contextCapacity(handle(["GPU KV cache size: 637,486 tokens"]), recipe)).resolves.toBe(637_486);
+    await expect(adapter.contextCapacity(handle(["llama_server: n_slots = 3, n_ctx_slot = 11008, kv_unified = 'false'"]), recipe)).resolves.toBe(11_008);
     await expect(adapter.contextCapacity(handle(["server ready"]), recipe)).resolves.toBe(32_768);
+  });
+
+  it("translates a typed llama drafter relationship at launch without persisting engine flags", async () => {
+    const adapter = new ManagedOpenAIEngineAdapter({ linuxRuntimes: new Map([["inference-linux", { distribution: "Fitz-Inference" }]]) });
+    const recipe = managedRecipe({
+      enginePath: "/opt/fitz/llm/engines/llama.cpp", runtime: "linux-managed", runtimeId: "inference-linux", command: "./build/server",
+      args: ["--model", "{model}", "--ctx-size", "{context}"], workingDirectory: ".", healthPath: "/v1/models", readinessTimeoutMs: 30_000,
+    });
+    const linked = { ...recipe, playbookId: "llama.cpp", speculativeDecoding: {
+      strategy: "draft-dflash" as const,
+      drafter: { id: "drafter-1", modelId: "Qwen-DFlash", path: "/opt/fitz/llm/models/gguf/qwen-dflash.gguf" },
+      maxDraftTokens: 15, gpuLayers: "all" as const, source: "auto" as const,
+    }};
+
+    await expect(adapter.validateRecipe(linked)).resolves.toEqual({ valid: true, issues: [] });
+    await expect(adapter.buildLaunchSpec(linked, { host: "127.0.0.1", port: 19191 })).resolves.toMatchObject({
+      args: expect.arrayContaining(["--model-draft", "/opt/fitz/llm/models/gguf/qwen-dflash.gguf", "--spec-type", "draft-dflash", "--spec-draft-ngl", "999", "--spec-draft-n-max", "15"]),
+    });
+  });
+
+  it("launches native MTP without a separate draft-model argument", async () => {
+    const adapter = new ManagedOpenAIEngineAdapter({ linuxRuntimes: new Map([["inference-linux", { distribution: "Fitz-Inference" }]]) });
+    const recipe = managedRecipe({
+      enginePath: "/opt/fitz/llm/engines/llama.cpp", runtime: "linux-managed", runtimeId: "inference-linux", command: "./build/server",
+      args: ["--model", "{model}", "--ctx-size", "{context}"], workingDirectory: ".", healthPath: "/v1/models", readinessTimeoutMs: 30_000,
+    });
+    const mtp = { ...recipe, playbookId: "llama.cpp", speculativeDecoding: {
+      strategy: "draft-mtp" as const, maxDraftTokens: 4, gpuLayers: "all" as const, source: "auto" as const,
+    }};
+
+    await expect(adapter.validateRecipe(mtp)).resolves.toEqual({ valid: true, issues: [] });
+    const spec = await adapter.buildLaunchSpec(mtp, { host: "127.0.0.1", port: 19192 });
+    expect(spec.args).toEqual(expect.arrayContaining(["--spec-type", "draft-mtp", "--spec-draft-n-max", "4"]));
+    expect(spec.args).not.toContain("--model-draft");
   });
 });
 

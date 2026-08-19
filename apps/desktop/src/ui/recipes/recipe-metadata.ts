@@ -1,3 +1,5 @@
+import type { RecipeSpeculativeDecoding } from "@fitz/protocol";
+
 export type RecipeModality = "text" | "image" | "video" | "audio";
 
 interface MediaLimits {
@@ -12,6 +14,7 @@ export interface RecipeMetadataOptions {
   /** Inference/provider engine, rendered before every other metadata tag. */
   engine?: string;
   modelId: string;
+  speculativeDecoding?: RecipeSpeculativeDecoding;
   contextTokens?: number;
   showConcurrency?: boolean;
   capabilities?: {
@@ -35,6 +38,11 @@ export function recipeMetadata(options: RecipeMetadataOptions): HTMLElement[] {
     ...(options.engine ? [label(engineDisplayName(options.engine), "recipe-engine-label")] : []),
     label(options.modelId),
   ];
+  if (options.speculativeDecoding) {
+    labels.push(options.speculativeDecoding.strategy === "draft-mtp"
+      ? label(`Native MTP · ${options.speculativeDecoding.maxDraftTokens}`, "recipe-speculative-label", "Uses prediction heads built into the target model")
+      : label(`Drafter: ${options.speculativeDecoding.drafter.modelId}`, "recipe-speculative-label", "Auxiliary drafter attached to this target recipe"));
+  }
   const modalities = outputModalities(options.capabilities);
   for (const modality of modalities) {
     labels.push(label(capitalize(modality), `media-modality-badge media-${modality}`, `Generates ${modality}`));

@@ -81,6 +81,13 @@ export function validateNInferConfiguration(recipe: Recipe): ValidationIssue[] {
   try {
     const config = readNInferConfiguration(recipe);
     const issues: ValidationIssue[] = [];
+    if (recipe.speculativeDecoding) {
+      issues.push({
+        level: "error",
+        code: "unsupported_speculative_decoding",
+        message: "NInfer uses its own typed speculativeMode configuration; a separate drafter recipe is not supported by this adapter",
+      });
+    }
     if (config.maxContext < 2_048 || config.maxContext > 262_144) {
       issues.push({
         level: "error",

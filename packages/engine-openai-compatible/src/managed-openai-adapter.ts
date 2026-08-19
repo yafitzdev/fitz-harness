@@ -11,7 +11,7 @@ import type {
   StopMode,
   StopReport,
 } from "@fitz/inference-core";
-import type { InferenceDelta, InferenceRequest, LaunchSpec, Recipe, ResourceEstimate, ValidationIssue, ValidationReport } from "@fitz/protocol";
+import type { InferenceDelta, InferenceRequest, LaunchSpec, Recipe, RecipeSpeculativeDecoding, ResourceEstimate, ValidationIssue, ValidationReport } from "@fitz/protocol";
 import { OpenAICompatibleClient } from "./openai-compatible-client.js";
 
 export interface ManagedOpenAIConfiguration {
@@ -68,7 +68,10 @@ export class ManagedOpenAIEngineAdapter implements EngineAdapter<ManagedOpenAIHa
   async buildLaunchSpec(recipe: Recipe, allocation: PortAllocation): Promise<LaunchSpec> {
     const config = readManagedOpenAIConfiguration(recipe);
     const values = { host: allocation.host, port: String(allocation.port), model: recipe.modelId, context: String(recipe.contextTokens) };
-    const args = config.args.map((argument) => interpolate(argument, values));
+    const interpolated = config.args.map((argument) => interpolate(argument, values));
+    const args = recipe.speculativeDecoding && recipe.playbookId === "llama.cpp"
+      ? [...stripLlamaSpeculativeArgs(interpolated), ...llamaSpeculativeArgs(recipe.speculativeDecoding)]
+      : interpolated;
     const workingDirectory = posix.resolve(config.enginePath, config.workingDirectory);
     const target = this.#linuxRuntimes.get(config.runtimeId);
     if (!target) throw new Error(`Managed Linux runtime is unavailable: ${config.runtimeId}`);
@@ -152,6 +155,7 @@ export class ManagedOpenAIEngineAdapter implements EngineAdapter<ManagedOpenAIHa
  * behind the adapter boundary. */
 function detectedContextCapacity(logs: readonly string[]): number | undefined {
   const patterns = [
+    /(?:n_ctx_slot|n_ctx_seq|context size per slot)\s*[=:]\s*([0-9][0-9,]*)/i,
     /GPU KV cache size:\s*([0-9][0-9,]*)\s*tokens/i,
     /["']?kv[_ -]?capacity["']?\s*[:=]\s*([0-9][0-9,]*)/i,
     /shared[_ -]?context(?:[_ -]?tokens)?\s*[:=]\s*([0-9][0-9,]*)/i,
@@ -185,6 +189,8 @@ export function readManagedOpenAIConfiguration(recipe: Recipe): ManagedOpenAICon
 export function validateManagedOpenAIConfiguration(recipe: Recipe): ValidationIssue[] {
   try {
     const config = readManagedOpenAIConfiguration(recipe);
+    const speculativeIssues = validateManagedSpeculativeDecoding(recipe);
+    if (speculativeIssues.length > 0) return speculativeIssues;
     if (!posix.isAbsolute(config.enginePath)) return [{ level: "error", code: "invalid_engine_path", message: "enginePath must be absolute" }];
     const workingDirectory = posix.resolve(config.enginePath, config.workingDirectory);
     if (!isWithinPosix(config.enginePath, workingDirectory)) return [{ level: "error", code: "invalid_working_directory", message: "workingDirectory must stay inside enginePath" }];
@@ -197,6 +203,58 @@ export function validateManagedOpenAIConfiguration(recipe: Recipe): ValidationIs
     if (config.readinessTimeoutMs < 1) return [{ level: "error", code: "invalid_timeout", message: "readinessTimeoutMs must be positive" }];
     return [];
   } catch (error) { return [{ level: "error", code: "invalid_configuration", message: errorMessage(error) }]; }
+}
+
+function validateManagedSpeculativeDecoding(recipe: Recipe): ValidationIssue[] {
+  const value = recipe.speculativeDecoding;
+  if (!value) return [];
+  if (recipe.playbookId !== "llama.cpp") {
+    return [{ level: "error", code: "unsupported_speculative_decoding", message: "This managed adapter only translates speculative decoding for llama.cpp recipes" }];
+  }
+  if (!isSpeculativeDecoding(value)) {
+    return [{ level: "error", code: "invalid_speculative_decoding", message: "speculativeDecoding must contain a drafter path, strategy, and positive maxDraftTokens" }];
+  }
+  if (value.strategy !== "draft-mtp" && !posix.isAbsolute(value.drafter.path)) {
+    return [{ level: "error", code: "invalid_drafter_path", message: "The managed drafter path must be absolute in the runtime" }];
+  }
+  return [];
+}
+
+function isSpeculativeDecoding(value: RecipeSpeculativeDecoding): boolean {
+  const baseValid = (value.strategy === "draft-model" || value.strategy === "draft-dflash" || value.strategy === "draft-mtp")
+    && Number.isInteger(value.maxDraftTokens) && value.maxDraftTokens > 0
+    && (value.gpuLayers === undefined || value.gpuLayers === "all" || value.gpuLayers === "auto" || (Number.isInteger(value.gpuLayers) && value.gpuLayers >= 0));
+  if (!baseValid || value.strategy === "draft-mtp") return baseValid;
+  return typeof value.drafter?.id === "string" && value.drafter.id.length > 0
+    && typeof value.drafter.modelId === "string" && value.drafter.modelId.length > 0
+    && typeof value.drafter.path === "string" && value.drafter.path.length > 0;
+}
+
+function llamaSpeculativeArgs(value: RecipeSpeculativeDecoding): string[] {
+  if (value.strategy === "draft-mtp") {
+    return [
+      "--spec-type", value.strategy,
+      "--spec-draft-ngl", value.gpuLayers === "all" || value.gpuLayers === "auto" || value.gpuLayers === undefined ? "999" : String(value.gpuLayers),
+      "--spec-draft-n-max", String(value.maxDraftTokens),
+    ];
+  }
+  return [
+    "--model-draft", value.drafter.path,
+    "--spec-type", value.strategy,
+    "--spec-draft-ngl", value.gpuLayers === "all" || value.gpuLayers === "auto" || value.gpuLayers === undefined ? "999" : String(value.gpuLayers),
+    "--spec-draft-n-max", String(value.maxDraftTokens),
+  ];
+}
+
+function stripLlamaSpeculativeArgs(args: string[]): string[] {
+  const options = new Set(["--model-draft", "--spec-type", "--spec-draft-ngl", "--spec-draft-n-max"]);
+  const result: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const option = args[index]!.split("=", 1)[0] ?? "";
+    if (!options.has(option)) { result.push(args[index]!); continue; }
+    if (!args[index]!.includes("=") && index + 1 < args.length) index += 1;
+  }
+  return result;
 }
 
 function interpolate(value: string, replacements: Record<string, string>): string { return value.replace(/\{(host|port|model|context)\}/g, (_match, key: string) => replacements[key] ?? ""); }

@@ -15,6 +15,21 @@ describe("recipeMetadata", () => {
     expect(labels.map((label) => label.textContent)).toContain("8 concurrent");
   });
 
+  it("marks a target recipe's drafter without exposing the drafter as a model card", () => {
+    const labels = recipeMetadata({
+      modelId: "Qwen3.8-27B-Q5_K_S",
+      speculativeDecoding: { strategy: "draft-dflash", drafter: { id: "d1", modelId: "Qwen3.8-27B-DFlash2", path: "/models/dflash.gguf" }, maxDraftTokens: 15 },
+      capabilities: { chatCompletions: true },
+    });
+    expect(labels.map((label) => label.textContent)).toContain("Drafter: Qwen3.8-27B-DFlash2");
+  });
+
+  it("shows native MTP without presenting it as an external drafter", () => {
+    const labels = recipeMetadata({ modelId: "Qwen3.8-27B", speculativeDecoding: { strategy: "draft-mtp", maxDraftTokens: 4 } });
+    expect(labels.map((label) => label.textContent)).toContain("Native MTP · 4");
+    expect(labels.map((label) => label.textContent).some((text) => text?.startsWith("Drafter:"))).toBe(false);
+  });
+
   it("puts a normalized engine tag before every other label when supplied", () => {
     const labels = recipeMetadata({ engine: "vllm", modelId: "worker", capabilities: { chatCompletions: true } });
     expect(labels.map((label) => label.textContent)).toEqual(["vLLM", "worker", "Text", "Sequential"]);

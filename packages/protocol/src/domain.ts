@@ -60,6 +60,35 @@ export interface RecipeLifecyclePolicy {
   minimumResidencySeconds: number;
 }
 
+/** A model relationship used for speculative decoding.  The relationship is
+ * deliberately part of the recipe contract rather than an engine's raw
+ * command-line arguments: each adapter decides how (or whether) its engine
+ * expresses the drafter link. */
+export type SpeculativeDecodingStrategy = "draft-model" | "draft-dflash" | "draft-mtp";
+export type SpeculativeDrafterSource = "auto" | "manual";
+
+export interface SpeculativeDrafter {
+  /** Stable artifact identity, not a route or a user-visible model recipe. */
+  id: string;
+  modelId: string;
+  /** Runtime-visible path supplied to an engine adapter. */
+  path: string;
+}
+
+interface RecipeSpeculativeDecodingBase {
+  maxDraftTokens: number;
+  gpuLayers?: number | "all" | "auto";
+  source?: SpeculativeDrafterSource;
+}
+
+/** Native MTP heads live inside the target model and therefore have no
+ * separate drafter artifact. External draft strategies retain an explicit
+ * target -> drafter relationship. */
+export type RecipeSpeculativeDecoding = RecipeSpeculativeDecodingBase & (
+  | { strategy: "draft-mtp"; drafter?: never }
+  | { strategy: "draft-model" | "draft-dflash"; drafter: SpeculativeDrafter }
+);
+
 export interface Recipe {
   id: string;
   playbookId: string;
@@ -75,6 +104,9 @@ export interface Recipe {
   capabilities: EngineCapabilities;
   lifecycle: RecipeLifecyclePolicy;
   configuration: Readonly<Record<string, unknown>>;
+  /** Optional target -> drafter relationship. Drafters are never standalone
+   * recipes or routes. */
+  speculativeDecoding?: RecipeSpeculativeDecoding | null;
 }
 
 export type EngineConnectionMode = "managed" | "external";

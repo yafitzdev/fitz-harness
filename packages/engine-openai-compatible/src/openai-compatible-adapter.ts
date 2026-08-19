@@ -133,6 +133,9 @@ export function readConfiguration(recipe: Recipe): OpenAICompatibleConfiguration
 export function validateConfiguration(recipe: Recipe): ValidationIssue[] {
   try {
     const config = readConfiguration(recipe);
+    if (recipe.speculativeDecoding) {
+      return [{ level: "error", code: "unsupported_speculative_decoding", message: "External OpenAI-compatible endpoints must configure speculative decoding on the provider" }];
+    }
     const url = new URL(config.baseUrl);
     if (url.protocol !== "http:" && url.protocol !== "https:") {
       return [{ level: "error", code: "invalid_protocol", message: "baseUrl must use http or https" }];

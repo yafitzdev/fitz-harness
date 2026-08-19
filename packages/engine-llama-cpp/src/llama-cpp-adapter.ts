@@ -17,6 +17,7 @@ import type {
   InferenceRequest,
   LaunchSpec,
   Recipe,
+  RecipeSpeculativeDecoding,
   ResourceEstimate,
   ValidationIssue,
   ValidationReport,
@@ -104,7 +105,8 @@ export class LlamaCppEngineAdapter implements EngineAdapter<LlamaCppHandle> {
     ];
     if (config.gpuLayers !== undefined) args.push("--gpu-layers", String(config.gpuLayers));
     if (config.threads !== undefined) args.push("--threads", String(config.threads));
-    if (config.extraArgs) args.push(...config.extraArgs);
+    if (recipe.speculativeDecoding) args.push(...llamaSpeculativeArgs(recipe.speculativeDecoding));
+    if (config.extraArgs) args.push(...(recipe.speculativeDecoding ? stripLlamaSpeculativeArgs(config.extraArgs) : config.extraArgs));
     return { executable: config.executable, args, env: {}, internalHost: allocation.host, internalPort: allocation.port };
   }
 
@@ -223,14 +225,55 @@ export function validateLlamaCppConfiguration(recipe: Recipe): ValidationIssue[]
     const issues: ValidationIssue[] = [];
     if (config.contextTokens < 512) issues.push({ level: "error", code: "invalid_context", message: "contextTokens must be at least 512" });
     if (config.gpuLayers !== undefined && config.gpuLayers < 0) issues.push({ level: "error", code: "invalid_gpu_layers", message: "gpuLayers cannot be negative" });
-    const reserved = ["--model", "-m", "--host", "--port", "--api-key", "--ctx-size"];
+    const reserved = ["--model", "-m", "--host", "--port", "--api-key", "--ctx-size", "--model-draft", "--spec-type", "--spec-draft-ngl", "--spec-draft-n-max"];
     if (config.extraArgs?.some((arg) => reserved.some((item) => arg === item || arg.startsWith(`${item}=`)))) {
       issues.push({ level: "error", code: "reserved_argument", message: "extraArgs cannot override Fitz-managed arguments" });
+    }
+    if (recipe.speculativeDecoding && !isSpeculativeDecoding(recipe.speculativeDecoding)) {
+      issues.push({ level: "error", code: "invalid_speculative_decoding", message: "speculativeDecoding must contain a drafter path, strategy, and positive maxDraftTokens" });
     }
     return issues;
   } catch (error) {
     return [{ level: "error", code: "invalid_configuration", message: errorMessage(error) }];
   }
+}
+
+function isSpeculativeDecoding(value: RecipeSpeculativeDecoding): boolean {
+  const baseValid = (value.strategy === "draft-model" || value.strategy === "draft-dflash" || value.strategy === "draft-mtp")
+    && Number.isInteger(value.maxDraftTokens) && value.maxDraftTokens > 0
+    && (value.gpuLayers === undefined || value.gpuLayers === "all" || value.gpuLayers === "auto" || (Number.isInteger(value.gpuLayers) && value.gpuLayers >= 0));
+  if (!baseValid || value.strategy === "draft-mtp") return baseValid;
+  return typeof value.drafter?.id === "string" && value.drafter.id.length > 0
+    && typeof value.drafter.modelId === "string" && value.drafter.modelId.length > 0
+    && typeof value.drafter.path === "string" && value.drafter.path.length > 0;
+}
+
+function llamaSpeculativeArgs(value: RecipeSpeculativeDecoding): string[] {
+  if (value.strategy === "draft-mtp") {
+    return [
+      "--spec-type", value.strategy,
+      "--spec-draft-ngl", value.gpuLayers === "all" || value.gpuLayers === "auto" || value.gpuLayers === undefined ? "999" : String(value.gpuLayers),
+      "--spec-draft-n-max", String(value.maxDraftTokens),
+    ];
+  }
+  return [
+    "--model-draft", value.drafter.path,
+    "--spec-type", value.strategy,
+    "--spec-draft-ngl", value.gpuLayers === "all" || value.gpuLayers === "auto" || value.gpuLayers === undefined ? "999" : String(value.gpuLayers),
+    "--spec-draft-n-max", String(value.maxDraftTokens),
+  ];
+}
+
+function stripLlamaSpeculativeArgs(args: string[]): string[] {
+  const options = new Set(["--model-draft", "--spec-type", "--spec-draft-ngl", "--spec-draft-n-max"]);
+  const result: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const item = args[index]!;
+    const option = item.split("=", 1)[0] ?? "";
+    if (!options.has(option)) { result.push(item); continue; }
+    if (!item.includes("=") && index + 1 < args.length) index += 1;
+  }
+  return result;
 }
 
 function captureLines(stream: Readable, logs: string[], source: string): void {

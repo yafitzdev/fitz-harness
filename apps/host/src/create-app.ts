@@ -29,6 +29,7 @@ import {
   type AgentEffort,
   type AgentTopologyPresentation,
   type Recipe,
+  type SpeculativeDrafter,
   type Route,
   type SessionQueryService,
 } from "@fitz/protocol";
@@ -118,6 +119,9 @@ export interface CreateHostOptions {
   modelCatalog?: ModelCatalogService;
   /** Reconciles canonical filesystem model registrations into the live index. */
   reconcileLocalModels?: (routes: RouteResolver) => void;
+  /** Lists auxiliary drafter artifacts for the recipe editor without turning
+   * them into standalone recipes or routes. */
+  listSpeculativeDrafters?: () => SpeculativeDrafter[];
   ninferRuntime?: NInferRuntimeManager;
   /** The host safety layer (policy engine, snapshots, trash, redaction). Optional so tests can run without it. */
   safety?: AgentSafetyService;
@@ -516,6 +520,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         resources: { ...resourceSnapshot, policy: resources.policy },
         routes: routes.listRoutes(true),
         recipes: routes.listRecipes(),
+        speculativeDrafters: options.listSpeculativeDrafters?.() ?? [],
         engines: store.listEngines(),
         cloudRoutes: userRoutes.configuration(ownerUserId(request)),
         chatDefaults: options.hostingService?.configuration().defaults ?? { route: "default", effort: "normal" },

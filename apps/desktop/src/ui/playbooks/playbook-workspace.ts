@@ -8,7 +8,7 @@ import { RecipeConfigurationEditor } from "./recipe-configuration-editor.js";
 type Json = Record<string, any>;
 
 /** The typed management fields that the Playbooks page actually consumes. */
-export type PlaybookConfiguration = Pick<ManagementConfiguration, "recipes" | "engineFolders" | "engineRoot">;
+export type PlaybookConfiguration = Pick<ManagementConfiguration, "recipes" | "engineFolders" | "engineRoot" | "speculativeDrafters">;
 
 export interface PlaybookWorkspaceElements {
   page: HTMLElement;
@@ -158,9 +158,11 @@ export class PlaybookWorkspaceController {
       ? { enginePath: playbook.runtime === "linux-managed" ? `/opt/fitz/llm/engines/${playbook.folderName}` : playbook.rootPath, runtime: playbook.runtime, command: playbook.launchCommand, args: playbook.launchArguments, workingDirectory: playbook.workingDirectory ?? ".", healthPath: playbook.healthPath, readinessTimeoutMs: 120_000, ...(playbook.runtimeId ? { runtimeId: playbook.runtimeId } : {}) }
       : playbook ? { baseUrl: playbook.baseUrl, healthPath: playbook.healthPath, allowInsecureRemote: false } : {};
     this.configurationEditor.load(adapter, recipe?.configuration ?? defaultConfiguration, recipe ?? {
+      playbookId,
+      adapter,
       contextTokens: Number(this.elements.recipeContextTokens.value),
       capabilities: { chatCompletions: true, toolCalls: false, maxConcurrentGenerations: 1 },
-    }, { showRuntimeSettings: !recipe });
+    }, { showRuntimeSettings: !recipe, speculativeDrafters: this.configuration?.speculativeDrafters ?? [] });
     this.showEditor("recipe");
     this.options.onRouteChange?.(["recipe", playbookId, ...(recipe?.id ? [String(recipe.id)] : [])]);
     (recipe ? this.elements.recipeRename : this.elements.recipeDisplayName).focus();
@@ -296,6 +298,7 @@ export class PlaybookWorkspaceController {
       modelId: String(recipe.modelId ?? recipe.id),
       contextTokens: Number(recipe.contextTokens),
       capabilities: recipe.capabilities,
+      ...(recipe.speculativeDecoding ? { speculativeDecoding: recipe.speculativeDecoding } : {}),
     }));
     recipeDetails.append(name, labels);
     recipeCard.append(recipeDetails);
@@ -340,11 +343,13 @@ export class PlaybookWorkspaceController {
     const id = this.elements.recipeId.value.trim(); if (!id) return;
     setFormBusy(this.elements.recipeForm, true);
     try {
+      const speculativeDecoding = this.configurationEditor.speculativeDecodingValue();
       await this.options.api(`/api/v1/management/recipes/${encodeURIComponent(id)}`, "PUT", {
         playbookId: this.elements.recipePlaybookId.value.trim(), displayName: this.elements.recipeDisplayName.value.trim(), adapter: this.elements.recipeAdapter.value.trim(), modelId: this.elements.recipeModelId.value.trim(),
         contextTokens: Number(this.elements.recipeContextTokens.value.trim()), configuration,
         capabilities: this.editingRecipe?.capabilities ?? { chatCompletions: true, streaming: true, toolCalls: false, responseFormat: false, minP: false, maxConcurrentGenerations: 1 },
         lifecycle: this.editingRecipe?.lifecycle ?? { loadPolicy: "onDemand", evictionPolicy: "idle-ttl", idleTtlSeconds: 600, minimumResidencySeconds: 0 },
+        ...(speculativeDecoding !== undefined ? { speculativeDecoding } : {}),
       });
       this.closeEditor();
       await this.options.reloadConfiguration();

@@ -297,6 +297,27 @@ describe("PlaybookWorkspaceController", () => {
     expect(api.mock.calls.find(([path]) => path === "/api/v1/management/recipes/qwen-team")?.[2]).not.toHaveProperty("agentTopology");
   });
 
+  it("shows the target drafter relationship and lets the user disable it", async () => {
+    const configuration = sampleConfiguration();
+    configuration.recipes[0] = {
+      id: "qwen-target", playbookId: "llama.cpp", displayName: "Qwen target", adapter: "openai-managed", modelId: "Qwen3.8-27B-Q5_K_S", contextTokens: 131072,
+      capabilities: { chatCompletions: true, streaming: true, toolCalls: true, responseFormat: true, minP: true, maxConcurrentGenerations: 3 },
+      lifecycle: { loadPolicy: "onDemand", evictionPolicy: "never", idleTtlSeconds: 0, minimumResidencySeconds: 0 }, configuration: { args: [] },
+      speculativeDecoding: { strategy: "draft-dflash", drafter: { id: "drafter-1", modelId: "Qwen3.8-27B-DFlash2", path: "/opt/fitz/llm/models/gguf/Qwen3.8-27B-DFlash2.gguf" }, maxDraftTokens: 15, gpuLayers: "all", source: "auto" },
+    };
+    configuration.engineFolders = [{ folderName: "llama.cpp", rootPath: "C:\\llama", registered: true, engine: { displayName: "llama.cpp", connectionMode: "managed", runtime: "linux-managed" } }];
+    const { controller, elements, api } = setup(configuration);
+    controller.render();
+    expect(elements.list.textContent).toContain("Drafter: Qwen3.8-27B-DFlash2");
+    click(elements.list.querySelector(".recipe-card-details")!);
+    expect(elements.recipeConfiguration.textContent).toContain("Speculative decoding");
+    expect(elements.recipeConfiguration.textContent).toContain("Qwen3.8-27B-DFlash2");
+    const toggle = elements.recipeConfiguration.querySelector<HTMLSelectElement>(".speculative-toggle select")!;
+    toggle.value = "";
+    submit(elements.recipeForm);
+    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/recipes/qwen-target", "PUT", expect.objectContaining({ speculativeDecoding: null })));
+  });
+
   it("renames an existing recipe inline from the header pen", () => {
     const { controller, elements } = setup();
     controller.render();

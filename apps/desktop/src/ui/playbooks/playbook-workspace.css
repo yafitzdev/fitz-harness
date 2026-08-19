@@ -35,6 +35,10 @@
 .recipe-configuration { display: grid; gap: 14px; }
 .configuration-section-heading { display: grid; gap: 4px; padding-top: 4px; }
 .configuration-section-heading small { color: var(--muted); }
+.speculative-section-heading { margin-top: 4px; padding-top: 14px; border-top: 1px solid var(--border-soft); }
+.speculative-toggle { display: flex; align-items: center; gap: 9px; padding: 11px 12px; border: 1px solid var(--border-soft); border-radius: 9px; background: var(--tint-3); color: var(--text) !important; }
+.speculative-toggle select { width: min(420px, 100%) !important; margin-left: auto; }
+.speculative-toggle small { margin-left: auto; color: var(--muted); }
 .recipe-configuration-grid .advanced-field { padding-top: 4px; border-top: 1px solid var(--border-soft); }
 .editor-actions { position: sticky; bottom: 0; display: flex; justify-content: flex-end; gap: 8px; padding: 16px 0; border-top: 1px solid var(--border-soft); background: var(--bg); }
 @media (max-width: 720px) {

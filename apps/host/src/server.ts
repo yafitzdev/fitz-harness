@@ -165,6 +165,7 @@ const runtime = createHost({
     llamaCppModels.reconcile(routes);
     vllmModels.reconcile(routes);
   },
+  listSpeculativeDrafters: () => llamaCppModels.listDrafterCandidates(),
   ...(ninferRuntime ? { ninferRuntime } : {}),
   ...(authPepper ? { authPepper } : {}),
   ...engineOptions,

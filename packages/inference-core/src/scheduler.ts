@@ -513,6 +513,7 @@ function recipeEvidenceSnapshot(recipe: Recipe): Record<string, unknown> {
     capabilities: recipe.capabilities,
     lifecycle: recipe.lifecycle,
     configuration: recipe.configuration,
+    ...(Object.prototype.hasOwnProperty.call(recipe, "speculativeDecoding") ? { speculativeDecoding: recipe.speculativeDecoding } : {}),
   })) as Record<string, unknown>;
 }
 function estimateTokens(text: string): number { return Math.max(1, Math.ceil(Buffer.byteLength(text, "utf8") / 4)) }

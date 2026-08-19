@@ -18,6 +18,7 @@ import type {
   ModalityCapabilities,
   ModalityInput,
   Recipe,
+  RecipeSpeculativeDecoding,
   Route,
   RouteKind,
 } from "@fitz/protocol";
@@ -437,6 +438,7 @@ function parseRecipe(value: unknown, recipeId: string): Recipe {
   if (evictionPolicy !== "immediate" && evictionPolicy !== "idle-ttl" && evictionPolicy !== "never" && evictionPolicy !== "manual") {
     throw new TypeError("lifecycle.evictionPolicy is invalid");
   }
+  const speculativeDecoding = parseSpeculativeDecoding(body.speculativeDecoding);
   return withLocalAgentCapacity({
     id: recipeId,
     playbookId: requireString(body.playbookId, "playbookId"),
@@ -460,7 +462,41 @@ function parseRecipe(value: unknown, recipeId: string): Recipe {
       minimumResidencySeconds: nonNegativeInteger(lifecycle.minimumResidencySeconds, "lifecycle.minimumResidencySeconds"),
     },
     configuration,
+    ...(speculativeDecoding === undefined ? {} : { speculativeDecoding }),
   });
+}
+
+function parseSpeculativeDecoding(value: unknown): RecipeSpeculativeDecoding | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const body = requireRecord(value);
+  const strategy = body.strategy;
+  if (strategy !== "draft-model" && strategy !== "draft-dflash" && strategy !== "draft-mtp") {
+    throw new TypeError("speculativeDecoding.strategy is invalid");
+  }
+  const gpuLayers = body.gpuLayers;
+  if (gpuLayers !== undefined && gpuLayers !== "all" && gpuLayers !== "auto" && (!Number.isInteger(gpuLayers) || (gpuLayers as number) < 0)) {
+    throw new TypeError("speculativeDecoding.gpuLayers is invalid");
+  }
+  const source = body.source;
+  if (source !== undefined && source !== "auto" && source !== "manual") throw new TypeError("speculativeDecoding.source is invalid");
+  const parsedSource = source as "auto" | "manual" | undefined;
+  const shared = {
+    maxDraftTokens: positiveInteger(body.maxDraftTokens, "speculativeDecoding.maxDraftTokens"),
+    ...(gpuLayers === undefined ? {} : { gpuLayers: gpuLayers as Exclude<RecipeSpeculativeDecoding["gpuLayers"], undefined> }),
+    ...(parsedSource === undefined ? {} : { source: parsedSource }),
+  };
+  if (strategy === "draft-mtp") return { strategy, ...shared };
+  const drafter = requireRecord(body.drafter);
+  return {
+    strategy,
+    drafter: {
+      id: requireString(drafter.id, "speculativeDecoding.drafter.id"),
+      modelId: requireString(drafter.modelId, "speculativeDecoding.drafter.modelId"),
+      path: requireString(drafter.path, "speculativeDecoding.drafter.path"),
+    },
+    ...shared,
+  };
 }
 
 function resolveMediaTestRoute(routes: RouteResolver, recipeId: string, output: MediaModality[]): Route | undefined {
@@ -518,6 +554,11 @@ function requireInteger(value: unknown): number {
 
 function nonNegativeInteger(value: unknown, name: string): number {
   if (!Number.isInteger(value) || (value as number) < 0) throw new TypeError(`${name} must be a non-negative integer`);
+  return value as number;
+}
+
+function positiveInteger(value: unknown, name: string): number {
+  if (!Number.isInteger(value) || (value as number) < 1) throw new TypeError(`${name} must be a positive integer`);
   return value as number;
 }
 
