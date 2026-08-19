@@ -1,5 +1,5 @@
 import { SqliteStore } from "@fitz/storage";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { assignPlanItemToWorker, completePlanAfterAnswer, createAgentPlanTool, createAgentRunPlanPolicy, planAdmissionReason, planCompletionIssue, planPromptInstruction, reconcileAgentPlan } from "./agent-plan-tools.js";
 
 const NOW = new Date(0).toISOString();
@@ -51,6 +51,42 @@ describe("durable agent plans", () => {
     store.close();
   });
 
+  it("records running start order durably and clears it when work returns to pending", async () => {
+    vi.useFakeTimers();
+    const store = harness();
+    try {
+      const tool = createAgentPlanTool({ store }, { runId: "parent" });
+      await execute(tool, { action: "set", items: [
+        { id: "first", task: "Start first" },
+        { id: "second", task: "Start second" },
+      ] });
+      vi.setSystemTime(new Date("2026-08-15T00:00:01Z"));
+      await execute(tool, { action: "update", item_id: "first", status: "running" });
+      vi.setSystemTime(new Date("2026-08-15T00:00:02Z"));
+      await execute(tool, { action: "update", item_id: "second", status: "running" });
+
+      expect(store.getAgentRunPlan("parent")?.items.map((item) => item.startedAt)).toEqual([
+        "2026-08-15T00:00:01.000Z",
+        "2026-08-15T00:00:02.000Z",
+      ]);
+
+      await execute(tool, { action: "set", items: [
+        { id: "second", task: "Start second, revised" },
+        { id: "first", task: "Start first, revised" },
+      ] });
+      expect(store.getAgentRunPlan("parent")?.items.map((item) => item.startedAt)).toEqual([
+        "2026-08-15T00:00:02.000Z",
+        "2026-08-15T00:00:01.000Z",
+      ]);
+
+      await execute(tool, { action: "update", item_id: "first", status: "pending" });
+      expect(store.getAgentRunPlan("parent")?.items.find((item) => item.id === "first")?.startedAt).toBeUndefined();
+    } finally {
+      store.close();
+      vi.useRealTimers();
+    }
+  });
+
   it("stops new substantive work once every required plan item is complete", async () => {
     const store = harness();
     const tool = createAgentPlanTool({ store }, { runId: "parent" });
@@ -84,11 +120,13 @@ describe("durable agent plans", () => {
       { id: "main", task: "Inspect the critical path" },
     ] });
     store.createAgentRun({ id: "child", routeId: "fast", status: "failed", error: "worker crashed", createdAt: NOW, updatedAt: NOW, lastSequence: 0 }, { model: "fast", messages: [] });
-    assignPlanItemToWorker(store, "parent", "research", "child");
+    const assigned = assignPlanItemToWorker(store, "parent", "research", "child");
+    expect(assigned.items[0]?.startedAt).toBeDefined();
 
     const plan = reconcileAgentPlan(store, "parent");
 
     expect(plan?.items[0]).toEqual(expect.objectContaining({ id: "research", owner: "main", status: "pending", attempts: 1, error: "worker crashed" }));
+    expect(plan?.items[0]?.startedAt).toBeUndefined();
     expect(planCompletionIssue(store, "parent")).toContain("research");
     store.close();
   });

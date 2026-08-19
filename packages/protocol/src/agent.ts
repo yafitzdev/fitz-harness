@@ -44,6 +44,8 @@ export interface AgentPlanItem {
   required: boolean;
   status: AgentPlanItemStatus;
   attempts: number;
+  /** Time of the current transition to running. Cleared when work returns to pending. */
+  startedAt?: string;
   workerRunId?: string;
   result?: string;
   error?: string;
