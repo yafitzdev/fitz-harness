@@ -28,7 +28,7 @@ import { ManagementPageLayout, managementRefreshIcon } from "./ui/layout/managem
 import { WorkspacePageController } from "./ui/layout/workspace-pages.js";
 import { AppNavigationController } from "./ui/navigation/app-navigation.js";
 import { CustomSelectController } from "./ui/primitives/custom-select.js";
-import type { ActionStatusTone } from "./ui/primitives/action-status.js";
+import { ActionStatusView, type ActionStatusTone } from "./ui/primitives/action-status.js";
 import { requiredElement as element, requiredQuery as query, svgIcon as svg, textBlock } from "./ui/primitives/dom.js";
 import { suppressNativeTooltips } from "./ui/primitives/native-tooltip-policy.js";
 import { ResizablePane } from "./ui/primitives/resizable-pane.js";
@@ -78,6 +78,7 @@ const pluginsButton = element("manage-plugins") as HTMLButtonElement;
 const modelsPage = element("models-page");
 const modelsButton = element("manage-models") as HTMLButtonElement;
 const overlayHost = new OverlayHost(document);
+const actionStatus = new ActionStatusView(document);
 const administrationPage = element("administration-page");
 const administrationButton = element("manage-administration") as HTMLButtonElement;
 const hostApi = new HostApiClient(window.fitz);
@@ -1149,8 +1150,7 @@ function updateTitles(): void {
 function toggleSidebar(): void { adaptiveWorkspace?.toggleSidebar(); inAppBrowser.syncBounds(); closePopovers(); }
 
 function setStatus(text: string, state: string): void { composer.setStatus(text, state); }
-/** Action feedback is deliberately silent; operations render durable state in their own UI. */
-function showStatus(_text: string, _tone: ActionStatusTone): void {}
+function showStatus(text: string, tone: ActionStatusTone): void { actionStatus.show(text, tone); }
 function panelEmpty(text: string): HTMLElement { return textBlock("panel-empty", text); }
 function loadingMessage(text: string): HTMLElement { return textBlock("panel-empty", text); }
 function errorMessage(error: unknown): string { return (error instanceof Error ? error.message : String(error)).replace(/^Error invoking remote method '[^']+':\s*Error:\s*/i, ""); }
