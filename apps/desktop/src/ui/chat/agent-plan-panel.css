@@ -1,11 +1,17 @@
 .agent-plan-panel { position: relative; z-index: 2; box-sizing: border-box; width: 100%; max-height: 220px; overflow: hidden; border-bottom: 1px solid var(--border-soft); color: var(--muted); }
 .agent-plan-panel[hidden] { display: none; }
 .agent-plan-panel > header { min-height: 36px; }
-.agent-plan-panel-toggle { width: 100%; min-height: 34px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 7px 12px; background: transparent; color: inherit; cursor: pointer; text-align: left; }
+.agent-plan-panel-toggle { width: 100%; min-height: 34px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; grid-template-areas: "title current summary chevron"; align-items: center; gap: 10px; padding: 7px 12px; background: transparent; color: inherit; cursor: pointer; text-align: left; }
 .agent-plan-panel-toggle:hover { background: var(--tint-2); }
-.agent-plan-panel-toggle strong { color: var(--text); font-size: 12px; font-weight: 600; }
-.agent-plan-panel-toggle > span:not(.agent-plan-panel-chevron) { justify-self: end; color: var(--subtle); font-size: 11px; }
-.agent-plan-panel-chevron { color: var(--subtle); font-size: 18px; line-height: 1; transform: rotate(90deg); transition: transform 150ms cubic-bezier(.23,1,.32,1); }
+.agent-plan-panel-toggle strong { grid-area: title; color: var(--text); font-size: 12px; font-weight: 600; }
+.agent-plan-panel-summary { grid-area: summary; justify-self: end; color: var(--subtle); font-size: 11px; white-space: nowrap; }
+.agent-plan-panel-current { grid-area: current; display: none; min-width: 0; overflow: hidden; color: var(--muted); font-size: 11px; line-height: 1.4; text-align: center; white-space: nowrap; }
+.agent-plan-panel-current[hidden] { display: none !important; }
+.agent-plan-panel.collapsed .agent-plan-panel-current { display: block; }
+.agent-plan-panel-current-text { display: inline-block; min-width: max-content; }
+.agent-plan-panel-current.overflowing { text-align: left; -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%); mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%); }
+.agent-plan-panel-current.overflowing .agent-plan-panel-current-text { animation: agent-plan-current-scroll var(--agent-plan-scroll-duration) ease-in-out infinite alternate; }
+.agent-plan-panel-chevron { grid-area: chevron; color: var(--subtle); font-size: 18px; line-height: 1; transform: rotate(90deg); transition: transform 150ms cubic-bezier(.23,1,.32,1); }
 .agent-plan-panel.collapsed { max-height: 36px; }
 .agent-plan-panel.collapsed .agent-plan-panel-chevron { transform: rotate(0); }
 .agent-plan-panel-list { display: grid; gap: 5px; max-height: 176px; margin: 0; padding: 9px 12px 11px; overflow: auto; list-style: none; }
@@ -13,7 +19,19 @@
 .agent-plan-panel-item { min-width: 0; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: start; gap: 7px; font-size: 12px; line-height: 1.4; }
 .agent-plan-panel-item.completed { color: var(--subtle); }
 .agent-plan-panel-item.completed .agent-plan-panel-task { text-decoration: line-through; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); }
-.agent-plan-panel-item.running .agent-plan-panel-mark { color: var(--accent); animation: activity-pulse 1.25s ease-in-out infinite; }
+.agent-plan-panel-mark { display: grid; width: 14px; height: 14px; place-items: center; }
+.agent-plan-panel-item.running .agent-plan-panel-mark { box-sizing: border-box; width: 12px; height: 12px; margin: 1px; border: 2px solid color-mix(in srgb, var(--accent) 24%, transparent); border-top-color: var(--accent); border-right-color: var(--accent); border-radius: 50%; animation: agent-plan-spinner .75s linear infinite; }
 .agent-plan-panel-item.failed .agent-plan-panel-mark { color: var(--status-danger-soft); }
 .agent-plan-panel-task { min-width: 0; overflow-wrap: anywhere; }
 .agent-plan-panel-owner { padding: 1px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--subtle); font-size: 10px; line-height: 1.25; }
+
+@keyframes agent-plan-spinner { to { transform: rotate(360deg); } }
+@keyframes agent-plan-current-scroll {
+  0%, 18% { transform: translateX(0); }
+  82%, 100% { transform: translateX(calc(-1 * var(--agent-plan-scroll-distance))); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-plan-panel-item.running .agent-plan-panel-mark { animation: none; }
+  .agent-plan-panel-current.overflowing .agent-plan-panel-current-text { animation: none; }
+}
