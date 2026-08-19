@@ -15,17 +15,17 @@ describe("production NiNfer playbook", () => {
     executable: "/opt/fitz/llm/environments/ninfer/bin/ninfer-serve",
   };
 
-  it("contains two validated recipes and one host-owned Default route", () => {
+  it("contains the managed model profiles and one host-owned Default route", () => {
     const playbook = createNInferPlaybook(runtime);
 
     expect(playbook).toMatchObject({ id: "ninfer", displayName: "ninfer" });
     expect(new Set(playbook.recipes.map((recipe) => recipe.playbookId))).toEqual(new Set([NINFER_PLAYBOOK_ID]));
-    expect(playbook.recipes).toHaveLength(2);
+    expect(playbook.recipes).toHaveLength(3);
     expect(playbook.recipes.every((recipe) => validateNInferConfiguration(recipe).length === 0)).toBe(true);
     expect(playbook.recipes.every((recipe) => recipe.lifecycle.evictionPolicy === "never" && recipe.lifecycle.idleTtlSeconds === 0)).toBe(true);
-    expect(playbook.recipes.every((recipe) => recipe.capabilities.maxConcurrentGenerations === 3)).toBe(true);
+    expect(playbook.recipes.map((recipe) => recipe.capabilities.maxConcurrentGenerations)).toEqual([1, 3, 3]);
     expect(playbook.recipes.every((recipe) => readNInferConfiguration(recipe).thinking)).toBe(true);
-    expect(playbook.recipes.map((recipe) => readNInferConfiguration(recipe).draftTokens)).toEqual([4, 4]);
+    expect(playbook.recipes.map((recipe) => readNInferConfiguration(recipe).draftTokens)).toEqual([4, 4, 4]);
     expect(playbook.routes).toEqual([expect.objectContaining({ id: "default", recipeId: playbook.recipes[0]!.id, isDefault: true })]);
   });
 
@@ -37,18 +37,29 @@ describe("production NiNfer playbook", () => {
       modelId: "qwen3.8-27b",
       contextTokens: 262_144,
       capabilities: {
-        maxConcurrentGenerations: 3,
+        maxConcurrentGenerations: 1,
         modalities: { input: ["text", "image"], output: [] },
       },
       configuration: {
         artifact: "/opt/fitz/llm/models/ninfer/qwen3_8_27b.ninfer",
         maxContext: 131_072,
         kvCapacity: "auto",
-        maxConcurrency: 3,
+        maxConcurrency: 1,
+        kvDtype: "bf16",
         vision: true,
       },
     });
-    expect(playbook.recipes[1]!.configuration).toMatchObject({
+    expect(playbook.recipes[1]).toMatchObject({
+      modelId: "qwen3.8-27b-nvfp4",
+      capabilities: { maxConcurrentGenerations: 3 },
+      configuration: {
+        artifact: "/opt/fitz/llm/models/ninfer/qwen3_8_27b_nvfp4.ninfer",
+        maxContext: 131_072,
+        kvCapacity: "auto",
+        kvDtype: "int8",
+      },
+    });
+    expect(playbook.recipes[2]!.configuration).toMatchObject({
       executable: runtime.executable,
       artifact: "/opt/fitz/llm/models/ninfer/qwen3_6_35b_a3b.ninfer",
       maxConcurrency: 3,

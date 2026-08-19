@@ -303,8 +303,14 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
 }
 
 function recentInstanceLogs(instance: Pick<NInferInstanceHandle, "logs" | "apiKey">): string {
-  return instance.logs
-    .slice(-6)
+  const tail = instance.logs.slice(-6);
+  const diagnostic = instance.logs.findLast((line) =>
+    /(?:\[error\]|\bfatal\b|\bunknown\b|\bunsupported\b|\bfailed\b|\bcannot\b|\bexception\b)/i.test(line)
+  );
+  const selected = diagnostic && !tail.includes(diagnostic)
+    ? [diagnostic, ...tail.slice(-5)]
+    : tail;
+  return selected
     .map((line) => line.replaceAll(instance.apiKey, "[REDACTED]"))
     .join(" | ");
 }
@@ -333,6 +339,7 @@ export function buildCurrentNInferRecipe(
     pendingTimeoutMs?: number;
     vision?: boolean;
     thinking?: boolean;
+    kvDtype?: NInferRecipeConfiguration["kvDtype"];
   } = {},
 ): Recipe {
   const maxContext = options.maxContext ?? 100_000;
@@ -346,7 +353,7 @@ export function buildCurrentNInferRecipe(
     maxConcurrency,
     maxPendingRequests: options.maxPendingRequests ?? 16,
     pendingTimeoutMs: options.pendingTimeoutMs ?? 30_000,
-    kvDtype: "int8",
+    kvDtype: options.kvDtype ?? "int8",
     speculativeMode: "mtp",
     draftTokens,
     lmHeadDraft: true,

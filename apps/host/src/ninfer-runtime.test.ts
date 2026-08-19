@@ -28,7 +28,7 @@ describe("managed NInfer runtime", () => {
     const run = vi.fn(async (_file: string, args: string[]) => {
       if (args.includes("--list")) return { stdout: "Ubuntu\0\r\0\n\0Fitz-Inference\0\r\0\n\0", stderr: "" };
       if (args.includes("test")) return { stdout: "", stderr: "" };
-      if (args.some((value) => value.endsWith("qwen3_6_27b_nvfp4.ninfer"))) return { stdout: "18324064000\n", stderr: "" };
+      if (args.some((value) => value.endsWith("qwen3_8_27b_nvfp4.ninfer"))) return { stdout: "21492695040\n", stderr: "" };
       throw new Error("missing");
     });
     const paths = resolveRuntimePaths({ FITZ_LLM_ROOT: "D:\\registry" });
@@ -47,21 +47,21 @@ describe("managed NInfer runtime", () => {
     const paths = resolveRuntimePaths({ FITZ_LLM_ROOT: "D:\\registry" });
     const runtime = new NInferRuntimeManager({ paths, platform: "win32", run: vi.fn() });
     expect(createNInferModelRegistration({
-      id: "qwen3.6-27b",
-      fileName: "qwen3_6_27b_nvfp4.ninfer",
-      bytes: 18_324_064_000,
+      id: "qwen3.8-27b-nvfp4",
+      fileName: "qwen3_8_27b_nvfp4.ninfer",
+      bytes: 21_492_695_040,
       sha256: "abc123",
     }, runtime.layout)).toEqual({
       schemaVersion: 1,
-      id: "qwen3.6-27b",
+      id: "qwen3.8-27b-nvfp4",
       engine: "ninfer",
       format: "ninfer",
       payload: {
         backend: "runtime-filesystem",
         runtimeId: "inference-linux",
-        path: "/opt/fitz/llm/models/ninfer/qwen3_6_27b_nvfp4.ninfer",
+        path: "/opt/fitz/llm/models/ninfer/qwen3_8_27b_nvfp4.ninfer",
       },
-      bytes: 18_324_064_000,
+      bytes: 21_492_695_040,
       sha256: "abc123",
     });
   });

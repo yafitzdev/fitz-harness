@@ -10,14 +10,11 @@ import {
   type ManagedLinuxRuntimeManifest,
   type ManagedLinuxRuntimeLayout,
 } from "./managed-linux-runtime.js";
+import { NINFER_MODEL_PROFILES } from "./ninfer-model-profiles.js";
 
 const execFileAsync = promisify(execFile);
 
-const KNOWN_MODELS = [
-  { id: "qwen3.8-27b", fileName: "qwen3_8_27b.ninfer" },
-  { id: "qwen3.6-35b-a3b", fileName: "qwen3_6_35b_a3b.ninfer" },
-  { id: "qwen3.6-27b", fileName: "qwen3_6_27b_nvfp4.ninfer" },
-] as const;
+const KNOWN_MODELS = NINFER_MODEL_PROFILES.map(({ registrationId: id, fileName }) => ({ id, fileName }));
 
 export interface NInferRuntimeLayout extends ManagedLinuxRuntimeLayout {
   modelRoot: string;

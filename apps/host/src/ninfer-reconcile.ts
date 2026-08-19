@@ -1,6 +1,7 @@
 import type { SqliteStore } from "@fitz/storage";
 import type { Recipe } from "@fitz/protocol";
-import { createNInferPlaybook, QWEN36_35B_RECIPE_ID, QWEN38_ORCHESTRATOR_RECIPE_ID } from "./ninfer-playbook.js";
+import { createNInferPlaybook } from "./ninfer-playbook.js";
+import { QWEN36_35B_RECIPE_ID, QWEN38_GROUPWISE_RECIPE_ID } from "./ninfer-model-profiles.js";
 import type { NInferRuntimeLayout } from "./ninfer-runtime.js";
 
 /** Well-known media route ids created by `ensureMediaRoutes` (model-management-routes.ts).
@@ -9,8 +10,9 @@ import type { NInferRuntimeLayout } from "./ninfer-runtime.js";
  *  be wiped at every boot and assignments lost (§5.2). */
 const NINFER_MEDIA_ROUTE_EXEMPTIONS = new Set(["image", "video", "audio"]);
 const RETIRED_NINFER_RECIPES = new Map([
-  ["qwen38-27b-mtp3-16k-vision-c2", QWEN38_ORCHESTRATOR_RECIPE_ID],
-  ["qwen38-27b-mtp3-128k-vision-c3", QWEN38_ORCHESTRATOR_RECIPE_ID],
+  ["qwen38-27b-mtp3-16k-vision-c2", QWEN38_GROUPWISE_RECIPE_ID],
+  ["qwen38-27b-mtp3-128k-vision-c3", QWEN38_GROUPWISE_RECIPE_ID],
+  ["qwen38-27b-mtp3-agent-pool-c3", QWEN38_GROUPWISE_RECIPE_ID],
   ["qwen36-27b-mtp3-100k", QWEN36_35B_RECIPE_ID],
 ]);
 
@@ -32,6 +34,7 @@ export function reconcileNInferConfiguration(store: SqliteStore, runtime: NInfer
       runtimeDistribution: _discardedDistribution,
       workerContextTokens: _legacyWorkerContext,
       maxLocalWorkers: _legacyWorkerCount,
+      kvHeadroomMiB: _retiredKvHeadroom,
       ...currentConfiguration
     } = existing.configuration;
     store.upsertRecipe({

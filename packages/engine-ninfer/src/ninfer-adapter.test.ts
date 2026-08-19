@@ -175,6 +175,34 @@ describe("NInferEngineAdapter launch contract", () => {
     );
   });
 
+  it("keeps the engine diagnostic when trailing help text exceeds the log window", async () => {
+    const adapter = new NInferEngineAdapter();
+    const instance = {
+      id: "failed",
+      recipeId: "recipe",
+      modelId: "model",
+      baseUrl: "http://127.0.0.1:19001",
+      startedAt: new Date(),
+      apiKey: "secret-key",
+      process: { exitCode: 1, signalCode: null },
+      logs: [
+        "stderr: [error] unknown tensor format: FP8_E4M3FN_ROW_BF16S",
+        "stderr: usage: ninfer-serve <model>",
+        "stderr: option 1",
+        "stderr: option 2",
+        "stderr: option 3",
+        "stderr: option 4",
+        "stderr: option 5",
+        "stderr: option 6",
+      ],
+      readinessTimeoutMs: 30,
+    } as unknown as NInferInstanceHandle;
+
+    await expect(adapter.waitUntilReady(instance, new AbortController().signal)).rejects.toThrow(
+      /unknown tensor format: FP8_E4M3FN_ROW_BF16S/,
+    );
+  });
+
   it("uses the shared OpenAI transport for reasoning history, template controls, and tool deltas", async () => {
     let requestBody: any;
     const encoder = new TextEncoder();

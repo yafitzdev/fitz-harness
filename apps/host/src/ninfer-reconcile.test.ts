@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { SqliteStore } from "@fitz/storage";
-import { createNInferPlaybook, QWEN36_35B_RECIPE_ID, QWEN38_ORCHESTRATOR_RECIPE_ID } from "./ninfer-playbook.js";
+import { createNInferPlaybook } from "./ninfer-playbook.js";
+import { QWEN36_35B_RECIPE_ID, QWEN38_GROUPWISE_RECIPE_ID } from "./ninfer-model-profiles.js";
 import { reconcileNInferConfiguration } from "./ninfer-reconcile.js";
 
 const runtime = {
@@ -69,6 +70,7 @@ describe("reconcileNInferConfiguration", () => {
           ...current.configuration,
           maxContext: 16_384,
           kvCapacity: 150_000,
+          kvHeadroomMiB: 800,
           maxConcurrency: 2,
           workerContextTokens: 64_000,
           maxLocalWorkers: 2,
@@ -84,20 +86,22 @@ describe("reconcileNInferConfiguration", () => {
 
       reconcileNInferConfiguration(store, runtime);
 
-      const recipe = store.listRecipes().find((candidate) => candidate.id === QWEN38_ORCHESTRATOR_RECIPE_ID);
+      const recipe = store.listRecipes().find((candidate) => candidate.id === QWEN38_GROUPWISE_RECIPE_ID);
       expect(recipe).toMatchObject({
         contextTokens: 262_144,
-        capabilities: { maxConcurrentGenerations: 3 },
+        capabilities: { maxConcurrentGenerations: 1 },
         configuration: {
           maxContext: 131_072,
           kvCapacity: "auto",
-          maxConcurrency: 3,
+          maxConcurrency: 1,
+          kvDtype: "bf16",
         },
       });
       expect(recipe).not.toHaveProperty("agentTopology");
       expect(recipe?.configuration).not.toHaveProperty("workerContextTokens");
       expect(recipe?.configuration).not.toHaveProperty("maxLocalWorkers");
-      expect(store.listRoutes().find((route) => route.id === "default")?.recipeId).toBe(QWEN38_ORCHESTRATOR_RECIPE_ID);
+      expect(recipe?.configuration).not.toHaveProperty("kvHeadroomMiB");
+      expect(store.listRoutes().find((route) => route.id === "default")?.recipeId).toBe(QWEN38_GROUPWISE_RECIPE_ID);
       expect(store.listRecipes().some((candidate) => candidate.id === "qwen38-27b-mtp3-16k-vision-c2")).toBe(false);
     } finally {
       store.close();
