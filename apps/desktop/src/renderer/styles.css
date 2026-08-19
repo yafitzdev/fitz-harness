@@ -49,7 +49,9 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .app-shell.context-open { grid-template-columns: var(--sidebar-width) minmax(0, 1fr); }
 .app-shell.sidebar-collapsed.context-open { grid-template-columns: 0 minmax(0, 1fr); }
 
-.sidebar { min-width: 0; display: flex; flex-direction: column; padding: 8px; overflow: hidden; background: var(--sidebar); transition: opacity 140ms ease; }
+.sidebar { min-width: 0; display: flex; flex-direction: column; padding: 8px; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; background: var(--sidebar); transition: opacity 140ms ease; }
+.sidebar::-webkit-scrollbar { display: none; }
+.sidebar > :not(.sidebar-spacer) { flex-shrink: 0; }
 .sidebar-collapsed .sidebar { opacity: 0; pointer-events: none; }
 .sidebar-resizer { position: fixed; z-index: 30; top: 32px; bottom: 0; left: calc(var(--sidebar-width) - 3px); width: 6px; outline: 0; cursor: col-resize; }
 .sidebar-resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 1px; background: transparent; transition: background 120ms ease; }

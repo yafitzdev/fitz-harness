@@ -1,5 +1,5 @@
 .sidebar-content-divider { margin: 12px 7px 4px; border-top: 1px solid var(--border-soft); }
-.sidebar-section { margin-top: 8px; min-height: 0; overflow: auto; }
+.sidebar-section { margin-top: 8px; min-height: 0; overflow: visible; }
 .sidebar-section + .sidebar-section { margin-top: 10px; }
 .section-heading { height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 0 7px; color: var(--sidebar-muted); }
 .section-heading, .project-row, .task-row, .chat-row { font-size: 13.5px; }
