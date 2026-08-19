@@ -319,6 +319,20 @@ describe("Composer", () => {
     expect(composer.root.querySelector<HTMLElement>("#composer-attachments")!.hidden).toBe(true);
   });
 
+  it("consumes only the attachment snapshot admitted for submission", async () => {
+    const { composer } = setup();
+    composer.attachFile(new File(["first"], "first.txt", { type: "text/plain" }));
+    await vi.waitFor(() => expect(composer.peekPastedAttachments()).toHaveLength(1));
+    const admitted = composer.peekPastedAttachments();
+
+    composer.attachFile(new File(["later"], "later.txt", { type: "text/plain" }));
+    await vi.waitFor(() => expect(composer.peekPastedAttachments()).toHaveLength(2));
+    composer.consumePastedAttachments(admitted);
+
+    expect(composer.peekPastedAttachments().map((item) => item.name)).toEqual(["later.txt"]);
+    expect(composer.root.querySelectorAll(".attachment-chip")).toHaveLength(1);
+  });
+
   it("creates pdf chips for pasted PDFs with a stable name", async () => {
     const { composer, calls } = setup();
     pasteFiles(composer, [{ bytes: ["%PDF-1.4"], name: "report.pdf", mimeType: "application/pdf" }]);

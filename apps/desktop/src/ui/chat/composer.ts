@@ -351,8 +351,17 @@ export class Composer {
     this.refreshAttachments();
   }
 
-  consumePastedAttachments(): PastedAttachment[] {
-    const captured = this.pastedFiles.splice(0);
+  peekPastedAttachments(): PastedAttachment[] {
+    return [...this.pastedFiles];
+  }
+
+  consumePastedAttachments(selected: readonly PastedAttachment[] = this.pastedFiles): PastedAttachment[] {
+    const selectedFiles = new Set(selected);
+    const captured = this.pastedFiles.filter((pasted) => selectedFiles.has(pasted));
+    for (const pasted of captured) {
+      const index = this.pastedFiles.indexOf(pasted);
+      if (index >= 0) this.pastedFiles.splice(index, 1);
+    }
     captured.forEach((pasted) => pasted.chip.remove());
     this.refreshAttachments();
     return captured.map((pasted) => ({ dataUrl: pasted.dataUrl, mimeType: pasted.mimeType, name: pasted.name, kind: pasted.kind }));

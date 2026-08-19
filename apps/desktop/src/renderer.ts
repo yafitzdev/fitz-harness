@@ -417,7 +417,8 @@ const runRecovery = new RunRecoveryView({
 });
 const promptSubmission = new PromptSubmissionController({
   draft: () => composer.submission,
-  consumeAttachments: () => composer.consumePastedAttachments(),
+  peekAttachments: () => composer.peekPastedAttachments(),
+  consumeAttachments: (attachments) => { composer.consumePastedAttachments(attachments); },
   sessionId: () => projects.currentSessionId,
   isSessionCurrent: (sessionId) => projects.currentSessionId === sessionId,
   settings: () => ({

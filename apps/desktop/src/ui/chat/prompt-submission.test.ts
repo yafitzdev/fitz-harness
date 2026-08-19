@@ -6,7 +6,7 @@ function setup(overrides: Partial<PromptSubmissionOptions> = {}) {
   const row = document.createElement("div");
   document.body.append(row);
   const options: PromptSubmissionOptions = {
-    draft: () => ({ content: "build it" }), consumeAttachments: () => [], sessionId: () => "session-1",
+    draft: () => ({ content: "build it" }), peekAttachments: () => [], consumeAttachments: vi.fn(), sessionId: () => "session-1",
     settings: () => ({ routeId: "smart", effort: "high", maxTokens: 8192, temperature: 0.4, accessMode: "full" }),
     ensureSession: vi.fn(async () => "session-1"), openNewChat: vi.fn(), clearDraft: vi.fn(), setDraft: vi.fn(), resetWarmup: vi.fn(),
     uploadAttachment: vi.fn(async () => ({ id: "artifact-1" })), clearLanding: vi.fn(), appendUser: vi.fn(),
@@ -30,7 +30,7 @@ beforeEach(() => document.body.replaceChildren());
 describe("PromptSubmissionController", () => {
   it("creates a session and submits pasted images as multimodal content", async () => {
     const attachment = { kind: "image" as const, dataUrl: "data:image/png;base64,AAAA", mimeType: "image/png", name: "shot.png" };
-    const { controller, options } = setup({ sessionId: () => undefined, consumeAttachments: () => [attachment] });
+    const { controller, options } = setup({ sessionId: () => undefined, peekAttachments: () => [attachment] });
     await controller.submit("Build a dashboard\nwith charts");
     expect(options.ensureSession).toHaveBeenCalledWith("Build a dashboard", "smart");
     expect(options.uploadAttachment).toHaveBeenCalledWith("session-1", attachment);
@@ -44,15 +44,17 @@ describe("PromptSubmissionController", () => {
     expect(options.appendUser).toHaveBeenCalledWith("Build a dashboard\nwith charts", [expect.objectContaining({
       id: "artifact-1", name: "shot.png", mimeType: "image/png", kind: "image", dataUrl: "data:image/png;base64,AAAA",
     })]);
+    expect(options.consumeAttachments).toHaveBeenCalledWith([attachment]);
   });
 
   it("reuses a durable edited turn without consuming unrelated composer attachments", async () => {
-    const consumeAttachments = vi.fn(() => [{ kind: "file" as const, dataUrl: "data:text/plain;base64,QQ==", mimeType: "text/plain", name: "draft.txt" }]);
-    const { controller, options, row } = setup({ consumeAttachments });
+    const peekAttachments = vi.fn(() => [{ kind: "file" as const, dataUrl: "data:text/plain;base64,QQ==", mimeType: "text/plain", name: "draft.txt" }]);
+    const { controller, options, row } = setup({ peekAttachments });
 
     await controller.submit("Edited prompt", row, "message-edited");
 
-    expect(consumeAttachments).not.toHaveBeenCalled();
+    expect(peekAttachments).not.toHaveBeenCalled();
+    expect(options.consumeAttachments).not.toHaveBeenCalled();
     expect(options.uploadAttachment).not.toHaveBeenCalled();
     expect(options.startRun).toHaveBeenCalledWith(expect.objectContaining({
       persistedMessageId: "message-edited",
@@ -63,13 +65,13 @@ describe("PromptSubmissionController", () => {
   it("serializes duplicate submissions while the first chat is materializing", async () => {
     let resolveSession!: (value: string) => void;
     const ensureSession = vi.fn(() => new Promise<string>((resolve) => { resolveSession = resolve; }));
-    const consumeAttachments = vi.fn(() => []);
-    const { controller, options } = setup({ sessionId: () => undefined, ensureSession, consumeAttachments });
+    const peekAttachments = vi.fn(() => []);
+    const { controller, options } = setup({ sessionId: () => undefined, ensureSession, peekAttachments });
 
     const first = controller.submit("Build it");
     const second = controller.submit("Build it");
     expect(ensureSession).toHaveBeenCalledOnce();
-    expect(consumeAttachments).toHaveBeenCalledOnce();
+    expect(peekAttachments).toHaveBeenCalledOnce();
     resolveSession("session-created");
     await Promise.all([first, second]);
 
@@ -138,13 +140,14 @@ describe("PromptSubmissionController", () => {
   it("does not silently run without an attachment whose upload failed", async () => {
     const attachment = { kind: "file" as const, dataUrl: "data:text/plain;base64,SGVsbG8=", mimeType: "text/plain", name: "note.txt" };
     const { controller, options } = setup({
-      consumeAttachments: () => [attachment],
+      peekAttachments: () => [attachment],
       uploadAttachment: vi.fn(async () => { throw new Error("upload failed"); }),
     });
     await controller.submit("analyse this");
     expect(options.showError).toHaveBeenCalledWith("Error: upload failed");
     expect(options.startRun).not.toHaveBeenCalled();
     expect(options.clearDraft).not.toHaveBeenCalled();
+    expect(options.consumeAttachments).not.toHaveBeenCalled();
   });
 
   it("does not submit an uploaded prompt into a conversation selected during the upload", async () => {
@@ -153,7 +156,7 @@ describe("PromptSubmissionController", () => {
     const uploadAttachment = vi.fn(() => new Promise<{ id: string }>((resolve) => { resolveUpload = resolve; }));
     const attachment = { kind: "file" as const, dataUrl: "data:text/plain;base64,SGVsbG8=", mimeType: "text/plain", name: "note.txt" };
     const { controller, options } = setup({
-      consumeAttachments: () => [attachment], uploadAttachment,
+      peekAttachments: () => [attachment], uploadAttachment,
       isSessionCurrent: () => current,
     });
 
@@ -164,6 +167,7 @@ describe("PromptSubmissionController", () => {
 
     expect(options.appendUser).not.toHaveBeenCalled();
     expect(options.startRun).not.toHaveBeenCalled();
+    expect(options.consumeAttachments).not.toHaveBeenCalled();
   });
 
   it("shows the inline creation card for a bare media command with a default prompt", async () => {
@@ -211,13 +215,31 @@ describe("PromptSubmissionController", () => {
   });
 
   it("does not create an empty chat when a regular prompt has no text route", async () => {
+    const attachment = { kind: "file" as const, dataUrl: "data:text/plain;base64,QQ==", mimeType: "text/plain", name: "draft.txt" };
     const { controller, options } = setup({
       sessionId: () => undefined,
       settings: () => ({ routeId: "", effort: "normal", maxTokens: 8192, temperature: 0.4, accessMode: "full" }),
+      peekAttachments: () => [attachment],
     });
     await controller.submit("hello");
     expect(options.ensureSession).not.toHaveBeenCalled();
     expect(options.showError).toHaveBeenCalledWith("No model route is available");
+    expect(options.consumeAttachments).not.toHaveBeenCalled();
+  });
+
+  it("retains attachments when first-session creation fails", async () => {
+    const attachment = { kind: "file" as const, dataUrl: "data:text/plain;base64,QQ==", mimeType: "text/plain", name: "draft.txt" };
+    const { controller, options } = setup({
+      sessionId: () => undefined,
+      peekAttachments: () => [attachment],
+      ensureSession: vi.fn(async () => { throw new Error("storage offline"); }),
+    });
+
+    await controller.submit("analyse this");
+
+    expect(options.showError).toHaveBeenCalledWith("Error: storage offline");
+    expect(options.consumeAttachments).not.toHaveBeenCalled();
+    expect(options.uploadAttachment).not.toHaveBeenCalled();
   });
 
   it("does not render an unpersisted media command when durable storage fails", async () => {
@@ -233,7 +255,7 @@ describe("PromptSubmissionController", () => {
 
   it("passes pasted reference images into the creation card and submits them as refs", async () => {
     const attachment = { kind: "image" as const, dataUrl: "data:image/png;base64,AAAA", mimeType: "image/png", name: "ref.png" };
-    const { controller, options } = setup({ consumeAttachments: () => [attachment], draft: () => ({ content: "make it match", mediaCommand: "image" }) });
+    const { controller, options } = setup({ peekAttachments: () => [attachment], draft: () => ({ content: "make it match", mediaCommand: "image" }) });
     await controller.submit();
     const request = mediaCreationRequest(options);
     expect(options.uploadAttachment).toHaveBeenCalledWith("session-1", attachment);
@@ -246,7 +268,7 @@ describe("PromptSubmissionController", () => {
 
   it("submits an attached image to /video as an animation", async () => {
     const attachment = { kind: "image" as const, dataUrl: "data:image/png;base64,AAAA", mimeType: "image/png", name: "ref.png" };
-    const { controller, options } = setup({ consumeAttachments: () => [attachment], draft: () => ({ content: "gentle camera orbit", mediaCommand: "video" }) });
+    const { controller, options } = setup({ peekAttachments: () => [attachment], draft: () => ({ content: "gentle camera orbit", mediaCommand: "video" }) });
     await controller.submit();
     const request = mediaCreationRequest(options);
     expect(request.refs).toEqual([{ artifactId: "artifact-1" }]);
@@ -258,7 +280,7 @@ describe("PromptSubmissionController", () => {
 
   it("does not upload refs for audio commands", async () => {
     const attachment = { kind: "image" as const, dataUrl: "data:image/png;base64,AAAA", mimeType: "image/png", name: "ref.png" };
-    const { controller, options } = setup({ consumeAttachments: () => [attachment], draft: () => ({ content: "narrate this", mediaCommand: "audio" }) });
+    const { controller, options } = setup({ peekAttachments: () => [attachment], draft: () => ({ content: "narrate this", mediaCommand: "audio" }) });
     await controller.submit();
     expect(options.uploadAttachment).not.toHaveBeenCalled();
     expect(mediaCreationRequest(options).refs).toEqual([]);

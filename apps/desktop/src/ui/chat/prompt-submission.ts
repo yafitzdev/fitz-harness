@@ -15,7 +15,8 @@ export interface PromptRunSettings {
 
 export interface PromptSubmissionOptions {
   draft: () => ComposerSubmission;
-  consumeAttachments: () => PastedAttachment[];
+  peekAttachments: () => PastedAttachment[];
+  consumeAttachments: (attachments: readonly PastedAttachment[]) => void;
   sessionId: () => string | undefined;
   isSessionCurrent?: (sessionId: string) => boolean;
   settings: () => PromptRunSettings;
@@ -113,7 +114,7 @@ export class PromptSubmissionController {
     const mediaCommand = draft.mediaCommand;
     // Inline edit/regenerate reuses the durable user turn and must not consume
     // unrelated attachments that are still sitting in the composer.
-    const attachments = existingUserMessage ? [] : this.#options.consumeAttachments();
+    const attachments = existingUserMessage ? [] : this.#options.peekAttachments();
     // A media command with no prompt text is still a valid submission: media
     // commands generate with a default prompt instead of being silently dropped.
     if (!content && attachments.length === 0 && !mediaCommand) return;
@@ -166,6 +167,7 @@ export class PromptSubmissionController {
         }
       }
       if (this.#options.isSessionCurrent?.(sessionId) === false) return;
+      if (attachments.length > 0) this.#options.consumeAttachments(attachments);
       this.#options.clearDraft();
       this.#options.clearLanding();
       if (!existingUserMessage) {
@@ -210,6 +212,7 @@ export class PromptSubmissionController {
       return;
     }
 
+    if (attachments.length > 0) this.#options.consumeAttachments(attachments);
     this.#options.clearDraft();
     this.#options.clearLanding();
     if (!existingUserMessage) {
