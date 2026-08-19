@@ -4,6 +4,10 @@ import type { InferenceDelta, InferenceRequest } from "@fitz/protocol";
 export interface OpenAICompatibleClientOptions {
   fetch?: typeof globalThis.fetch;
   apiKey?: string;
+  /** Maximum silence between request dispatch and SSE bytes, or between SSE
+   * chunks. This is a transport boundary, shared by every OpenAI-compatible
+   * engine; it prevents a healthy HTTP process from holding a run forever. */
+  streamInactivityTimeoutMs?: number;
 }
 
 export interface OpenAICompatibleModel {
@@ -42,10 +46,15 @@ interface StreamChunk {
 export class OpenAICompatibleClient {
   readonly #fetch: typeof globalThis.fetch;
   readonly #apiKey: string | undefined;
+  readonly #streamInactivityTimeoutMs: number;
 
   constructor(options: OpenAICompatibleClientOptions = {}) {
     this.#fetch = options.fetch ?? globalThis.fetch;
     this.#apiKey = options.apiKey;
+    this.#streamInactivityTimeoutMs = options.streamInactivityTimeoutMs ?? 120_000;
+    if (!Number.isFinite(this.#streamInactivityTimeoutMs) || this.#streamInactivityTimeoutMs <= 0) {
+      throw new TypeError("streamInactivityTimeoutMs must be positive");
+    }
   }
 
   async healthy(baseUrl: string, healthPath: string, signal?: AbortSignal): Promise<boolean> {
@@ -90,51 +99,62 @@ export class OpenAICompatibleClient {
     request: InferenceRequest,
     signal: AbortSignal,
   ): AsyncIterable<InferenceDelta> {
-    const response = await this.#fetch(openAIEndpoint(baseUrl, "chat/completions"), {
-      method: "POST",
-      headers: { ...this.headers(), "content-type": "application/json" },
-      body: JSON.stringify({
-        model: modelId,
-        messages: request.messages,
-        stream: true,
-        // Preserve the caller's OpenAI stream option while retaining the
-        // historical default that lets Fitz collect provider token telemetry.
-        stream_options: { include_usage: request.streamOptions?.includeUsage ?? true },
-        ...(request.maxTokens !== undefined ? { max_tokens: request.maxTokens } : {}),
-        ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
-        ...(request.topP !== undefined ? { top_p: request.topP } : {}),
-        ...(request.stop !== undefined ? { stop: request.stop } : {}),
-        ...(request.userId ? { user: request.userId } : {}),
-        ...(request.tools !== undefined ? { tools: request.tools } : {}),
-        ...(request.toolChoice !== undefined ? { tool_choice: request.toolChoice } : {}),
-        ...(request.parallelToolCalls !== undefined ? { parallel_tool_calls: request.parallelToolCalls } : {}),
-        ...(request.chatTemplateKwargs !== undefined ? { chat_template_kwargs: request.chatTemplateKwargs } : {}),
-      }),
-      signal,
-    });
-    if (!response.ok || !response.body) {
-      const detail = await response.text().catch(() => "");
-      const message = `OpenAI-compatible request failed (${response.status}): ${detail.slice(0, 500)}`;
-      if (response.status >= 400 && response.status < 500) {
-        throw new InferenceRequestRejectedError(message, response.status);
+    const watchdog = new StreamInactivityWatchdog(signal, this.#streamInactivityTimeoutMs);
+    try {
+      const response = await this.#fetch(openAIEndpoint(baseUrl, "chat/completions"), {
+        method: "POST",
+        headers: { ...this.headers(), "content-type": "application/json" },
+        body: JSON.stringify({
+          model: modelId,
+          messages: request.messages,
+          stream: true,
+          // Preserve the caller's OpenAI stream option while retaining the
+          // historical default that lets Fitz collect provider token telemetry.
+          stream_options: { include_usage: request.streamOptions?.includeUsage ?? true },
+          ...(request.maxTokens !== undefined ? { max_tokens: request.maxTokens } : {}),
+          ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+          ...(request.topP !== undefined ? { top_p: request.topP } : {}),
+          ...(request.stop !== undefined ? { stop: request.stop } : {}),
+          ...(request.userId ? { user: request.userId } : {}),
+          ...(request.tools !== undefined ? { tools: request.tools } : {}),
+          ...(request.toolChoice !== undefined ? { tool_choice: request.toolChoice } : {}),
+          ...(request.parallelToolCalls !== undefined ? { parallel_tool_calls: request.parallelToolCalls } : {}),
+          ...(request.chatTemplateKwargs !== undefined ? { chat_template_kwargs: request.chatTemplateKwargs } : {}),
+        }),
+        signal: watchdog.signal,
+      });
+      watchdog.activity();
+      if (!response.ok || !response.body) {
+        const detail = await response.text().catch(() => "");
+        const message = `OpenAI-compatible request failed (${response.status}): ${detail.slice(0, 500)}`;
+        if (response.status >= 400 && response.status < 500) {
+          throw new InferenceRequestRejectedError(message, response.status);
+        }
+        throw new Error(message);
       }
-      throw new Error(message);
-    }
-    for await (const chunk of parseSseJson(response.body, signal)) {
-      if (chunk.error) throw new Error(chunk.error.message ?? "OpenAI-compatible stream failed");
-      const choice = chunk.choices?.[0];
-      const finishReason = normalizeFinishReason(choice?.finish_reason);
-      const providerReasoning = reasoningText(choice?.delta);
-      yield {
-        text: choice?.delta?.content ?? "",
-        ...(providerReasoning ? { reasoning: providerReasoning } : {}),
-        ...(choice?.delta?.tool_calls?.length ? { toolCalls: choice.delta.tool_calls } : {}),
-        ...(finishReason ? { finishReason } : {}),
-        ...(chunk.usage?.prompt_tokens !== undefined ? { promptTokens: chunk.usage.prompt_tokens } : {}),
-        ...(chunk.usage?.completion_tokens !== undefined
-          ? { completionTokens: chunk.usage.completion_tokens }
-          : {}),
-      };
+      for await (const chunk of parseSseJson(response.body, watchdog.signal, () => watchdog.activity())) {
+        if (chunk.error) throw new Error(chunk.error.message ?? "OpenAI-compatible stream failed");
+        const choice = chunk.choices?.[0];
+        const finishReason = normalizeFinishReason(choice?.finish_reason);
+        const providerReasoning = reasoningText(choice?.delta);
+        yield {
+          text: choice?.delta?.content ?? "",
+          ...(providerReasoning ? { reasoning: providerReasoning } : {}),
+          ...(choice?.delta?.tool_calls?.length ? { toolCalls: choice.delta.tool_calls } : {}),
+          ...(finishReason ? { finishReason } : {}),
+          ...(chunk.usage?.prompt_tokens !== undefined ? { promptTokens: chunk.usage.prompt_tokens } : {}),
+          ...(chunk.usage?.completion_tokens !== undefined
+            ? { completionTokens: chunk.usage.completion_tokens }
+            : {}),
+        };
+      }
+    } catch (error) {
+      if (watchdog.timedOut) {
+        throw new Error(`OpenAI-compatible stream stalled for ${Math.round(this.#streamInactivityTimeoutMs / 1_000)} seconds without receiving data`);
+      }
+      throw error;
+    } finally {
+      watchdog.close();
     }
   }
 
@@ -207,6 +227,7 @@ function stringArray(value: unknown): string[] | undefined {
 export async function* parseSseJson(
   body: ReadableStream<Uint8Array>,
   signal: AbortSignal,
+  onActivity?: () => void,
 ): AsyncIterable<StreamChunk> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -214,8 +235,9 @@ export async function* parseSseJson(
   try {
     while (true) {
       if (signal.aborted) throw abortError();
-      const { done, value } = await reader.read();
+      const { done, value } = await readWithAbort(reader, signal);
       if (done) break;
+      onActivity?.();
       buffer += decoder.decode(value, { stream: true }).replaceAll("\r\n", "\n");
       let boundary = buffer.indexOf("\n\n");
       while (boundary >= 0) {
@@ -231,8 +253,64 @@ export async function* parseSseJson(
       }
     }
   } finally {
+    if (signal.aborted) await reader.cancel(signal.reason).catch(() => undefined);
     reader.releaseLock();
   }
+}
+
+class StreamInactivityWatchdog {
+  readonly #controller = new AbortController();
+  readonly #timeoutMs: number;
+  readonly #source: AbortSignal;
+  #timer: ReturnType<typeof setTimeout> | undefined;
+  #timedOut = false;
+
+  constructor(source: AbortSignal, timeoutMs: number) {
+    this.#source = source;
+    this.#timeoutMs = timeoutMs;
+    source.addEventListener("abort", this.#sourceAborted, { once: true });
+    if (source.aborted) this.#sourceAborted();
+    else this.activity();
+  }
+
+  get signal(): AbortSignal { return this.#controller.signal; }
+  get timedOut(): boolean { return this.#timedOut; }
+
+  activity(): void {
+    if (this.#controller.signal.aborted) return;
+    if (this.#timer) clearTimeout(this.#timer);
+    this.#timer = setTimeout(() => {
+      this.#timedOut = true;
+      this.#controller.abort();
+    }, this.#timeoutMs);
+  }
+
+  close(): void {
+    if (this.#timer) clearTimeout(this.#timer);
+    this.#timer = undefined;
+    this.#source.removeEventListener("abort", this.#sourceAborted);
+  }
+
+  readonly #sourceAborted = (): void => { this.#controller.abort(this.#source.reason); };
+}
+
+async function readWithAbort(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal,
+): Promise<Awaited<ReturnType<typeof reader.read>>> {
+  if (signal.aborted) throw abortError();
+  return new Promise((resolve, reject) => {
+    const aborted = () => finish(() => reject(abortError()));
+    const finish = (action: () => void) => {
+      signal.removeEventListener("abort", aborted);
+      action();
+    };
+    signal.addEventListener("abort", aborted, { once: true });
+    reader.read().then(
+      (result) => finish(() => resolve(result)),
+      (error: unknown) => finish(() => reject(error)),
+    );
+  });
 }
 
 function joinUrl(baseUrl: string, path: string): string {

@@ -128,6 +128,38 @@ describe("OpenAICompatibleClient model discovery", () => {
       id: "req-rejected-2", routeId: "fast", messages: [{ role: "user", content: "large prompt" }],
     }, new AbortController().signal))).rejects.toBeInstanceOf(InferenceRequestRejectedError);
   });
+
+  it("fails a stream that accepts the request but never produces bytes", async () => {
+    const client = new OpenAICompatibleClient({
+      streamInactivityTimeoutMs: 10,
+      fetch: async () => new Response(new ReadableStream<Uint8Array>({ start() { /* remain silent */ } }), {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }),
+    });
+
+    await expect(collect(client.streamChat("https://example.test/v1", "silent-model", {
+      id: "req-silent", routeId: "default", messages: [{ role: "user", content: "hello" }],
+    }, new AbortController().signal))).rejects.toThrow(/stream stalled .* without receiving data/);
+  });
+
+  it("resets the inactivity boundary whenever SSE bytes arrive", async () => {
+    const encoder = new TextEncoder();
+    const client = new OpenAICompatibleClient({
+      streamInactivityTimeoutMs: 30,
+      fetch: async () => new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          setTimeout(() => controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n')), 15);
+          setTimeout(() => { controller.enqueue(encoder.encode("data: [DONE]\n\n")); controller.close(); }, 40);
+        },
+      }), { status: 200, headers: { "content-type": "text/event-stream" } }),
+    });
+    const deltas: unknown[] = [];
+    for await (const delta of client.streamChat("https://example.test/v1", "paced-model", {
+      id: "req-paced", routeId: "default", messages: [{ role: "user", content: "hello" }],
+    }, new AbortController().signal)) deltas.push(delta);
+    expect(deltas).toEqual([expect.objectContaining({ text: "Hi" })]);
+  });
 });
 
 async function collect(stream: AsyncIterable<unknown>): Promise<void> {
