@@ -2,7 +2,7 @@ type Json = Record<string, any>;
 
 export interface RunRecoveryViewOptions {
   messages: HTMLElement;
-  resume: (runId: string, confirmUnsafe: boolean) => Promise<void>;
+  resume: (runId: string, confirmUnsafe: boolean, onAccepted: () => void) => Promise<void>;
 }
 
 /** A durable interrupted-run boundary. It never implies that an unfinished
@@ -29,14 +29,21 @@ export class RunRecoveryView {
       const confirmed = !review || window.confirm("A tool call was in flight when this task stopped. Fitz will tell the agent to inspect its effects before retrying. Continue?");
       if (!confirmed) return;
       button.disabled = true; button.textContent = "Resuming…";
-      // The interruption card is a boundary, not part of the resumed run. Drop
-      // it before the successor creates/continues the work disclosure so the
-      // reasoning feed carries on in place. The controller renders any
-      // submission/follow failure in the stream; the stale source boundary
-      // must never reappear after a successor has been attempted.
-      row.remove();
-      try { await this.options.resume(String(run.id), review); }
-      catch { /* AgentRunController owns visible resume failures. */ }
+      let accepted = false;
+      try {
+        await this.options.resume(String(run.id), review, () => {
+          accepted = true;
+          row.remove();
+        });
+        if (!accepted) row.remove();
+      } catch {
+        // AgentRunController owns the visible error. Keep the durable boundary
+        // actionable so a transient resume failure does not require a reload.
+        if (!accepted && row.parentElement) {
+          button.disabled = false;
+          button.textContent = review ? "Review and continue" : "Continue";
+        }
+      }
     });
     row.append(copy, button);
     this.options.messages.append(row);

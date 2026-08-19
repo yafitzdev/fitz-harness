@@ -189,9 +189,11 @@ describe("AgentRunController", () => {
       ? { data: { id: "run-successor" } }
       : { events: [{ sequence: 1, type: "run.completed", data: {} }] });
     const { controller } = setup(api);
-    await controller.resume("run-failed", true);
+    const accepted = vi.fn();
+    await controller.resume("run-failed", true, accepted);
     expect(api).toHaveBeenNthCalledWith(1, "/api/v1/agent/runs/run-failed/resume", "POST", { confirmUnsafe: true });
     expect(api).toHaveBeenNthCalledWith(2, "/api/v1/agent/runs/run-successor/events?after=0");
+    expect(accepted).toHaveBeenCalledOnce();
   });
 
   it("does not attach a resumed run whose response arrives after detach", async () => {

@@ -413,7 +413,7 @@ const agentRuns = new AgentRunController({
 });
 const runRecovery = new RunRecoveryView({
   messages,
-  resume: (runId, confirmUnsafe) => agentRuns.resume(runId, confirmUnsafe),
+  resume: (runId, confirmUnsafe, onAccepted) => agentRuns.resume(runId, confirmUnsafe, onAccepted),
 });
 const promptSubmission = new PromptSubmissionController({
   draft: () => composer.submission,

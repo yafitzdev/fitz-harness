@@ -111,7 +111,7 @@ export class AgentRunController {
     finally { if (this.#generation === generation) { this.#runId = undefined; this.#cancelPending = false; this.#options.refreshControls(); } }
   }
 
-  async resume(sourceRunId: string, confirmUnsafe = false): Promise<void> {
+  async resume(sourceRunId: string, confirmUnsafe = false, onAccepted?: () => void): Promise<void> {
     if (this.active) return;
     const generation = ++this.#generation;
     const activity = this.#options.activity.appendRun("Resuming");
@@ -124,6 +124,7 @@ export class AgentRunController {
       if (this.#generation !== generation) return;
       const runId = String(response.data.id);
       this.#runId = runId; this.#starting = false;
+      onAccepted?.();
       await this.#follow(runId, activity, Date.now(), generation);
     } catch (error) {
       if (this.#generation !== generation) return;
