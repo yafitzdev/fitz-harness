@@ -15,8 +15,8 @@ function memoryStorage(): Storage { const values = new Map<string, string>(); re
 
 function elements(): AdministrationPageElements {
   return {
-    refresh: node("button"), sections: node("div"),
-    createUserForm: node("form"), createUserName: node("input"), createUserKeyName: node("input"), hostedUserResult: node("div"), adminUsers: node("div"),
+    sections: node("div"),
+    createUserForm: node("form"), createUserName: node("input"), adminUsers: node("div"),
     toolPolicyForm: node("form"), toolPolicySubjectType: select(["role", "user"]), toolPolicySubject: select([]), toolPolicyName: node("input"), toolPolicyDecision: select(["ask", "allow", "deny"]), toolPolicies: node("div"),
     adminAuditEvents: node("div"), adminTrash: node("div"), adminSnapshots: node("div"), adminToolActions: node("div"), emptyTrashButton: node("button"), gcRetentionButton: node("button"), emptyTrashConfirmation: node("div"), emptyTrashConfirmationText: node("span"), cancelEmptyTrash: node("button"), confirmEmptyTrash: node("button"),
     diagnosticGeneratedAt: node("p"), diagnosticSummary: node("div"), diagnosticMetrics: node("div"), diagnosticFailures: node("div"), diagnosticExportStatus: node("p"), exportDiagnostics: node("button"),
@@ -32,10 +32,8 @@ const quota = { maxRequestsPerMinute: 360, maxPromptChars: 200_000, maxOutputTok
 function apiMock() {
   return vi.fn(async (path: string, method?: string) => {
     if (path === "/api/v1/management/users") return { data: [ada, grace] };
-    if (path === "/api/v1/management/user-usage") return { data: [{ ownerUserId: "user-2", requests: 42, totalTokens: 9000, lastActiveAt: new Date().toISOString() }] };
-    if (path.endsWith("/access")) { const user = path.includes("user-2") ? grace : ada; return { data: { user, devices: user === grace ? [{ id: "key-1", name: "Laptop", revokedAt: null }, { id: "key-old", name: "Old laptop", revokedAt: "2026-08-01T00:00:00.000Z" }] : [], routeIds: ["audio"], quota, currentDeviceId: "admin-key" } }; }
-    if (path.startsWith("/api/v1/management/usage?")) return { data: { timeline: [{ timestamp: "2026-08-14T20:00:00.000Z", requests: 4 }] } };
-    if (path === "/api/v1/management/hosting/users" && method === "POST") return { data: { user: { id: "user-3", displayName: "Linus" }, apiKey: "fitz_once_123", url: "https://yan.example.ts.net" } };
+    if (path.endsWith("/access")) { const user = path.includes("user-2") ? grace : ada; return { data: { user, devices: user === grace ? [{ id: "key-1", name: "Laptop" }] : [], routeIds: ["audio"], quota, currentDeviceId: "admin-key" } }; }
+    if (path === "/api/v1/management/hosting/users" && method === "POST") return { data: { user: { id: "user-3", displayName: "Linus" } } };
     if (path === "/api/v1/management/devices/key-1/rotate" && method === "POST") return { data: { token: "fitz_rotated_456" } };
     if (path === "/api/v1/management/tool-policies") return { data: [] };
     if (path === "/api/v1/management/audit-events?limit=50") return { data: [] };
@@ -47,7 +45,7 @@ function apiMock() {
 }
 
 function setup(administrator = true) {
-  const page = elements(); page.hostedUserResult.hidden = true; page.emptyTrashConfirmation.hidden = true; page.storageRestoreConfirmation.hidden = true;
+  const page = elements(); page.emptyTrashConfirmation.hidden = true; page.storageRestoreConfirmation.hidden = true;
   const api = apiMock();
   const bridge: AdministrationPageBridge = { copyText: vi.fn(async () => undefined), saveDiagnostics: vi.fn(async () => undefined), checkForUpdates: vi.fn(async () => undefined), installUpdate: vi.fn(async () => undefined), updateStatus: vi.fn(async () => ({ state: "idle" })), onUpdateStatus: vi.fn(() => () => undefined) };
   const showStatus = vi.fn();
@@ -58,35 +56,31 @@ function setup(administrator = true) {
 beforeEach(() => { document.body.replaceChildren(); Object.defineProperty(globalThis, "localStorage", { configurable: true, value: memoryStorage() }); });
 
 describe("AdministrationPageController", () => {
-  it("loads people, access, usage summaries, and advanced administration data", async () => {
+  it("loads people and access separately from usage analytics", async () => {
     const { controller, page, api } = setup(); await controller.load();
-    expect(api).toHaveBeenCalledWith("/api/v1/management/user-usage");
+    expect(api).not.toHaveBeenCalledWith("/api/v1/management/user-usage");
     expect(page.adminUsers.querySelectorAll(".admin-user")).toHaveLength(2);
-    expect(page.adminUsers.textContent).toContain("42 requests");
-    expect(page.adminUsers.textContent).toContain("9K tokens");
+    expect(page.adminUsers.textContent).toContain("1 active API key");
+    expect(page.adminUsers.textContent).not.toContain("requests");
     expect(page.adminUsers.textContent).not.toContain("Local Default is available");
     expect(page.adminUsers.textContent).not.toContain("Old laptop");
     expect(page.adminUsers.textContent).toContain("API keys");
   });
 
-  it("adds a consumer and exposes the URL plus API key exactly once", async () => {
-    const { controller, page, api, bridge } = setup(); await controller.load();
-    page.createUserName.value = "Linus"; page.createUserKeyName.value = "Desktop";
+  it("adds a consumer without implicitly issuing an API key", async () => {
+    const { controller, page, api, showStatus } = setup(); await controller.load();
+    page.createUserName.value = "Linus";
     page.createUserForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/hosting/users", "POST", { displayName: "Linus", keyName: "Desktop" }));
-    expect(page.hostedUserResult.hidden).toBe(false);
-    expect(page.hostedUserResult.textContent).toContain("https://yan.example.ts.net");
-    expect(page.hostedUserResult.textContent).toContain("fitz_once_123");
-    page.hostedUserResult.querySelector("button")!.click();
-    expect(bridge.copyText).toHaveBeenCalledWith("https://yan.example.ts.net\nfitz_once_123");
+    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/management/hosting/users", "POST", { displayName: "Linus" }));
+    await vi.waitFor(() => expect(showStatus).toHaveBeenCalledWith("User added. Add API keys from their user row.", "success"));
   });
 
-  it("loads a per-user time-of-day chart when the person is expanded", async () => {
+  it("does not load usage or render a time-of-day chart when a person is expanded", async () => {
     const { controller, page, api } = setup(); await controller.load();
     const details = page.adminUsers.querySelectorAll<HTMLDetailsElement>(".admin-user")[1]!;
     details.open = true; details.dispatchEvent(new Event("toggle"));
-    await vi.waitFor(() => expect(api.mock.calls.some(([path]) => String(path).includes("ownerUserId=user-2"))).toBe(true));
-    expect(details.querySelectorAll(".admin-hour-chart span")).toHaveLength(24);
+    expect(api.mock.calls.some(([path]) => String(path).startsWith("/api/v1/management/usage"))).toBe(false);
+    expect(details.querySelector(".admin-hour-chart")).toBeNull();
   });
 
   it("rotates keys and removes a person while preserving their history", async () => {

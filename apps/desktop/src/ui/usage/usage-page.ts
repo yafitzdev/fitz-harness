@@ -1,22 +1,28 @@
 import type { UsageBreakdownRow, UsageReport, UsageTimelineBucket } from "@fitz/protocol";
 
 type RangeId = "day" | "week" | "month";
+type UsageScope = { kind: "all" } | { kind: "user"; id: string } | { kind: "device"; id: string };
+interface UsageDevice { id: string; name: string }
+interface UsageSubject { id: string; displayName: string; status: string; devices: UsageDevice[] }
 
 /** Raw host request boundary used by the usage page adapter. */
 export type UsagePageApi = (path: string) => Promise<unknown>;
 
 export interface UsagePageClient {
   report(path: string): Promise<UsageReport>;
+  subjects(): Promise<UsageSubject[]>;
 }
 
 /** Validates the immutable usage report before it reaches the renderer. */
 export function createUsagePageClient(request: UsagePageApi): UsagePageClient {
-  return { report: async (path) => parseEnvelope(await request(path), parseUsageReport) };
+  return {
+    report: async (path) => parseEnvelope(await request(path), parseUsageReport),
+    subjects: async () => parseEnvelope(await request("/api/v1/management/usage-subjects"), parseSubjects),
+  };
 }
 
 export interface UsagePageOptions {
   root: HTMLElement;
-  refresh: HTMLButtonElement;
   api: UsagePageClient;
   errorMessage: (error: unknown) => string;
 }
@@ -31,10 +37,11 @@ const ranges: Record<RangeId, { label: string; milliseconds: number; bucket: "ho
 export class UsagePageController {
   readonly #options: UsagePageOptions;
   #range: RangeId = "week";
+  #scope: UsageScope = { kind: "all" };
+  #subjects: UsageSubject[] = [];
 
   constructor(options: UsagePageOptions) {
     this.#options = options;
-    options.refresh.addEventListener("click", () => void this.load());
   }
 
   showLoading(): void {
@@ -47,8 +54,15 @@ export class UsagePageController {
       const range = ranges[this.#range];
       const to = new Date();
       const from = new Date(to.getTime() - range.milliseconds);
+      const subjects = await this.#options.api.subjects();
+      const selectedScope = this.#scope;
+      if (selectedScope.kind === "user" && !subjects.some((user) => user.id === selectedScope.id)) this.#scope = { kind: "all" };
+      if (selectedScope.kind === "device" && !subjects.some((user) => user.devices.some((device) => device.id === selectedScope.id))) this.#scope = { kind: "all" };
       const query = new URLSearchParams({ from: from.toISOString(), to: to.toISOString(), bucket: range.bucket });
+      if (this.#scope.kind === "user") query.set("ownerUserId", this.#scope.id);
+      if (this.#scope.kind === "device") query.set("ownerDeviceId", this.#scope.id);
       const report = await this.#options.api.report(`/api/v1/management/usage?${query}`);
+      this.#subjects = subjects;
       this.render(report);
     } catch (error) {
       this.#options.root.replaceChildren(message(this.#options.errorMessage(error)));
@@ -57,7 +71,28 @@ export class UsagePageController {
 
   render(report: UsageReport): void {
     const controls = document.createElement("div");
-    controls.className = "usage-range";
+    controls.className = "usage-controls";
+    const scope = document.createElement("label");
+    scope.className = "usage-scope";
+    scope.append(Object.assign(document.createElement("span"), { textContent: "Filter by" }));
+    const select = document.createElement("select");
+    select.setAttribute("aria-label", "Filter usage by user or API key");
+    select.add(option("All", "all"));
+    select.add(separatorOption("all"));
+    for (const [index, user] of this.#subjects.entries()) {
+      select.add(option(`${user.displayName}${user.status === "active" ? "" : " (disabled)"}`, `user:${user.id}`));
+      for (const device of user.devices) select.add(option(`    API key · ${device.name}`, `device:${device.id}`));
+      if (index < this.#subjects.length - 1) select.add(separatorOption(String(index)));
+    }
+    select.value = this.#scope.kind === "all" ? "all" : `${this.#scope.kind}:${this.#scope.id}`;
+    select.addEventListener("change", () => {
+      const [kind, id] = select.value.split(":", 2);
+      this.#scope = kind === "user" && id ? { kind, id } : kind === "device" && id ? { kind, id } : { kind: "all" };
+      void this.load();
+    });
+    scope.append(select);
+    const rangeControls = document.createElement("div");
+    rangeControls.className = "usage-range";
     for (const [id, range] of Object.entries(ranges) as [RangeId, typeof ranges[RangeId]][]) {
       const button = document.createElement("button");
       button.type = "button";
@@ -68,8 +103,9 @@ export class UsagePageController {
         this.#range = id;
         void this.load();
       });
-      controls.append(button);
+      rangeControls.append(button);
     }
+    controls.append(scope, rangeControls);
 
     const cards = document.createElement("section");
     cards.className = "usage-kpis";
@@ -83,12 +119,15 @@ export class UsagePageController {
       metric("Avg. first output", formatDuration(report.totals.averageTtftMs), "Chat requests with telemetry"),
       metric("Avg. duration", formatDuration(report.totals.averageDurationMs), "All terminal requests"),
       metric("Recorded cost", formatMoney(report.totals.creditCostCents), "Provider-reported credits only"),
+      metric("Last active", report.totals.lastActiveAt ? formatRelativeTime(report.totals.lastActiveAt) : "—", report.totals.lastActiveAt ? new Date(report.totals.lastActiveAt).toLocaleString() : "No requests in this period"),
     );
 
     const timeline = panel("Request volume", "Terminal requests over time", renderTimeline(report.timeline));
     const breakdowns = document.createElement("div");
     breakdowns.className = "usage-breakdowns";
     breakdowns.append(
+      panel("Users", "Usage now lives here instead of in user administration", renderBreakdown(report.users)),
+      panel("API keys", "Authenticated key attribution; historical requests may be unattributed", renderBreakdown(report.devices)),
       panel("Routes", "Requests and token usage", renderBreakdown(report.routes)),
       panel("Modalities", "Text and media workload", renderBreakdown(report.modalities)),
     );
@@ -105,6 +144,21 @@ function message(text: string): HTMLElement {
   element.className = "panel-empty";
   element.textContent = text;
   return element;
+}
+
+function option(text: string, value: string): HTMLOptionElement {
+  const item = document.createElement("option");
+  item.textContent = text;
+  item.value = value;
+  return item;
+}
+
+function separatorOption(id: string): HTMLOptionElement {
+  const separator = option("", `separator:${id}`);
+  separator.dataset.separator = "true";
+  separator.disabled = true;
+  separator.setAttribute("aria-hidden", "true");
+  return separator;
 }
 
 function metric(label: string, value: string, note: string): HTMLElement {
@@ -231,6 +285,16 @@ function formatDuration(value?: number): string {
   return `${(value / 60_000).toFixed(1)} min`;
 }
 
+function formatRelativeTime(value: string): string {
+  const elapsed = Math.max(0, Date.now() - new Date(value).getTime());
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
 function terminalFailureSummary(report: UsageReport): string {
   const parts = [
     report.totals.failed ? `${report.totals.failed} failed` : "",
@@ -248,7 +312,8 @@ function parseEnvelope<T>(value: unknown, parse: (value: unknown) => T): T {
 function parseUsageReport(value: unknown): UsageReport {
   if (!isRecord(value) || typeof value.from !== "string" || typeof value.to !== "string"
     || (value.bucket !== "hour" && value.bucket !== "day") || !isRecord(value.totals)
-    || !Array.isArray(value.timeline) || !Array.isArray(value.routes) || !Array.isArray(value.recipes) || !Array.isArray(value.modalities)) {
+    || !Array.isArray(value.timeline) || !Array.isArray(value.routes) || !Array.isArray(value.recipes) || !Array.isArray(value.modalities)
+    || !Array.isArray(value.users) || !Array.isArray(value.devices)) {
     throw invalidResponse("usage report is invalid");
   }
   return {
@@ -260,6 +325,8 @@ function parseUsageReport(value: unknown): UsageReport {
     routes: value.routes.map(parseBreakdownRow),
     recipes: value.recipes.map(parseBreakdownRow),
     modalities: value.modalities.map(parseBreakdownRow),
+    users: value.users.map(parseBreakdownRow),
+    devices: value.devices.map(parseBreakdownRow),
   };
 }
 
@@ -269,6 +336,7 @@ function parseUsageTotals(value: Record<string, unknown>): UsageReport["totals"]
   const averageQueueWaitMs = optionalNumber(value.averageQueueWaitMs);
   const averageTtftMs = optionalNumber(value.averageTtftMs);
   const averageDurationMs = optionalNumber(value.averageDurationMs);
+  const lastActiveAt = typeof value.lastActiveAt === "string" ? value.lastActiveAt : undefined;
   return {
     requests: requiredNumber(value, "requests"),
     successful: requiredNumber(value, "successful"),
@@ -284,7 +352,23 @@ function parseUsageTotals(value: Record<string, unknown>): UsageReport["totals"]
     ...(averageQueueWaitMs !== undefined ? { averageQueueWaitMs } : {}),
     ...(averageTtftMs !== undefined ? { averageTtftMs } : {}),
     ...(averageDurationMs !== undefined ? { averageDurationMs } : {}),
+    ...(lastActiveAt !== undefined ? { lastActiveAt } : {}),
   };
+}
+
+function parseSubjects(value: unknown): UsageSubject[] {
+  if (!Array.isArray(value)) throw invalidResponse("usage subjects are invalid");
+  return value.map((entry) => {
+    if (!isRecord(entry) || typeof entry.id !== "string" || typeof entry.displayName !== "string" || typeof entry.status !== "string" || !Array.isArray(entry.devices)) throw invalidResponse("usage subject is invalid");
+    return { id: entry.id, displayName: entry.displayName, status: entry.status, devices: parseDevices(entry.devices) };
+  });
+}
+
+function parseDevices(value: unknown[]): UsageDevice[] {
+  return value.map((entry) => {
+    if (!isRecord(entry) || typeof entry.id !== "string" || typeof entry.name !== "string") throw invalidResponse("API key is invalid");
+    return { id: entry.id, name: entry.name };
+  });
 }
 
 function parseTimelineBucket(value: unknown): UsageTimelineBucket {

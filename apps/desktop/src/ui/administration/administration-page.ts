@@ -20,13 +20,10 @@ export interface AdministrationPageBridge extends DesktopUpdateBridge, Diagnosti
 }
 
 export interface AdministrationPageElements {
-  refresh: HTMLButtonElement;
   /** Root that owns every collapsible admin section; toggles are resolved from it. */
   sections: HTMLElement;
   createUserForm: HTMLFormElement;
   createUserName: HTMLInputElement;
-  createUserKeyName: HTMLInputElement;
-  hostedUserResult: HTMLElement;
   adminUsers: HTMLElement;
   toolPolicyForm: HTMLFormElement;
   toolPolicySubjectType: HTMLSelectElement;
@@ -84,7 +81,7 @@ export class AdministrationPageController {
   private readonly options: AdministrationPageOptions;
   private users: Json[] = [];
   private policies: Json[] = [];
-  private userUsage = new Map<string, Json>();
+  private revealUserId: string | undefined;
   private readonly diagnostics: DiagnosticsController;
   private readonly safetyRecovery: SafetyRecoveryController;
   private readonly storageDurability: StorageDurabilityController;
@@ -124,7 +121,7 @@ export class AdministrationPageController {
       confirmEmptyTrash: elements.confirmEmptyTrash,
     }, {
       api: options.api,
-      reload: () => this.load(),
+      reload: () => this.loadAdvanced(),
       showStatus: options.showStatus,
       errorMessage: options.errorMessage,
     });
@@ -143,7 +140,7 @@ export class AdministrationPageController {
       confirmRestore: elements.confirmStorageRestore,
     }, {
       api: options.api,
-      reload: () => this.load(),
+      reload: () => this.loadAdvanced(),
       showStatus: options.showStatus,
       errorMessage: options.errorMessage,
     });
@@ -155,11 +152,38 @@ export class AdministrationPageController {
   }
 
   async load(): Promise<void> {
+    await Promise.all([this.loadUsers(), this.loadAdvanced()]);
+  }
+
+  async loadUsers(): Promise<void> {
     if (!this.options.isAdministrator()) return;
     try {
-      const [users, userUsage, policies, audit, diagnostics, trash, snapshots, toolActions, storage] = await Promise.all([
+      const users = await this.options.api("/api/v1/management/users");
+      this.users = users.data ?? [];
+      const access = await Promise.all(this.users.map((user) =>
+        this.options.api(`/api/v1/management/users/${user.id}/access`).then((response) => response.data),
+      ));
+      this.elements.adminUsers.replaceChildren(...access.map((entry) => this.renderAdminUser(entry)));
+      if (!access.length) this.elements.adminUsers.append(emptyState("No users yet"));
+      if (this.revealUserId) {
+        const created = [...this.elements.adminUsers.querySelectorAll<HTMLDetailsElement>(".admin-user")]
+          .find((item) => item.dataset.userId === this.revealUserId);
+        if (created) {
+          created.open = true;
+          created.querySelector<HTMLInputElement>(".admin-issue-key input")?.focus();
+        }
+        this.revealUserId = undefined;
+      }
+    } catch (error) {
+      this.elements.adminUsers.replaceChildren(emptyState(`Users unavailable: ${this.options.errorMessage(error)}`));
+    }
+  }
+
+  async loadAdvanced(): Promise<void> {
+    if (!this.options.isAdministrator()) return;
+    try {
+      const [users, policies, audit, diagnostics, trash, snapshots, toolActions, storage] = await Promise.all([
         this.options.api("/api/v1/management/users"),
-        this.options.api("/api/v1/management/user-usage"),
         this.options.api("/api/v1/management/tool-policies"),
         this.options.api("/api/v1/management/audit-events?limit=50"),
         this.options.api("/api/v1/management/diagnostics"),
@@ -169,13 +193,7 @@ export class AdministrationPageController {
         this.options.api("/api/v1/management/storage").catch((error) => ({ data: { error: this.options.errorMessage(error), report: {}, backups: [], available: false } })),
       ]);
       this.users = users.data ?? [];
-      this.userUsage = new Map((userUsage.data ?? []).map((entry: Json) => [entry.ownerUserId, entry]));
       this.policies = policies.data ?? [];
-      const access = await Promise.all(this.users.map((user) =>
-        this.options.api(`/api/v1/management/users/${user.id}/access`).then((response) => response.data),
-      ));
-      this.elements.adminUsers.replaceChildren(...access.map((entry) => this.renderAdminUser(entry)));
-      if (!access.length) this.elements.adminUsers.append(emptyState("No users yet"));
       this.renderToolPolicySubjects();
       this.renderToolPolicies();
       this.renderAdminAuditEvents(audit.data ?? []);
@@ -185,12 +203,11 @@ export class AdministrationPageController {
       this.diagnostics.render(diagnostics);
       this.storageDurability.render(storage.data ?? {});
     } catch (error) {
-      this.elements.adminUsers.replaceChildren(emptyState(`Administration unavailable: ${this.options.errorMessage(error)}`));
+      this.options.showStatus(`Advanced administration unavailable: ${this.options.errorMessage(error)}`, "error");
     }
   }
 
   private bind(): void {
-    this.elements.refresh.addEventListener("click", () => void this.load());
     this.elements.createUserForm.addEventListener("submit", (event) => { event.preventDefault(); void this.createAdminUser(); });
     this.elements.toolPolicySubjectType.addEventListener("change", () => this.renderToolPolicySubjects());
     this.elements.toolPolicyForm.addEventListener("submit", (event) => { event.preventDefault(); void this.saveToolPolicy(); });
@@ -201,43 +218,28 @@ export class AdministrationPageController {
     try {
       const response = await this.options.api("/api/v1/management/hosting/users", "POST", {
         displayName: this.elements.createUserName.value.trim(),
-        ...(this.elements.createUserKeyName.value.trim() ? { keyName: this.elements.createUserKeyName.value.trim() } : {}),
       });
-      const url = String(response.data.url ?? "Hosting is currently offline");
-      const apiKey = String(response.data.apiKey ?? "");
-      const connection = `${url}\n${apiKey}`;
-      const copy = document.createElement("button");
-      copy.type = "button"; copy.textContent = "Copy connection";
-      copy.addEventListener("click", () => void this.options.bridge.copyText(connection));
-      this.elements.hostedUserResult.replaceChildren(
-        Object.assign(document.createElement("strong"), { textContent: `${response.data.user?.displayName ?? "User"} is ready` }),
-        Object.assign(document.createElement("span"), { textContent: "Send both values below. The API key cannot be shown again." }),
-        Object.assign(document.createElement("code"), { textContent: url }),
-        Object.assign(document.createElement("code"), { textContent: apiKey }),
-        copy,
-      );
-      this.elements.hostedUserResult.hidden = false;
+      this.revealUserId = typeof response.data?.user?.id === "string" ? response.data.user.id : undefined;
       this.elements.createUserName.value = "";
-      this.elements.createUserKeyName.value = "";
-      await this.load();
-      this.options.showStatus("User and API key created", "success");
+      await this.loadUsers();
+      this.options.showStatus("User added. Add API keys from their user row.", "success");
     } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
     finally { setFormBusy(this.elements.createUserForm, false); }
   }
 
   private renderAdminUser(access: Json): HTMLElement {
     const user = access.user as Json;
-    const activeDevices = (access.devices ?? []).filter((device: Json) => !device.revokedAt).length;
-    const usage = this.userUsage.get(user.id);
+    const activeDevices = (access.devices ?? []).length;
     const details = document.createElement("details");
     details.className = "admin-user";
+    details.dataset.userId = user.id;
 
     const summary = document.createElement("summary");
     const title = document.createElement("span");
     title.className = "admin-user-title";
     title.append(
       Object.assign(document.createElement("strong"), { textContent: user.displayName }),
-      Object.assign(document.createElement("small"), { textContent: usage ? `${formatCompact(usage.requests)} requests · ${formatCompact(usage.totalTokens)} tokens · active ${formatRelativeTime(usage.lastActiveAt)}` : `${activeDevices} active device${activeDevices === 1 ? "" : "s"} · no usage in 30 days` }),
+      Object.assign(document.createElement("small"), { textContent: `${activeDevices} active API key${activeDevices === 1 ? "" : "s"}` }),
     );
     const role = document.createElement("select");
     role.setAttribute("aria-label", `Role for ${user.displayName}`);
@@ -255,17 +257,6 @@ export class AdministrationPageController {
 
     const body = document.createElement("div");
     body.className = "admin-user-body";
-    const activityHeading = document.createElement("h3");
-    activityHeading.textContent = "30-day activity by time of day";
-    const activity = document.createElement("div");
-    activity.className = "admin-user-activity";
-    activity.append(emptyState("Open this user to load activity"));
-    let activityLoaded = false;
-    details.addEventListener("toggle", () => {
-      if (!details.open || activityLoaded) return;
-      activityLoaded = true;
-      void this.loadUserActivity(user.id, activity);
-    });
     const mediaHeading = document.createElement("h3");
     mediaHeading.textContent = "Media access";
     const mediaRoutes = document.createElement("div");
@@ -308,8 +299,8 @@ export class AdministrationPageController {
     devicesHeading.textContent = "API keys";
     const devices = document.createElement("div");
     devices.className = "admin-devices";
-    const activeDeviceRecords = (access.devices ?? []).filter((device: Json) => !device.revokedAt);
-    for (const device of activeDeviceRecords) {
+    const deviceRecords = access.devices ?? [];
+    for (const device of deviceRecords) {
       const item = document.createElement("span");
       item.className = "admin-device";
       const current = device.id === access.currentDeviceId;
@@ -327,18 +318,18 @@ export class AdministrationPageController {
         rotatedKey.className = "admin-api-key-result";
         rotatedKey.hidden = true;
         rotate.addEventListener("click", () => void this.rotateAdminDevice(device.id, rotatedKey));
-        const revoke = document.createElement("button");
-        revoke.type = "button";
-        revoke.className = "admin-device-action danger";
-        revoke.setAttribute("aria-label", `Revoke ${device.name}`);
-        revoke.title = "Revoke API key";
-        revoke.textContent = "×";
-        revoke.addEventListener("click", () => void this.revokeAdminDevice(device.id));
-        item.append(rotate, revoke, rotatedKey);
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "admin-device-action danger";
+        remove.setAttribute("aria-label", `Delete ${device.name} API key`);
+        remove.title = "Delete API key";
+        remove.textContent = "×";
+        remove.addEventListener("click", () => void this.deleteAdminDevice(device.id));
+        item.append(rotate, remove, rotatedKey);
       }
       devices.append(item);
     }
-    if (!activeDeviceRecords.length) devices.append(emptyState("No active API keys"));
+    if (!deviceRecords.length) devices.append(emptyState("No API keys"));
 
     const issueKey = document.createElement("form");
     issueKey.className = "admin-issue-key";
@@ -371,33 +362,9 @@ export class AdministrationPageController {
       toggle.addEventListener("click", () => user.status === "active" ? void this.removeAdminUser(user.id) : void this.updateAdminUser(user.id, { status: "active" }));
       actions.append(toggle);
     }
-    body.append(activityHeading, activity, mediaHeading, mediaRoutes, quotaHeading, quota, devicesHeading, devices, issueKey, keyResult, actions);
+    body.append(mediaHeading, mediaRoutes, quotaHeading, quota, devicesHeading, devices, issueKey, keyResult, actions);
     details.append(summary, body);
     return details;
-  }
-
-  private async loadUserActivity(userId: string, target: HTMLElement): Promise<void> {
-    try {
-      const to = new Date();
-      const from = new Date(to.getTime() - 30 * 86_400_000);
-      const query = new URLSearchParams({ from: from.toISOString(), to: to.toISOString(), bucket: "hour", ownerUserId: userId });
-      const response = await this.options.api(`/api/v1/management/usage?${query}`);
-      const hours = Array.from({ length: 24 }, () => 0);
-      for (const bucket of response.data?.timeline ?? []) hours[new Date(bucket.timestamp).getHours()]! += Number(bucket.requests ?? 0);
-      const maximum = Math.max(1, ...hours);
-      const chart = document.createElement("div");
-      chart.className = "admin-hour-chart";
-      hours.forEach((requests, hour) => {
-        const bar = document.createElement("span");
-        bar.style.height = `${Math.max(requests ? 4 : 1, requests / maximum * 100)}%`;
-        bar.title = `${String(hour).padStart(2, "0")}:00 · ${requests} request${requests === 1 ? "" : "s"}`;
-        chart.append(bar);
-      });
-      const axis = document.createElement("div");
-      axis.className = "admin-hour-axis";
-      axis.append(...["00", "06", "12", "18", "24"].map((label) => Object.assign(document.createElement("span"), { textContent: label })));
-      target.replaceChildren(chart, axis);
-    } catch (error) { target.replaceChildren(emptyState(this.options.errorMessage(error))); }
   }
 
   private renderToolPolicySubjects(): void {
@@ -458,7 +425,7 @@ export class AdministrationPageController {
         decision: this.elements.toolPolicyDecision.value,
       });
       this.elements.toolPolicyName.value = "";
-      await this.load();
+      await this.loadAdvanced();
       this.options.showStatus("Tool policy saved", "success");
     } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
     finally { setFormBusy(this.elements.toolPolicyForm, false); }
@@ -467,16 +434,16 @@ export class AdministrationPageController {
   private async updateAdminUser(userId: string, update: Json): Promise<void> {
     try {
       await this.options.api(`/api/v1/management/users/${userId}`, "PATCH", update);
-      await this.load();
+      await this.loadUsers();
       this.options.showStatus("User updated", "success");
     } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
   }
 
-  private async revokeAdminDevice(deviceId: string): Promise<void> {
+  private async deleteAdminDevice(deviceId: string): Promise<void> {
     try {
       await this.options.api(`/api/v1/management/devices/${deviceId}`, "DELETE");
-      await this.load();
-      this.options.showStatus("API key revoked", "success");
+      await this.loadUsers();
+      this.options.showStatus("API key deleted", "success");
     } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
   }
 
@@ -498,7 +465,7 @@ export class AdministrationPageController {
   private async removeAdminUser(userId: string): Promise<void> {
     try {
       await this.options.api(`/api/v1/management/users/${userId}`, "DELETE");
-      await this.load();
+      await this.loadUsers();
       this.options.showStatus("User removed and API keys revoked", "success");
     } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
   }
@@ -546,16 +513,4 @@ function emptyState(message: string): HTMLElement {
 
 function setFormBusy(form: HTMLFormElement, busy: boolean): void {
   for (const control of form.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>("input,button,select")) control.disabled = busy;
-}
-
-function formatCompact(value: unknown): string { return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(Number(value ?? 0)); }
-function formatRelativeTime(value: unknown): string {
-  const timestamp = typeof value === "string" ? new Date(value).getTime() : Number.NaN;
-  if (!Number.isFinite(timestamp)) return "never";
-  const minutes = Math.max(0, Math.round((Date.now() - timestamp) / 60_000));
-  if (minutes < 1) return "now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
 }

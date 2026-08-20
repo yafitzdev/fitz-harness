@@ -39,21 +39,17 @@
 .sidebar-hosting-switch > span::after { width: 18px; height: 18px; }
 .sidebar-hosting-switch input:checked + span::after { transform: translateX(16px); }
 .hosting-config-path code { overflow: hidden; color: var(--text); font: 12px/1.4 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
-.hosting-repair-row button, .hosting-config-actions button, .hosting-config-path button, .hosting-create-user button, .hosted-user-result button { min-height: 34px; padding: 0 12px; border-radius: var(--radius-md); background: var(--tint-5); color: var(--text); cursor: pointer; }
-.hosting-repair-row button:hover, .hosting-config-actions button:hover, .hosting-config-path button:hover, .hosting-create-user button:hover, .hosted-user-result button:hover { background: var(--tint-7); }
+.hosting-repair-row button, .hosting-config-actions button, .hosting-config-path button, .hosting-create-user button { min-height: 34px; padding: 0 12px; border-radius: var(--radius-md); background: var(--tint-5); color: var(--text); cursor: pointer; }
+.hosting-repair-row button:hover, .hosting-config-actions button:hover, .hosting-config-path button:hover, .hosting-create-user button:hover { background: var(--tint-7); }
 .hosting-status-cards { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; }
 .hosting-status-cards > div { min-height: 66px; display: grid; align-content: space-between; gap: 8px; padding: 11px 12px; border-radius: var(--radius-lg); background: var(--grey-200); }
 .hosting-status-cards small { color: var(--subtle); font-size: 10px; }
 .hosting-status-cards strong { overflow: hidden; font-size: 12px; font-weight: 520; text-overflow: ellipsis; white-space: nowrap; }
 .hosting-repair-row { display: flex; align-items: center; gap: 12px; }
 .hosting-repair-row span { color: var(--subtle); font-size: 11px; }
-.hosting-create-user { display: grid; grid-template-columns: minmax(180px,1fr) minmax(180px,1fr) auto; align-items: end; gap: 10px; padding: 15px; border-radius: var(--radius-lg); background: var(--grey-200); }
+.hosting-create-user { display: grid; grid-template-columns: minmax(180px,1fr) auto; align-items: end; gap: 10px; padding: 15px; border-radius: var(--radius-lg); background: var(--grey-200); }
 .hosting-create-user label, .hosting-config-editor { display: grid; gap: 7px; color: var(--muted); font-size: 11px; }
 .hosting-create-user input { height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--window-background); color: var(--text); }
-.hosted-user-result { display: grid; gap: 8px; padding: 15px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--tint-2); }
-.hosted-user-result[hidden] { display: none; }
-.hosted-user-result span { color: var(--muted); font-size: 11px; }
-.hosted-user-result code { padding: 8px 10px; border-radius: var(--radius-md); background: var(--window-background); font: 11px/1.4 var(--font-mono); overflow-wrap: anywhere; }
 .hosting-check { display: flex; align-items: center; gap: 9px; margin-top: 14px; color: var(--text); font-size: 12px; }
 .hosting-config-path { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 7px 12px; margin-top: 14px; padding: 12px; border-radius: var(--radius-lg); background: var(--grey-200); }
 .hosting-config-path small { grid-column: 1 / -1; }
@@ -61,10 +57,6 @@
 .hosting-config-editor textarea { width: 100%; min-height: 260px; resize: vertical; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--window-background); color: var(--text); font: 11px/1.55 var(--font-mono); outline: none; }
 .hosting-config-editor textarea:focus { border-color: var(--grey-500); }
 .hosting-config-actions { display: flex; gap: 8px; margin-top: 10px; }
-.admin-user-activity { min-height: 100px; }
-.admin-hour-chart { height: 92px; display: grid; grid-template-columns: repeat(24,1fr); align-items: end; gap: 3px; padding-top: 8px; }
-.admin-hour-chart span { min-height: 1px; border-radius: 2px 2px 0 0; background: color-mix(in srgb, var(--text) 55%, transparent); }
-.admin-hour-axis { display: flex; justify-content: space-between; color: var(--subtle); font-size: 9px; }
 @media (max-width: 800px) { .hosting-status-cards { grid-template-columns: 1fr; } .hosting-create-user { grid-template-columns: 1fr; } }
 .diagnostic-export-status { margin: -3px 0 10px; color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
 .diagnostic-export-status[data-state="error"] { color: var(--status-danger); }

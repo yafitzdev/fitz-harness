@@ -50,6 +50,19 @@ describe("CustomSelectController", () => {
     expect(document.activeElement).toBe(select);
   });
 
+  it("renders separator options as thin full-width rules", () => {
+    const { select, popover, controller } = setup();
+    const separator = document.createElement("option");
+    separator.dataset.separator = "true";
+    separator.disabled = true;
+    select.insertBefore(separator, select.firstChild);
+
+    controller.open(select);
+
+    expect(popover.querySelector(".select-separator")).not.toBeNull();
+    expect(popover.querySelectorAll(".select-option")).toHaveLength(2);
+  });
+
   it("enhances selects inserted after startup", async () => {
     setup();
     const added = document.createElement("select");

@@ -54,6 +54,13 @@ export class CustomSelectController {
       if (group && group !== currentGroup) {
         const heading = document.createElement("small"); heading.className = "select-group-label"; heading.textContent = group; this.#popover.append(heading); currentGroup = group;
       }
+      if (option.dataset.separator === "true") {
+        const separator = document.createElement("hr");
+        separator.className = "select-separator";
+        separator.setAttribute("role", "separator");
+        this.#popover.append(separator);
+        continue;
+      }
       const button = document.createElement("button"); button.type = "button"; button.className = "select-option"; button.disabled = option.disabled; button.dataset.value = option.value; button.setAttribute("role", "option"); button.setAttribute("aria-selected", String(option.selected)); button.classList.toggle("selected", option.selected); button.textContent = option.textContent ?? option.value;
       if (option.selected) selectedButton = button;
       button.addEventListener("click", (event) => { event.stopPropagation(); select.value = option.value; select.dispatchEvent(new Event("change", { bubbles: true })); this.close(); select.focus(); });

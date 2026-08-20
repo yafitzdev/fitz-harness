@@ -1,5 +1,8 @@
 .usage-page .management-page-content { padding-bottom: 48px; }
 .usage-dashboard { display: grid; gap: 18px; }
+.usage-controls { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px; }
+.usage-scope { min-width: min(320px, 100%); display: grid; gap: 5px; color: var(--muted); font-size: 11px; }
+.usage-scope select { min-height: 34px; padding: 5px 30px 5px 10px; border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: var(--tint-1); color: var(--text); }
 .usage-range { width: max-content; display: flex; gap: 2px; padding: 3px; border-radius: var(--radius-md); background: var(--grey-200); }
 .usage-range button { min-height: 28px; padding: 4px 10px; border-radius: var(--radius-sm); background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; }
 .usage-range button:hover { color: var(--text); }
