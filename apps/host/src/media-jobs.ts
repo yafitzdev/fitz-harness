@@ -18,6 +18,7 @@ import { ArtifactQuotaExceededError, BlobSizeLimitError, type ArtifactRepository
 
 export interface MediaSubmitInput {
   routeId: string;
+  clientRequestId?: string;
   recipeId?: string;
   sourceJobId?: string;
   modality: MediaModality;
@@ -127,6 +128,7 @@ export class MediaJobCoordinator {
     const now = new Date().toISOString();
     const record: MediaJobRecord = {
       id,
+      ...(input.clientRequestId ? { clientRequestId: input.clientRequestId } : {}),
       ...(input.sourceJobId ? { sourceJobId: input.sourceJobId } : {}),
       routeId: route.id,
       modality: input.modality,

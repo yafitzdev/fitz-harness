@@ -76,6 +76,33 @@ describe("Fitz host media jobs", () => {
     }
   });
 
+  it("returns the original media job when native submission is retried", async () => {
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter()] });
+    try {
+      await registerMediaRecipe(runtime, "h3-img", ["image"]);
+      await assignRoute(runtime, "image", "h3-img");
+      const payload = {
+        routeId: "image",
+        modality: "image",
+        clientRequestId: "desktop:media-once",
+        params: { prompt: "one durable cat" },
+      };
+
+      const first = await runtime.app.inject({ method: "POST", url: "/api/v1/media/jobs", payload });
+      const replay = await runtime.app.inject({ method: "POST", url: "/api/v1/media/jobs", payload });
+
+      expect(first.statusCode, first.body).toBe(202);
+      expect(replay.statusCode, replay.body).toBe(200);
+      expect(replay.json()).toEqual(expect.objectContaining({
+        idempotentReplay: true,
+        data: expect.objectContaining({ id: first.json().data.id, clientRequestId: "desktop:media-once" }),
+      }));
+      expect(runtime.store.listMediaJobs().filter((job) => job.clientRequestId === "desktop:media-once")).toHaveLength(1);
+    } finally {
+      await runtime.app.close();
+    }
+  });
+
   it("pins edits to the source recipe and preserves durable lineage and sortable artifact names", async () => {
     const mediaFake = new FakeMediaEngineAdapter();
     const runtime = createHost({ adapters: [new FakeEngineAdapter(), mediaFake] });

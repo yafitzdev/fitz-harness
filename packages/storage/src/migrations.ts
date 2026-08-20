@@ -828,4 +828,14 @@ export const MIGRATIONS: readonly Migration[] = [
         ON forensics_persistence_errors(session_id, timestamp, id);
     `,
   },
+  {
+    version: 30,
+    // Native media submissions need the same retry safety as agent runs. The
+    // partial unique index leaves gateway-created and historical jobs alone.
+    sql: `
+      ALTER TABLE media_jobs ADD COLUMN client_request_id TEXT;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_media_jobs_client_request
+        ON media_jobs(client_request_id) WHERE client_request_id IS NOT NULL;
+    `,
+  },
 ] as const;

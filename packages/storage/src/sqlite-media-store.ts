@@ -20,6 +20,7 @@ export interface MediaJobEventEnvelope {
 
 interface MediaJobRow {
   id: string;
+  client_request_id: string | null;
   source_job_id: string | null;
   session_id: string | null;
   route_id: string;
@@ -53,13 +54,14 @@ export class SqliteMediaStore {
     this.database
       .prepare(
         `INSERT INTO media_jobs (
-          id, source_job_id, session_id, route_id, modality, status, params_json, execution_json, progress,
+          id, client_request_id, source_job_id, session_id, route_id, modality, status, params_json, execution_json, progress,
           artifact_id, provider_job_id, error_code, enqueued_at, started_at,
           completed_at, cancelled_at, created_by_user_id, credit_cost_cents
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         job.id,
+        job.clientRequestId ?? null,
         job.sourceJobId ?? null,
         job.sessionId ?? null,
         job.routeId,
@@ -99,12 +101,24 @@ export class SqliteMediaStore {
   getJob(id: string): MediaJobRecord | undefined {
     const row = this.database
       .prepare(
-        `SELECT id, source_job_id, session_id, route_id, modality, status, params_json, execution_json, progress,
+        `SELECT id, client_request_id, source_job_id, session_id, route_id, modality, status, params_json, execution_json, progress,
                 artifact_id, provider_job_id, error_code, enqueued_at, started_at,
                 completed_at, cancelled_at, created_by_user_id, credit_cost_cents
          FROM media_jobs WHERE id = ?`,
       )
       .get(id) as MediaJobRow | undefined;
+    return row ? mapMediaJob(row) : undefined;
+  }
+
+  jobForClientRequest(clientRequestId: string): MediaJobRecord | undefined {
+    const row = this.database
+      .prepare(
+        `SELECT id, client_request_id, source_job_id, session_id, route_id, modality, status, params_json, execution_json, progress,
+                artifact_id, provider_job_id, error_code, enqueued_at, started_at,
+                completed_at, cancelled_at, created_by_user_id, credit_cost_cents
+         FROM media_jobs WHERE client_request_id = ?`,
+      )
+      .get(clientRequestId) as MediaJobRow | undefined;
     return row ? mapMediaJob(row) : undefined;
   }
 
@@ -156,7 +170,7 @@ export class SqliteMediaStore {
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     const rows = this.database
       .prepare(
-        `SELECT id, source_job_id, session_id, route_id, modality, status, params_json, execution_json, progress,
+        `SELECT id, client_request_id, source_job_id, session_id, route_id, modality, status, params_json, execution_json, progress,
                 artifact_id, provider_job_id, error_code, enqueued_at, started_at,
                 completed_at, cancelled_at, created_by_user_id, credit_cost_cents
          FROM media_jobs ${where} ORDER BY enqueued_at DESC LIMIT ?`,
@@ -245,6 +259,7 @@ export class SqliteMediaStore {
 function mapMediaJob(row: MediaJobRow): MediaJobRecord {
   return {
     id: row.id,
+    ...(row.client_request_id ? { clientRequestId: row.client_request_id } : {}),
     ...(row.source_job_id ? { sourceJobId: row.source_job_id } : {}),
     routeId: row.route_id,
     modality: row.modality,

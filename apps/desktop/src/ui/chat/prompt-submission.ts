@@ -51,6 +51,7 @@ export interface PromptSubmissionOptions {
   /** Submits a media job straight to the media-job pipeline, bypassing the LLM entirely. */
   submitMedia: (request: {
     routeId: string;
+    clientRequestId: string;
     modality: MediaModality;
     operation?: "generate" | "edit" | "animate";
     prompt: string;
@@ -246,6 +247,7 @@ export class PromptSubmissionController {
       if (displayContent && !existingUserMessage) this.#options.pushHistory(displayContent);
       this.#options.addTokenEstimate(displayContent);
       this.#options.refreshContext();
+      const mediaJobRequestId = crypto.randomUUID();
       this.#options.showMediaCreation({
         modality: mediaCommand,
         prompt: content || DEFAULT_MEDIA_PROMPTS[mediaCommand],
@@ -255,6 +257,7 @@ export class PromptSubmissionController {
             if (this.#options.isSessionCurrent?.(sessionId) === false) throw staleConversationError();
             const job = await this.#options.submitMedia({
               routeId: mediaCommand,
+              clientRequestId: mediaJobRequestId,
               modality: mediaCommand,
               ...(mediaCommand === "image" && refs.length > 0 ? { operation: "edit" } : {}),
               ...(mediaCommand === "video" && refs.length > 0 ? { operation: "animate" } : {}),

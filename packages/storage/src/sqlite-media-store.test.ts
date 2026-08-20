@@ -55,6 +55,25 @@ describe("SqliteStore media persistence", () => {
     store.close();
   });
 
+  it("maps one client request identity to one durable media job", () => {
+    const store = SqliteStore.memory();
+    const now = new Date(0).toISOString();
+    const job: MediaJobRecord = {
+      id: "job-once",
+      clientRequestId: "desktop:media-request-1",
+      routeId: "image",
+      modality: "image",
+      status: "queued",
+      params: { prompt: "once" },
+      enqueuedAt: now,
+    };
+    store.createMediaJob(job);
+
+    expect(store.mediaJobForClientRequest("desktop:media-request-1")).toEqual(job);
+    expect(() => store.createMediaJob({ ...job, id: "job-duplicate" })).toThrow();
+    store.close();
+  });
+
   it("persists direct media edit ancestry", () => {
     const store = SqliteStore.memory();
     const now = new Date(0).toISOString();

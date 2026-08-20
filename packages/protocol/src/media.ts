@@ -66,6 +66,8 @@ export interface MediaExecutionMetadata {
 
 export interface MediaJobRecord {
   id: string;
+  /** Client-generated identity used to make native job submission retry-safe. */
+  clientRequestId?: string;
   /** Direct parent job for edit/revision lineage. */
   sourceJobId?: string;
   sessionId?: string;

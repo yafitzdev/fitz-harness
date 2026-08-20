@@ -165,6 +165,7 @@ describe("PromptSubmissionController", () => {
     await request.submit({ prompt: "a cat with a hat", durationSeconds: 4, fps: 24 });
     expect(options.submitMedia).toHaveBeenCalledWith({
       routeId: "video",
+      clientRequestId: expect.any(String),
       modality: "video",
       prompt: "a cat with a hat",
       sessionId: "session-1",
@@ -516,6 +517,9 @@ describe("PromptSubmissionController", () => {
     await controller.submit();
     const request = mediaCreationRequest(options);
     await expect(request.submit({ prompt: "boom" })).rejects.toThrow("route unavailable");
+    await expect(request.submit({ prompt: "boom" })).rejects.toThrow("route unavailable");
+    const requestIds = (options.submitMedia as ReturnType<typeof vi.fn>).mock.calls.map(([input]) => input.clientRequestId);
+    expect(requestIds[0]).toBe(requestIds[1]);
     expect(options.showError).toHaveBeenCalledWith("Error: route unavailable");
     expect(options.onMediaJobSubmitted).not.toHaveBeenCalled();
     expect(options.startRun).not.toHaveBeenCalled();

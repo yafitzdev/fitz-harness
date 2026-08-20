@@ -453,9 +453,10 @@ const promptSubmission = new PromptSubmissionController({
   refreshContext: () => conversationContext.refresh(),
   refreshControls: refreshComposerState,
   runId: () => agentRuns.runId,
-  submitMedia: async ({ routeId, modality, operation, prompt, sessionId, size, seed, negativePrompt, lyrics, durationSeconds, fps, refs }) => {
+  submitMedia: async ({ routeId, clientRequestId, modality, operation, prompt, sessionId, size, seed, negativePrompt, lyrics, durationSeconds, fps, refs }) => {
     const response = await api("/api/v1/media/jobs", "POST", {
       routeId,
+      clientRequestId,
       modality,
       params: {
         prompt,

@@ -220,6 +220,10 @@ export class SqliteStore {
     return this.#media.getJob(id);
   }
 
+  mediaJobForClientRequest(clientRequestId: string): MediaJobRecord | undefined {
+    return this.#media.jobForClientRequest(clientRequestId);
+  }
+
   updateMediaJob(id: string, patch: Partial<Omit<MediaJobRecord, "id" | "enqueuedAt">>): void {
     this.#media.updateJob(id, patch);
   }

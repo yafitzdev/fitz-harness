@@ -32,21 +32,35 @@ export function registerMediaRoutes(options: RegisterMediaRoutesOptions): void {
   const { app, store, artifacts, mediaJobs, principals, security, imageTimeoutMs } = options;
 
   app.post("/api/v1/media/jobs", async (request, reply) => {
+    let clientRequestId: string | undefined;
+    let principal: AuthenticatedPrincipal | undefined;
     try {
       const body = requireRecord(request.body);
       const routeId = typeof body.routeId === "string" ? body.routeId : typeof body.model === "string" ? body.model : undefined;
       if (!routeId) throw new TypeError("routeId is required");
       const modality = parseModality(body.modality);
-      const principal = principals.get(request);
+      principal = principals.get(request);
+      clientRequestId = body.clientRequestId === undefined ? undefined : validateClientRequestId(body.clientRequestId);
+      const existing = clientRequestId ? store.mediaJobForClientRequest(clientRequestId) : undefined;
+      if (existing) {
+        if (!canAccessMediaJob(principal, existing)) return reply.code(409).send({ error: "Request identity is already in use" });
+        return reply.code(200).send({ data: existing, idempotentReplay: true });
+      }
       const job = await mediaJobs.submit({
         routeId,
         modality,
         params: parseMediaParams(body.params),
+        ...(clientRequestId ? { clientRequestId } : {}),
         ...(typeof body.sessionId === "string" && body.sessionId ? { sessionId: body.sessionId } : {}),
       }, principal);
       security?.audit("media-job.created", principal?.user.id, "media-job", job.id, { routeId, modality, status: job.status });
       return reply.code(202).send({ data: job });
     } catch (error) {
+      const concurrent = clientRequestId ? store.mediaJobForClientRequest(clientRequestId) : undefined;
+      if (concurrent) {
+        if (!canAccessMediaJob(principal, concurrent)) return reply.code(409).send({ error: "Request identity is already in use" });
+        return reply.code(200).send({ data: concurrent, idempotentReplay: true });
+      }
       const statusCode = mediaSubmissionStatus(error);
       if (error instanceof MediaJobAdmissionError) reply.header("retry-after", "2");
       return reply.code(statusCode).send({ error: errorMessage(error), ...(error instanceof MediaJobAdmissionError ? { data: { jobId: error.jobId } } : {}) });
@@ -419,6 +433,12 @@ function requireRecord(value: unknown): Record<string, unknown> {
 function requireString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim() === "") throw new TypeError(`${name} is required`);
   return value;
+}
+
+function validateClientRequestId(value: unknown): string {
+  const normalized = requireString(value, "clientRequestId").trim();
+  if (normalized.length > 128 || !/^[A-Za-z0-9._:-]+$/.test(normalized)) throw new TypeError("clientRequestId is invalid");
+  return normalized;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
