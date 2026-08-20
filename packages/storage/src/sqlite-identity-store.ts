@@ -10,7 +10,7 @@ import type {
 } from "@fitz/protocol";
 
 interface UserRow { id: string; display_name: string; role: UserRecord["role"]; status: UserRecord["status"]; created_at: string; updated_at: string }
-interface DeviceRow { id: string; user_id: string; name: string; token_hash: string; created_at: string; last_used_at: string | null; revoked_at: string | null }
+interface DeviceRow { id: string; user_id: string; name: string; token_hash: string; created_at: string; last_used_at: string | null }
 interface AuditRow { id: string; timestamp: string; actor_user_id: string | null; action: string; target_type: string | null; target_id: string | null; detail_json: string }
 interface ToolPolicyRow { subject_type: ToolPolicyRecord["subjectType"]; subject_id: string; tool_name: string; decision: ToolPolicyRecord["decision"]; updated_at: string }
 interface ToolApprovalRow { id: string; session_id: string; run_id: string | null; tool_call_id: string; tool_name: string; status: ToolApprovalRecord["status"]; request_json: string; requested_at: string; resolved_at: string | null; decided_by_user_id: string | null; note: string | null }
@@ -25,14 +25,26 @@ export class SqliteIdentityStore {
   listUsers(): UserRecord[] { return (this.database.prepare(`SELECT id, display_name, role, status, created_at, updated_at FROM users ORDER BY created_at`).all() as unknown as UserRow[]).map(mapUser); }
 
   createDevice(device: DeviceRecord, tokenHash: string): void { this.database.prepare(`INSERT INTO devices (id, user_id, name, token_hash, created_at) VALUES (?, ?, ?, ?, ?)`).run(device.id, device.userId, device.name, tokenHash, device.createdAt); }
-  listDevices(userId: string): DeviceRecord[] { return (this.database.prepare(`SELECT id, user_id, name, token_hash, created_at, last_used_at, revoked_at FROM devices WHERE user_id = ? ORDER BY created_at`).all(userId) as unknown as DeviceRow[]).map(mapDevice); }
+  listDevices(userId: string): DeviceRecord[] { return (this.database.prepare(`SELECT id, user_id, name, token_hash, created_at, last_used_at FROM devices WHERE user_id = ? ORDER BY created_at`).all(userId) as unknown as DeviceRow[]).map(mapDevice); }
   findDeviceByTokenHash(tokenHash: string): DeviceAuthenticationRecord | undefined {
-    const row = this.database.prepare(`SELECT d.id, d.user_id, d.name, d.token_hash, d.created_at, d.last_used_at, d.revoked_at, u.display_name, u.role, u.status, u.created_at AS user_created_at, u.updated_at AS user_updated_at FROM devices d JOIN users u ON u.id = d.user_id WHERE d.token_hash = ?`).get(tokenHash) as (DeviceRow & { display_name: string; role: UserRecord["role"]; status: UserRecord["status"]; user_created_at: string; user_updated_at: string }) | undefined;
+    const row = this.database.prepare(`SELECT d.id, d.user_id, d.name, d.token_hash, d.created_at, d.last_used_at, u.display_name, u.role, u.status, u.created_at AS user_created_at, u.updated_at AS user_updated_at FROM devices d JOIN users u ON u.id = d.user_id WHERE d.token_hash = ?`).get(tokenHash) as (DeviceRow & { display_name: string; role: UserRecord["role"]; status: UserRecord["status"]; user_created_at: string; user_updated_at: string }) | undefined;
     if (!row) return undefined;
     return { ...mapDevice(row), tokenHash: row.token_hash, user: { id: row.user_id, displayName: row.display_name, role: row.role, status: row.status, createdAt: row.user_created_at, updatedAt: row.user_updated_at } };
   }
   touchDevice(id: string, timestamp: string): void { this.database.prepare(`UPDATE devices SET last_used_at = ? WHERE id = ?`).run(timestamp, id); }
-  revokeDevice(id: string, timestamp: string): boolean { return Number(this.database.prepare(`UPDATE devices SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`).run(timestamp, id).changes) > 0; }
+  deleteDevice(id: string): boolean {
+    if (!this.database.prepare(`SELECT 1 FROM devices WHERE id = ?`).get(id)) return false;
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.prepare(`DELETE FROM request_usage WHERE owner_device_id = ?`).run(id);
+      const deleted = Number(this.database.prepare(`DELETE FROM devices WHERE id = ?`).run(id).changes) > 0;
+      this.database.exec("COMMIT");
+      return deleted;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
 
   replaceUserRouteGrants(userId: string, routeIds: readonly string[]): void {
     this.database.exec("BEGIN IMMEDIATE");
@@ -66,5 +78,5 @@ export class SqliteIdentityStore {
 }
 
 function mapUser(row: UserRow): UserRecord { return { id: row.id, displayName: row.display_name, role: row.role, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at }; }
-function mapDevice(row: DeviceRow): DeviceRecord { return { id: row.id, userId: row.user_id, name: row.name, createdAt: row.created_at, ...(row.last_used_at ? { lastUsedAt: row.last_used_at } : {}), ...(row.revoked_at ? { revokedAt: row.revoked_at } : {}) }; }
+function mapDevice(row: DeviceRow): DeviceRecord { return { id: row.id, userId: row.user_id, name: row.name, createdAt: row.created_at, ...(row.last_used_at ? { lastUsedAt: row.last_used_at } : {}) }; }
 function mapApproval(row: ToolApprovalRow): ToolApprovalRecord { return { id: row.id, sessionId: row.session_id, toolCallId: row.tool_call_id, toolName: row.tool_name, status: row.status, request: JSON.parse(row.request_json) as Record<string, unknown>, requestedAt: row.requested_at, ...(row.run_id ? { runId: row.run_id } : {}), ...(row.resolved_at ? { resolvedAt: row.resolved_at } : {}), ...(row.decided_by_user_id ? { decidedByUserId: row.decided_by_user_id } : {}), ...(row.note ? { note: row.note } : {}) }; }

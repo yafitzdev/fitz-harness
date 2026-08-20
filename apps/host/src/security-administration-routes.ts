@@ -32,26 +32,27 @@ export function registerSecurityAdministrationRoutes(options: SecurityAdministra
   });
 
   app.get("/api/v1/management/users", { preHandler }, async () => ({ data: store.listUsers() }));
-  app.get("/api/v1/management/user-usage", { preHandler }, async (request, reply) => {
-    const query = request.query as { from?: string; to?: string };
-    const to = query.to ? validDate(query.to) : new Date();
-    const from = query.from ? validDate(query.from) : new Date(to.getTime() - 30 * 86_400_000);
-    if (!Number.isFinite(to.getTime()) || !Number.isFinite(from.getTime()) || from >= to) return reply.code(400).send({ error: "Invalid usage date range" });
-    return { data: store.userUsageSummaries({ from: from.toISOString(), to: to.toISOString() }) };
-  });
+  app.get("/api/v1/management/usage-subjects", { preHandler }, async () => ({
+    data: store.listUsers().map((user) => ({
+      id: user.id,
+      displayName: user.displayName,
+      status: user.status,
+      devices: store.listDevices(user.id).map((device) => ({
+        id: device.id,
+        name: device.name,
+      })),
+    })),
+  }));
   app.post("/api/v1/management/hosting/users", { preHandler }, async (request, reply) => {
     try {
       const body = requireRecord(request.body);
       const displayName = requireString(body.displayName, "displayName");
-      const keyName = body.keyName === undefined ? `${displayName} device` : requireString(body.keyName, "keyName");
       const service = securityRequired(security);
-      const hostingStatus = options.hosting ? await options.hosting.status() : undefined;
       const user = service.createUser(displayName, "consumer");
       const defaults = options.hosting?.configuration().users.defaultQuota;
       if (defaults) service.setQuota(user.id, { maxRequestsPerMinute: defaults.requestsPerMinute, maxPromptChars: defaults.promptCharacters, maxOutputTokens: defaults.outputTokens, maxQueueDepth: defaults.queueDepth });
-      const issued = service.issueDevice(user.id, keyName);
-      security?.audit("hosting.user-created", principals.get(request)?.user.id, "user", user.id, { deviceId: issued.device.id });
-      return reply.code(201).send({ data: { user, device: issued.device, apiKey: issued.token, ...(hostingStatus?.publicUrl ? { url: hostingStatus.publicUrl } : {}) } });
+      security?.audit("hosting.user-created", principals.get(request)?.user.id, "user", user.id);
+      return reply.code(201).send({ data: { user } });
     } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
   });
   app.get("/api/v1/management/users/:userId/access", { preHandler }, async (request, reply) => {
@@ -92,18 +93,18 @@ export function registerSecurityAdministrationRoutes(options: SecurityAdministra
   });
   app.delete("/api/v1/management/devices/:deviceId", { preHandler }, async (request, reply) => {
     const deviceId = (request.params as { deviceId: string }).deviceId;
-    if (!store.revokeDevice(deviceId, new Date().toISOString())) return reply.code(404).send({ error: "Device not found or already revoked" });
-    security?.audit("device.revoked", principals.get(request)?.user.id, "device", deviceId);
+    if (!store.deleteDevice(deviceId)) return reply.code(404).send({ error: "API key not found" });
+    security?.audit("device.deleted", principals.get(request)?.user.id, "device", deviceId);
     return reply.code(204).send();
   });
   app.post("/api/v1/management/devices/:deviceId/rotate", { preHandler }, async (request, reply) => {
     const deviceId = (request.params as { deviceId: string }).deviceId;
-    const located = store.listUsers().flatMap((user) => store.listDevices(user.id).map((device) => ({ user, device }))).find((entry) => entry.device.id === deviceId && !entry.device.revokedAt);
+    const located = store.listUsers().flatMap((user) => store.listDevices(user.id).map((device) => ({ user, device }))).find((entry) => entry.device.id === deviceId);
     if (!located) return reply.code(404).send({ error: "Active API key not found" });
     try {
       const issued = securityRequired(security).issueDevice(located.user.id, located.device.name);
-      if (!store.revokeDevice(deviceId, new Date().toISOString())) {
-        store.revokeDevice(issued.device.id, new Date().toISOString());
+      if (!store.deleteDevice(deviceId)) {
+        store.deleteDevice(issued.device.id);
         return reply.code(409).send({ error: "The API key changed while it was being rotated" });
       }
       security?.audit("device.rotated", principals.get(request)?.user.id, "device", deviceId, { replacementDeviceId: issued.device.id, userId: located.user.id });
@@ -115,9 +116,8 @@ export function registerSecurityAdministrationRoutes(options: SecurityAdministra
     if (principals.get(request)?.user.id === userId) return reply.code(409).send({ error: "You cannot remove your current administrator account" });
     const user = store.getUser(userId);
     if (!user) return reply.code(404).send({ error: "User not found" });
-    const removedAt = new Date().toISOString();
     const updated = securityRequired(security).updateUser(userId, { status: "disabled" });
-    for (const device of store.listDevices(userId)) if (!device.revokedAt) store.revokeDevice(device.id, removedAt);
+    for (const device of store.listDevices(userId)) store.deleteDevice(device.id);
     security?.audit("hosting.user-removed", principals.get(request)?.user.id, "user", userId);
     return { data: updated };
   });

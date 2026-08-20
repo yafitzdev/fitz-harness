@@ -65,7 +65,7 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
         // Recheck after asynchronous context preparation to close the race
         // between two callers trying to claim the same durable replacement.
         if (persistedMessage) requireNoActiveReplacementRun(store, persistedMessage);
-        run = agentRuns.start(prepared.request, principal?.user.id, persistedMessage ? [] : body.messages, durableRequest, undefined, transcriptAttachments);
+        run = agentRuns.start(prepared.request, principal?.user.id, persistedMessage ? [] : body.messages, durableRequest, undefined, transcriptAttachments, principal?.device?.id);
       }
       catch (error) {
         const concurrent = body.clientRequestId ? store.agentRunForClientRequest(body.clientRequestId) : undefined;
@@ -223,7 +223,7 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
         return reply.code(409).send({ error: "This run is already being resumed" });
       }
       try {
-        const run = agentRuns.start(prepared.request, principal?.user.id ?? source.ownerUserId, [], resumeRequest, sourceRunId);
+        const run = agentRuns.start(prepared.request, principal?.user.id ?? source.ownerUserId, [], resumeRequest, sourceRunId, [], principal?.device?.id ?? source.ownerDeviceId);
         security?.audit("agent-run.resumed", principal?.user.id, "agent-run", run.id, { sourceRunId, resumeSafety: source.checkpoint.resumeSafety });
         return reply.code(202).send({ protocolVersion: PROTOCOL_VERSION, data: run, resumedFrom: sourceRunId, checkpoint: source.checkpoint });
       } catch (error) { store.setAgentRunResumable(sourceRunId, true); throw error; }
@@ -272,7 +272,7 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
 function buildRecoveryInstruction(sourceRunId: string, checkpoint: AgentRunCheckpoint): string {
   const completed = checkpoint.completedTools.map((tool) => `- ${tool.toolName} (${tool.toolCallId})${tool.isError ? " failed" : " completed"}`).join("\n") || "- none";
   const inFlight = checkpoint.inFlightTools.map((tool) => `- ${tool.toolName} (${tool.toolCallId})`).join("\n") || "- none";
-  return `Continue the interrupted Fitz task from durable checkpoint ${sourceRunId}:${checkpoint.sequence}.\n\nCompleted tool calls:\n${completed}\n\nTool calls that were in flight when execution stopped:\n${inFlight}\n\nRecovery rules:\n1. Inspect the current workspace/state before acting.\n2. Treat completed tool calls as already applied; do not blindly repeat mutations.\n3. Treat in-flight tool calls as having an unknown outcome; verify their effects before retrying.\n4. Continue toward the user's original goal and report the recovered result normally.`;
+  return `[fitz.recovery@1]\nContinue the interrupted Fitz task from durable checkpoint ${sourceRunId}:${checkpoint.sequence}.\n\nCompleted tool calls:\n${completed}\n\nTool calls that were in flight when execution stopped:\n${inFlight}\n\nRecovery rules:\n1. Inspect the current workspace/state before acting.\n2. Treat completed tool calls as already applied; do not blindly repeat mutations.\n3. Treat in-flight tool calls as having an unknown outcome; verify their effects before retrying.\n4. Continue toward the user's original goal and report the recovered result normally.`;
 }
 
 function parseAgentRunRequest(value: unknown): AgentRunRequest {

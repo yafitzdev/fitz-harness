@@ -18,7 +18,6 @@ export interface DeviceRecord {
   name: string;
   createdAt: string;
   lastUsedAt?: string;
-  revokedAt?: string;
 }
 
 export interface DeviceAuthenticationRecord extends DeviceRecord {

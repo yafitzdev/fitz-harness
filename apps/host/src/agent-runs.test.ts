@@ -126,7 +126,7 @@ describe("AgentRunCoordinator", () => {
     const coordinator = new AgentRunCoordinator(store, {} as InferenceScheduler, runtime, undefined, 256, 1, 1);
     const now = new Date(0).toISOString();
     const parentRequest: AgentRunRequest = { model: "default", messages: [{ role: "user", content: "parent" }] };
-    store.createAgentRun({ id: "parent", routeId: "default", ownerUserId: "owner", status: "running", createdAt: now, updatedAt: now, lastSequence: 0 }, parentRequest);
+    store.createAgentRun({ id: "parent", routeId: "default", ownerUserId: "owner", ownerDeviceId: "device-1", status: "running", createdAt: now, updatedAt: now, lastSequence: 0 }, parentRequest);
 
     const first = coordinator.runSubagent({
       parentRunId: "parent",
@@ -149,6 +149,7 @@ describe("AgentRunCoordinator", () => {
     const [firstResult, secondResult] = await Promise.all([first, second]);
 
     expect(firstResult.run.status).toBe("completed");
+    expect(firstResult.run.ownerDeviceId).toBe("device-1");
     expect(firstResult.text).toBe("done:research-one");
     expect(secondResult.run.routeId).toBe("subagent");
     expect(store.getAgentRunRequest(firstResult.run.id)?.delegation).toEqual({ role: roleSnapshot(store, "researcher"), parentRunId: "parent" });
@@ -225,6 +226,28 @@ describe("AgentRunCoordinator", () => {
     expect(assistant).toHaveLength(1);
     expect(assistant[0]?.content).toEqual(expect.objectContaining({ phase: "final", text: "One standalone final answer." }));
     expect(store.getAgentRunPlan(run.id)?.status).toBe("completed");
+    store.close();
+  });
+
+  it("persists prompt provenance as run evidence without adding transcript text", async () => {
+    const store = SqliteStore.memory();
+    const runtime: AgentRuntime = {
+      id: "provenance",
+      run: () => ({
+        cancel: () => undefined,
+        async *[Symbol.asyncIterator]() {
+          yield { type: "prompt.provenance" as const, id: "fitz.root", version: 1, sha256: "b".repeat(64), sections: ["core", "tools"] };
+          yield { type: "assistant.delta" as const, text: "done" };
+        },
+      }),
+    };
+    const coordinator = new AgentRunCoordinator(store, {} as InferenceScheduler, runtime);
+    const run = coordinator.start({ model: "default", messages: [{ role: "user", content: "work" }] });
+    await waitFor(() => coordinator.get(run.id)?.status === "completed");
+    expect(store.agentEventsAfter(run.id, 0)).toContainEqual(expect.objectContaining({
+      type: "prompt.provenance",
+      data: { promptId: "fitz.root", promptVersion: 1, sha256: "b".repeat(64), sections: ["core", "tools"] },
+    }));
     store.close();
   });
 });

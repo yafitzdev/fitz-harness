@@ -10,6 +10,7 @@ interface AgentQueueJob {
   id: string;
   request: AgentRunRequest;
   ownerUserId?: string;
+  ownerDeviceId?: string;
   stream: AgentRuntimeRun | ScheduledStream | undefined;
   cancelRequested: boolean;
   shutdownRequested: boolean;
@@ -57,11 +58,11 @@ export class AgentRunCoordinator {
     if (!Number.isInteger(maxConcurrentPerOwner) || maxConcurrentPerOwner < 1) throw new TypeError("Per-owner agent concurrency must be a positive integer");
   }
 
-  start(request: AgentRunRequest, ownerUserId?: string, canonicalMessages = request.messages, durableRequest = request, resumeOfRunId?: string, transcriptAttachments: readonly ArtifactRecord[] = []): AgentRunRecord {
+  start(request: AgentRunRequest, ownerUserId?: string, canonicalMessages = request.messages, durableRequest = request, resumeOfRunId?: string, transcriptAttachments: readonly ArtifactRecord[] = [], ownerDeviceId?: string): AgentRunRecord {
     if (!this.#accepting) throw new AgentCoordinatorClosedError();
     if (this.#queue.length + this.#active.size >= this.maxDepth) throw new AgentQueueCapacityError();
     const id = randomUUID(); const now = new Date().toISOString();
-    const run: AgentRunRecord = { id, routeId: request.model, status: "queued", createdAt: now, updatedAt: now, lastSequence: 0, ...(ownerUserId ? { ownerUserId } : {}), ...(request.sessionId ? { sessionId: request.sessionId } : {}) };
+    const run: AgentRunRecord = { id, routeId: request.model, status: "queued", createdAt: now, updatedAt: now, lastSequence: 0, ...(ownerUserId ? { ownerUserId } : {}), ...(ownerDeviceId ? { ownerDeviceId } : {}), ...(request.sessionId ? { sessionId: request.sessionId } : {}) };
     // Claim the client request identity before adding canonical messages. A
     // concurrent retry then fails at the unique run-state boundary and cannot
     // duplicate the user's prompt in the transcript.
@@ -76,7 +77,7 @@ export class AgentRunCoordinator {
       catch { this.store.updateAgentRun(id, "failed", message); /* the original storage failure remains primary */ }
       throw error;
     }
-    this.#queue.enqueue({ id, request, stream: undefined, cancelRequested: false, shutdownRequested: false, ...(ownerUserId ? { ownerUserId } : {}) }); this.#publishQueue(); this.#pump();
+    this.#queue.enqueue({ id, request, stream: undefined, cancelRequested: false, shutdownRequested: false, ...(ownerUserId ? { ownerUserId } : {}), ...(ownerDeviceId ? { ownerDeviceId } : {}) }); this.#publishQueue(); this.#pump();
     return this.store.getAgentRun(id)!;
   }
 
@@ -85,6 +86,7 @@ export class AgentRunCoordinator {
   launchSubagent(input: SubagentRunInput): SubagentLaunch {
     if (!this.#accepting) throw new AgentCoordinatorClosedError();
     const parentRequest = this.store.getAgentRunRequest(input.parentRunId);
+    const parentRun = this.store.getAgentRun(input.parentRunId);
     if (!parentRequest) throw new Error(`Parent agent run ${input.parentRunId} was not found`);
     if (parentRequest.delegation) throw new Error("Subagents cannot delegate to other subagents");
     if (input.signal?.aborted) throw abortError();
@@ -103,10 +105,11 @@ export class AgentRunCoordinator {
       updatedAt: now,
       lastSequence: 0,
       ...(input.ownerUserId ? { ownerUserId: input.ownerUserId } : {}),
+      ...(parentRun?.ownerDeviceId ? { ownerDeviceId: parentRun.ownerDeviceId } : {}),
     };
     this.store.createAgentRun(run, request);
     this.#emit(id, "run.created", { routeId: request.model, subagent: true, roleId: input.role.id, roleVersion: input.role.version, parentRunId: input.parentRunId, ...(input.planItemId ? { planItemId: input.planItemId } : {}) });
-    const job: AgentQueueJob = { id, request, stream: undefined, cancelRequested: false, shutdownRequested: false, ...(input.ownerUserId ? { ownerUserId: input.ownerUserId } : {}) };
+    const job: AgentQueueJob = { id, request, stream: undefined, cancelRequested: false, shutdownRequested: false, ...(input.ownerUserId ? { ownerUserId: input.ownerUserId } : {}), ...(parentRun?.ownerDeviceId ? { ownerDeviceId: parentRun.ownerDeviceId } : {}) };
     this.#activeSubagents.set(id, job);
     const cancel = () => { job.cancelRequested = true; job.stream?.cancel(); };
     input.signal?.addEventListener("abort", cancel, { once: true });
@@ -222,7 +225,7 @@ export class AgentRunCoordinator {
 
   async #runJob(job: AgentQueueJob): Promise<void> {
     try {
-      job.stream = this.#createStream(job.request, job.ownerUserId, job.id);
+      job.stream = this.#createStream(job.request, job.ownerUserId, job.ownerDeviceId, job.id);
       if (job.cancelRequested || job.shutdownRequested) job.stream.cancel();
       await this.#consume(job, job.stream);
       this.#notifyCompletion(job.id);
@@ -233,12 +236,12 @@ export class AgentRunCoordinator {
     }
   }
 
-  #createStream(request: AgentRunRequest, ownerUserId: string | undefined, runId: string): AgentRuntimeRun | ScheduledStream {
+  #createStream(request: AgentRunRequest, ownerUserId: string | undefined, ownerDeviceId: string | undefined, runId: string): AgentRuntimeRun | ScheduledStream {
     // The runId is threaded into the runtime so the safety layer can scope its trash,
     // snapshots and action log to this exact run.
     return this.runtime
-      ? this.runtime.run(request, undefined, { runId, ...(ownerUserId ? { ownerUserId } : {}), ...(request.sessionId ? { sessionId: request.sessionId } : {}) })
-      : this.scheduler.enqueue(request.model, { messages: request.messages, ...(request.maxTokens !== undefined ? { maxTokens: request.maxTokens } : {}), ...(request.temperature !== undefined ? { temperature: request.temperature } : {}), ...(ownerUserId ? { userId: ownerUserId } : {}) }, undefined, { ...(ownerUserId ? { ownerUserId } : {}), ...(request.sessionId ? { sessionId: request.sessionId } : {}), runId, label: "Agent response" });
+      ? this.runtime.run(request, undefined, { runId, ...(ownerUserId ? { ownerUserId } : {}), ...(ownerDeviceId ? { ownerDeviceId } : {}), ...(request.sessionId ? { sessionId: request.sessionId } : {}) })
+      : this.scheduler.enqueue(request.model, { messages: request.messages, ...(request.maxTokens !== undefined ? { maxTokens: request.maxTokens } : {}), ...(request.temperature !== undefined ? { temperature: request.temperature } : {}), ...(ownerUserId ? { userId: ownerUserId } : {}) }, undefined, { ...(ownerUserId ? { ownerUserId } : {}), ...(ownerDeviceId ? { ownerDeviceId } : {}), ...(request.sessionId ? { sessionId: request.sessionId } : {}), runId, label: "Agent response" });
   }
   async #consume(job: AgentQueueJob, stream: AgentRuntimeRun | ScheduledStream): Promise<void> {
     const id = job.id;
@@ -311,6 +314,6 @@ function abortError(): Error {
 }
 
 function normalizeRuntimeEvent(event: AgentRuntimeEvent | { text: string; finishReason?: string; promptTokens?: number; completionTokens?: number }): { type: AgentEventType; data: Record<string, unknown> } {
-  if ("type" in event) { if (event.type === "assistant.delta") return { type: event.type, data: { text: event.text } }; if (event.type === "reasoning.delta") return { type: event.type, data: { text: event.text } }; if (event.type === "reasoning.completed") return { type: event.type, data: {} }; if (event.type === "user.steer") return { type: event.type, data: { text: event.text } }; return { type: event.type, data: { toolCallId: event.toolCallId, toolName: event.toolName, ...((event.type === "tool.started" || event.type === "tool.approval.requested") && event.input !== undefined ? { input: event.input } : {}), ...((event.type === "tool.approval.requested" || event.type === "tool.approval.resolved") ? { approvalId: event.approvalId } : {}), ...(event.type === "tool.approval.resolved" ? { decision: event.decision } : {}), ...(event.type === "tool.completed" ? { result: event.result, ...(event.isError !== undefined ? { isError: event.isError } : {}) } : {}) } }; }
+  if ("type" in event) { if (event.type === "prompt.provenance") return { type: event.type, data: { promptId: event.id, promptVersion: event.version, sha256: event.sha256, sections: event.sections } }; if (event.type === "assistant.delta") return { type: event.type, data: { text: event.text } }; if (event.type === "reasoning.delta") return { type: event.type, data: { text: event.text } }; if (event.type === "reasoning.completed") return { type: event.type, data: {} }; if (event.type === "user.steer") return { type: event.type, data: { text: event.text } }; return { type: event.type, data: { toolCallId: event.toolCallId, toolName: event.toolName, ...((event.type === "tool.started" || event.type === "tool.approval.requested") && event.input !== undefined ? { input: event.input } : {}), ...((event.type === "tool.approval.requested" || event.type === "tool.approval.resolved") ? { approvalId: event.approvalId } : {}), ...(event.type === "tool.approval.resolved" ? { decision: event.decision } : {}), ...(event.type === "tool.completed" ? { result: event.result, ...(event.isError !== undefined ? { isError: event.isError } : {}) } : {}) } }; }
   return { type: "assistant.delta", data: { text: event.text, ...(event.finishReason ? { finishReason: event.finishReason } : {}), ...(event.promptTokens !== undefined ? { promptTokens: event.promptTokens } : {}), ...(event.completionTokens !== undefined ? { completionTokens: event.completionTokens } : {}) } };
 }

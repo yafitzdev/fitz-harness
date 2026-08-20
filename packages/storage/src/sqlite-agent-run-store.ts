@@ -14,6 +14,7 @@ interface AgentRunRow {
   id: string;
   route_id: string;
   owner_user_id: string | null;
+  owner_device_id: string | null;
   session_id: string | null;
   status: AgentRunRecord["status"];
   created_at: string;
@@ -44,7 +45,7 @@ interface TranscriptRow {
   created_at: string;
 }
 
-const RUN_COLUMNS = "id, route_id, owner_user_id, session_id, status, created_at, updated_at, last_sequence, error";
+const RUN_COLUMNS = "id, route_id, owner_user_id, owner_device_id, session_id, status, created_at, updated_at, last_sequence, error";
 
 export class SqliteAgentRunStore {
   constructor(private readonly database: DatabaseSync, private readonly jobs = new SqliteJobStore(database)) {}
@@ -53,11 +54,12 @@ export class SqliteAgentRunStore {
     this.database.exec("BEGIN IMMEDIATE");
     try {
       this.database
-        .prepare(`INSERT INTO agent_runs (${RUN_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) `)
+        .prepare(`INSERT INTO agent_runs (${RUN_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) `)
         .run(
           run.id,
           run.routeId,
           run.ownerUserId ?? null,
+          run.ownerDeviceId ?? null,
           run.sessionId ?? null,
           run.status,
           run.createdAt,
@@ -454,6 +456,7 @@ function mapAgentRun(row: AgentRunRow): AgentRunRecord {
     updatedAt: row.updated_at,
     lastSequence: row.last_sequence,
     ...(row.owner_user_id ? { ownerUserId: row.owner_user_id } : {}),
+    ...(row.owner_device_id ? { ownerDeviceId: row.owner_device_id } : {}),
     ...(row.session_id ? { sessionId: row.session_id } : {}),
     ...(row.error ? { error: row.error } : {}),
   };

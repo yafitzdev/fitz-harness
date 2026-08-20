@@ -164,6 +164,7 @@ async function submitMedia(
     modality,
     params,
     ...(run?.sessionId ? { sessionId: run.sessionId } : {}),
+    ...(run?.ownerDeviceId ? { deviceId: run.ownerDeviceId } : {}),
   }, principal);
 }
 

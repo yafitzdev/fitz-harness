@@ -116,14 +116,47 @@ describe("SqliteStore", () => {
     store.close();
   });
 
-  it("aggregates usage by owning user", () => {
+  it("aggregates usage by owning user in the usage report", () => {
     const store = SqliteStore.memory();
-    store.recordRequestUsage({ id: "alice-1", kind: "chat", status: "completed", routeId: "default", ownerUserId: "alice", executionLane: "gpu", enqueuedAt: "2026-08-09T10:00:00.000Z", completedAt: "2026-08-09T10:00:01.000Z", promptTokens: 10, completionTokens: 5, durationMs: 1000 });
-    store.recordRequestUsage({ id: "bob-1", kind: "image", status: "failed", routeId: "image", ownerUserId: "bob", executionLane: "gpu", enqueuedAt: "2026-08-09T11:00:00.000Z", completedAt: "2026-08-09T11:00:02.000Z", durationMs: 2000 });
-    expect(store.userUsageSummaries({ from: "2026-08-09T00:00:00.000Z", to: "2026-08-10T00:00:00.000Z" })).toEqual([
-      expect.objectContaining({ ownerUserId: "bob", requests: 1, failed: 1, mediaJobs: 1 }),
-      expect.objectContaining({ ownerUserId: "alice", requests: 1, totalTokens: 15 }),
-    ]);
+    const now = "2026-08-09T00:00:00.000Z";
+    store.createUser({ id: "alice", displayName: "Alice", role: "consumer", status: "active", createdAt: now, updatedAt: now });
+    store.createUser({ id: "bob", displayName: "Bob", role: "consumer", status: "active", createdAt: now, updatedAt: now });
+    store.createDevice({ id: "alice-key", userId: "alice", name: "Alice key", createdAt: now }, "alice-hash");
+    store.createDevice({ id: "bob-key", userId: "bob", name: "Bob key", createdAt: now }, "bob-hash");
+    store.recordRequestUsage({ id: "alice-1", kind: "chat", status: "completed", routeId: "default", ownerUserId: "alice", ownerDeviceId: "alice-key", executionLane: "gpu", enqueuedAt: "2026-08-09T10:00:00.000Z", completedAt: "2026-08-09T10:00:01.000Z", promptTokens: 10, completionTokens: 5, durationMs: 1000 });
+    store.recordRequestUsage({ id: "bob-1", kind: "image", status: "failed", routeId: "image", ownerUserId: "bob", ownerDeviceId: "bob-key", executionLane: "gpu", enqueuedAt: "2026-08-09T11:00:00.000Z", completedAt: "2026-08-09T11:00:02.000Z", durationMs: 2000 });
+    const report = store.usageReport({ from: "2026-08-09T00:00:00.000Z", to: "2026-08-10T00:00:00.000Z", bucket: "day" });
+    expect(report.users).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: "bob", requests: 1, failed: 1 }),
+      expect.objectContaining({ key: "alice", requests: 1, totalTokens: 15 }),
+    ]));
+    store.close();
+  });
+
+  it("reports only usage mapped to an active API key and deletes usage with its key", () => {
+    const store = SqliteStore.memory();
+    const now = "2026-08-09T00:00:00.000Z";
+    store.createUser({ id: "user-a", displayName: "User A", role: "consumer", status: "active", createdAt: now, updatedAt: now });
+    store.createUser({ id: "user-b", displayName: "User B", role: "consumer", status: "active", createdAt: now, updatedAt: now });
+    store.createDevice({ id: "user-a-key", userId: "user-a", name: "Current A", createdAt: now }, "hash-a");
+    store.createDevice({ id: "user-b-key", userId: "user-b", name: "Current B", createdAt: now }, "hash-b");
+    store.createDevice({ id: "user-a-key-2", userId: "user-a", name: "Second A", createdAt: now }, "hash-a-2");
+    store.recordRequestUsage({ id: "user-a-unattributed", kind: "chat", status: "completed", routeId: "default", ownerUserId: "user-a", executionLane: "gpu", enqueuedAt: "2026-08-09T10:00:00.000Z", completedAt: "2026-08-09T10:00:01.000Z" });
+    store.recordRequestUsage({ id: "user-a-retired-key", kind: "chat", status: "completed", routeId: "default", ownerUserId: "user-a", ownerDeviceId: "deleted-a-key", executionLane: "gpu", enqueuedAt: "2026-08-09T11:00:00.000Z", completedAt: "2026-08-09T11:00:01.000Z" });
+    store.recordRequestUsage({ id: "user-a-current-key", kind: "chat", status: "completed", routeId: "default", ownerUserId: "user-a", ownerDeviceId: "user-a-key", executionLane: "gpu", enqueuedAt: "2026-08-09T12:00:00.000Z", completedAt: "2026-08-09T12:00:01.000Z" });
+    store.recordRequestUsage({ id: "user-b-retired-key", kind: "chat", status: "completed", routeId: "default", ownerUserId: "user-b", ownerDeviceId: "deleted-b-key", executionLane: "gpu", enqueuedAt: "2026-08-09T13:00:00.000Z", completedAt: "2026-08-09T13:00:01.000Z" });
+    store.recordRequestUsage({ id: "user-a-second-key", kind: "chat", status: "completed", routeId: "default", ownerUserId: "user-a", ownerDeviceId: "user-a-key-2", executionLane: "gpu", enqueuedAt: "2026-08-09T14:00:00.000Z", completedAt: "2026-08-09T14:00:01.000Z" });
+
+    const firstKey = store.usageReport({ from: now, to: "2026-08-10T00:00:00.000Z", bucket: "day", ownerDeviceId: "user-a-key" });
+    const secondKey = store.usageReport({ from: now, to: "2026-08-10T00:00:00.000Z", bucket: "day", ownerDeviceId: "user-a-key-2" });
+    const otherUserKey = store.usageReport({ from: now, to: "2026-08-10T00:00:00.000Z", bucket: "day", ownerDeviceId: "user-b-key" });
+    expect(firstKey.totals.requests).toBe(1);
+    expect(secondKey.totals.requests).toBe(1);
+    expect(otherUserKey.totals.requests).toBe(0);
+
+    expect(store.deleteDevice("user-a-key")).toBe(true);
+    const afterDeletion = store.usageReport({ from: now, to: "2026-08-10T00:00:00.000Z", bucket: "day" });
+    expect(afterDeletion.totals.requests).toBe(1);
     store.close();
   });
 
@@ -198,15 +231,20 @@ describe("SqliteStore", () => {
 
   it("accounts terminal requests idempotently and aggregates nullable token telemetry", () => {
     const store = SqliteStore.memory();
+    const identityTimestamp = "2026-08-09T00:00:00.000Z";
+    store.createUser({ id: "user-1", displayName: "User 1", role: "consumer", status: "active", createdAt: identityTimestamp, updatedAt: identityTimestamp });
+    store.createUser({ id: "user-2", displayName: "User 2", role: "consumer", status: "active", createdAt: identityTimestamp, updatedAt: identityTimestamp });
+    store.createDevice({ id: "device-1", userId: "user-1", name: "Primary", createdAt: identityTimestamp }, "device-hash-1");
+    store.createDevice({ id: "device-2", userId: "user-2", name: "Primary", createdAt: identityTimestamp }, "device-hash-2");
     store.recordRequestUsage({
       id: "chat-usage", kind: "chat", status: "completed", routeId: "smart", recipeId: "reasoner", playbookId: "ninfer", adapter: "ninfer", modelId: "qwen",
-      ownerUserId: "user-1", executionLane: "gpu", enqueuedAt: "2026-08-09T10:00:00.000Z", startedAt: "2026-08-09T10:00:01.000Z",
+      ownerUserId: "user-1", ownerDeviceId: "device-1", executionLane: "gpu", enqueuedAt: "2026-08-09T10:00:00.000Z", startedAt: "2026-08-09T10:00:01.000Z",
       firstOutputAt: "2026-08-09T10:00:03.000Z", completedAt: "2026-08-09T10:00:09.000Z", queueWaitMs: 1_000, ttftMs: 2_000, durationMs: 8_000,
     });
     // A terminal replay enriches the same request instead of double-counting it.
     store.recordRequestUsage({
       id: "chat-usage", kind: "chat", status: "completed", routeId: "smart", recipeId: "reasoner", playbookId: "ninfer", adapter: "ninfer", modelId: "qwen",
-      ownerUserId: "user-1", executionLane: "gpu", enqueuedAt: "2026-08-09T10:00:00.000Z", startedAt: "2026-08-09T10:00:01.000Z",
+      ownerUserId: "user-1", ownerDeviceId: "device-1", executionLane: "gpu", enqueuedAt: "2026-08-09T10:00:00.000Z", startedAt: "2026-08-09T10:00:01.000Z",
       firstOutputAt: "2026-08-09T10:00:03.000Z", completedAt: "2026-08-09T10:00:09.000Z", queueWaitMs: 1_000, ttftMs: 2_000, durationMs: 8_000,
       promptTokens: 120, completionTokens: 30,
     });
@@ -217,6 +255,7 @@ describe("SqliteStore", () => {
     });
     store.recordRequestUsage({
       id: "image-usage", kind: "image", status: "failed", routeId: "image", recipeId: "flux", executionLane: "gpu",
+      ownerUserId: "user-2", ownerDeviceId: "device-2",
       enqueuedAt: "2026-08-09T11:00:00.000Z", completedAt: "2026-08-09T11:00:04.000Z", durationMs: 4_000, errorCode: "generation_failed",
     });
 
@@ -229,6 +268,9 @@ describe("SqliteStore", () => {
     expect(report.modalities).toEqual(expect.arrayContaining([expect.objectContaining({ key: "image", label: "Images", failed: 1 })]));
     const ownerReport = store.usageReport({ from: "2026-08-09T00:00:00.000Z", to: "2026-08-10T00:00:00.000Z", bucket: "day", ownerUserId: "user-1" });
     expect(ownerReport.totals.requests).toBe(1);
+    const deviceReport = store.usageReport({ from: "2026-08-09T00:00:00.000Z", to: "2026-08-10T00:00:00.000Z", bucket: "day", ownerDeviceId: "device-1" });
+    expect(deviceReport.totals.requests).toBe(1);
+    expect(store.listRequestUsageForRun("missing")).toEqual([]);
     expect(store.listRequestUsageForRun("missing")).toEqual([]);
     store.close();
   });

@@ -13,6 +13,9 @@ export interface RequestUsageRecord {
   adapter?: string;
   modelId?: string;
   ownerUserId?: string;
+  /** Device/API-key identity that authenticated the request. Historical rows
+   * created before device attribution was introduced intentionally omit it. */
+  ownerDeviceId?: string;
   sessionId?: string;
   runId?: string;
   executionLane: "gpu" | "cloud";
@@ -46,6 +49,7 @@ export interface UsageTotals {
   averageQueueWaitMs?: number;
   averageTtftMs?: number;
   averageDurationMs?: number;
+  lastActiveAt?: string;
 }
 
 export interface UsageTimelineBucket {
@@ -78,14 +82,6 @@ export interface UsageReport {
   routes: UsageBreakdownRow[];
   recipes: UsageBreakdownRow[];
   modalities: UsageBreakdownRow[];
-}
-
-export interface UserUsageSummary {
-  ownerUserId: string;
-  requests: number;
-  failed: number;
-  mediaJobs: number;
-  totalTokens: number;
-  averageDurationMs?: number;
-  lastActiveAt: string;
+  users: UsageBreakdownRow[];
+  devices: UsageBreakdownRow[];
 }

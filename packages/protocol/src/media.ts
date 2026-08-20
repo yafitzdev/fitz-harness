@@ -87,6 +87,7 @@ export interface MediaJobRecord {
   completedAt?: string;
   cancelledAt?: string;
   createdByUserId?: string;
+  createdByDeviceId?: string;
   creditCostCents?: number; // recipe.configuration.costCentsPerJob at submit time
 }
 

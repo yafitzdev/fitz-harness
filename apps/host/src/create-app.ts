@@ -327,7 +327,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   };
   const requestStarts = new WeakMap<object, number>();
   const principals = new WeakMap<object, AuthenticatedPrincipal>();
-  const internalWorkContexts = new WeakMap<object, { runId?: string; ownerUserId?: string; sessionId?: string }>();
+  const internalWorkContexts = new WeakMap<object, { runId?: string; ownerUserId?: string; ownerDeviceId?: string; sessionId?: string }>();
   const ownerUserId = (request: object): string => principals.get(request)?.user.id ?? LOCAL_OWNER_ID;
   app.addHook("onRequest", async (request, reply) => {
     requestStarts.set(request, performance.now());
@@ -586,7 +586,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     "/api/v1/management/usage",
     { preHandler: adminGuard(options.adminToken, authMode, principals) },
     async (request, reply) => {
-      const query = request.query as { from?: string; to?: string; bucket?: string; ownerUserId?: string };
+      const query = request.query as { from?: string; to?: string; bucket?: string; ownerUserId?: string; ownerDeviceId?: string };
       const to = query.to ? parseUsageDate(query.to) : new Date();
       if (!to) return reply.code(400).send({ error: "Usage to must be an ISO date" });
       const from = query.from ? parseUsageDate(query.from) : new Date(to.getTime() - 7 * 86_400_000);
@@ -595,7 +595,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
       if (to.getTime() - from.getTime() > 366 * 86_400_000) return reply.code(400).send({ error: "Usage range cannot exceed 366 days" });
       if (query.bucket && query.bucket !== "hour" && query.bucket !== "day") return reply.code(400).send({ error: "Usage bucket must be hour or day" });
       const bucket = query.bucket === "hour" ? "hour" : "day";
-      return { data: store.usageReport({ from: from.toISOString(), to: to.toISOString(), bucket, ...(query.ownerUserId ? { ownerUserId: query.ownerUserId } : {}) }) };
+      return { data: store.usageReport({ from: from.toISOString(), to: to.toISOString(), bucket, ...(query.ownerUserId ? { ownerUserId: query.ownerUserId } : {}), ...(query.ownerDeviceId ? { ownerDeviceId: query.ownerDeviceId } : {}) }) };
     },
   );
 
@@ -849,15 +849,16 @@ function validBearerToken(authorization: string | undefined, expected: string | 
   return timingSafeEqual(actualHash, expectedHash);
 }
 
-function trustedInternalWorkContext(headers: Record<string, string | string[] | undefined>): { runId?: string; ownerUserId?: string; sessionId?: string } {
+function trustedInternalWorkContext(headers: Record<string, string | string[] | undefined>): { runId?: string; ownerUserId?: string; ownerDeviceId?: string; sessionId?: string } {
   const value = (name: string): string | undefined => {
     const candidate = headers[name];
     return typeof candidate === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(candidate) ? candidate : undefined;
   };
   const runId = value("x-fitz-run-id");
   const ownerUserId = value("x-fitz-owner-user-id");
+  const ownerDeviceId = value("x-fitz-owner-device-id");
   const sessionId = value("x-fitz-session-id");
-  return { ...(runId ? { runId } : {}), ...(ownerUserId ? { ownerUserId } : {}), ...(sessionId ? { sessionId } : {}) };
+  return { ...(runId ? { runId } : {}), ...(ownerUserId ? { ownerUserId } : {}), ...(ownerDeviceId ? { ownerDeviceId } : {}), ...(sessionId ? { sessionId } : {}) };
 }
 
 function adminGuard(expectedToken: string | undefined, authMode: "disabled" | "required", principals: WeakMap<object, AuthenticatedPrincipal>) {

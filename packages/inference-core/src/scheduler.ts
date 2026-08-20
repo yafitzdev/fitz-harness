@@ -11,6 +11,7 @@ import { EvidenceDeltaBuffer } from "./evidence-delta-buffer.js";
 
 export interface WorkContext {
   ownerUserId?: string;
+  ownerDeviceId?: string;
   sessionId?: string;
   runId?: string;
   label?: string;
@@ -348,7 +349,6 @@ export class InferenceScheduler {
         const recipe = this.routes.resolveRecipe(job.recipeId);
         job.result.resolve(await this.lifecycle.warm(recipe, job.controller.signal));
       }
-      closeJob(job);
       if (job.kind === "chat") {
         await this.#evidenceDeltas.flush(job.id);
         this.#safeRecordEvidence(this.#evidenceFor(job, "completed", evidenceRecipe ?? chatRecipe, {
@@ -358,8 +358,10 @@ export class InferenceScheduler {
         }));
         await this.#safeRecordUsage(this.#chatUsage(job, chatRecipe, "completed", started, firstOutput, promptTokens, completionTokens, undefined, localTelemetry));
       }
+      // Make terminal usage durable before consumers can observe EOF and
+      // immediately refresh the Usage page.
+      closeJob(job);
     } catch (error) {
-      failJob(job, error);
       if (job.kind === "chat") {
         await this.#evidenceDeltas.flush(job.id);
         const status = isAbort(error) ? "cancelled" : "failed" as const;
@@ -371,6 +373,7 @@ export class InferenceScheduler {
         }));
         await this.#safeRecordUsage(this.#chatUsage(job, chatRecipe, status, started, firstOutput, promptTokens, completionTokens, error, localTelemetry));
       }
+      failJob(job, error);
       throw error;
     } finally {
       job.detachExternalAbort?.();

@@ -37,6 +37,7 @@ interface MediaJobRow {
   completed_at: string | null;
   cancelled_at: string | null;
   created_by_user_id: string | null;
+  created_by_device_id: string | null;
   credit_cost_cents: number | null;
 }
 
@@ -56,8 +57,8 @@ export class SqliteMediaStore {
         `INSERT INTO media_jobs (
           id, client_request_id, source_job_id, session_id, route_id, modality, status, params_json, execution_json, progress,
           artifact_id, provider_job_id, error_code, enqueued_at, started_at,
-          completed_at, cancelled_at, created_by_user_id, credit_cost_cents
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          completed_at, cancelled_at, created_by_user_id, created_by_device_id, credit_cost_cents
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         job.id,
@@ -78,6 +79,7 @@ export class SqliteMediaStore {
         job.completedAt ?? null,
         job.cancelledAt ?? null,
         job.createdByUserId ?? null,
+        job.createdByDeviceId ?? null,
         job.creditCostCents ?? null,
       );
     this.jobs.create({
@@ -103,7 +105,7 @@ export class SqliteMediaStore {
       .prepare(
         `SELECT id, client_request_id, source_job_id, session_id, route_id, modality, status, params_json, execution_json, progress,
                 artifact_id, provider_job_id, error_code, enqueued_at, started_at,
-                completed_at, cancelled_at, created_by_user_id, credit_cost_cents
+                completed_at, cancelled_at, created_by_user_id, created_by_device_id, credit_cost_cents
          FROM media_jobs WHERE id = ?`,
       )
       .get(id) as MediaJobRow | undefined;
@@ -115,7 +117,7 @@ export class SqliteMediaStore {
       .prepare(
         `SELECT id, client_request_id, source_job_id, session_id, route_id, modality, status, params_json, execution_json, progress,
                 artifact_id, provider_job_id, error_code, enqueued_at, started_at,
-                completed_at, cancelled_at, created_by_user_id, credit_cost_cents
+                completed_at, cancelled_at, created_by_user_id, created_by_device_id, credit_cost_cents
          FROM media_jobs WHERE client_request_id = ?`,
       )
       .get(clientRequestId) as MediaJobRow | undefined;
@@ -145,6 +147,7 @@ export class SqliteMediaStore {
     set("completed_at", patch.completedAt);
     set("cancelled_at", patch.cancelledAt);
     set("created_by_user_id", patch.createdByUserId);
+    set("created_by_device_id", patch.createdByDeviceId);
     set("credit_cost_cents", patch.creditCostCents);
     if (assignments.length === 0) return;
     this.database.prepare(`UPDATE media_jobs SET ${assignments.join(", ")} WHERE id = ?`).run(...values, id);
@@ -172,7 +175,7 @@ export class SqliteMediaStore {
       .prepare(
         `SELECT id, client_request_id, source_job_id, session_id, route_id, modality, status, params_json, execution_json, progress,
                 artifact_id, provider_job_id, error_code, enqueued_at, started_at,
-                completed_at, cancelled_at, created_by_user_id, credit_cost_cents
+                completed_at, cancelled_at, created_by_user_id, created_by_device_id, credit_cost_cents
          FROM media_jobs ${where} ORDER BY enqueued_at DESC LIMIT ?`,
       )
       .all(...values, options.limit ?? 100) as unknown as MediaJobRow[];
@@ -276,6 +279,7 @@ function mapMediaJob(row: MediaJobRow): MediaJobRecord {
     ...(row.completed_at ? { completedAt: row.completed_at } : {}),
     ...(row.cancelled_at ? { cancelledAt: row.cancelled_at } : {}),
     ...(row.created_by_user_id ? { createdByUserId: row.created_by_user_id } : {}),
+    ...(row.created_by_device_id ? { createdByDeviceId: row.created_by_device_id } : {}),
     ...(row.credit_cost_cents !== null ? { creditCostCents: row.credit_cost_cents } : {}),
   };
 }

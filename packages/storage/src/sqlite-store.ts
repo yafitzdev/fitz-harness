@@ -31,7 +31,6 @@ import type {
   GpuWorkRecord,
   RequestUsageRecord,
   UsageReport,
-  UserUsageSummary,
   SubagentRoleDefinition,
   InferenceDelta,
   InferenceEvidenceRecord,
@@ -209,8 +208,7 @@ export class SqliteStore {
   sessionForensics(sessionId: string, generatedAt?: string): import("@fitz/protocol").SessionForensicsBundle | undefined { return this.#forensics.build(sessionId, generatedAt); }
   listRequestUsageForRun(runId: string): RequestUsageRecord[] { return this.#inferenceTelemetry.listRequestUsageForRun(runId); }
   listRequestUsageForSession(sessionId: string): RequestUsageRecord[] { return this.#inferenceTelemetry.listRequestUsageForSession(sessionId); }
-  usageReport(options: { from: string; to: string; bucket: "hour" | "day"; ownerUserId?: string }): UsageReport { return this.#inferenceTelemetry.usageReport(options); }
-  userUsageSummaries(options: { from: string; to: string }): UserUsageSummary[] { return this.#inferenceTelemetry.userUsageSummaries(options); }
+  usageReport(options: { from: string; to: string; bucket: "hour" | "day"; ownerUserId?: string; ownerDeviceId?: string }): UsageReport { return this.#inferenceTelemetry.usageReport(options); }
 
   createMediaJob(job: MediaJobRecord): void {
     this.#media.createJob(job);
@@ -275,7 +273,7 @@ export class SqliteStore {
   listDevices(userId: string): DeviceRecord[] { return this.#identity.listDevices(userId); }
   findDeviceByTokenHash(tokenHash: string): DeviceAuthenticationRecord | undefined { return this.#identity.findDeviceByTokenHash(tokenHash); }
   touchDevice(id: string, timestamp: string): void { this.#identity.touchDevice(id, timestamp); }
-  revokeDevice(id: string, timestamp: string): boolean { return this.#identity.revokeDevice(id, timestamp); }
+  deleteDevice(id: string): boolean { return this.#identity.deleteDevice(id); }
   replaceUserRouteGrants(userId: string, routeIds: readonly string[]): void { this.#identity.replaceUserRouteGrants(userId, routeIds); }
   listUserRouteGrants(userId: string): string[] { return this.#identity.listUserRouteGrants(userId); }
   setUserQuota(userId: string, quota: UserQuota): void { this.#identity.setUserQuota(userId, quota); }

@@ -18,6 +18,7 @@ import { LOCAL_OWNER_ID, type UserRouteResolver } from "./user-route-resolver.js
 interface InternalWorkContext {
   runId?: string;
   ownerUserId?: string;
+  ownerDeviceId?: string;
   sessionId?: string;
 }
 
@@ -106,7 +107,7 @@ export function registerOpenAIRoutes(options: OpenAIRouteOptions): void {
         ...(body.stream_options?.include_usage !== undefined ? { streamOptions: { includeUsage: body.stream_options.include_usage } } : {}),
         ...(body.chat_template_kwargs !== undefined ? { chatTemplateKwargs: body.chat_template_kwargs } : {}),
         ...(principal ? { userId: principal.user.id } : internalContext?.ownerUserId ? { userId: internalContext.ownerUserId } : body.user !== undefined ? { userId: body.user } : {}),
-      }, undefined, { ...(principal ? { ownerUserId: principal.user.id } : {}), ...internalContext, label: `${responseModel} completion` });
+      }, undefined, { ...(principal ? { ownerUserId: principal.user.id, ...(principal.device ? { ownerDeviceId: principal.device.id } : {}) } : {}), ...internalContext, label: `${responseModel} completion` });
     } catch (error) {
       if (error instanceof InferenceAdmissionError) reply.header("retry-after", "2");
       return reply.code(error instanceof InferenceAdmissionError ? 429 : 502).send(openAIError(error, error instanceof InferenceAdmissionError ? "resource_busy" : "server_error"));

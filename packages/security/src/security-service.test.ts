@@ -3,13 +3,13 @@ import { SqliteStore } from "@fitz/storage";
 import { DEFAULT_QUOTAS, SecurityPolicyError, SecurityService } from "./security-service.js";
 
 describe("SecurityService", () => {
-  it("authenticates hashed device tokens and rejects revocation", () => {
+  it("authenticates hashed device tokens and rejects deleted keys", () => {
     const store = SqliteStore.memory(); const security = new SecurityService(store, "test-pepper");
     const user = security.createUser("Agent", "agent"); security.setRouteGrants(user.id, ["image"]);
     const issued = security.issueDevice(user.id, "Laptop", "secret-device-token");
     expect(security.authenticate("Bearer secret-device-token")).toEqual(expect.objectContaining({ user: expect.objectContaining({ id: user.id }), routeGrants: ["image"] }));
     expect(store.findDeviceByTokenHash("secret-device-token")).toBeUndefined();
-    store.revokeDevice(issued.device.id, new Date().toISOString());
+    store.deleteDevice(issued.device.id);
     expect(security.authenticate("Bearer secret-device-token")).toBeUndefined(); store.close();
   });
 

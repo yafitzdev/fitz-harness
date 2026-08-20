@@ -421,12 +421,12 @@ describe("InferenceScheduler", () => {
       { recordUsage: (record) => { records.push(record); } },
     );
 
-    await collect(scheduler.enqueue("smart", { messages: [{ role: "user", content: "count these tokens" }] }, undefined, { ownerUserId: "user-1", sessionId: "session-1" }));
+    await collect(scheduler.enqueue("smart", { messages: [{ role: "user", content: "count these tokens" }] }, undefined, { ownerUserId: "user-1", ownerDeviceId: "device-1", sessionId: "session-1" }));
     await waitFor(() => records.length === 1);
 
     expect(records).toEqual([expect.objectContaining({
       kind: "chat", status: "completed", routeId: "smart", recipeId: "reasoner", modelId: "reasoner-model",
-      ownerUserId: "user-1", sessionId: "session-1", executionLane: "gpu", promptTokens: expect.any(Number), completionTokens: expect.any(Number),
+      ownerUserId: "user-1", ownerDeviceId: "device-1", sessionId: "session-1", executionLane: "gpu", promptTokens: expect.any(Number), completionTokens: expect.any(Number),
       metadata: expect.objectContaining({ responseDurationMs: expect.any(Number), outputDelivery: "streamed", observedOutputChunks: expect.any(Number) }),
     })]);
   });

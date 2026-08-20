@@ -18,6 +18,7 @@ describe("SqliteStore media persistence", () => {
       params: { prompt: "a cat", durationSeconds: 5 },
       enqueuedAt: now,
       createdByUserId: "user-1",
+      createdByDeviceId: "device-1",
       creditCostCents: 3,
     };
     store.createMediaJob(job);

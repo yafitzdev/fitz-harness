@@ -25,6 +25,7 @@ export interface MediaSubmitInput {
   params: MediaGenerationParams;
   sessionId?: string;
   userId?: string;
+  deviceId?: string;
 }
 
 export interface MediaJobCoordinatorOptions {
@@ -143,6 +144,7 @@ export class MediaJobCoordinator {
       enqueuedAt: now,
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
       ...(principal ? { createdByUserId: principal.user.id } : input.userId ? { createdByUserId: input.userId } : {}),
+      ...(principal?.device ? { createdByDeviceId: principal.device.id } : input.deviceId ? { createdByDeviceId: input.deviceId } : {}),
       ...(creditCostCents !== undefined ? { creditCostCents } : {}),
     };
     this.#store.createMediaJob(record);
@@ -155,7 +157,7 @@ export class MediaJobCoordinator {
       }, undefined, {
         jobId: id,
         ...(input.recipeId ? { recipeId: input.recipeId } : {}),
-        context: { ...(principal ? { ownerUserId: principal.user.id } : input.userId ? { ownerUserId: input.userId } : {}), ...(input.sessionId ? { sessionId: input.sessionId } : {}), label: `${input.modality} generation` },
+        context: { ...(principal ? { ownerUserId: principal.user.id } : input.userId ? { ownerUserId: input.userId } : {}), ...(principal?.device ? { ownerDeviceId: principal.device.id } : input.deviceId ? { ownerDeviceId: input.deviceId } : {}), ...(input.sessionId ? { sessionId: input.sessionId } : {}), label: `${input.modality} generation` },
       });
     } catch (error) {
       if (error instanceof InferenceAdmissionError) {
@@ -273,6 +275,7 @@ export class MediaJobCoordinator {
       params: { ...inherited, operation: "edit", prompt, refs: [{ artifactId: source.artifactId }] },
       ...(source.sessionId ? { sessionId: source.sessionId } : {}),
       ...(!principal && source.createdByUserId ? { userId: source.createdByUserId } : {}),
+      ...(!principal && source.createdByDeviceId ? { deviceId: source.createdByDeviceId } : {}),
     }, principal);
   }
 
@@ -287,6 +290,7 @@ export class MediaJobCoordinator {
       params: { operation: "animate", prompt, refs: [{ artifactId: source.artifactId }] },
       ...(source.sessionId ? { sessionId: source.sessionId } : {}),
       ...(!principal && source.createdByUserId ? { userId: source.createdByUserId } : {}),
+      ...(!principal && source.createdByDeviceId ? { deviceId: source.createdByDeviceId } : {}),
     }, principal);
   }
 
@@ -299,6 +303,7 @@ export class MediaJobCoordinator {
       params: original.params,
       ...(original.sessionId ? { sessionId: original.sessionId } : {}),
       ...(!principal && original.createdByUserId ? { userId: original.createdByUserId } : {}),
+      ...(!principal && original.createdByDeviceId ? { deviceId: original.createdByDeviceId } : {}),
     }, principal);
   }
 
@@ -460,6 +465,7 @@ export class MediaJobCoordinator {
       createdAt: now,
       updatedAt: now,
       ...(job.createdByUserId ? { ownerUserId: job.createdByUserId } : {}),
+      ...(job.createdByDeviceId ? { ownerDeviceId: job.createdByDeviceId } : {}),
     });
     return job.id;
   }

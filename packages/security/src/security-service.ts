@@ -40,7 +40,7 @@ export class SecurityService {
   }
   authenticate(header: string | string[] | undefined): AuthenticatedPrincipal | undefined {
     const token = bearer(header); if (!token) return undefined;
-    const record = this.store.findDeviceByTokenHash(this.hash(token)); if (!record || record.revokedAt || record.user.status !== "active") return undefined;
+    const record = this.store.findDeviceByTokenHash(this.hash(token)); if (!record || record.user.status !== "active") return undefined;
     this.store.touchDevice(record.id, new Date().toISOString());
     const { tokenHash: _tokenHash, user, ...device } = record;
     return { user, device, routeGrants: this.store.listUserRouteGrants(user.id), quota: this.store.getUserQuota(user.id) ?? DEFAULT_QUOTAS[user.role] };

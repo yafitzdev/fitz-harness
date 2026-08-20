@@ -838,4 +838,32 @@ export const MIGRATIONS: readonly Migration[] = [
         ON media_jobs(client_request_id) WHERE client_request_id IS NOT NULL;
     `,
   },
+  {
+    version: 31,
+    // Attribute usage to the API key that admitted it. The nullable columns
+    // preserve honest semantics for local work and pre-migration history.
+    sql: `
+      ALTER TABLE request_usage ADD COLUMN owner_device_id TEXT;
+      ALTER TABLE agent_runs ADD COLUMN owner_device_id TEXT;
+      ALTER TABLE media_jobs ADD COLUMN created_by_device_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_request_usage_device_completed
+        ON request_usage(owner_device_id, completed_at);
+    `,
+  },
+  {
+    version: 32,
+    // Revocation is now physical deletion. Purge legacy revoked credentials;
+    // the following migration removes usage that no longer has a live key.
+    sql: `DELETE FROM devices WHERE revoked_at IS NOT NULL;`,
+  },
+  {
+    version: 33,
+    // Hosting usage is key-scoped. Remove pre-attribution history and facts for
+    // deleted keys instead of presenting them as if a current key produced them.
+    sql: `
+      DELETE FROM request_usage
+      WHERE owner_device_id IS NULL
+         OR NOT EXISTS (SELECT 1 FROM devices WHERE devices.id = request_usage.owner_device_id);
+    `,
+  },
 ] as const;

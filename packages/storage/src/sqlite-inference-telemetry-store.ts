@@ -6,17 +6,16 @@ import type {
   QueueUpdatedEvent,
   RequestUsageRecord,
   UsageReport,
-  UserUsageSummary,
 } from "@fitz/protocol";
 
 interface EventRow { event_json: string }
 interface InferenceRequestRow { id: string; route_id: string; status: InferenceRequestRecord["status"]; enqueued_at: string; started_at: string | null; completed_at: string | null; error_code: string | null }
 interface GpuWorkRow { id: string; route_id: string; kind: GpuWorkRecord["kind"]; status: GpuWorkRecord["status"]; position: number; depth: number; enqueued_at: string; started_at: string | null; completed_at: string | null; error_code: string | null }
-interface UsageAggregateRow { requests: number; successful: number; failed: number; cancelled: number; interrupted: number; prompt_tokens: number; completion_tokens: number; token_reported_requests: number; media_jobs: number; credit_cost_cents: number; average_queue_wait_ms: number | null; average_ttft_ms: number | null; average_duration_ms: number | null }
+interface UsageAggregateRow { requests: number; successful: number; failed: number; cancelled: number; interrupted: number; prompt_tokens: number; completion_tokens: number; token_reported_requests: number; media_jobs: number; credit_cost_cents: number; average_queue_wait_ms: number | null; average_ttft_ms: number | null; average_duration_ms: number | null; last_active_at: string | null }
 interface RequestUsageRow {
   id: string; kind: RequestUsageRecord["kind"]; status: RequestUsageRecord["status"];
   route_id: string; recipe_id: string | null; playbook_id: string | null;
-  adapter: string | null; model_id: string | null; owner_user_id: string | null;
+  adapter: string | null; model_id: string | null; owner_user_id: string | null; owner_device_id: string | null;
   session_id: string | null; run_id: string | null; execution_lane: RequestUsageRecord["executionLane"];
   enqueued_at: string; started_at: string | null; first_output_at: string | null;
   completed_at: string; queue_wait_ms: number | null; ttft_ms: number | null;
@@ -60,17 +59,18 @@ export class SqliteInferenceTelemetryStore {
     this.database.prepare(`
       INSERT INTO request_usage (
         id, kind, status, route_id, recipe_id, playbook_id, adapter, model_id,
-        owner_user_id, session_id, run_id, execution_lane, enqueued_at,
+        owner_user_id, owner_device_id, session_id, run_id, execution_lane, enqueued_at,
         started_at, first_output_at, completed_at, queue_wait_ms, ttft_ms,
         generation_ms, duration_ms, prompt_tokens, completion_tokens,
         credit_cost_cents, error_code, metadata_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         recipe_id=COALESCE(excluded.recipe_id, request_usage.recipe_id),
         playbook_id=COALESCE(excluded.playbook_id, request_usage.playbook_id),
         adapter=COALESCE(excluded.adapter, request_usage.adapter),
         model_id=COALESCE(excluded.model_id, request_usage.model_id),
         owner_user_id=COALESCE(excluded.owner_user_id, request_usage.owner_user_id),
+        owner_device_id=COALESCE(excluded.owner_device_id, request_usage.owner_device_id),
         session_id=COALESCE(excluded.session_id, request_usage.session_id),
         run_id=COALESCE(excluded.run_id, request_usage.run_id),
         started_at=COALESCE(excluded.started_at, request_usage.started_at),
@@ -84,7 +84,7 @@ export class SqliteInferenceTelemetryStore {
     `).run(
       record.id, record.kind, record.status, record.routeId, record.recipeId ?? null,
       record.playbookId ?? null, record.adapter ?? null, record.modelId ?? null,
-      record.ownerUserId ?? null, record.sessionId ?? null, record.runId ?? null,
+      record.ownerUserId ?? null, record.ownerDeviceId ?? null, record.sessionId ?? null, record.runId ?? null,
       record.executionLane, record.enqueuedAt, record.startedAt ?? null,
       record.firstOutputAt ?? null, record.completedAt, record.queueWaitMs ?? null,
       record.ttftMs ?? null, record.generationMs ?? null, record.durationMs ?? null,
@@ -95,21 +95,27 @@ export class SqliteInferenceTelemetryStore {
   }
 
   listRequestUsageForRun(runId: string): RequestUsageRecord[] {
-    const rows = this.database.prepare(`SELECT id, kind, status, route_id, recipe_id, playbook_id, adapter, model_id, owner_user_id, session_id, run_id, execution_lane, enqueued_at, started_at, first_output_at, completed_at, queue_wait_ms, ttft_ms, generation_ms, duration_ms, prompt_tokens, completion_tokens, credit_cost_cents, error_code, metadata_json FROM request_usage WHERE run_id = ? ORDER BY COALESCE(started_at, enqueued_at), completed_at, id`).all(runId) as unknown as RequestUsageRow[];
+    const rows = this.database.prepare(`SELECT id, kind, status, route_id, recipe_id, playbook_id, adapter, model_id, owner_user_id, owner_device_id, session_id, run_id, execution_lane, enqueued_at, started_at, first_output_at, completed_at, queue_wait_ms, ttft_ms, generation_ms, duration_ms, prompt_tokens, completion_tokens, credit_cost_cents, error_code, metadata_json FROM request_usage WHERE run_id = ? ORDER BY COALESCE(started_at, enqueued_at), completed_at, id`).all(runId) as unknown as RequestUsageRow[];
     return rows.map(mapRequestUsage);
   }
 
   listRequestUsageForSession(sessionId: string): RequestUsageRecord[] {
-    const rows = this.database.prepare(`SELECT id, kind, status, route_id, recipe_id, playbook_id, adapter, model_id, owner_user_id, session_id, run_id, execution_lane, enqueued_at, started_at, first_output_at, completed_at, queue_wait_ms, ttft_ms, generation_ms, duration_ms, prompt_tokens, completion_tokens, credit_cost_cents, error_code, metadata_json FROM request_usage WHERE session_id = ? ORDER BY COALESCE(started_at, enqueued_at), completed_at, id`).all(sessionId) as unknown as RequestUsageRow[];
+    const rows = this.database.prepare(`SELECT id, kind, status, route_id, recipe_id, playbook_id, adapter, model_id, owner_user_id, owner_device_id, session_id, run_id, execution_lane, enqueued_at, started_at, first_output_at, completed_at, queue_wait_ms, ttft_ms, generation_ms, duration_ms, prompt_tokens, completion_tokens, credit_cost_cents, error_code, metadata_json FROM request_usage WHERE session_id = ? ORDER BY COALESCE(started_at, enqueued_at), completed_at, id`).all(sessionId) as unknown as RequestUsageRow[];
     return rows.map(mapRequestUsage);
   }
 
-  usageReport(options: { from: string; to: string; bucket: "hour" | "day"; ownerUserId?: string }): UsageReport {
-    const filters = ["completed_at >= ?", "completed_at < ?"];
+  usageReport(options: { from: string; to: string; bucket: "hour" | "day"; ownerUserId?: string; ownerDeviceId?: string }): UsageReport {
+    const filters = [
+      "completed_at >= ?",
+      "completed_at < ?",
+      "owner_device_id IS NOT NULL",
+      "EXISTS (SELECT 1 FROM devices WHERE devices.id = request_usage.owner_device_id)",
+    ];
     const values: SQLInputValue[] = [options.from, options.to];
     if (options.ownerUserId) { filters.push("owner_user_id = ?"); values.push(options.ownerUserId); }
+    if (options.ownerDeviceId) { filters.push("owner_device_id = ?"); values.push(options.ownerDeviceId); }
     const where = filters.join(" AND ");
-    const totals = this.database.prepare(`SELECT COUNT(*) requests, SUM(status='completed') successful, SUM(status='failed') failed, SUM(status='cancelled') cancelled, SUM(status='interrupted') interrupted, COALESCE(SUM(prompt_tokens),0) prompt_tokens, COALESCE(SUM(completion_tokens),0) completion_tokens, SUM(prompt_tokens IS NOT NULL OR completion_tokens IS NOT NULL) token_reported_requests, SUM(kind!='chat') media_jobs, COALESCE(SUM(credit_cost_cents),0) credit_cost_cents, AVG(queue_wait_ms) average_queue_wait_ms, AVG(ttft_ms) average_ttft_ms, AVG(duration_ms) average_duration_ms FROM request_usage WHERE ${where}`).get(...values) as unknown as UsageAggregateRow;
+    const totals = this.database.prepare(`SELECT COUNT(*) requests, SUM(status='completed') successful, SUM(status='failed') failed, SUM(status='cancelled') cancelled, SUM(status='interrupted') interrupted, COALESCE(SUM(prompt_tokens),0) prompt_tokens, COALESCE(SUM(completion_tokens),0) completion_tokens, SUM(prompt_tokens IS NOT NULL OR completion_tokens IS NOT NULL) token_reported_requests, SUM(kind!='chat') media_jobs, COALESCE(SUM(credit_cost_cents),0) credit_cost_cents, AVG(queue_wait_ms) average_queue_wait_ms, AVG(ttft_ms) average_ttft_ms, AVG(duration_ms) average_duration_ms, MAX(completed_at) last_active_at FROM request_usage WHERE ${where}`).get(...values) as unknown as UsageAggregateRow;
     const bucketExpression = options.bucket === "hour" ? "substr(completed_at,1,13) || ':00:00.000Z'" : "substr(completed_at,1,10) || 'T00:00:00.000Z'";
     const timeline = this.database.prepare(`SELECT ${bucketExpression} timestamp, COUNT(*) requests, SUM(status='failed') failed, SUM(status='interrupted') interrupted, SUM(kind!='chat') media_jobs, COALESCE(SUM(prompt_tokens),0) prompt_tokens, COALESCE(SUM(completion_tokens),0) completion_tokens FROM request_usage WHERE ${where} GROUP BY 1 ORDER BY 1`).all(...values) as unknown as UsageReport["timeline"];
     const breakdown = (keyExpression: string, labelExpression: string): UsageReport["routes"] => this.database.prepare(`SELECT ${keyExpression} key, ${labelExpression} label, COUNT(*) requests, SUM(status='failed') failed, SUM(status='interrupted') interrupted, COALESCE(SUM(prompt_tokens),0)+COALESCE(SUM(completion_tokens),0) totalTokens, AVG(ttft_ms) averageTtftMs, AVG(duration_ms) averageDurationMs FROM request_usage WHERE ${where} GROUP BY 1,2 ORDER BY requests DESC LIMIT 12`).all(...values).map((row: any) => ({ key: String(row.key), label: String(row.label), requests: Number(row.requests), failed: Number(row.failed), interrupted: Number(row.interrupted), totalTokens: Number(row.totalTokens), ...(row.averageTtftMs !== null ? { averageTtftMs: Number(row.averageTtftMs) } : {}), ...(row.averageDurationMs !== null ? { averageDurationMs: Number(row.averageDurationMs) } : {}) }));
@@ -124,17 +130,15 @@ export class SqliteInferenceTelemetryStore {
         ...(totals.average_queue_wait_ms !== null ? { averageQueueWaitMs: Number(totals.average_queue_wait_ms) } : {}),
         ...(totals.average_ttft_ms !== null ? { averageTtftMs: Number(totals.average_ttft_ms) } : {}),
         ...(totals.average_duration_ms !== null ? { averageDurationMs: Number(totals.average_duration_ms) } : {}),
+        ...(totals.last_active_at ? { lastActiveAt: totals.last_active_at } : {}),
       },
       timeline: timeline.map((row: any) => ({ timestamp: String(row.timestamp), requests: Number(row.requests), failed: Number(row.failed), interrupted: Number(row.interrupted), mediaJobs: Number(row.media_jobs), promptTokens: Number(row.prompt_tokens), completionTokens: Number(row.completion_tokens) })),
       routes: breakdown("route_id", "route_id"),
       recipes: breakdown("COALESCE(recipe_id,'unknown')", "COALESCE(model_id,recipe_id,'Unknown recipe')"),
       modalities: breakdown("kind", "CASE kind WHEN 'chat' THEN 'Text' WHEN 'image' THEN 'Images' WHEN 'video' THEN 'Videos' ELSE 'Audio' END"),
+      users: breakdown("COALESCE(owner_user_id,'local')", "COALESCE((SELECT display_name FROM users WHERE users.id=request_usage.owner_user_id),'Local / unattributed')"),
+      devices: breakdown("COALESCE(owner_device_id,'unattributed')", "CASE WHEN owner_device_id IS NULL THEN 'Unattributed / historical' ELSE COALESCE((SELECT users.display_name || ' · ' || devices.name FROM devices JOIN users ON users.id=devices.user_id WHERE devices.id=request_usage.owner_device_id),'Unknown API key') END"),
     };
-  }
-
-  userUsageSummaries(options: { from: string; to: string }): UserUsageSummary[] {
-    const rows = this.database.prepare(`SELECT owner_user_id, COUNT(*) requests, SUM(status='failed') failed, SUM(kind!='chat') media_jobs, COALESCE(SUM(prompt_tokens),0)+COALESCE(SUM(completion_tokens),0) total_tokens, AVG(duration_ms) average_duration_ms, MAX(completed_at) last_active_at FROM request_usage WHERE owner_user_id IS NOT NULL AND completed_at >= ? AND completed_at < ? GROUP BY owner_user_id ORDER BY last_active_at DESC`).all(options.from, options.to) as unknown as Array<{ owner_user_id: string; requests: number; failed: number; media_jobs: number; total_tokens: number; average_duration_ms: number | null; last_active_at: string }>;
-    return rows.map((row) => ({ ownerUserId: row.owner_user_id, requests: Number(row.requests), failed: Number(row.failed), mediaJobs: Number(row.media_jobs), totalTokens: Number(row.total_tokens), ...(row.average_duration_ms !== null ? { averageDurationMs: Number(row.average_duration_ms) } : {}), lastActiveAt: row.last_active_at }));
   }
 }
 
@@ -144,7 +148,7 @@ function mapRequestUsage(row: RequestUsageRow): RequestUsageRecord {
     executionLane: row.execution_lane, enqueuedAt: row.enqueued_at, completedAt: row.completed_at,
     ...(row.recipe_id ? { recipeId: row.recipe_id } : {}), ...(row.playbook_id ? { playbookId: row.playbook_id } : {}),
     ...(row.adapter ? { adapter: row.adapter } : {}), ...(row.model_id ? { modelId: row.model_id } : {}),
-    ...(row.owner_user_id ? { ownerUserId: row.owner_user_id } : {}), ...(row.session_id ? { sessionId: row.session_id } : {}),
+    ...(row.owner_user_id ? { ownerUserId: row.owner_user_id } : {}), ...(row.owner_device_id ? { ownerDeviceId: row.owner_device_id } : {}), ...(row.session_id ? { sessionId: row.session_id } : {}),
     ...(row.run_id ? { runId: row.run_id } : {}), ...(row.started_at ? { startedAt: row.started_at } : {}),
     ...(row.first_output_at ? { firstOutputAt: row.first_output_at } : {}), ...(row.queue_wait_ms !== null ? { queueWaitMs: row.queue_wait_ms } : {}),
     ...(row.ttft_ms !== null ? { ttftMs: row.ttft_ms } : {}), ...(row.generation_ms !== null ? { generationMs: row.generation_ms } : {}),

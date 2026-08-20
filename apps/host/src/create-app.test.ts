@@ -83,14 +83,20 @@ describe("Fitz host", () => {
   });
 
   it("exposes durable usage aggregates after a terminal request", async () => {
-    const runtime = createHost();
+    const store = SqliteStore.memory();
+    const security = new SecurityService(store, "usage-pepper");
+    const administrator = security.createUser("Usage administrator", "administrator");
+    const { token } = security.issueDevice(administrator.id, "Usage API key");
+    const headers = { authorization: `Bearer ${token}` };
+    const runtime = createHost({ store, security, authMode: "required" });
     try {
       const completion = await runtime.app.inject({
         method: "POST", url: "/v1/chat/completions",
+        headers,
         payload: { model: "default", stream: false, messages: [{ role: "user", content: "usage accounting" }] },
       });
       expect(completion.statusCode, completion.body).toBe(200);
-      const usage = await runtime.app.inject({ method: "GET", url: "/api/v1/management/usage?bucket=hour" });
+      const usage = await runtime.app.inject({ method: "GET", url: "/api/v1/management/usage?bucket=hour", headers });
       expect(usage.statusCode, usage.body).toBe(200);
       expect(usage.json().data).toEqual(expect.objectContaining({
         bucket: "hour",
@@ -1094,8 +1100,11 @@ describe("Fitz host", () => {
     const created = await runtime.app.inject({ method: "POST", url: "/api/v1/management/users", headers, payload: { displayName: "Agent", role: "agent" } });
     const issued = await runtime.app.inject({ method: "POST", url: `/api/v1/management/users/${created.json().data.id}/devices`, headers, payload: { name: "Laptop" } }); const me = await runtime.app.inject({ method: "GET", url: "/api/v1/me", headers }); expect(me.json().data).toEqual(expect.objectContaining({ authMode: "required", user: expect.objectContaining({ role: "administrator" }) })); const access = await runtime.app.inject({ method: "GET", url: `/api/v1/management/users/${created.json().data.id}/access`, headers }); expect(access.json().data).toEqual(expect.objectContaining({ devices: [expect.objectContaining({ id: issued.json().data.device.id })], routeIds: [], quota: expect.objectContaining({ maxRequestsPerMinute: expect.any(Number) }), currentDeviceId: me.json().data.device.id }));
     expect(created.statusCode).toBe(201); expect(issued.statusCode).toBe(201); expect(issued.json().data.token).toMatch(/^fitz_/);
-    const revoked = await runtime.app.inject({ method: "DELETE", url: `/api/v1/management/devices/${issued.json().data.device.id}`, headers }); const audit = await runtime.app.inject({ method: "GET", url: "/api/v1/management/audit-events", headers });
-    expect(revoked.statusCode).toBe(204); expect(audit.json().data.map((event: { action: string }) => event.action)).toEqual(expect.arrayContaining(["user.created", "device.issued", "device.revoked"])); await runtime.app.close();
+    const subjects = await runtime.app.inject({ method: "GET", url: "/api/v1/management/usage-subjects", headers });
+    expect(subjects.json().data).toEqual(expect.arrayContaining([expect.objectContaining({ id: created.json().data.id, devices: [expect.objectContaining({ id: issued.json().data.device.id, name: "Laptop" })] })]));
+    const deleted = await runtime.app.inject({ method: "DELETE", url: `/api/v1/management/devices/${issued.json().data.device.id}`, headers }); const audit = await runtime.app.inject({ method: "GET", url: "/api/v1/management/audit-events", headers });
+    const subjectsAfterDelete = await runtime.app.inject({ method: "GET", url: "/api/v1/management/usage-subjects", headers });
+    expect(deleted.statusCode).toBe(204); expect(store.listDevices(created.json().data.id)).toEqual([]); expect(subjectsAfterDelete.json().data.find((item: { id: string }) => item.id === created.json().data.id)?.devices).toEqual([]); expect(audit.json().data.map((event: { action: string }) => event.action)).toEqual(expect.arrayContaining(["user.created", "device.issued", "device.deleted"])); await runtime.app.close();
   });
 
   it("persists native agent events and resumes after a sequence", async () => {
