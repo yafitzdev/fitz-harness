@@ -35,6 +35,32 @@ describe("host security and recovery boundaries", () => {
     const artifact = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/artifacts`, headers: firstHeaders, payload: { name: "secret.txt", mimeType: "text/plain", contentBase64: Buffer.from("secret").toString("base64") } });
     const approval = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/tool-approvals`, headers: firstHeaders, payload: { toolCallId: "call", toolName: "read", request: {} } });
     const run = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", headers: firstHeaders, payload: { model: "default", sessionId, messages: [{ role: "user", content: "private" }] } });
+    const mediaInjection = await runtime.app.inject({
+      method: "POST",
+      url: "/api/v1/media/jobs",
+      headers: secondHeaders,
+      payload: { routeId: "image", modality: "image", sessionId, params: { prompt: "inject" } },
+    });
+    expect(mediaInjection.statusCode).toBe(403);
+
+    store.createMediaJob({
+      id: "first-media",
+      clientRequestId: "shared-media-key",
+      sessionId,
+      routeId: "image",
+      modality: "image",
+      status: "queued",
+      params: { prompt: "private" },
+      enqueuedAt: new Date().toISOString(),
+      createdByUserId: first.id,
+    });
+    const mediaKeyCollision = await runtime.app.inject({
+      method: "POST",
+      url: "/api/v1/media/jobs",
+      headers: secondHeaders,
+      payload: { routeId: "image", modality: "image", clientRequestId: "shared-media-key", params: { prompt: "steal" } },
+    });
+    expect(mediaKeyCollision.statusCode).toBe(409);
 
     for (const [method, url] of [
       ["GET", `/api/v1/sessions/${sessionId}`],

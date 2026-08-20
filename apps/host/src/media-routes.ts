@@ -46,12 +46,20 @@ export function registerMediaRoutes(options: RegisterMediaRoutesOptions): void {
         if (!canAccessMediaJob(principal, existing)) return reply.code(409).send({ error: "Request identity is already in use" });
         return reply.code(200).send({ data: existing, idempotentReplay: true });
       }
+      const sessionId = typeof body.sessionId === "string" && body.sessionId ? body.sessionId : undefined;
+      if (sessionId) {
+        const session = store.getSession(sessionId);
+        if (!session) return reply.code(404).send({ error: "Session not found" });
+        if (principal && principal.user.role !== "administrator" && session.ownerUserId !== principal.user.id) {
+          return reply.code(403).send({ error: "Session access denied" });
+        }
+      }
       const job = await mediaJobs.submit({
         routeId,
         modality,
         params: parseMediaParams(body.params),
         ...(clientRequestId ? { clientRequestId } : {}),
-        ...(typeof body.sessionId === "string" && body.sessionId ? { sessionId: body.sessionId } : {}),
+        ...(sessionId ? { sessionId } : {}),
       }, principal);
       security?.audit("media-job.created", principal?.user.id, "media-job", job.id, { routeId, modality, status: job.status });
       return reply.code(202).send({ data: job });
