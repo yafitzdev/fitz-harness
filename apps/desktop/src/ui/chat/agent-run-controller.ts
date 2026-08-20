@@ -160,7 +160,7 @@ export class AgentRunController {
     if (this.active) return;
     const generation = ++this.#generation;
     this.resetWarmup();
-    const activity = this.#options.activity.appendRun("Working");
+    let activity: HTMLElement | undefined;
     const startedAt = Date.now();
     this.#starting = true;
     this.#cancelPending = false;
@@ -190,6 +190,9 @@ export class AgentRunController {
       try { onAccepted?.(); }
       catch (error) { this.#options.showStatus(this.#options.errorMessage(error), "error"); }
       if (this.#generation !== generation) return;
+      // Admission commits the user turn before its work group is rendered, so
+      // reasoning always follows the prompt it belongs to in the transcript.
+      activity = this.#options.activity.appendRun("Working");
       this.#runId = acceptedRunId;
       this.#starting = false;
       const preparedEstimate = Number(response.context?.estimatedContextTokens);
@@ -202,10 +205,10 @@ export class AgentRunController {
       await this.#follow(acceptedRunId, activity, startedAt, generation);
     } catch (error) {
       if (this.#generation !== generation) return;
-      activity.remove();
+      activity?.remove();
       this.#options.appendSystem(this.#options.errorMessage(error));
       this.#options.setStatus("Failed", "error");
-      this.#options.activity.finishWork();
+      if (activity) this.#options.activity.finishWork();
     } finally {
       if (this.#generation === generation) {
         this.#runId = undefined;

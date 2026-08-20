@@ -47,27 +47,31 @@ describe("PromptSubmissionController", () => {
     expect(options.consumeAttachments).toHaveBeenCalledWith([attachment]);
   });
 
-  it("clears the landing before the run appends visible reasoning activity", async () => {
+  it("commits the user turn before the run appends visible reasoning activity", async () => {
     const messages = document.createElement("main");
     const landing = document.createElement("div");
     landing.className = "landing";
     messages.append(landing);
     document.body.append(messages);
-    let reasoning: HTMLElement | undefined;
     const { controller } = setup({
       clearLanding: vi.fn(() => { if (messages.querySelector(".landing")) messages.replaceChildren(); }),
+      appendUser: vi.fn((content) => {
+        const user = document.createElement("article");
+        user.className = "user";
+        user.textContent = content;
+        messages.append(user);
+      }),
       startRun: vi.fn(async (_request, onAccepted) => {
-        reasoning = document.createElement("div");
+        onAccepted();
+        const reasoning = document.createElement("div");
         reasoning.textContent = "Thinking…";
         messages.append(reasoning);
-        onAccepted();
       }),
     });
 
     await controller.submit("reason about this");
 
-    expect(reasoning?.isConnected).toBe(true);
-    expect(messages.textContent).toContain("Thinking…");
+    expect([...messages.children].map((node) => node.textContent)).toEqual(["reason about this", "Thinking…"]);
   });
 
   it("reuses a durable edited turn without consuming unrelated composer attachments", async () => {
@@ -439,7 +443,7 @@ describe("PromptSubmissionController", () => {
 
     expect(options.consumeAttachments).toHaveBeenCalledWith([attachment]);
     expect(options.appendUser).not.toHaveBeenCalled();
-    expect(options.clearLanding).toHaveBeenCalledOnce();
+    expect(options.clearLanding).not.toHaveBeenCalled();
     expect(options.setDraft).not.toHaveBeenCalled();
   });
 

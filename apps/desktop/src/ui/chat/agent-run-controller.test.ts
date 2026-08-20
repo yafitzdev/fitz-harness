@@ -72,6 +72,22 @@ afterEach(() => {
 });
 
 describe("AgentRunController", () => {
+  it("commits an accepted user turn before appending its run activity", async () => {
+    const order: string[] = [];
+    const api = vi.fn(async (path: string) => path === "/api/v1/agent/runs"
+      ? { data: { id: "run-ordered" } }
+      : { events: [{ sequence: 1, type: "run.completed", data: {} }] });
+    const { controller, activity } = setup(api);
+    activity.timeline.appendRun.mockImplementation(() => {
+      order.push("activity");
+      return activity.activity;
+    });
+
+    await controller.start(request(), () => { order.push("user"); });
+
+    expect(order).toEqual(["user", "activity"]);
+  });
+
   it("owns submission, streaming, status transitions, and completion", async () => {
     const api = vi.fn(async (path: string) => path === "/api/v1/agent/runs"
       ? { data: { id: "run-1" }, context: { compacted: true } }
