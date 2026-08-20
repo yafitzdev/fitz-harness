@@ -102,21 +102,40 @@ const DEFAULT_MEDIA_PROMPTS: Record<MediaModality, string> = {
 export class PromptSubmissionController {
   readonly #options: PromptSubmissionOptions;
   #pendingSubmission: Promise<void> | undefined;
+  #pendingSubmissionKey: string | undefined;
   #retryableRun: RetryableRunSubmission | undefined;
 
   constructor(options: PromptSubmissionOptions) { this.#options = options; }
 
   async submit(submitted?: string | ComposerSubmission, existingUserMessage?: HTMLElement, persistedMessageId?: string): Promise<void> {
-    if (this.#pendingSubmission) { await this.#pendingSubmission; return; }
+    const captured = typeof submitted === "string" ? { content: submitted } : (submitted ?? this.#options.draft());
+    const submissionKey = pendingSubmissionKey(captured, existingUserMessage, persistedMessageId);
+    if (this.#pendingSubmission) {
+      const duplicate = submissionKey === this.#pendingSubmissionKey;
+      await this.#pendingSubmission;
+      if (duplicate) return;
+      // A distinct Enter press during slow first-chat creation must not vanish.
+      // Restore it as an editable draft once the earlier admission resolves;
+      // the user can then send it as steering or as the next regular turn.
+      const currentDraft = submissionText(this.#options.draft());
+      const queuedDraft = submissionText(captured);
+      const recovered = mergeDraftText(currentDraft, queuedDraft);
+      if (recovered) this.#options.setDraft(recovered);
+      this.#options.refreshContext();
+      this.#options.refreshControls();
+      return;
+    }
     let resolveAdmission!: () => void;
     const admission = new Promise<void>((resolve) => { resolveAdmission = resolve; });
     this.#pendingSubmission = admission;
+    this.#pendingSubmissionKey = submissionKey;
     const releaseAdmission = () => {
       if (this.#pendingSubmission !== admission) return;
       this.#pendingSubmission = undefined;
+      this.#pendingSubmissionKey = undefined;
       resolveAdmission();
     };
-    try { await this.#submitOnce(submitted, existingUserMessage, persistedMessageId, releaseAdmission); }
+    try { await this.#submitOnce(captured, existingUserMessage, persistedMessageId, releaseAdmission); }
     finally { releaseAdmission(); }
   }
 
@@ -142,6 +161,7 @@ export class PromptSubmissionController {
       try { sessionId = await this.#options.ensureSession(titleFrom(content), settings.routeId || undefined); }
       catch (error) {
         if (error instanceof Error && error.name === "AbortError") return;
+        if (!existingUserMessage) this.#restoreSubmissionDraft(draft);
         this.#options.showError(this.#options.errorMessage(error)); return;
       }
     }
@@ -170,6 +190,7 @@ export class PromptSubmissionController {
           }
         } catch (error) {
           await this.#discardUploads(sessionId, uploaded);
+          if (!existingUserMessage && this.#options.isSessionCurrent?.(sessionId) !== false) this.#restoreSubmissionDraft(draft);
           this.#options.showError(this.#options.errorMessage(error));
           return;
         }
@@ -189,7 +210,7 @@ export class PromptSubmissionController {
         try { await this.#options.persistUserMessage(sessionId, displayContent, crypto.randomUUID()); }
         catch (error) {
           await this.#discardUploads(sessionId, uploaded);
-          this.#options.setDraft(displayContent);
+          this.#restoreSubmissionDraft(draft);
           this.#options.showError(this.#options.errorMessage(error));
           return;
         }
@@ -293,11 +314,7 @@ export class PromptSubmissionController {
     } finally {
       if (!accepted && !existingUserMessage && this.#options.isSessionCurrent?.(sessionId) !== false) {
         this.#retryableRun = retryState;
-        const newerDraft = submissionText(this.#options.draft());
-        const recoveredDraft = newerDraft.trim() && newerDraft.trim() !== content ? `${content}\n\n${newerDraft}` : content;
-        this.#options.setDraft(recoveredDraft);
-        this.#options.refreshContext();
-        this.#options.refreshControls();
+        this.#restoreSubmissionDraft({ content });
       }
     }
   }
@@ -340,6 +357,13 @@ export class PromptSubmissionController {
   async #discardUploads(sessionId: string, uploaded: readonly UploadedAttachment[]): Promise<void> {
     await Promise.allSettled(uploaded.map(({ artifact }) => this.#options.discardUploadedAttachment(sessionId, artifact.id)));
   }
+
+  #restoreSubmissionDraft(submission: ComposerSubmission): void {
+    const recovered = mergeDraftText(submissionText(submission), submissionText(this.#options.draft()));
+    if (recovered) this.#options.setDraft(recovered);
+    this.#options.refreshContext();
+    this.#options.refreshControls();
+  }
 }
 
 function staleConversationError(): Error {
@@ -353,6 +377,19 @@ function titleFrom(content: string): string {
 function submissionText(submission: ComposerSubmission): string {
   if (!submission.mediaCommand) return submission.content;
   return `/${submission.mediaCommand}${submission.content ? ` ${submission.content}` : ""}`;
+}
+
+function pendingSubmissionKey(submission: ComposerSubmission, existingUserMessage: HTMLElement | undefined, persistedMessageId: string | undefined): string {
+  return JSON.stringify([submission.content.trim(), submission.mediaCommand ?? "", persistedMessageId ?? "", Boolean(existingUserMessage)]);
+}
+
+function mergeDraftText(first: string, second: string): string {
+  const left = first.trim();
+  const right = second.trim();
+  if (!left) return right;
+  if (!right || left === right || left.endsWith(`\n\n${right}`)) return left;
+  if (right.startsWith(`${left}\n\n`)) return right;
+  return `${left}\n\n${right}`;
 }
 
 function messageAttachment(uploaded: UploadedAttachment): MessageAttachment {

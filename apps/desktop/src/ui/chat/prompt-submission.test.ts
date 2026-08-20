@@ -79,6 +79,48 @@ describe("PromptSubmissionController", () => {
     expect(options.startRun).toHaveBeenCalledOnce();
   });
 
+  it("restores a distinct submission made while the first chat is materializing", async () => {
+    let resolveSession!: (value: string) => void;
+    let currentDraft = "follow up";
+    const ensureSession = vi.fn(() => new Promise<string>((resolve) => { resolveSession = resolve; }));
+    const { controller, options } = setup({
+      sessionId: () => undefined,
+      ensureSession,
+      draft: () => ({ content: currentDraft }),
+      clearDraft: vi.fn(() => { currentDraft = ""; }),
+    });
+
+    const first = controller.submit("Build it");
+    const second = controller.submit("follow up");
+    resolveSession("session-created");
+    await Promise.all([first, second]);
+
+    expect(options.startRun).toHaveBeenCalledOnce();
+    expect(options.appendUser).toHaveBeenCalledOnce();
+    expect(options.setDraft).toHaveBeenCalledWith("follow up");
+  });
+
+  it("preserves both submissions when first-chat materialization fails", async () => {
+    let rejectSession!: (reason: Error) => void;
+    let currentDraft = "follow up";
+    const ensureSession = vi.fn(() => new Promise<string>((_resolve, reject) => { rejectSession = reject; }));
+    const { controller, options } = setup({
+      sessionId: () => undefined,
+      ensureSession,
+      draft: () => ({ content: currentDraft }),
+      setDraft: vi.fn((value: string) => { currentDraft = value; }),
+    });
+
+    const first = controller.submit("Build it");
+    const second = controller.submit("follow up");
+    rejectSession(new Error("storage offline"));
+    await Promise.all([first, second]);
+
+    expect(options.startRun).not.toHaveBeenCalled();
+    expect(options.setDraft).toHaveBeenLastCalledWith("Build it\n\nfollow up");
+    expect(options.showError).toHaveBeenCalledWith("Error: storage offline");
+  });
+
   it("accepts media commands after an admitted chat run while that run is still active", async () => {
     let finishRun!: () => void;
     const startRun: PromptSubmissionOptions["startRun"] = vi.fn((_request, onAccepted) => {
