@@ -217,7 +217,9 @@ export class PromptSubmissionController {
       }
       if (this.#options.isSessionCurrent?.(sessionId) === false) return;
       this.#retryableRun = undefined;
-      if (attachments.length > 0) this.#options.consumeAttachments(attachments);
+      // Only consume references the media request actually captured. Files,
+      // PDFs, and every attachment on /audio remain staged for the next turn.
+      if (uploadable.length > 0) this.#options.consumeAttachments(uploadable);
       this.#options.clearDraft();
       this.#options.clearLanding();
       if (!existingUserMessage) {

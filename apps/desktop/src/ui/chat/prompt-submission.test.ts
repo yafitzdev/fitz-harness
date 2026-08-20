@@ -439,6 +439,7 @@ describe("PromptSubmissionController", () => {
     await controller.submit();
     const request = mediaCreationRequest(options);
     expect(options.uploadAttachment).toHaveBeenCalledWith("session-1", attachment);
+    expect(options.consumeAttachments).toHaveBeenCalledWith([attachment]);
     expect(request.refs).toEqual([{ artifactId: "artifact-1" }]);
 
     await request.submit({ prompt: "make it match" });
@@ -463,11 +464,27 @@ describe("PromptSubmissionController", () => {
     const { controller, options } = setup({ peekAttachments: () => [attachment], draft: () => ({ content: "narrate this", mediaCommand: "audio" }) });
     await controller.submit();
     expect(options.uploadAttachment).not.toHaveBeenCalled();
+    expect(options.consumeAttachments).not.toHaveBeenCalled();
     expect(mediaCreationRequest(options).refs).toEqual([]);
 
     await mediaCreationRequest(options).submit({ prompt: "narrate this" });
     expect(options.submitMedia).toHaveBeenCalledWith(expect.objectContaining({ routeId: "audio", modality: "audio", prompt: "narrate this" }));
     expect(options.startRun).not.toHaveBeenCalled();
+  });
+
+  it("leaves unsupported media attachments staged while consuming an image ref", async () => {
+    const image = { kind: "image" as const, dataUrl: "data:image/png;base64,AAAA", mimeType: "image/png", name: "ref.png" };
+    const file = { kind: "file" as const, dataUrl: "data:text/plain;base64,QQ==", mimeType: "text/plain", name: "notes.txt" };
+    const { controller, options } = setup({
+      peekAttachments: () => [image, file],
+      draft: () => ({ content: "animate this", mediaCommand: "video" }),
+    });
+
+    await controller.submit();
+
+    expect(options.uploadAttachment).toHaveBeenCalledOnce();
+    expect(options.uploadAttachment).toHaveBeenCalledWith("session-1", image);
+    expect(options.consumeAttachments).toHaveBeenCalledWith([image]);
   });
 
   it("shows an error when the media submission fails and does not track a job", async () => {
