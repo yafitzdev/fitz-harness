@@ -287,6 +287,10 @@ export class PromptSubmissionController {
     // created the run. The text is cleared while admission is pending so the
     // unlocked running composer cannot accidentally steer the same prompt.
     this.#options.clearDraft();
+    // Clear the landing before AgentRunController creates its activity group.
+    // Clearing it from the acceptance callback would detach the live reasoning
+    // rows that the run controller has already appended to the message feed.
+    this.#options.clearLanding();
     this.#options.refreshContext();
     const clientRequestId = retryable?.clientRequestId ?? crypto.randomUUID();
     const retryState: RetryableRunSubmission = { sessionId, content, settings: { ...settings }, attachments: [...attachments], uploaded: [...uploaded], clientRequestId };
@@ -301,7 +305,6 @@ export class PromptSubmissionController {
         // user selected another chat. In that case transcript replay owns the
         // old chat's UI and this callback must not touch the new conversation.
         if (this.#options.isSessionCurrent?.(sessionId) !== false) {
-          this.#options.clearLanding();
           if (!existingUserMessage) {
             const messageAttachments = uploaded.map(messageAttachment);
             if (messageAttachments.length) this.#options.appendUser(content, messageAttachments);

@@ -47,6 +47,29 @@ describe("PromptSubmissionController", () => {
     expect(options.consumeAttachments).toHaveBeenCalledWith([attachment]);
   });
 
+  it("clears the landing before the run appends visible reasoning activity", async () => {
+    const messages = document.createElement("main");
+    const landing = document.createElement("div");
+    landing.className = "landing";
+    messages.append(landing);
+    document.body.append(messages);
+    let reasoning: HTMLElement | undefined;
+    const { controller } = setup({
+      clearLanding: vi.fn(() => { if (messages.querySelector(".landing")) messages.replaceChildren(); }),
+      startRun: vi.fn(async (_request, onAccepted) => {
+        reasoning = document.createElement("div");
+        reasoning.textContent = "Thinking…";
+        messages.append(reasoning);
+        onAccepted();
+      }),
+    });
+
+    await controller.submit("reason about this");
+
+    expect(reasoning?.isConnected).toBe(true);
+    expect(messages.textContent).toContain("Thinking…");
+  });
+
   it("reuses a durable edited turn without consuming unrelated composer attachments", async () => {
     const peekAttachments = vi.fn(() => [{ kind: "file" as const, dataUrl: "data:text/plain;base64,QQ==", mimeType: "text/plain", name: "draft.txt" }]);
     const { controller, options, row } = setup({ peekAttachments });
@@ -416,7 +439,7 @@ describe("PromptSubmissionController", () => {
 
     expect(options.consumeAttachments).toHaveBeenCalledWith([attachment]);
     expect(options.appendUser).not.toHaveBeenCalled();
-    expect(options.clearLanding).not.toHaveBeenCalled();
+    expect(options.clearLanding).toHaveBeenCalledOnce();
     expect(options.setDraft).not.toHaveBeenCalled();
   });
 
