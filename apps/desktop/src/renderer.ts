@@ -478,7 +478,7 @@ const promptSubmission = new PromptSubmissionController({
   showMediaCreation: ({ modality, prompt, refs, submit }) => {
     mediaCreationForm.show({ modality, prompt, refs, onCreate: submit });
   },
-  startRun: (request) => agentRuns.start(request),
+  startRun: (request, onAccepted) => agentRuns.start(request, onAccepted),
   steerRun: (content) => agentRuns.steer(content),
   showError: (message) => { appendMessage("system", message); },
   errorMessage,

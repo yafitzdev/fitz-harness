@@ -45,7 +45,7 @@ export interface PromptSubmissionOptions {
     persistedMessageId?: string;
     attachments?: Array<{ artifactId: string }>;
     messages: Array<{ role: "user"; content: PromptMessageContent }>;
-  }) => Promise<void>;
+  }, onAccepted: () => void) => Promise<void>;
   /** Submits a media job straight to the media-job pipeline, bypassing the LLM entirely. */
   submitMedia: (request: {
     routeId: string;
@@ -212,31 +212,60 @@ export class PromptSubmissionController {
       return;
     }
 
-    if (attachments.length > 0) this.#options.consumeAttachments(attachments);
+    // Keep attachment chips staged until the host confirms that it durably
+    // created the run. The text is cleared while admission is pending so the
+    // unlocked running composer cannot accidentally steer the same prompt.
     this.#options.clearDraft();
-    this.#options.clearLanding();
-    if (!existingUserMessage) {
-      const messageAttachments = uploaded.map(messageAttachment);
-      if (messageAttachments.length) this.#options.appendUser(content, messageAttachments);
-      else this.#options.appendUser(content);
-    }
-    if (content && !existingUserMessage) this.#options.pushHistory(content);
-    if (!existingUserMessage) this.#options.addTokenEstimate(content);
     this.#options.refreshContext();
-    // The run controller marks itself active synchronously. Once it owns this
-    // request, media commands no longer need to wait for the run to finish.
-    releaseAdmission();
-    await this.#options.startRun({
-      model: settings.routeId,
-      effort: settings.effort,
-      max_tokens: settings.maxTokens,
-      temperature: settings.temperature,
-      sessionId,
-      accessMode: settings.accessMode,
-      ...(uploaded.length ? { attachments: uploaded.map(({ artifact }) => ({ artifactId: artifact.id })) } : {}),
-      ...(persistedMessageId ? { persistedMessageId } : {}),
-      messages: [{ role: "user", content }],
-    });
+    let accepted = false;
+    const accept = () => {
+      if (accepted) return;
+      accepted = true;
+      try {
+        if (attachments.length > 0) this.#options.consumeAttachments(attachments);
+        // The run is durable even if its creation response arrived after the
+        // user selected another chat. In that case transcript replay owns the
+        // old chat's UI and this callback must not touch the new conversation.
+        if (this.#options.isSessionCurrent?.(sessionId) !== false) {
+          this.#options.clearLanding();
+          if (!existingUserMessage) {
+            const messageAttachments = uploaded.map(messageAttachment);
+            if (messageAttachments.length) this.#options.appendUser(content, messageAttachments);
+            else this.#options.appendUser(content);
+          }
+          if (content && !existingUserMessage) this.#options.pushHistory(content);
+          if (!existingUserMessage) this.#options.addTokenEstimate(content);
+          this.#options.refreshContext();
+        }
+      } finally {
+        // Once admission succeeds, other independent media submissions may
+        // use the composer while the agent continues following the run.
+        releaseAdmission();
+      }
+    };
+    try {
+      await this.#options.startRun({
+        model: settings.routeId,
+        effort: settings.effort,
+        max_tokens: settings.maxTokens,
+        temperature: settings.temperature,
+        sessionId,
+        accessMode: settings.accessMode,
+        ...(uploaded.length ? { attachments: uploaded.map(({ artifact }) => ({ artifactId: artifact.id })) } : {}),
+        ...(persistedMessageId ? { persistedMessageId } : {}),
+        messages: [{ role: "user", content }],
+      }, accept);
+    } catch (error) {
+      this.#options.showError(this.#options.errorMessage(error));
+    } finally {
+      if (!accepted && !existingUserMessage && this.#options.isSessionCurrent?.(sessionId) !== false) {
+        const newerDraft = submissionText(this.#options.draft());
+        const recoveredDraft = newerDraft.trim() && newerDraft.trim() !== content ? `${content}\n\n${newerDraft}` : content;
+        this.#options.setDraft(recoveredDraft);
+        this.#options.refreshContext();
+        this.#options.refreshControls();
+      }
+    }
   }
 
   async steer(content: string): Promise<void> {
@@ -264,6 +293,11 @@ function staleConversationError(): Error {
 
 function titleFrom(content: string): string {
   return content.split(/\r?\n/, 1)[0]!.trim().slice(0, 80) || "New chat";
+}
+
+function submissionText(submission: ComposerSubmission): string {
+  if (!submission.mediaCommand) return submission.content;
+  return `/${submission.mediaCommand}${submission.content ? ` ${submission.content}` : ""}`;
 }
 
 function messageAttachment(uploaded: { artifact: Awaited<ReturnType<PromptSubmissionOptions["uploadAttachment"]>>; attachment: PastedAttachment }): MessageAttachment {

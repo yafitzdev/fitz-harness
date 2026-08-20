@@ -12,7 +12,7 @@ function setup(overrides: Partial<PromptSubmissionOptions> = {}) {
     uploadAttachment: vi.fn(async () => ({ id: "artifact-1" })), clearLanding: vi.fn(), appendUser: vi.fn(),
     persistUserMessage: vi.fn(async () => undefined), appendSteer: vi.fn(() => row),
     pushHistory: vi.fn(), addTokenEstimate: vi.fn(), refreshContext: vi.fn(), refreshControls: vi.fn(), runId: () => "run-1",
-    startRun: vi.fn(async () => undefined), submitMedia: vi.fn(async () => ({ id: "job-1" })), onMediaJobSubmitted: vi.fn(),
+    startRun: vi.fn(async (_request, onAccepted) => { onAccepted(); }), submitMedia: vi.fn(async () => ({ id: "job-1" })), onMediaJobSubmitted: vi.fn(),
     showMediaCreation: vi.fn(),
     steerRun: vi.fn(async () => undefined), showError: vi.fn(), errorMessage: (error) => String(error),
     ...overrides,
@@ -40,7 +40,7 @@ describe("PromptSubmissionController", () => {
       max_tokens: 8192,
       attachments: [{ artifactId: "artifact-1" }],
       messages: [{ role: "user", content: "Build a dashboard\nwith charts" }],
-    }));
+    }), expect.any(Function));
     expect(options.appendUser).toHaveBeenCalledWith("Build a dashboard\nwith charts", [expect.objectContaining({
       id: "artifact-1", name: "shot.png", mimeType: "image/png", kind: "image", dataUrl: "data:image/png;base64,AAAA",
     })]);
@@ -59,7 +59,7 @@ describe("PromptSubmissionController", () => {
     expect(options.startRun).toHaveBeenCalledWith(expect.objectContaining({
       persistedMessageId: "message-edited",
       messages: [{ role: "user", content: "Edited prompt" }],
-    }));
+    }), expect.any(Function));
   });
 
   it("serializes duplicate submissions while the first chat is materializing", async () => {
@@ -81,7 +81,10 @@ describe("PromptSubmissionController", () => {
 
   it("accepts media commands after an admitted chat run while that run is still active", async () => {
     let finishRun!: () => void;
-    const startRun = vi.fn(() => new Promise<void>((resolve) => { finishRun = resolve; }));
+    const startRun: PromptSubmissionOptions["startRun"] = vi.fn((_request, onAccepted) => {
+      onAccepted();
+      return new Promise<void>((resolve) => { finishRun = resolve; });
+    });
     const { controller, options } = setup({ startRun });
 
     const activeRun = controller.submit("Build it");
@@ -240,6 +243,78 @@ describe("PromptSubmissionController", () => {
     expect(options.showError).toHaveBeenCalledWith("Error: storage offline");
     expect(options.consumeAttachments).not.toHaveBeenCalled();
     expect(options.uploadAttachment).not.toHaveBeenCalled();
+  });
+
+  it("restores a regular prompt and retains attachments when run admission fails", async () => {
+    const attachment = { kind: "file" as const, dataUrl: "data:text/plain;base64,QQ==", mimeType: "text/plain", name: "draft.txt" };
+    const { controller, options } = setup({
+      draft: () => ({ content: "" }),
+      peekAttachments: () => [attachment],
+      startRun: vi.fn(async () => undefined),
+    });
+
+    await controller.submit("analyse this");
+
+    expect(options.clearDraft).toHaveBeenCalledOnce();
+    expect(options.setDraft).toHaveBeenCalledWith("analyse this");
+    expect(options.consumeAttachments).not.toHaveBeenCalled();
+    expect(options.appendUser).not.toHaveBeenCalled();
+    expect(options.pushHistory).not.toHaveBeenCalled();
+  });
+
+  it("preserves text typed while an earlier prompt is awaiting admission", async () => {
+    const { controller, options } = setup({
+      draft: () => ({ content: "new thought", mediaCommand: "video" }),
+      startRun: vi.fn(async () => undefined),
+    });
+
+    await controller.submit("original prompt");
+
+    expect(options.setDraft).toHaveBeenCalledWith("original prompt\n\n/video new thought");
+  });
+
+  it("restores a prompt when the run adapter rejects unexpectedly", async () => {
+    const { controller, options } = setup({
+      draft: () => ({ content: "" }),
+      startRun: vi.fn(async () => { throw new Error("adapter stopped"); }),
+    });
+
+    await controller.submit("keep this");
+
+    expect(options.setDraft).toHaveBeenCalledWith("keep this");
+    expect(options.showError).toHaveBeenCalledWith("Error: adapter stopped");
+  });
+
+  it("does not duplicate a durable edited turn when its replacement run is rejected", async () => {
+    const { controller, options, row } = setup({
+      draft: () => ({ content: "" }),
+      startRun: vi.fn(async () => undefined),
+    });
+
+    await controller.submit("edited prompt", row, "message-edited");
+
+    expect(options.setDraft).not.toHaveBeenCalled();
+  });
+
+  it("commits captured attachments without drawing into a conversation selected during admission", async () => {
+    let current = true;
+    const attachment = { kind: "file" as const, dataUrl: "data:text/plain;base64,QQ==", mimeType: "text/plain", name: "draft.txt" };
+    const startRun: PromptSubmissionOptions["startRun"] = vi.fn(async (_request, onAccepted) => {
+      current = false;
+      onAccepted();
+    });
+    const { controller, options } = setup({
+      peekAttachments: () => [attachment],
+      isSessionCurrent: () => current,
+      startRun,
+    });
+
+    await controller.submit("old chat prompt");
+
+    expect(options.consumeAttachments).toHaveBeenCalledWith([attachment]);
+    expect(options.appendUser).not.toHaveBeenCalled();
+    expect(options.clearLanding).not.toHaveBeenCalled();
+    expect(options.setDraft).not.toHaveBeenCalled();
   });
 
   it("does not render an unpersisted media command when durable storage fails", async () => {

@@ -172,6 +172,47 @@ describe("AgentRunController", () => {
     expect(creationBodies[0]?.clientRequestId).toBe(creationBodies[1]?.clientRequestId);
   });
 
+  it("does not cross the durable admission boundary when run creation exhausts its retries", async () => {
+    vi.useFakeTimers();
+    const api = vi.fn(async () => { throw new Error("host offline"); });
+    const { controller, calls } = setup(api);
+    const accepted = vi.fn();
+
+    const started = controller.start(request(), accepted);
+    await vi.runAllTimersAsync();
+    await started;
+
+    expect(api).toHaveBeenCalledTimes(4);
+    expect(accepted).not.toHaveBeenCalled();
+    expect(calls.appendSystem).toHaveBeenCalledWith("host offline");
+  });
+
+  it("commits durable admission before following the accepted run", async () => {
+    let finishReplay!: (value: Record<string, unknown>) => void;
+    const replay = new Promise<Record<string, unknown>>((resolve) => { finishReplay = resolve; });
+    const api = vi.fn(async (path: string) => path === "/api/v1/agent/runs"
+      ? { data: { id: "run-admitted" } }
+      : replay);
+    const { controller } = setup(api);
+    const accepted = vi.fn();
+
+    const started = controller.start(request(), accepted);
+    await vi.waitFor(() => expect(accepted).toHaveBeenCalledOnce());
+    finishReplay({ events: [{ sequence: 1, type: "run.completed", data: {} }] });
+    await started;
+  });
+
+  it("does not commit admission for a malformed creation response", async () => {
+    const api = vi.fn(async () => ({ data: {} }));
+    const { controller, calls } = setup(api);
+    const accepted = vi.fn();
+
+    await controller.start(request(), accepted);
+
+    expect(accepted).not.toHaveBeenCalled();
+    expect(calls.appendSystem).toHaveBeenCalledWith("The host accepted the request without returning a run id");
+  });
+
   it("reattaches to a live persisted run after the restored transcript sequence", async () => {
     const api = vi.fn(async () => ({ events: [
       { sequence: 8, type: "assistant.delta", data: { text: "continued" } },
@@ -338,14 +379,16 @@ describe("AgentRunController", () => {
       return { events: [] };
     });
     const { controller, calls } = setup(api);
+    const accepted = vi.fn();
 
-    const pending = controller.start(request());
+    const pending = controller.start(request(), accepted);
     controller.detach();
     resolveStart({ data: { id: "stale-run" } });
     await pending;
 
     expect(controller.active).toBe(false);
     expect(controller.runId).toBeUndefined();
+    expect(accepted).toHaveBeenCalledOnce();
     expect(calls.appendSystem).not.toHaveBeenCalled();
     expect(api.mock.calls.some(([path]) => String(path).includes("stale-run/events"))).toBe(false);
   });

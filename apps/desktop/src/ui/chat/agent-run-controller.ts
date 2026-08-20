@@ -156,7 +156,7 @@ export class AgentRunController {
     }, 120);
   }
 
-  async start(request: AgentRunRequest): Promise<void> {
+  async start(request: AgentRunRequest, onAccepted?: () => void): Promise<void> {
     if (this.active) return;
     const generation = ++this.#generation;
     this.resetWarmup();
@@ -181,9 +181,16 @@ export class AgentRunController {
           await this.#delay(reconnectDelay(attempt));
         }
       }
-      if (this.#generation !== generation) return;
       if (!response) throw new Error("The run could not be created");
-      this.#runId = String(response.data.id);
+      const acceptedRunId = typeof response.data?.id === "string" ? response.data.id.trim() : "";
+      if (!acceptedRunId) throw new Error("The host accepted the request without returning a run id");
+      // A successful creation response is the durable admission boundary. Let
+      // the composer commit its optimistic UI state even if the user detached
+      // while the response was in flight; the callback owns its session guard.
+      try { onAccepted?.(); }
+      catch (error) { this.#options.showStatus(this.#options.errorMessage(error), "error"); }
+      if (this.#generation !== generation) return;
+      this.#runId = acceptedRunId;
       this.#starting = false;
       const preparedEstimate = Number(response.context?.estimatedContextTokens);
       // Every run is prepared from the host's canonical transcript. Re-anchor the local
@@ -191,8 +198,8 @@ export class AgentRunController {
       // into the next run through accumulated renderer-only estimates.
       if (Number.isFinite(preparedEstimate) && preparedEstimate >= 0) this.#options.recalibrateEstimate(preparedEstimate);
       if (response.context?.compacted) this.#options.activity.appendContext();
-      if (this.#cancelPending) await this.#options.api(`/api/v1/agent/runs/${this.#runId}`, "DELETE");
-      await this.#follow(this.#runId, activity, startedAt, generation);
+      if (this.#cancelPending) await this.#options.api(`/api/v1/agent/runs/${acceptedRunId}`, "DELETE");
+      await this.#follow(acceptedRunId, activity, startedAt, generation);
     } catch (error) {
       if (this.#generation !== generation) return;
       activity.remove();
