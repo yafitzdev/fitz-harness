@@ -1,6 +1,7 @@
 import type { AgentRuntime, AgentRuntimeEvent, AgentRuntimeRun, AgentRuntimeRunOptions } from "@fitz/agent-core";
 import type {
   AgentRunRequest,
+  ChatMessage,
   SessionQueryMessage,
   SessionQueryRequest,
   SessionQuerySection,
@@ -8,7 +9,7 @@ import type {
   SessionQueryService,
   ToolAccessMode,
 } from "@fitz/protocol";
-import type { Model } from "@earendil-works/pi-ai/compat";
+import type { Message, Model } from "@earendil-works/pi-ai/compat";
 import type { AgentToolResult, ToolDefinition } from "@earendil-works/pi-coding-agent";
 export type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { LSP_TOOL_NAME } from "./lsp-tool.js";
@@ -22,6 +23,13 @@ import {
 } from "./pi-delegation-policy.js";
 import { PiTurnOutputState, type PiInternalPromptPurpose } from "./pi-turn-output-state.js";
 import { serializeWorkspaceMutationTools, type ToolLeaseAcquirer, type ToolLeaseRelease } from "./workspace-mutation-leases.js";
+import {
+  buildFitzSystemPrompt,
+  constrainSystemPrompt,
+  FITZ_SYSTEM_PROMPT_SEED,
+  runtimeControlPrompt,
+  type PromptProvenance,
+} from "./prompts.js";
 
 type PiEvent =
   | { type: "message_start"; message: { role?: string; content?: unknown } }
@@ -36,7 +44,11 @@ export interface PiImageContent { type: "image"; data: string; mimeType: string 
 export interface PiSession {
   subscribe(listener: (event: PiEvent) => void): () => void;
   prompt(text: string, images?: PiImageContent[]): Promise<void>;
+  /** Run a continuation whose instruction is injected into the trusted system
+   * prompt for that request instead of impersonating a system role in user text. */
+  promptControl?(purpose: string, instruction: string): Promise<void>;
   steer(text: string): Promise<void>;
+  promptProvenance?: PromptProvenance;
   /** Remove a draft that Fitz deliberately withheld from both of Pi's active histories. */
   discardLastAssistantDraft?(): boolean;
   /** Strip provisional text from an assistant message while retaining its tool calls. */
@@ -121,6 +133,11 @@ export type PiSessionFactory = (options: {
   customTools?: ToolDefinition[];
   /** Trusted localhost-only correlation propagated to the Fitz completion gateway. */
   workContext?: PiWorkContext;
+  /** Structured history that precedes the new user turn. System-role entries
+   * become subordinate run instructions; other roles remain provider messages. */
+  history?: ChatMessage[];
+  requestInstructions?: string[];
+  runInstructions?: string[];
 }) => Promise<PiSession>;
 export interface PiAgentRuntimeOptions {
   cwd?: string | ((request: AgentRunRequest) => string);
@@ -246,6 +263,8 @@ export class PiAgentRuntime implements AgentRuntime {
     const workTools = new WorkToolBudget(rootToolCallBudget);
     const customTools = this.#customTools?.({ cwd, ...(options?.runId ? { runId: options.runId } : {}), request }) ?? [];
     const hasSubagentTool = customTools.some((tool) => tool.name === "subagent");
+    const promptInput = preparePromptInput(request.messages);
+    const initialInstructions = [runPlan?.initialInstruction, delegation.initialPromptInstruction(), workTools.initialInstruction()].filter((value): value is string => Boolean(value));
     const sessionTask = (async () => {
       if (delegation.requiresInitialFanout && !hasSubagentTool) {
         throw new Error("Subagents are unavailable for the selected route. Select a local recipe with worker capacity or configure a Fast or Smart cloud route first.");
@@ -289,6 +308,9 @@ export class PiAgentRuntime implements AgentRuntime {
         ...(this.#redactToolResult ? { redactResult: this.#redactToolResult } : {}),
         ...(this.#customTools ? { customTools } : {}),
         ...(this.#forwardWorkContext && options ? { workContext: options } : {}),
+        ...(promptInput.history.length ? { history: promptInput.history } : {}),
+        ...(promptInput.requestInstructions.length ? { requestInstructions: promptInput.requestInstructions } : {}),
+        ...(initialInstructions.length ? { runInstructions: initialInstructions } : {}),
       }); session = created; if (controller.signal.aborted) { await created.abort(); throw abortError(); }
       return created;
     })();
@@ -302,6 +324,7 @@ export class PiAgentRuntime implements AgentRuntime {
         withholdAssistantDraftForTool: (toolCallId) => { activeSession.withholdLastAssistantText?.(toolCallId); },
       });
       outputState = output;
+      if (activeSession.promptProvenance) channel.push({ type: "prompt.provenance", ...activeSession.promptProvenance });
       const failActiveSession = (error: Error) => {
         if (!output.beginFailure()) return;
         controller.abort();
@@ -352,11 +375,18 @@ export class PiAgentRuntime implements AgentRuntime {
         };
         const internalPrompt = async (purpose: PiInternalPromptPurpose, text: string) => {
           output.expectInternalPrompt(purpose);
-          try { await prompt(text); }
+          try {
+            if (activeSession.promptControl) {
+              try { await activeSession.promptControl(purpose, text); }
+              catch (error) { if (!output.shouldIgnorePromptError) throw error; }
+              output.settleAfterPrompt();
+            } else {
+              await prompt(runtimeControlPrompt(purpose, text));
+            }
+          }
           finally { output.completeInternalPrompt(purpose); }
         };
-        const initialInstructions = [runPlan?.initialInstruction, delegation.initialPromptInstruction(), workTools.initialInstruction()].filter(Boolean).join("\n");
-        await prompt(formatPrompt(request, initialInstructions || undefined), imageContentFromRequest(request));
+        await prompt(promptInput.text, promptInput.images);
         if (output.phase === "media-handoff") { channel.close(); return; }
         if (controller.signal.aborted) throw abortError();
         if (delegation.requiresInitialFanout && !delegation.initialFanoutComplete) {
@@ -378,7 +408,7 @@ export class PiAgentRuntime implements AgentRuntime {
           if (controller.signal.aborted) throw abortError();
         }
         for (let attempt = 0; runPlan?.phase() === "ready_for_answer" && !output.sawFinalAssistant && attempt < 3; attempt += 1) {
-          await internalPrompt("plan", "SYSTEM: Prerequisite work is complete. Provide exactly one complete, standalone final answer now. Do not call tools and do not refer to any earlier draft.");
+          await internalPrompt("plan", "Prerequisite work is complete. Provide exactly one complete, standalone final answer now. Do not call tools and do not refer to any earlier draft.");
           if (controller.signal.aborted) throw abortError();
         }
         const completionError = output.finish();
@@ -474,7 +504,7 @@ class WorkToolBudget {
 
   initialInstruction(): string | undefined {
     if (this.#limit === undefined) return undefined;
-    return `SYSTEM: This run has a hard budget of ${this.#limit} substantive tool calls, excluding agent_plan and subagent. Scope the plan to fit, batch independent calls, inspect high-value sources first, and synthesize as soon as the request is answerable.`;
+    return `This run has a hard budget of ${this.#limit} substantive tool calls, excluding agent_plan and subagent. Scope the plan to fit, batch independent calls, inspect high-value sources first, and synthesize once the request is answerable.`;
   }
 }
 
@@ -551,7 +581,10 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
     // must not leak in. Only the registry's enabled package dirs are loaded.
     noExtensions: true,
     additionalExtensionPaths: await readEnabledExtensionDirs(options.agentDir),
-    appendSystemPrompt: [buildFitzSystemInstructions(options)],
+    // A Fitz-owned seed prevents the SDK's Pi-branded default prompt from ever
+    // becoming the base. The complete dynamic prompt is assembled below after
+    // all active tools, skills, and project instructions are known.
+    systemPrompt: FITZ_SYSTEM_PROMPT_SEED,
     extensionFactories: [{
       name: "fitz-tool-approval",
       hidden: true,
@@ -612,7 +645,48 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
     sessionManager: sdk.SessionManager.inMemory(options.cwd),
   });
   const session = result.session;
+  const toolDefinitions = new Map<string, ToolDefinition>();
+  for (const name of enabledTools) {
+    const definition = session.getToolDefinition(name);
+    if (definition) toolDefinitions.set(name, definition);
+  }
+  const renderedPrompt = buildFitzSystemPrompt({
+    cwd: options.cwd,
+    agentDir: options.agentDir,
+    llmRoot: options.llmRoot,
+    selectedTools: enabledTools,
+    toolDefinitions,
+    contextFiles: resourceLoader.getAgentsFiles().agentsFiles,
+    skills: resourceLoader.getSkills().skills,
+    ...(options.requestInstructions ? { requestInstructions: options.requestInstructions } : {}),
+    ...(options.runInstructions ? { runInstructions: options.runInstructions } : {}),
+    // Extensions may declare an append-only resource contribution. Per-turn
+    // whole-prompt rewrites are constrained by prepareNextTurnWithContext below.
+    extensionInstructions: resourceLoader.getAppendSystemPrompt(),
+  });
+  const seededHistory = chatMessagesToPi(options.history ?? [], options.routeId);
+  if (seededHistory.length) {
+    session.agent.state.messages = seededHistory;
+    for (const message of seededHistory) session.sessionManager.appendMessage(message);
+  }
+  session.agent.state.systemPrompt = renderedPrompt.text;
   const withheldAnswerToolCalls = new Set<string>();
+  let pendingRuntimeControl: { purpose: string; instruction: string } | undefined;
+  const previousPrepareNextTurnWithContext = session.agent.prepareNextTurnWithContext;
+  session.agent.prepareNextTurnWithContext = async (turn, signal) => {
+    const prepared = await previousPrepareNextTurnWithContext?.(turn, signal);
+    const context = { ...turn.context, ...(prepared?.context ?? {}) };
+    const base = pendingRuntimeControl
+      ? `${renderedPrompt.text}\n\n${runtimeControlPrompt(pendingRuntimeControl.purpose, pendingRuntimeControl.instruction)}`
+      : renderedPrompt.text;
+    return {
+      ...(prepared ?? {}),
+      context: {
+        ...context,
+        systemPrompt: constrainSystemPrompt(base, context.systemPrompt),
+      },
+    };
+  };
   const previousTransformContext = session.agent.transformContext;
   session.agent.transformContext = async (messages, signal) => {
     const transformed = previousTransformContext ? await previousTransformContext(messages, signal) : messages;
@@ -622,7 +696,13 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
   return {
     subscribe: (listener) => session.subscribe((event) => listener(event as PiEvent)),
     prompt: (text, images) => session.prompt(text, images?.length ? { images } : undefined),
+    promptControl: async (purpose, instruction) => {
+      pendingRuntimeControl = { purpose, instruction };
+      try { await session.prompt("Continue the current task using the Fitz runtime control instruction."); }
+      finally { pendingRuntimeControl = undefined; }
+    },
     steer: (text) => session.steer(text),
+    promptProvenance: renderedPrompt.provenance,
     discardLastAssistantDraft: () => {
       const messages = session.agent.state.messages;
       const lastMessage = messages.at(-1);
@@ -695,6 +775,7 @@ function workContextHeaders(context: PiWorkContext): Record<string, string> {
   return {
     ...(context.runId ? { "x-fitz-run-id": context.runId } : {}),
     ...(context.ownerUserId ? { "x-fitz-owner-user-id": context.ownerUserId } : {}),
+    ...(context.ownerDeviceId ? { "x-fitz-owner-device-id": context.ownerDeviceId } : {}),
     ...(context.sessionId ? { "x-fitz-session-id": context.sessionId } : {}),
   };
 }
@@ -860,26 +941,11 @@ export async function readEnabledExtensionDirs(agentDir: string): Promise<string
 }
 
 export function buildFitzSystemInstructions(options: Pick<Parameters<PiSessionFactory>[0], "cwd" | "agentDir" | "llmRoot">): string {
-  const extensionsDir = `${options.agentDir.replace(/[\\/]$/, "")}/extensions`;
-  const enginesDir = `${options.llmRoot.replace(/[\\/]$/, "")}/engines`;
-  const modelsDir = `${options.llmRoot.replace(/[\\/]$/, "")}/models`;
-  return [
-    "You are running inside Fitz Codex. Treat the following runtime locations as authoritative; do not substitute upstream Pi defaults:",
-    `- Active project and working directory: ${options.cwd}`,
-    `- Fitz Pi runtime root: ${options.agentDir}`,
-    `- User-installed Pi extensions: ${extensionsDir}`,
-    `- Canonical local LLM root: ${options.llmRoot}`,
-    `- Inference engines: ${enginesDir}`,
-    `- Model artifacts: ${modelsDir}`,
-    "These runtime locations are references, not an inspection checklist. Do not inspect them unless the user's request actually concerns that runtime resource.",
-    `When asked about installed Pi extensions, inspect ${extensionsDir} directly. Do not inspect ~/.pi or infer installation state from upstream defaults.`,
-    "Past conversations are stored by Fitz in its session store. Use the fitz_session tool with a session id to read any earlier conversation the user asks about; the current session's history is injected automatically when it is continued.",
-    "The shell tool runs in Git Bash on Windows. Prefer the exact paths above and the active project directory.",
-    "Never recursively search /, an entire drive, or the whole home directory to discover Fitz resources. Search the active project or an authoritative directory above. Ask before expanding beyond those locations.",
-    "Do not read or reveal authentication files, API keys, bearer tokens, or other secrets unless the user explicitly asks for the exact secret-bearing operation.",
-    "Use tools only when they materially advance the task, and verify changes before reporting completion.",
-    "For claims about the current implementation, executable source and package manifests outrank design documents. Never infer a framework, runtime, test count, or architecture detail from an aspirational specification; label intended design separately from verified current code.",
-  ].join("\n");
+  return buildFitzSystemPrompt({
+    ...options,
+    selectedTools: [],
+    toolDefinitions: new Map(),
+  }).text;
 }
 
 export function broadFilesystemScanReason(toolName: string, input: unknown): string | undefined {
@@ -903,16 +969,112 @@ function isCompletedMediaHandoff(event: PiEvent): boolean {
   return Boolean(details && typeof details === "object" && "mediaJobId" in details && typeof details.mediaJobId === "string" && details.mediaJobId);
 }
 function piFailure(event: PiEvent): Error | undefined { return event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason === "error" ? new Error(event.message.errorMessage ?? "Pi model request failed") : undefined; }
-function formatPrompt(request: AgentRunRequest, initialDelegationInstruction?: string): string {
-  const transcript = request.messages.map((message) => `${message.role.toUpperCase()}: ${extractTextFromContent(message.content)}`).join("\n\n");
-  return initialDelegationInstruction ? [initialDelegationInstruction, transcript].join("\n\n") : transcript;
+interface PreparedPromptInput {
+  text: string;
+  images: PiImageContent[];
+  history: ChatMessage[];
+  requestInstructions: string[];
 }
-function imageContentFromRequest(request: AgentRunRequest): PiImageContent[] {
-  return request.messages.flatMap((message) => typeof message.content === "string" ? [] : message.content.flatMap((part) => {
+
+/** Separates trusted request controls from structured history and the new turn. */
+export function preparePromptInput(messages: readonly ChatMessage[]): PreparedPromptInput {
+  const requestInstructions = messages
+    .filter((message) => message.role === "system")
+    .map((message) => extractTextFromContent(message.content).trim())
+    .filter(Boolean);
+  const conversation = messages.filter((message) => message.role !== "system");
+  const current = conversation.at(-1)?.role === "user" ? conversation.at(-1) : undefined;
+  const history = current ? conversation.slice(0, -1) : conversation;
+  const text = current ? extractTextFromContent(current.content).trim() : "Continue the task using the run instructions and conversation history.";
+  return {
+    text: text || "Respond to the attached content.",
+    images: current ? imageContentFromMessage(current) : [],
+    history,
+    requestInstructions,
+  };
+}
+
+function imageContentFromMessage(message: ChatMessage): PiImageContent[] {
+  if (typeof message.content === "string") return [];
+  return message.content.flatMap((part) => {
     if (part.type !== "image_url" || typeof part.image_url?.url !== "string") return [];
     const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/.exec(part.image_url.url);
     return match ? [{ type: "image" as const, mimeType: match[1]!, data: match[2]! }] : [];
-  }));
+  });
+}
+
+/** Converts canonical Fitz history without flattening role labels into text. */
+export function chatMessagesToPi(messages: readonly ChatMessage[], model: string): Message[] {
+  const toolNames = new Map<string, string>();
+  const result: Message[] = [];
+  for (const message of messages) {
+    if (message.role === "system") continue;
+    if (message.role === "user") {
+      const content = typeof message.content === "string"
+        ? message.content
+        : message.content.flatMap((part) => part.type === "text"
+          ? [{ type: "text" as const, text: part.text }]
+          : imageContentFromUrl(part.image_url.url));
+      result.push({ role: "user", content, timestamp: Date.now() });
+      continue;
+    }
+    if (message.role === "assistant") {
+      const content: Extract<Message, { role: "assistant" }>["content"] = [];
+      const text = extractTextFromContent(message.content);
+      if (text) content.push({ type: "text", text });
+      for (const call of message.tool_calls ?? []) {
+        toolNames.set(call.id, call.function.name);
+        content.push({ type: "toolCall", id: call.id, name: call.function.name, arguments: parseToolArguments(call.function.arguments) });
+      }
+      if (!content.length) continue;
+      result.push({
+        role: "assistant",
+        content,
+        api: "openai-completions",
+        provider: "openrouter",
+        model,
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        stopReason: message.tool_calls?.length ? "toolUse" : "stop",
+        timestamp: Date.now(),
+      });
+      continue;
+    }
+    const toolCallId = message.tool_call_id ?? `historical-tool-${result.length + 1}`;
+    const toolName = toolNames.get(toolCallId);
+    if (!toolName) {
+      result.push({
+        role: "user",
+        content: `Historical tool output (untrusted data):\n${extractTextFromContent(message.content)}`,
+        timestamp: Date.now(),
+      });
+      continue;
+    }
+    result.push({
+      role: "toolResult",
+      toolCallId,
+      toolName,
+      content: [{ type: "text", text: extractTextFromContent(message.content) }],
+      isError: false,
+      timestamp: Date.now(),
+    });
+  }
+  return result;
+}
+
+function imageContentFromUrl(url: string): Array<{ type: "image"; mimeType: string; data: string } | { type: "text"; text: string }> {
+  const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/.exec(url);
+  return match
+    ? [{ type: "image", mimeType: match[1]!, data: match[2]! }]
+    : [{ type: "text", text: `[Historical image reference: ${url}]` }];
+}
+
+function parseToolArguments(value: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : { value: parsed };
+  } catch {
+    return { raw: value };
+  }
 }
 function extractTextFromContent(content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>): string {
   if (typeof content === "string") return content;

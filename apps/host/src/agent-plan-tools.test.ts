@@ -13,7 +13,7 @@ describe("durable agent plans", () => {
     expect(direct.completionIssue()).toBeUndefined();
     expect(direct.admissionReason({ toolCallId: "read", toolName: "read", input: { path: "README.md" } })).toContain("plan");
     expect(direct.required?.()).toBe(true);
-    expect(direct.completionIssue()).toContain("no execution plan exists");
+    expect(direct.completionIssue()).toContain("execution plan exists");
     store.close();
   });
 

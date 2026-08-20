@@ -46,6 +46,23 @@ describe("PiAgentRuntime", () => {
     expect(events).toEqual([{ type: "assistant.delta", text: "Hi!" }]);
   });
 
+  it("emits versioned prompt provenance without exposing prompt text", async () => {
+    const runtime = new PiAgentRuntime({
+      createSession: async () => ({
+        promptProvenance: { id: "fitz.root", version: 1, sha256: "a".repeat(64), sections: ["core", "tools"] },
+        subscribe: (listener) => { listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "ok" } }); return () => undefined; },
+        prompt: async () => undefined,
+        steer: async () => undefined,
+        abort: async () => undefined,
+        dispose: () => undefined,
+      }),
+    });
+    const events = [];
+    for await (const event of runtime.run({ model: "default", messages: [{ role: "user", content: "hello" }] })) events.push(event);
+    expect(events[0]).toEqual({ type: "prompt.provenance", id: "fitz.root", version: 1, sha256: "a".repeat(64), sections: ["core", "tools"] });
+    expect(events).toContainEqual({ type: "assistant.delta", text: "ok" });
+  });
+
   it("enforces plan-first tools and continues the model until the durable plan is complete", async () => {
     let planned = false; let ready = false; const prompts: string[] = [];
     const runtime = new PiAgentRuntime({
@@ -58,20 +75,23 @@ describe("PiAgentRuntime", () => {
         phase: () => ready ? "ready_for_answer" : planned ? "active" : "missing",
       }),
       createSession: async (options) => {
+        expect(options.runInstructions).toContain("CREATE DURABLE PLAN FIRST");
         let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+        const handlePrompt = async (prompt: string) => {
+          prompts.push(prompt);
+          if (!planned) {
+            expect(await options.evaluateTool!({ toolCallId: "early", toolName: "read", input: {} })).toEqual({ action: "block", reason: "plan required" });
+            expect(await options.evaluateTool!({ toolCallId: "plan", toolName: "agent_plan", input: { action: "set" } })).toEqual({ action: "allow" });
+            planned = true;
+            return;
+          }
+          ready = true;
+          listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "done" } });
+        };
         return {
           subscribe: (next) => { listener = next; return () => undefined; },
-          prompt: async (prompt) => {
-            prompts.push(prompt);
-            if (!planned) {
-              expect(await options.evaluateTool!({ toolCallId: "early", toolName: "read", input: {} })).toEqual({ action: "block", reason: "plan required" });
-              expect(await options.evaluateTool!({ toolCallId: "plan", toolName: "agent_plan", input: { action: "set" } })).toEqual({ action: "allow" });
-              planned = true;
-              return;
-            }
-            ready = true;
-            listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "done" } });
-          },
+          prompt: handlePrompt,
+          promptControl: (_purpose, instruction) => handlePrompt(instruction),
           steer: async () => undefined,
           abort: async () => undefined,
           dispose: () => undefined,
@@ -80,7 +100,7 @@ describe("PiAgentRuntime", () => {
     });
     const events = []; for await (const event of runtime.run({ model: "fast", messages: [{ role: "user", content: "work" }] }, undefined, { runId: "run-1" })) events.push(event);
     expect(prompts).toHaveLength(2);
-    expect(prompts[0]).toContain("CREATE DURABLE PLAN FIRST");
+    expect(prompts[0]).toBe("work");
     expect(prompts[1]).toBe("CONTINUE UNTIL PLAN READY");
     expect(events).toEqual([{ type: "assistant.delta", text: "done" }]);
     expect(ready).toBe(true);
@@ -402,17 +422,18 @@ describe("PiAgentRuntime", () => {
     expect(seen).toEqual(["low", "high"]);
   });
 
-  it("builds authoritative Fitz paths into the appended system instructions", () => {
+  it("builds the Fitz-owned core prompt with authoritative runtime paths", () => {
     const prompt = buildFitzSystemInstructions({ cwd: "C:/project", agentDir: "C:/Fitz/pi", llmRoot: "C:/Users/me/.llm" });
     expect(prompt).toContain("C:/Fitz/pi/extensions");
     expect(prompt).toContain("C:/Users/me/.llm/engines");
     expect(prompt).toContain("C:/Users/me/.llm/models");
-    expect(prompt).toContain("Do not inspect ~/.pi");
-    expect(prompt).toContain("Never recursively search /");
+    expect(prompt).toContain("rather than upstream Pi defaults");
+    expect(prompt).toContain("Never recursively scan an entire drive");
     expect(prompt).toContain("Do not read or reveal authentication files");
-    expect(prompt).not.toContain("progress commentary");
-    expect(prompt).toContain("executable source and package manifests outrank design documents");
-    expect(prompt).toContain("label intended design separately from verified current code");
+    expect(prompt).toContain("You are Fitz Codex");
+    expect(prompt).not.toContain("operating inside pi");
+    expect(prompt).toContain("Inspect executable source and package manifests");
+    expect(prompt).toContain("distinguish observed evidence from inference or intended design");
   });
 
   it("blocks filesystem-wide shell discovery while allowing scoped searches", () => {
@@ -425,7 +446,7 @@ describe("PiAgentRuntime", () => {
 
   it("translates Pi text and tool lifecycle events behind the Fitz boundary", async () => {
     let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined; let disposed = false;
-    const runtime = new PiAgentRuntime({ cwd: "C:/project", tools: ["read"], apiKey: "private-pi-token", createSession: async (options) => { expect(options.tools).toEqual(["read"]); expect(options.apiKey).toBe("private-pi-token"); return { subscribe: (next) => { listener = next; return () => undefined; }, prompt: async (prompt) => { expect(prompt).toContain("USER: inspect this"); listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "hello" } }); listener({ type: "tool_execution_start", toolCallId: "call-1", toolName: "read", args: { path: "README.md" } }); listener({ type: "tool_execution_end", toolCallId: "call-1", toolName: "read", result: "done" }); }, abort: async () => undefined, dispose: () => { disposed = true; } }; } });
+    const runtime = new PiAgentRuntime({ cwd: "C:/project", tools: ["read"], apiKey: "private-pi-token", createSession: async (options) => { expect(options.tools).toEqual(["read"]); expect(options.apiKey).toBe("private-pi-token"); return { subscribe: (next) => { listener = next; return () => undefined; }, prompt: async (prompt) => { expect(prompt).toBe("inspect this"); expect(prompt).not.toContain("USER:"); listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "hello" } }); listener({ type: "tool_execution_start", toolCallId: "call-1", toolName: "read", args: { path: "README.md" } }); listener({ type: "tool_execution_end", toolCallId: "call-1", toolName: "read", result: "done" }); }, abort: async () => undefined, dispose: () => { disposed = true; } }; } });
     const events = []; for await (const event of runtime.run({ model: "fast", messages: [{ role: "user", content: "inspect this" }] })) events.push(event);
     expect(events).toEqual([{ type: "assistant.delta", text: "hello" }, { type: "tool.started", toolCallId: "call-1", toolName: "read", input: { path: "README.md" } }, { type: "tool.completed", toolCallId: "call-1", toolName: "read", result: "done" }]); expect(disposed).toBe(true);
   });
@@ -953,7 +974,8 @@ describe("PiAgentRuntime", () => {
       createSession: async (options) => ({
         subscribe: (next) => { listener = next; return () => undefined; },
         prompt: async (text) => {
-          expect(text).toContain("hard budget of 2 substantive tool calls");
+          expect(text).toBe("inspect");
+          expect(options.runInstructions).toContainEqual(expect.stringContaining("hard budget of 2 substantive tool calls"));
           expect(await options.evaluateTool!({ toolCallId: "plan", toolName: "agent_plan", input: {} })).toEqual({ action: "allow" });
           expect(await options.evaluateTool!({ toolCallId: "read-1", toolName: "read", input: {} })).toEqual({ action: "allow" });
           expect(await options.evaluateTool!({ toolCallId: "read-2", toolName: "read", input: {} })).toEqual({ action: "allow" });
@@ -1032,10 +1054,10 @@ describe("PiAgentRuntime", () => {
         prompt: async (prompt) => {
           expect(options.activeTools).toBeUndefined();
           expect(options.tools).toBeDefined();
-          expect(prompt).toContain("3 Fast subagents");
-          expect(prompt).not.toContain("1 Smart subagent");
-          expect(prompt).toContain("begin your own parent tool work in the same response");
-          expect(prompt).toContain("Do not announce that delegation is available");
+          expect(prompt).toBe("Launch three fast researcher subagents for independent parts of this task.");
+          expect(options.runInstructions).toContainEqual(expect.stringContaining("3 Fast subagents"));
+          expect(options.runInstructions?.join("\n")).not.toContain("1 Smart subagent");
+          expect(options.runInstructions).toContainEqual(expect.stringContaining("begin independent parent tool work"));
           expect(await options.evaluateTool!({ toolCallId: "read-early", toolName: "read", input: { path: "README.md" } }))
             .toMatchObject({ action: "block", reason: expect.stringContaining("3 Fast subagents") });
           for (let index = 0; index < 3; index += 1) {

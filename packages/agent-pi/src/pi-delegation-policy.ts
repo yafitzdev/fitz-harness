@@ -74,16 +74,16 @@ export class PiDelegationPolicy {
    * mechanically enforced instead of merely requested in prose. */
   beginFinalReport(): string {
     this.#finalReportOnly = true;
-    return "SYSTEM: The tool phase is closed. Return the concise final report now. Do not call tools.";
+    return "The tool phase is closed. Return the concise final report now without calling tools.";
   }
 
   initialPromptInstruction(): string | undefined {
     if (!this.requiresInitialFanout) return undefined;
-    return `SYSTEM: REQUIRED WORKERS: After creating the durable execution plan, launch ${formatSubagentRoutes(this.initialRoutes)} for distinct worker-eligible plan items. Do not announce that delegation is available or ask the user to request it. Put those launches first, then begin your own parent tool work in the same response. The parent independently owns the overarching analysis and final synthesis.`;
+    return `After creating the durable execution plan, launch ${formatSubagentRoutes(this.initialRoutes)} for distinct worker-eligible plan items, then begin independent parent tool work. The parent owns the overarching analysis and final synthesis.`;
   }
 
   retryPrompt(): string {
-    return `SYSTEM: Your previous response was invalid because it did not launch the required workers. Call the subagent tool now to launch ${formatSubagentRoutes(this.remainingInitialRoutes())}. Do not answer in prose.`;
+    return `Launch the still-required ${formatSubagentRoutes(this.remainingInitialRoutes())} now with the subagent tool. Do not answer in prose.`;
   }
 
   missingFanoutError(): Error {

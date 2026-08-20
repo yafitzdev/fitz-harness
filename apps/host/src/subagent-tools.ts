@@ -70,7 +70,7 @@ export function isDelegatedToolContext(
 
 /** Host-native delegation tool. Child turns use the normal embedded Pi runtime
  * and consume the route-specific local or cloud budget of their parent turn. */
-export function createSubagentTool(options: SubagentToolsOptions, context: { runId?: string }, budget: SubagentRouteBudget): ToolDefinition {
+export function createSubagentTool(options: SubagentToolsOptions, context: { runId?: string; cwd?: string }, budget: SubagentRouteBudget): ToolDefinition {
   const roles = options.store.listSubagentRoles();
   if (!roles.length) throw new Error("No enabled subagent roles are registered");
   const roleDescription = roles.map((role) => `${role.id}: ${role.dispatchDescription}`).join(" ");
@@ -163,7 +163,7 @@ export function createSubagentTool(options: SubagentToolsOptions, context: { run
         accessMode: role.accessMode,
         maxTokens: role.maxOutputTokens,
         messages: [
-          { role: "system", content: subagentSystemPrompt(role) },
+          { role: "system", content: subagentSystemPrompt(role, context.cwd) },
           { role: "user", content: subagentAssignmentPrompt(planItem.task, params.relevant_paths, meteredCloud && route === "smart" ? concurrentParentTask : undefined) },
         ],
       };
@@ -211,12 +211,15 @@ function formatBudget(budget: SubagentRouteBudget, meteredCloud: boolean): strin
   return parts.join(" and ") || "no subagents";
 }
 
-function subagentSystemPrompt(role: SubagentRoleDefinition): string {
+function subagentSystemPrompt(role: SubagentRoleDefinition, cwd?: string): string {
   return [
     `You are an isolated Fitz Codex worker assigned the registered ${role.displayName} role (${role.id}@${role.version}).`,
+    `Workspace root: ${cwd ?? "the working directory resolved by the Fitz runtime"}.`,
     role.systemInstructions,
     "Do not attempt to delegate to another agent.",
     `You have a hard budget of ${role.toolCallBudget} tool calls.`,
+    "Your report is evidence for the parent agent, not a user-facing final answer. Distinguish observed evidence from inference and include precise paths or commands used for verification.",
+    "If blocked, report the exact blocker, what you verified, and the safest next action; never imply completion.",
     role.outputContract,
   ].join("\n");
 }

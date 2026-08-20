@@ -86,15 +86,10 @@ export function createAgentPlanTool(options: AgentPlanToolsOptions, context: { r
 
 export function planPromptInstruction(): string {
   return [
-    "SYSTEM: TOOL-WORK PLANNING. If the request can be answered directly without tools, answer normally and do not create a plan. Before any research, edits, shell commands, or delegation, call agent_plan with action=set.",
-    "List every concrete prerequisite work item required to answer the request, with dependencies. Never add final synthesis, final-answer, or respond-to-user as an item; final synthesis is implicit and runtime-owned.",
-    "Mark only independent, bounded tasks that can safely run alongside the main work as worker_eligible=true.",
-    "The main agent must continue its own work after launching workers; workers are accelerators, never a blocking substitute for the main agent.",
-    "Do not duplicate a running worker-owned plan item. Advance a different ready main-owned item; take the worker item back only if the runtime reassigns it after failure.",
-    "Update main items as work advances. After exhausting independent main work, call agent_plan action=status with wait_seconds up to 30 to collect worker outcomes, then call agent_plan action=ready before emitting any user-facing final-answer text.",
-    "If a worker fails, its item returns to the main agent as pending. Complete it yourself instead of failing the user request.",
-    "For claims about the current implementation, executable source and package manifests outrank design documents. Never claim a framework, runtime, test count, or architecture detail unless inspected code or a manifest supports it; label aspirational documentation as intended design.",
-    "The final answer must be standalone. Never say that the answer appears above, was already delivered, or merely summarize an earlier hidden draft.",
+    "If the request can be answered directly without tools, answer normally. Before other tool work, create the durable prerequisite plan with agent_plan action=set.",
+    "Keep critical-path work with the main agent and mark only independent, bounded tasks as worker_eligible. Do not add final synthesis as a plan item.",
+    "Update main-owned items as work advances, continue independent parent work after delegation, and use status only after ready parent work is exhausted.",
+    "When all required items are complete, call agent_plan action=ready before the standalone final answer. Failed worker items return to the main agent.",
   ].join(" ");
 }
 
@@ -156,14 +151,14 @@ export function planAdmissionReason(
 /** Returns a deterministic reason the runtime must continue instead of ending. */
 export function planCompletionIssue(store: SqliteStore, runId: string): string | undefined {
   const plan = reconcileAgentPlan(store, runId);
-  if (!plan) return "SYSTEM: You cannot finish yet because no execution plan exists. Call agent_plan with action=set now; do not answer the user yet.";
+  if (!plan) return "No execution plan exists yet. Call agent_plan with action=set before answering the user.";
   if (plan.status === "ready_for_answer" || plan.status === "completed") return undefined;
   const missingWorkers = missingRequiredWorkers(store, plan);
-  if (missingWorkers.length) return `SYSTEM: The user/system required worker launches that are not yet durably assigned: ${missingWorkers.join(", ")}. Ensure the plan contains enough ready worker-eligible items, launch those workers, and continue substantive main-agent work.`;
+  if (missingWorkers.length) return `Required worker launches are not yet durably assigned: ${missingWorkers.join(", ")}. Ensure the plan contains enough ready worker-eligible items, launch those workers, and continue substantive main-agent work.`;
   const running = plan.items.filter((item) => item.status === "running").map((item) => item.id);
   const pending = plan.items.filter((item) => item.required && item.status !== "completed").map((item) => item.id);
-  if (!pending.length) return "SYSTEM: All prerequisite work items are complete. Call agent_plan with action=ready before emitting any final-answer text. Final synthesis is implicit and must not be another plan item.";
-  return `SYSTEM: The execution plan is not complete. Required items still open: ${pending.join(", ")}.${running.length ? ` Workers/main currently running: ${running.join(", ")}.` : ""} Continue the main-agent gameplan, collect worker status when useful, and do not give the final answer yet.`;
+  if (!pending.length) return "All prerequisite work items are complete. Call agent_plan with action=ready before answering; final synthesis is implicit.";
+  return `The execution plan is not complete. Required items still open: ${pending.join(", ")}.${running.length ? ` Workers/main currently running: ${running.join(", ")}.` : ""} Continue the main-agent work and collect worker status when useful.`;
 }
 
 export function reconcileAgentPlan(store: SqliteStore, runId: string): AgentRunPlan | undefined {
