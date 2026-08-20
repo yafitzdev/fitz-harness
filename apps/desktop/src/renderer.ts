@@ -441,6 +441,7 @@ const promptSubmission = new PromptSubmissionController({
     });
     return artifact as { id: string; name: string; mimeType: string; kind: string; byteSize?: number };
   },
+  discardUploadedAttachment: (sessionId, artifactId) => artifactController.discardUpload(sessionId, artifactId),
   clearLanding: () => { if (messages.querySelector(".landing, .new-chat-landing")) messages.replaceChildren(); },
   appendUser: (content, attachments) => { appendMessage("user", content, undefined, undefined, attachments); },
   persistUserMessage: async (sessionId, content, clientMessageId) => {

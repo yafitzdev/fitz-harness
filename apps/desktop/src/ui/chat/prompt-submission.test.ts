@@ -9,7 +9,7 @@ function setup(overrides: Partial<PromptSubmissionOptions> = {}) {
     draft: () => ({ content: "build it" }), peekAttachments: () => [], consumeAttachments: vi.fn(), sessionId: () => "session-1",
     settings: () => ({ routeId: "smart", effort: "high", maxTokens: 8192, temperature: 0.4, accessMode: "full" }),
     ensureSession: vi.fn(async () => "session-1"), openNewChat: vi.fn(), clearDraft: vi.fn(), setDraft: vi.fn(), resetWarmup: vi.fn(),
-    uploadAttachment: vi.fn(async () => ({ id: "artifact-1" })), clearLanding: vi.fn(), appendUser: vi.fn(),
+    uploadAttachment: vi.fn(async () => ({ id: "artifact-1" })), discardUploadedAttachment: vi.fn(async () => undefined), clearLanding: vi.fn(), appendUser: vi.fn(),
     persistUserMessage: vi.fn(async () => undefined), appendSteer: vi.fn(() => row),
     pushHistory: vi.fn(), addTokenEstimate: vi.fn(), refreshContext: vi.fn(), refreshControls: vi.fn(), runId: () => "run-1",
     startRun: vi.fn(async (_request, onAccepted) => { onAccepted(); }), submitMedia: vi.fn(async () => ({ id: "job-1" })), onMediaJobSubmitted: vi.fn(),
@@ -153,6 +153,22 @@ describe("PromptSubmissionController", () => {
     expect(options.consumeAttachments).not.toHaveBeenCalled();
   });
 
+  it("discards earlier uploads when a later attachment upload fails", async () => {
+    const first = { kind: "file" as const, dataUrl: "data:text/plain;base64,QQ==", mimeType: "text/plain", name: "first.txt" };
+    const second = { kind: "file" as const, dataUrl: "data:text/plain;base64,Qg==", mimeType: "text/plain", name: "second.txt" };
+    const uploadAttachment = vi.fn(async (_sessionId: string, attachment: typeof first) => {
+      if (attachment === second) throw new Error("second upload failed");
+      return { id: "artifact-first" };
+    });
+    const { controller, options } = setup({ peekAttachments: () => [first, second], uploadAttachment });
+
+    await controller.submit("analyse both");
+
+    expect(options.discardUploadedAttachment).toHaveBeenCalledWith("session-1", "artifact-first");
+    expect(options.startRun).not.toHaveBeenCalled();
+    expect(options.consumeAttachments).not.toHaveBeenCalled();
+  });
+
   it("does not submit an uploaded prompt into a conversation selected during the upload", async () => {
     let current = true;
     let resolveUpload!: (value: { id: string }) => void;
@@ -171,6 +187,7 @@ describe("PromptSubmissionController", () => {
     expect(options.appendUser).not.toHaveBeenCalled();
     expect(options.startRun).not.toHaveBeenCalled();
     expect(options.consumeAttachments).not.toHaveBeenCalled();
+    expect(options.discardUploadedAttachment).toHaveBeenCalledWith("session-1", "artifact-old-chat");
   });
 
   it("shows the inline creation card for a bare media command with a default prompt", async () => {
@@ -361,14 +378,17 @@ describe("PromptSubmissionController", () => {
   });
 
   it("does not render an unpersisted media command when durable storage fails", async () => {
+    const attachment = { kind: "image" as const, dataUrl: "data:image/png;base64,AAAA", mimeType: "image/png", name: "ref.png" };
     const { controller, options } = setup({
       draft: () => ({ content: "a fox", mediaCommand: "video" }),
+      peekAttachments: () => [attachment],
       persistUserMessage: vi.fn(async () => { throw new Error("storage unavailable"); }),
     });
     await controller.submit();
     expect(options.appendUser).not.toHaveBeenCalled();
     expect(options.showMediaCreation).not.toHaveBeenCalled();
     expect(options.showError).toHaveBeenCalledWith("Error: storage unavailable");
+    expect(options.discardUploadedAttachment).toHaveBeenCalledWith("session-1", "artifact-1");
   });
 
   it("passes pasted reference images into the creation card and submits them as refs", async () => {

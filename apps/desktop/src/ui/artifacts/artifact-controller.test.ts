@@ -101,4 +101,15 @@ describe("ArtifactController", () => {
 
     expect(calls.setSessionArtifacts).toHaveBeenLastCalledWith([artifact]);
   });
+
+  it("removes a discarded upload from durable storage and the current repository", async () => {
+    const artifact = { id: "unused", name: "unused.txt", byteSize: 5 };
+    const { controller, calls } = setup({ sessionId: "session-1", artifacts: [artifact] });
+    await controller.load();
+
+    await controller.discardUpload("session-1", "unused");
+
+    expect(calls.api).toHaveBeenLastCalledWith("/api/v1/artifacts/unused", "DELETE");
+    expect(calls.setSessionArtifacts).toHaveBeenLastCalledWith([]);
+  });
 });

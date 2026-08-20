@@ -85,6 +85,14 @@ export class ArtifactController {
     return artifact;
   }
 
+  /** Removes an upload that never became part of an admitted message. */
+  async discardUpload(sessionId: string, artifactId: string): Promise<void> {
+    await this.#options.api(`/api/v1/artifacts/${encodeURIComponent(artifactId)}`, "DELETE");
+    if (this.#sessionId !== sessionId) return;
+    this.#sessionArtifacts = this.#sessionArtifacts.filter((artifact) => String(artifact.id ?? "") !== artifactId);
+    this.#options.setSessionArtifacts(this.#sessionArtifacts);
+  }
+
   async uploadSelected(): Promise<void> {
     const files = [...(this.#options.fileInput.files ?? [])];
     this.#options.fileInput.value = "";

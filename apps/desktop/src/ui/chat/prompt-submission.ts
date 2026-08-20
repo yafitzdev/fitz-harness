@@ -26,6 +26,7 @@ export interface PromptSubmissionOptions {
   setDraft: (value: string) => void;
   resetWarmup: () => void;
   uploadAttachment: (sessionId: string, attachment: PastedAttachment) => Promise<{ id: string; name?: string; mimeType?: string; kind?: string; byteSize?: number }>;
+  discardUploadedAttachment: (sessionId: string, artifactId: string) => Promise<void>;
   clearLanding: () => void;
   appendUser: (content: string, attachments?: readonly MessageAttachment[]) => void;
   persistUserMessage: (sessionId: string, content: string, clientMessageId: string) => Promise<void>;
@@ -162,9 +163,13 @@ export class PromptSubmissionController {
       for (const attachment of uploadable) {
         try {
           const artifact = await this.#options.uploadAttachment(sessionId, attachment);
-          if (this.#options.isSessionCurrent?.(sessionId) === false) return;
           uploaded.push({ artifact, attachment });
+          if (this.#options.isSessionCurrent?.(sessionId) === false) {
+            await this.#discardUploads(sessionId, uploaded);
+            return;
+          }
         } catch (error) {
+          await this.#discardUploads(sessionId, uploaded);
           this.#options.showError(this.#options.errorMessage(error));
           return;
         }
@@ -183,6 +188,7 @@ export class PromptSubmissionController {
       if (!existingUserMessage) {
         try { await this.#options.persistUserMessage(sessionId, displayContent, crypto.randomUUID()); }
         catch (error) {
+          await this.#discardUploads(sessionId, uploaded);
           this.#options.setDraft(displayContent);
           this.#options.showError(this.#options.errorMessage(error));
           return;
@@ -329,6 +335,10 @@ export class PromptSubmissionController {
       || retryable.settings.accessMode !== settings.accessMode) return false;
     return retryable.attachments.length === attachments.length
       && retryable.attachments.every((attachment, index) => attachment === attachments[index]);
+  }
+
+  async #discardUploads(sessionId: string, uploaded: readonly UploadedAttachment[]): Promise<void> {
+    await Promise.allSettled(uploaded.map(({ artifact }) => this.#options.discardUploadedAttachment(sessionId, artifact.id)));
   }
 }
 
