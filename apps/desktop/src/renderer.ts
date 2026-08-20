@@ -41,6 +41,7 @@ import { createUsagePageClient, UsagePageController } from "./ui/usage/usage-pag
 import { PlaybookWorkspaceController } from "./ui/playbooks/playbook-workspace.js";
 import { ProjectsController } from "./ui/projects/projects.js";
 import { ProjectSidebarController } from "./ui/sidebar/project-sidebar.js";
+import { SidebarActivityController } from "./ui/sidebar/sidebar-activity.js";
 import { WorkQueueController } from "./ui/queue/work-queue.js";
 import { ArtifactController } from "./ui/artifacts/artifact-controller.js";
 import { assertHostContract, HostRequestError } from "./client-error.js";
@@ -54,6 +55,7 @@ type ApiData<T> = { data: T };
 suppressNativeTooltips();
 
 let queueRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+let sidebarActivity: SidebarActivityController | undefined;
 let currentUserId: string | undefined;
 let managementConfiguration: ManagementConfiguration | undefined;
 let initialNavigationPending = true;
@@ -318,6 +320,10 @@ const agentQueue = new WorkQueueController({
   api,
   showStatus,
   errorMessage,
+});
+sidebarActivity = new SidebarActivityController({
+  api,
+  onChange: () => renderTree(),
 });
 const artifactController = new ArtifactController({
   list: element("artifacts"),
@@ -601,12 +607,9 @@ const conversationMessages = new ConversationMessageFeed({
   },
 });
 const administrationPageController = new AdministrationPageController({
-  refresh: element("refresh-administration") as HTMLButtonElement,
   sections: administrationPage,
   createUserForm: element("create-user-form") as HTMLFormElement,
   createUserName: element("create-user-name") as HTMLInputElement,
-  createUserKeyName: element("create-user-key-name") as HTMLInputElement,
-  hostedUserResult: element("hosted-user-result"),
   adminUsers: element("admin-users"),
   toolPolicyForm: element("tool-policy-form") as HTMLFormElement,
   toolPolicySubjectType: element("tool-policy-subject-type") as HTMLSelectElement,
@@ -680,7 +683,6 @@ const hostingPageController = new HostingPageController({
 });
 const usagePageController = new UsagePageController({
   root: element("usage-dashboard"),
-  refresh: element("refresh-administration") as HTMLButtonElement,
   api: createUsagePageClient(api),
   errorMessage,
 });
@@ -689,12 +691,18 @@ const hostingPanels: Record<string, HTMLElement> = {
   "hosting-usage-tab": element("hosting-usage-panel"),
   "hosting-advanced-tab": element("hosting-advanced-panel"),
 };
+let activeHostingTab = "hosting-users-tab";
 administrationLayout.onTabSelect((id) => {
+  activeHostingTab = id;
   for (const [panelId, panel] of Object.entries(hostingPanels)) panel.hidden = panelId !== id;
   if (id === "hosting-usage-tab") void usagePageController.load();
-  if (id === "hosting-advanced-tab") void hostingPageController.load();
+  if (id === "hosting-advanced-tab") void Promise.all([administrationPageController.loadAdvanced(), hostingPageController.load()]);
 });
-element("refresh-administration").addEventListener("click", () => { void hostingPageController.load(); });
+element("refresh-administration").addEventListener("click", () => {
+  if (activeHostingTab === "hosting-users-tab") void administrationPageController.loadUsers();
+  else if (activeHostingTab === "hosting-usage-tab") void usagePageController.load();
+  else void Promise.all([administrationPageController.loadAdvanced(), hostingPageController.load()]);
+});
 const conversationSessions = new ConversationSessionController({
   api,
   projects: {
@@ -803,7 +811,7 @@ const appNavigation = new AppNavigationController({
       load: async () => { modelsPageController.showLoading(); await modelsPageController.load(false); },
     },
     administration: {
-      load: async () => { administrationPageController.showLoading(); await Promise.all([administrationPageController.load(), hostingPageController.load()]); },
+      load: async () => { administrationPageController.showLoading(); await administrationPageController.loadUsers(); },
     },
   },
   replayConversation: async (location) => {
@@ -885,6 +893,7 @@ async function initializeLocalWorkspace(): Promise<void> {
     routeState.textContent = composer.controls.routeLabel;
     setStatus(health.engine?.state ?? "Ready", "idle");
     await projects.load(undefined, undefined, !initialNavigationPending);
+    sidebarActivity?.start();
     if (initialNavigationPending) {
       initialNavigationPending = false;
       openNewChat();
@@ -919,9 +928,11 @@ function refreshAgentTopology(): void {
 }
 
 function renderTree(): void {
-  const processingSessionIds = agentRuns.active && projects.currentSessionId
-    ? new Set([projects.currentSessionId])
-    : new Set<string>();
+  const processingSessionIds = new Set(sidebarActivity?.processingSessionIds ?? []);
+  // Keep the just-admitted selected run visible before the next durable queue
+  // poll observes it. The queue remains the source of truth once a run is
+  // detached or the user navigates to another chat.
+  if (agentRuns.active && agentRuns.activeSessionId) processingSessionIds.add(agentRuns.activeSessionId);
   projectSidebar.render({ projects: projects.projects, sessionsByProject: projects.sessionsByProject, chats: projects.chats, currentProjectId: projects.currentProjectId, currentSessionId: projects.currentSessionId, processingSessionIds, newChat: conversationSessions.newChat });
   updateTitles();
 }
@@ -1142,6 +1153,7 @@ function refreshComposerState(): void {
 function refreshAgentRunState(): void {
   refreshComposerState();
   renderTree();
+  void sidebarActivity?.refresh();
 }
 
 function updateTitles(): void {

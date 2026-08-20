@@ -28,6 +28,7 @@
     </header>
     <div class="app-shell">
       <aside class="sidebar" aria-label="Workspace navigation">
+        <div class="sidebar-scroll-region">
         <div class="sidebar-brand" aria-label="JEON lab">
           <svg class="sidebar-brand-logo" viewBox="0 0 48 48" aria-hidden="true">
             <defs>
@@ -102,17 +103,18 @@
           <nav id="chats" class="project-tree" aria-label="Chats"></nav>
         </div>
 
-        <div class="sidebar-spacer"></div>
+        </div>
 
-        <div class="sidebar-content-divider" aria-hidden="true"></div>
-
-        <div class="sidebar-hosting" aria-label="Public hosting">
-          <em class="sidebar-hosting-title">Hosting</em>
-          <button id="copy-hosting-url" type="button" title="Copy public server URL" aria-label="Copy public server URL">Copy URL</button>
-          <label class="hosting-switch sidebar-hosting-switch">
-            <input id="hosting-enabled" type="checkbox">
-            <span aria-hidden="true"></span>
-          </label>
+        <div class="sidebar-footer">
+          <div class="sidebar-content-divider" aria-hidden="true"></div>
+          <div class="sidebar-hosting" aria-label="Public hosting">
+            <em class="sidebar-hosting-title">Hosting</em>
+            <button id="copy-hosting-url" type="button" title="Copy public server URL" aria-label="Copy public server URL">Copy URL</button>
+            <label class="hosting-switch sidebar-hosting-switch">
+              <input id="hosting-enabled" type="checkbox">
+              <span aria-hidden="true"></span>
+            </label>
+          </div>
         </div>
       </aside>
       <div id="sidebar-resizer" class="sidebar-resizer" role="separator" aria-label="Resize sidebar" aria-orientation="vertical" tabindex="0"></div>
@@ -138,8 +140,7 @@
         <section id="administration-page" class="management-page administration-page" aria-label="Hosting" hidden>
           <div id="administration-sections" class="administration-sections">
             <section id="hosting-users-panel" class="hosting-tab-panel">
-              <form id="create-user-form" class="hosting-create-user"><label>Person’s name<input id="create-user-name" maxlength="100" required placeholder="Name"></label><label>Key name<input id="create-user-key-name" maxlength="100" placeholder="Laptop"></label><button type="submit">Add user</button></form>
-              <div id="hosted-user-result" class="hosted-user-result" hidden></div>
+              <form id="create-user-form" class="hosting-create-user"><label>Person’s name<input id="create-user-name" maxlength="100" required placeholder="Name"></label><button type="submit">Add user</button></form>
               <div id="admin-users" class="admin-users"></div>
             </section>
             <section id="hosting-usage-panel" class="hosting-tab-panel" hidden><div id="usage-dashboard" class="usage-dashboard"></div></section>

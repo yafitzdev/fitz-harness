@@ -49,9 +49,11 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .app-shell.context-open { grid-template-columns: var(--sidebar-width) minmax(0, 1fr); }
 .app-shell.sidebar-collapsed.context-open { grid-template-columns: 0 minmax(0, 1fr); }
 
-.sidebar { min-width: 0; display: flex; flex-direction: column; padding: 8px; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; background: var(--sidebar); transition: opacity 140ms ease; }
-.sidebar::-webkit-scrollbar { display: none; }
-.sidebar > :not(.sidebar-spacer) { flex-shrink: 0; }
+.sidebar { min-width: 0; display: flex; flex-direction: column; padding: 8px; overflow: hidden; background: var(--sidebar); transition: opacity 140ms ease; }
+.sidebar-scroll-region { min-height: 0; flex: 1 1 auto; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; }
+.sidebar-scroll-region::-webkit-scrollbar { display: none; }
+.sidebar-scroll-region > * { flex-shrink: 0; }
+.sidebar-footer { position: relative; z-index: 1; flex: 0 0 auto; background: var(--sidebar); }
 .sidebar-collapsed .sidebar { opacity: 0; pointer-events: none; }
 .sidebar-resizer { position: fixed; z-index: 30; top: 32px; bottom: 0; left: calc(var(--sidebar-width) - 3px); width: 6px; outline: 0; cursor: col-resize; }
 .sidebar-resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 1px; background: transparent; transition: background 120ms ease; }
@@ -67,7 +69,6 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .nav-action { width: 100%; display: flex; align-items: center; gap: 9px; padding: 8px 9px; color: var(--sidebar-text); background: transparent; border-radius: var(--sidebar-item-radius); cursor: pointer; text-align: left; }
 .nav-action:hover { background: var(--tint-5); }
 .nav-action.active { background: var(--selection); color: var(--text); }
-.sidebar-spacer { flex: 1; }
 .mode-dot { display: inline-block; border-radius: 50%; background: var(--status-warning); }
 
 .workspace { --inspector-width: 400px; --composer-height: 112px; --composer-card-height: 112px; --conversation-viewport: 100%; --conversation-space: var(--conversation-viewport); --conversation-inset: clamp(48px, 8vw, 96px); --conversation-width: min(768px, calc(var(--conversation-space) - var(--conversation-inset))); --conversation-gutter: max(24px, calc((var(--conversation-space) - var(--conversation-width)) / 2)); position: relative; isolation: isolate; min-width: 0; margin-top: 5px; display: grid; grid-template-rows: var(--workspace-header-height) minmax(0, 1fr); overflow: hidden; border-top-left-radius: var(--radius-lg); background: var(--bg); box-shadow: -1px -1px 0 var(--border-soft); transition: background-color 220ms cubic-bezier(.23,1,.32,1); }
@@ -88,6 +89,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .menu-surface button:disabled:hover { background: transparent; }
 .menu-surface button.danger, .menu-surface button.danger svg { color: var(--status-danger); }
 .menu-surface hr { height: 1px; margin: 3px 4px; border: 0; background: var(--border); }
+.select-popover .select-separator { height: 1px; margin: 3px 4px; border: 0; background: var(--border-soft); }
 .menu-surface svg { width: 16px; height: 16px; flex: 0 0 auto; color: var(--muted); }
 .menu-label { flex: 1; }
 .menu-surface kbd { color: var(--subtle); font-family: inherit; font-size: 11px; line-height: 1.2; }

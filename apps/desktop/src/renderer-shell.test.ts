@@ -26,6 +26,9 @@ describe("desktop renderer shell", () => {
     expect(shell.querySelectorAll(":scope > body > .app-titlebar")).toHaveLength(1);
     expect(shell.querySelectorAll(":scope > body > .app-shell")).toHaveLength(1);
     expect(shell.querySelectorAll(".app-shell > aside.sidebar")).toHaveLength(1);
+    expect(shell.querySelectorAll("aside.sidebar > .sidebar-scroll-region")).toHaveLength(1);
+    expect(shell.querySelectorAll("aside.sidebar > .sidebar-footer")).toHaveLength(1);
+    expect(required("hosting-enabled").closest(".sidebar-footer")).not.toBeNull();
     expect(shell.querySelectorAll(".app-shell > main.workspace")).toHaveLength(1);
     expect(shell.querySelector("aside.sidebar")?.getAttribute("aria-label")).toBe("Workspace navigation");
     expect(required("messages").getAttribute("aria-live")).toBe("polite");

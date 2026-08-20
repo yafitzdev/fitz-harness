@@ -16,22 +16,30 @@ beforeEach(() => {
 });
 
 describe("sidebar scrolling", () => {
-  it("uses the sidebar as one hidden-chrome scroll surface instead of scrolling each section", () => {
+  it("keeps one hidden-chrome content scroller above a fixed hosting footer", () => {
     const sidebar = document.createElement("aside");
     sidebar.className = "sidebar";
+    const scrollRegion = document.createElement("div");
+    scrollRegion.className = "sidebar-scroll-region";
     const pinned = document.createElement("section");
     pinned.className = "sidebar-section";
     const projects = document.createElement("section");
     projects.className = "sidebar-section projects-section";
     const chats = document.createElement("section");
     chats.className = "sidebar-section";
-    sidebar.append(pinned, projects, chats);
+    const footer = document.createElement("footer");
+    footer.className = "sidebar-footer";
+    scrollRegion.append(pinned, projects, chats);
+    sidebar.append(scrollRegion, footer);
     document.body.append(sidebar);
 
-    expect(getComputedStyle(sidebar).overflowY).toBe("auto");
+    expect(getComputedStyle(sidebar).overflow).toBe("hidden");
+    expect(getComputedStyle(scrollRegion).overflowY).toBe("auto");
+    expect(getComputedStyle(scrollRegion).flexGrow).toBe("1");
+    expect(getComputedStyle(footer).flexShrink).toBe("0");
     const rules = [...document.styleSheets[0]!.cssRules] as CSSStyleRule[];
-    expect(rules.find((rule) => rule.selectorText === ".sidebar")?.style.getPropertyValue("scrollbar-width")).toBe("none");
-    expect(rules.find((rule) => rule.selectorText === ".sidebar::-webkit-scrollbar")?.style.display).toBe("none");
+    expect(rules.find((rule) => rule.selectorText === ".sidebar-scroll-region")?.style.getPropertyValue("scrollbar-width")).toBe("none");
+    expect(rules.find((rule) => rule.selectorText === ".sidebar-scroll-region::-webkit-scrollbar")?.style.display).toBe("none");
     for (const section of [pinned, projects, chats]) {
       expect(getComputedStyle(section).overflow).toBe("visible");
       expect(getComputedStyle(section).flexShrink).toBe("0");

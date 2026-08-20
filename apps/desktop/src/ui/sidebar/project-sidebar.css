@@ -32,7 +32,7 @@
 .tree-pin-action { right: 31px; }
 .tree-item:has(.project-row) .tree-quick-action { right: 58px; }
 .tree-item:hover .tree-menu-toggle, .tree-item:hover .tree-quick-action, .tree-item:hover .tree-pin-action, .tree-item:focus-within .tree-menu-toggle, .tree-item:focus-within .tree-quick-action, .tree-item:focus-within .tree-pin-action, .tree-menu-toggle[aria-expanded="true"] { opacity: 1; }
-.tree-run-spinner { position: absolute; z-index: 1; top: 50%; right: 9px; width: 13px; height: 13px; transform: translateY(-50%); border: 2px solid var(--grey-450); border-top-color: var(--grey-850); border-right-color: var(--grey-850); border-radius: 50%; animation: sidebar-run-spinner 720ms linear infinite; pointer-events: none; transition: opacity 100ms ease; }
+.tree-run-spinner { position: absolute; z-index: 1; top: 50%; right: 9px; width: 13px; height: 13px; transform: translateY(-50%); border: 2px solid var(--grey-450); border-top-color: var(--grey-850); border-right-color: var(--grey-850); border-radius: 50%; animation: sidebar-run-spinner 1.2s linear infinite; pointer-events: none; transition: opacity 100ms ease; }
 .tree-item:hover .tree-run-spinner, .tree-item:focus-within .tree-run-spinner { opacity: 0; }
 @keyframes sidebar-run-spinner { to { transform: translateY(-50%) rotate(1turn); } }
 @media (prefers-reduced-motion: reduce) { .tree-run-spinner { animation: none; } }

@@ -28,6 +28,8 @@ let deviceToken = process.env.FITZ_DEVICE_TOKEN;
 const hostClient = new HostClient({ origin: hostUrl, getToken: () => deviceToken });
 let localHostStartup: Promise<boolean> | undefined;
 let localHostReady = false;
+let localDeviceStartup: Promise<boolean> | undefined;
+let localDeviceReady = false;
 interface DesktopUpdateStatus { state: "idle" | "checking" | "available" | "downloading" | "current" | "downloaded" | "error" | "development"; percent?: number; version?: string }
 let latestUpdateStatus: DesktopUpdateStatus = { state: app.isPackaged ? "idle" : "development" };
 type InferenceExecutionClass = "self_hosted" | "metered_cloud";
@@ -46,15 +48,20 @@ ipcMain.handle("fitz:request", async (event, input: unknown) => {
   const cancel = () => controller.abort();
   event.sender.once("destroyed", cancel);
   try {
-    return await hostClient.request(path, {
+    const result = await hostClient.request(path, {
       ...(typeof input.method === "string" ? { method: input.method } : {}),
       ...(input.body !== undefined ? { body: input.body } : {}),
       responseType,
       timeoutMs: hostRequestDeadline(path, responseType),
       signal: controller.signal,
     });
+    if (result.status === 401) localDeviceReady = false;
+    return result;
   } catch (error) {
-    if (error instanceof HostRequestError && error.code === "network") localHostReady = false;
+    if (error instanceof HostRequestError && error.code === "network") {
+      localHostReady = false;
+      localDeviceReady = false;
+    }
     throw error;
   } finally {
     event.sender.removeListener("destroyed", cancel);
@@ -86,7 +93,11 @@ ipcMain.on("fitz:agent-events-unsubscribe", (event, subscriptionId: unknown) => 
   agentEventStreams.get(key)?.abort();
   agentEventStreams.delete(key);
 });
-ipcMain.handle("fitz:retry-local-host", () => { localHostReady = false; return ensureLocalHost(); });
+ipcMain.handle("fitz:retry-local-host", () => {
+  localHostReady = false;
+  localDeviceReady = false;
+  return ensureLocalHost();
+});
 ipcMain.handle("fitz:consumer-connections-list", () => loadConsumerConnections().map(publicConsumerConnection));
 ipcMain.handle("fitz:consumer-connection-save", async (_event, input: unknown) => {
   if (!isRecord(input)) throw new TypeError("Connection must be an object");
@@ -270,9 +281,22 @@ function ensureLocalHost(): Promise<boolean> {
   return attempt;
 }
 async function ensureLocalDevice(): Promise<boolean> {
+  if (localDeviceReady) return true;
+  if (localDeviceStartup) return localDeviceStartup;
+  const attempt = initializeLocalDevice();
+  localDeviceStartup = attempt;
+  const clearAttempt = () => { if (localDeviceStartup === attempt) localDeviceStartup = undefined; };
+  void attempt.then(clearAttempt, clearAttempt);
+  return attempt;
+}
+
+async function initializeLocalDevice(): Promise<boolean> {
   if (!safeStorage.isEncryptionAvailable()) return false;
   const identity = await hostClient.fetch("/api/v1/me", { timeoutMs: 15_000 });
-  if (identity.ok) return true;
+  if (identity.ok) {
+    localDeviceReady = true;
+    return true;
+  }
   if (identity.status !== 401 || deviceToken) return false;
   const response = await hostClient.fetch("/api/v1/pairing/bootstrap", { method: "POST", authenticated: false, timeoutMs: 15_000 });
   if (!response.ok) return false;
@@ -282,6 +306,7 @@ async function ensureLocalDevice(): Promise<boolean> {
   if (!token) return false;
   persistDeviceToken(token);
   deviceToken = token;
+  localDeviceReady = true;
   return true;
 }
 type AgentEventRelayMessage =
