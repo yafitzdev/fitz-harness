@@ -433,6 +433,27 @@ describe("PromptSubmissionController", () => {
     expect(options.discardUploadedAttachment).toHaveBeenCalledWith("session-1", "artifact-1");
   });
 
+  it("reuses a media command identity after an ambiguous persistence failure", async () => {
+    let attempts = 0;
+    const persistUserMessage = vi.fn(async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("response lost");
+    });
+    const { controller, options } = setup({
+      draft: () => ({ content: "a fox", mediaCommand: "video" }),
+      persistUserMessage,
+    });
+
+    await controller.submit();
+    await controller.submit();
+
+    const messageIds = persistUserMessage.mock.calls.map(([, , clientMessageId]) => clientMessageId);
+    expect(messageIds).toHaveLength(2);
+    expect(messageIds[0]).toBe(messageIds[1]);
+    expect(options.appendUser).toHaveBeenCalledOnce();
+    expect(options.showMediaCreation).toHaveBeenCalledOnce();
+  });
+
   it("passes pasted reference images into the creation card and submits them as refs", async () => {
     const attachment = { kind: "image" as const, dataUrl: "data:image/png;base64,AAAA", mimeType: "image/png", name: "ref.png" };
     const { controller, options } = setup({ peekAttachments: () => [attachment], draft: () => ({ content: "make it match", mediaCommand: "image" }) });

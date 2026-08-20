@@ -91,6 +91,12 @@ interface RetryableRunSubmission {
   clientRequestId: string;
 }
 
+interface RetryableMediaMessage {
+  sessionId: string;
+  displayContent: string;
+  clientMessageId: string;
+}
+
 /** Prompt used when a media command is submitted with no trailing prompt text. */
 const DEFAULT_MEDIA_PROMPTS: Record<MediaModality, string> = {
   image: "a vivid, detailed image",
@@ -104,6 +110,7 @@ export class PromptSubmissionController {
   #pendingSubmission: Promise<void> | undefined;
   #pendingSubmissionKey: string | undefined;
   #retryableRun: RetryableRunSubmission | undefined;
+  #retryableMediaMessage: RetryableMediaMessage | undefined;
 
   constructor(options: PromptSubmissionOptions) { this.#options = options; }
 
@@ -148,6 +155,7 @@ export class PromptSubmissionController {
     const draft = typeof submitted === "string" ? { content: submitted } : (submitted ?? this.#options.draft());
     const content = draft.content.trim();
     const mediaCommand = draft.mediaCommand;
+    if (!mediaCommand) this.#retryableMediaMessage = undefined;
     // Inline edit/regenerate reuses the durable user turn and must not consume
     // unrelated attachments that are still sitting in the composer.
     const attachments = existingUserMessage ? [] : this.#options.peekAttachments();
@@ -206,9 +214,16 @@ export class PromptSubmissionController {
         .filter(({ attachment }) => attachment.kind === "image")
         .map(({ artifact }) => ({ artifactId: artifact.id }));
       const displayContent = `/${mediaCommand}${content ? ` ${content}` : ""}`;
+      const retryableMedia = this.#retryableMediaMessage?.sessionId === sessionId
+        && this.#retryableMediaMessage.displayContent === displayContent
+        ? this.#retryableMediaMessage
+        : undefined;
+      if (!retryableMedia) this.#retryableMediaMessage = undefined;
+      const clientMessageId = retryableMedia?.clientMessageId ?? crypto.randomUUID();
       if (!existingUserMessage) {
-        try { await this.#options.persistUserMessage(sessionId, displayContent, crypto.randomUUID()); }
+        try { await this.#options.persistUserMessage(sessionId, displayContent, clientMessageId); }
         catch (error) {
+          this.#retryableMediaMessage = { sessionId, displayContent, clientMessageId };
           await this.#discardUploads(sessionId, uploaded);
           this.#restoreSubmissionDraft(draft);
           this.#options.showError(this.#options.errorMessage(error));
@@ -216,6 +231,7 @@ export class PromptSubmissionController {
         }
       }
       if (this.#options.isSessionCurrent?.(sessionId) === false) return;
+      this.#retryableMediaMessage = undefined;
       this.#retryableRun = undefined;
       // Only consume references the media request actually captured. Files,
       // PDFs, and every attachment on /audio remain staged for the next turn.
