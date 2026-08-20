@@ -42,6 +42,7 @@ export interface PromptSubmissionOptions {
     temperature: number;
     sessionId: string;
     accessMode: string;
+    clientRequestId?: string;
     persistedMessageId?: string;
     attachments?: Array<{ artifactId: string }>;
     messages: Array<{ role: "user"; content: PromptMessageContent }>;
@@ -75,6 +76,20 @@ export interface PromptSubmissionOptions {
   errorMessage: (error: unknown) => string;
 }
 
+type UploadedAttachment = {
+  artifact: Awaited<ReturnType<PromptSubmissionOptions["uploadAttachment"]>>;
+  attachment: PastedAttachment;
+};
+
+interface RetryableRunSubmission {
+  sessionId: string;
+  content: string;
+  settings: PromptRunSettings;
+  attachments: readonly PastedAttachment[];
+  uploaded: readonly UploadedAttachment[];
+  clientRequestId: string;
+}
+
 /** Prompt used when a media command is submitted with no trailing prompt text. */
 const DEFAULT_MEDIA_PROMPTS: Record<MediaModality, string> = {
   image: "a vivid, detailed image",
@@ -86,6 +101,7 @@ const DEFAULT_MEDIA_PROMPTS: Record<MediaModality, string> = {
 export class PromptSubmissionController {
   readonly #options: PromptSubmissionOptions;
   #pendingSubmission: Promise<void> | undefined;
+  #retryableRun: RetryableRunSubmission | undefined;
 
   constructor(options: PromptSubmissionOptions) { this.#options = options; }
 
@@ -137,15 +153,21 @@ export class PromptSubmissionController {
     const uploadable = mediaCommand
       ? mediaCommand === "audio" ? [] : attachments.filter((attachment) => attachment.kind === "image")
       : attachments;
-    const uploaded: Array<{ artifact: Awaited<ReturnType<PromptSubmissionOptions["uploadAttachment"]>>; attachment: PastedAttachment }> = [];
-    for (const attachment of uploadable) {
-      try {
-        const artifact = await this.#options.uploadAttachment(sessionId, attachment);
-        if (this.#options.isSessionCurrent?.(sessionId) === false) return;
-        uploaded.push({ artifact, attachment });
-      } catch (error) {
-        this.#options.showError(this.#options.errorMessage(error));
-        return;
+    const retryable = !existingUserMessage && !mediaCommand && this.#matchesRetryableRun(sessionId, content, settings, attachments)
+      ? this.#retryableRun
+      : undefined;
+    if (!retryable && !mediaCommand) this.#retryableRun = undefined;
+    const uploaded: UploadedAttachment[] = retryable ? [...retryable.uploaded] : [];
+    if (!retryable) {
+      for (const attachment of uploadable) {
+        try {
+          const artifact = await this.#options.uploadAttachment(sessionId, attachment);
+          if (this.#options.isSessionCurrent?.(sessionId) === false) return;
+          uploaded.push({ artifact, attachment });
+        } catch (error) {
+          this.#options.showError(this.#options.errorMessage(error));
+          return;
+        }
       }
     }
 
@@ -167,6 +189,7 @@ export class PromptSubmissionController {
         }
       }
       if (this.#options.isSessionCurrent?.(sessionId) === false) return;
+      this.#retryableRun = undefined;
       if (attachments.length > 0) this.#options.consumeAttachments(attachments);
       this.#options.clearDraft();
       this.#options.clearLanding();
@@ -217,10 +240,13 @@ export class PromptSubmissionController {
     // unlocked running composer cannot accidentally steer the same prompt.
     this.#options.clearDraft();
     this.#options.refreshContext();
+    const clientRequestId = retryable?.clientRequestId ?? crypto.randomUUID();
+    const retryState: RetryableRunSubmission = { sessionId, content, settings: { ...settings }, attachments: [...attachments], uploaded: [...uploaded], clientRequestId };
     let accepted = false;
     const accept = () => {
       if (accepted) return;
       accepted = true;
+      if (this.#retryableRun === retryState || this.#retryableRun?.clientRequestId === clientRequestId) this.#retryableRun = undefined;
       try {
         if (attachments.length > 0) this.#options.consumeAttachments(attachments);
         // The run is durable even if its creation response arrived after the
@@ -251,6 +277,7 @@ export class PromptSubmissionController {
         temperature: settings.temperature,
         sessionId,
         accessMode: settings.accessMode,
+        clientRequestId,
         ...(uploaded.length ? { attachments: uploaded.map(({ artifact }) => ({ artifactId: artifact.id })) } : {}),
         ...(persistedMessageId ? { persistedMessageId } : {}),
         messages: [{ role: "user", content }],
@@ -259,6 +286,7 @@ export class PromptSubmissionController {
       this.#options.showError(this.#options.errorMessage(error));
     } finally {
       if (!accepted && !existingUserMessage && this.#options.isSessionCurrent?.(sessionId) !== false) {
+        this.#retryableRun = retryState;
         const newerDraft = submissionText(this.#options.draft());
         const recoveredDraft = newerDraft.trim() && newerDraft.trim() !== content ? `${content}\n\n${newerDraft}` : content;
         this.#options.setDraft(recoveredDraft);
@@ -285,6 +313,23 @@ export class PromptSubmissionController {
       this.#options.setDraft(content);
     }
   }
+
+  #matchesRetryableRun(
+    sessionId: string,
+    content: string,
+    settings: PromptRunSettings,
+    attachments: readonly PastedAttachment[],
+  ): boolean {
+    const retryable = this.#retryableRun;
+    if (!retryable || retryable.sessionId !== sessionId || retryable.content !== content) return false;
+    if (retryable.settings.routeId !== settings.routeId
+      || retryable.settings.effort !== settings.effort
+      || retryable.settings.maxTokens !== settings.maxTokens
+      || retryable.settings.temperature !== settings.temperature
+      || retryable.settings.accessMode !== settings.accessMode) return false;
+    return retryable.attachments.length === attachments.length
+      && retryable.attachments.every((attachment, index) => attachment === attachments[index]);
+  }
 }
 
 function staleConversationError(): Error {
@@ -300,7 +345,7 @@ function submissionText(submission: ComposerSubmission): string {
   return `/${submission.mediaCommand}${submission.content ? ` ${submission.content}` : ""}`;
 }
 
-function messageAttachment(uploaded: { artifact: Awaited<ReturnType<PromptSubmissionOptions["uploadAttachment"]>>; attachment: PastedAttachment }): MessageAttachment {
+function messageAttachment(uploaded: UploadedAttachment): MessageAttachment {
   return {
     id: uploaded.artifact.id,
     name: uploaded.artifact.name ?? uploaded.attachment.name,

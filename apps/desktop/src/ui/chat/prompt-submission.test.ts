@@ -262,6 +262,49 @@ describe("PromptSubmissionController", () => {
     expect(options.pushHistory).not.toHaveBeenCalled();
   });
 
+  it("reuses the request identity and uploaded attachments when the restored prompt is retried", async () => {
+    const attachment = { kind: "file" as const, dataUrl: "data:text/plain;base64,QQ==", mimeType: "text/plain", name: "draft.txt" };
+    let attempts = 0;
+    const startRun: PromptSubmissionOptions["startRun"] = vi.fn(async (_request, onAccepted) => {
+      attempts += 1;
+      if (attempts === 2) onAccepted();
+    });
+    const { controller, options } = setup({
+      draft: () => ({ content: "" }),
+      peekAttachments: () => [attachment],
+      startRun,
+    });
+
+    await controller.submit("analyse this");
+    await controller.submit("analyse this");
+
+    const requests = (startRun as ReturnType<typeof vi.fn>).mock.calls.map(([request]) => request as { clientRequestId: string; attachments: Array<{ artifactId: string }> });
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.clientRequestId).toBe(requests[1]?.clientRequestId);
+    expect(requests[0]?.attachments).toEqual([{ artifactId: "artifact-1" }]);
+    expect(requests[1]?.attachments).toEqual([{ artifactId: "artifact-1" }]);
+    expect(options.uploadAttachment).toHaveBeenCalledOnce();
+    expect(options.consumeAttachments).toHaveBeenCalledOnce();
+    expect(options.appendUser).toHaveBeenCalledOnce();
+  });
+
+  it("uses a new request identity when retry settings change", async () => {
+    let routeId = "smart";
+    const startRun: PromptSubmissionOptions["startRun"] = vi.fn(async () => undefined);
+    const { controller } = setup({
+      draft: () => ({ content: "" }),
+      settings: () => ({ routeId, effort: "high", maxTokens: 8192, temperature: 0.4, accessMode: "full" }),
+      startRun,
+    });
+
+    await controller.submit("analyse this");
+    routeId = "default";
+    await controller.submit("analyse this");
+
+    const requests = (startRun as ReturnType<typeof vi.fn>).mock.calls.map(([request]) => request as { clientRequestId: string });
+    expect(requests[0]?.clientRequestId).not.toBe(requests[1]?.clientRequestId);
+  });
+
   it("preserves text typed while an earlier prompt is awaiting admission", async () => {
     const { controller, options } = setup({
       draft: () => ({ content: "new thought", mediaCommand: "video" }),
