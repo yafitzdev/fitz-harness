@@ -46,7 +46,9 @@ export class ProjectsController {
   private readonly options: ProjectsOptions;
   private records: ProjectRecord[] = [];
   private readonly sessions = new Map<string, SessionRecord[]>();
+  private readonly archivedSessions = new Map<string, SessionRecord[]>();
   private chatRecords: SessionRecord[] = [];
+  private archivedChatRecords: SessionRecord[] = [];
   private currentProjectIdValue: string | undefined;
   private currentSessionIdValue: string | undefined;
   private loadGeneration = 0;
@@ -57,7 +59,9 @@ export class ProjectsController {
 
   get projects(): ProjectRecord[] { return this.records; }
   get sessionsByProject(): Map<string, SessionRecord[]> { return this.sessions; }
+  get archivedSessionsByProject(): Map<string, SessionRecord[]> { return this.archivedSessions; }
   get chats(): SessionRecord[] { return this.chatRecords; }
+  get archivedChats(): SessionRecord[] { return this.archivedChatRecords; }
   get currentProjectId(): string | undefined { return this.currentProjectIdValue; }
   get currentSessionId(): string | undefined { return this.currentSessionIdValue; }
 
@@ -79,17 +83,24 @@ export class ProjectsController {
     const generation = ++this.loadGeneration;
     let records: ProjectRecord[];
     let sessions: Map<string, SessionRecord[]>;
+    let archivedSessions: Map<string, SessionRecord[]>;
     let chats: SessionRecord[];
+    let archivedChats: SessionRecord[];
     try {
       const response = await this.options.api("/api/v1/projects");
       records = response.data ?? [];
       sessions = new Map();
+      archivedSessions = new Map();
       await Promise.all(records.map(async (project) => {
         const response = await this.options.api(`/api/v1/projects/${project.id}/sessions`);
-        sessions.set(project.id, (response.data ?? []).filter((session: Json) => session.status !== "archived"));
+        const projectSessions = (response.data ?? []) as SessionRecord[];
+        sessions.set(project.id, projectSessions.filter((session) => session.status !== "archived"));
+        archivedSessions.set(project.id, projectSessions.filter((session) => session.status === "archived"));
       }));
       const chatsResponse = await this.options.api("/api/v1/chats");
-      chats = (chatsResponse.data ?? []).filter((session: Json) => session.status !== "archived");
+      const allChats = (chatsResponse.data ?? []) as SessionRecord[];
+      chats = allChats.filter((session) => session.status !== "archived");
+      archivedChats = allChats.filter((session) => session.status === "archived");
     } catch (error) {
       if (generation !== this.loadGeneration) return;
       throw error;
@@ -98,7 +109,10 @@ export class ProjectsController {
     this.records = records;
     this.sessions.clear();
     for (const [projectId, projectSessions] of sessions) this.sessions.set(projectId, projectSessions);
+    this.archivedSessions.clear();
+    for (const [projectId, projectSessions] of archivedSessions) this.archivedSessions.set(projectId, projectSessions);
     this.chatRecords = chats;
+    this.archivedChatRecords = archivedChats;
 
     if (preferredProject && this.records.some((project) => project.id === preferredProject)) this.currentProjectIdValue = preferredProject;
     else if (this.currentProjectIdValue === undefined) {
@@ -231,6 +245,19 @@ export class ProjectsController {
       await this.load(this.currentProjectIdValue);
       this.options.showStatus(`Archived ${session.title}`, "success");
     } catch (error) { this.options.showStatus(this.options.errorMessage(error), "error"); }
+  }
+
+  /** Restores an archived chat and selects it in its active project or Chats collection. */
+  async restoreSession(id: string, projectId: string | undefined): Promise<void> {
+    try {
+      await this.options.api(`/api/v1/sessions/${id}`, "PATCH", { status: "active" });
+      this.currentProjectIdValue = projectId;
+      this.currentSessionIdValue = id;
+      await this.load(projectId, id);
+      this.options.showStatus("Chat restored", "success");
+    } catch (error) {
+      this.options.showStatus(this.options.errorMessage(error), "error");
+    }
   }
 
   /** Permanently removes one chat while preserving the surrounding selection when possible. */

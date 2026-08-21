@@ -58,8 +58,8 @@ function fakeApi(initial: { projects: Json[]; sessions: Record<string, Json[]>; 
       return { data: {} };
     }
     if (path === "/api/v1/projects") return { data: state.projects };
-    if (sessionsPath) return { data: (state.sessions[sessionsPath[1]!] ?? []).filter((session: Json) => session.status !== "archived") };
-    if (path === "/api/v1/chats") return { data: state.chats.filter((chat: Json) => chat.status !== "archived") };
+    if (sessionsPath) return { data: state.sessions[sessionsPath[1]!] ?? [] };
+    if (path === "/api/v1/chats") return { data: state.chats };
     return { data: {} };
   });
   return api;
@@ -253,8 +253,27 @@ describe("ProjectsController", () => {
 
     expect(api).toHaveBeenCalledWith("/api/v1/sessions/session-1", "PATCH", { status: "archived" });
     expect(controller.currentSessionId).toBeUndefined();
+    expect(controller.archivedSessionsByProject.get("project-a")).toEqual([expect.objectContaining({ id: "session-1" })]);
     expect(calls.showStatus).toHaveBeenCalledWith("Archived Old chat", "success");
     expect(calls.onNoSession).toHaveBeenCalled();
+  });
+
+  it("restores an archived project chat into the active collection and selects it", async () => {
+    const { controller, api, calls } = setup({
+      projects: [{ id: "project-a", name: "Alpha" }],
+      sessions: { "project-a": [{ id: "session-1", title: "Archived chat", status: "archived" }] },
+    });
+    await controller.load();
+
+    await controller.restoreSession("session-1", "project-a");
+
+    expect(api).toHaveBeenCalledWith("/api/v1/sessions/session-1", "PATCH", { status: "active" });
+    expect(controller.archivedSessionsByProject.get("project-a")).toEqual([]);
+    expect(controller.sessionsByProject.get("project-a")).toEqual([expect.objectContaining({ id: "session-1", status: "active" })]);
+    expect(controller.currentProjectId).toBe("project-a");
+    expect(controller.currentSessionId).toBe("session-1");
+    expect(calls.onSessionSelected).toHaveBeenLastCalledWith("session-1");
+    expect(calls.showStatus).toHaveBeenCalledWith("Chat restored", "success");
   });
 
   it("permanently removes a chat and keeps its project selected", async () => {

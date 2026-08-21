@@ -79,6 +79,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .workspace-title svg { color: var(--muted); }
 .workspace-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 #task-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+#task-title::before { content: "/"; margin-right: 8px; color: var(--subtle); }
 .popover { position: absolute; padding: 4px; border: 0; border-radius: var(--radius-lg); background: var(--floating-surface); box-shadow: var(--elevation-stroke), var(--shadow-popover); backdrop-filter: blur(16px); }
 .copy-button-text { display: inline-flex; align-items: center; gap: 5px; }
 .markdown-copy.copied { color: var(--text); }

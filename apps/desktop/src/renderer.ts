@@ -247,6 +247,10 @@ const projectSidebar = new ProjectSidebarController({
   pinnedMount: element("pinned"),
   pinnedSection: element("pinned-section"),
   chatsMount: element("chats"),
+  searchInput: element("sidebar-search") as HTMLInputElement,
+  archivedToggle: element("archived-toggle") as HTMLButtonElement,
+  archivedCount: element("archived-count"),
+  archivedMount: element("archived-chats"),
   overlayHost,
   closePopovers,
   selectProject: (projectId) => void projects.selectProject(projectId),
@@ -262,6 +266,7 @@ const projectSidebar = new ProjectSidebarController({
   chooseFolder: () => window.fitz.chooseFolder(),
   onError: (error) => showStatus(errorMessage(error), "error"),
   archiveSession: (sessionId, projectId) => { projects.setCurrentProject(projectId); projects.setCurrentSession(sessionId); void projects.archiveCurrentTask(); },
+  restoreSession: (sessionId, projectId) => projects.restoreSession(sessionId, projectId),
   removeSession: (sessionId, projectId) => projects.removeSession(sessionId, projectId),
   copyValue: (value, message) => void copyValue(value, message),
   continueSession: (session, projectId) => void projects.continueInNewChat(session, projectId),
@@ -941,7 +946,7 @@ function renderTree(): void {
   // poll observes it. The queue remains the source of truth once a run is
   // detached or the user navigates to another chat.
   if (agentRuns.active && agentRuns.activeSessionId) processingSessionIds.add(agentRuns.activeSessionId);
-  projectSidebar.render({ projects: projects.projects, sessionsByProject: projects.sessionsByProject, chats: projects.chats, currentProjectId: projects.currentProjectId, currentSessionId: projects.currentSessionId, processingSessionIds, newChat: conversationSessions.newChat });
+  projectSidebar.render({ projects: projects.projects, sessionsByProject: projects.sessionsByProject, archivedSessionsByProject: projects.archivedSessionsByProject, chats: projects.chats, archivedChats: projects.archivedChats, currentProjectId: projects.currentProjectId, currentSessionId: projects.currentSessionId, processingSessionIds, newChat: conversationSessions.newChat });
   updateTitles();
 }
 
@@ -1166,8 +1171,10 @@ function refreshAgentRunState(): void {
 
 function updateTitles(): void {
   const project = projects.activeProject();
+  const session = projects.currentSessionRecord();
   projectTitle.textContent = project?.name ?? "Fitz Codex";
-  taskTitle.textContent = "";
+  taskTitle.textContent = session?.title ?? "";
+  taskTitle.hidden = !session;
 }
 
 function toggleSidebar(): void { adaptiveWorkspace?.toggleSidebar(); inAppBrowser.syncBounds(); closePopovers(); }

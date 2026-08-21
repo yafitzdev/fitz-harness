@@ -76,6 +76,11 @@
 
         <div class="sidebar-content-divider" aria-hidden="true"></div>
 
+        <label class="sidebar-search">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"></circle><path d="m12.5 12.5 4 4"></path></svg>
+          <input id="sidebar-search" type="search" placeholder="Search projects and chats" aria-label="Search projects and chats" autocomplete="off" spellcheck="false">
+        </label>
+
         <div id="pinned-section" class="sidebar-section pinned-section" hidden>
           <div class="section-heading pinned-heading">
             <span>Pinned</span>
@@ -101,6 +106,14 @@
             </button>
           </div>
           <nav id="chats" class="project-tree" aria-label="Chats"></nav>
+        </div>
+
+        <div id="archived-section" class="sidebar-section archived-section">
+          <button id="archived-toggle" class="section-heading archived-heading" type="button" aria-expanded="false" aria-controls="archived-chats">
+            <span>Archived</span>
+            <small id="archived-count">0</small>
+          </button>
+          <nav id="archived-chats" class="project-tree archived-tree" aria-label="Archived chats" hidden></nav>
         </div>
 
         </div>
