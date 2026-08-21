@@ -1,20 +1,25 @@
 export type ActionStatusTone = "neutral" | "success" | "error";
 export type ActionFeedback = (message: string, tone: ActionStatusTone) => void;
 
+export interface ActionStatusViewOptions {
+  mount?: HTMLElement;
+  dismissAfterMs?: number;
+}
+
 /** Accessible, app-wide feedback for actions that do not own durable inline UI. */
 export class ActionStatusView {
   readonly root: HTMLElement;
   readonly #dismissAfterMs: number;
   #dismissTimer: ReturnType<typeof setTimeout> | undefined;
 
-  constructor(owner: Document, dismissAfterMs = 5_000) {
-    this.#dismissAfterMs = dismissAfterMs;
+  constructor(owner: Document, options: ActionStatusViewOptions = {}) {
+    this.#dismissAfterMs = options.dismissAfterMs ?? 5_000;
     this.root = owner.createElement("div");
     this.root.className = "action-status";
     this.root.hidden = true;
     this.root.setAttribute("aria-atomic", "true");
     this.root.addEventListener("click", () => this.clear());
-    owner.body.append(this.root);
+    (options.mount ?? owner.body).append(this.root);
   }
 
   show(message: string, tone: ActionStatusTone): void {

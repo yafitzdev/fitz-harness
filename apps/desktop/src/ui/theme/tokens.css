@@ -1,6 +1,7 @@
 :root {
   color-scheme: dark;
   --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, monospace;
   font: 14px/1.5 var(--font-ui);
 
   /* ---- JEON lab brand palette ---------------------------------------------
@@ -66,6 +67,7 @@
   --surface: var(--grey-200);           /* inputs and bounded controls */
   --floating-surface: rgba(33,33,33,.96); /* popovers + dialogs (frosted) */
   --border: rgba(255,255,255,.16);      /* strong hairline (cards, code blocks) */
+  --border-strong: var(--tint-border);  /* emphasized outlines and feedback */
   --border-soft: rgba(255,255,255,.08); /* faint hairline (lists, dividers) */
   --text: var(--grey-950);              /* brightest text */
   --muted: rgba(255,255,255,.70);       /* secondary text */

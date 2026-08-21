@@ -11,7 +11,9 @@ afterEach(() => {
 describe("ActionStatusView", () => {
   it("shows accessible action feedback and dismisses it", () => {
     vi.useFakeTimers();
-    const view = new ActionStatusView(document, 100);
+    const workspace = document.createElement("main");
+    document.body.append(workspace);
+    const view = new ActionStatusView(document, { mount: workspace, dismissAfterMs: 100 });
 
     view.show("Approval failed", "error");
 
@@ -19,6 +21,7 @@ describe("ActionStatusView", () => {
     expect(view.root.textContent).toBe("Approval failed");
     expect(view.root.dataset.tone).toBe("error");
     expect(view.root.getAttribute("role")).toBe("alert");
+    expect(view.root.parentElement).toBe(workspace);
 
     vi.advanceTimersByTime(100);
     expect(view.root.hidden).toBe(true);

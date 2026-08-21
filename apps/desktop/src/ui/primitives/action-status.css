@@ -1,9 +1,9 @@
 .action-status {
-  position: fixed;
+  position: absolute;
   z-index: 120;
-  left: 50%;
-  bottom: 24px;
-  max-width: min(520px, calc(100vw - 32px));
+  left: calc(var(--conversation-viewport) / 2);
+  bottom: calc(var(--composer-bottom) + var(--composer-height) + 60px);
+  max-width: min(520px, calc(var(--conversation-viewport) - 32px));
   padding: 9px 12px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
@@ -19,3 +19,5 @@
 
 .action-status[data-tone="error"] { border-color: color-mix(in srgb, var(--status-danger) 45%, var(--border-strong)); color: var(--status-danger-soft); }
 .action-status[data-tone="success"] { border-color: color-mix(in srgb, var(--status-success) 40%, var(--border-strong)); color: var(--status-success); }
+.workspace.new-chat-open .action-status { bottom: calc(var(--composer-bottom) + var(--composer-height) + 116px); }
+.workspace:has(.management-page:not([hidden])) .action-status { left: 50%; bottom: 24px; max-width: min(520px, calc(100% - 32px)); }
