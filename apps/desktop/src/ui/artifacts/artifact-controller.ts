@@ -10,6 +10,7 @@ export interface ArtifactControllerOptions {
   getSessionId: () => string | undefined;
   isNewChat: () => boolean;
   api: (path: string, method?: string, body?: Json) => Promise<Json>;
+  uploadFile: (sessionId: string, file: File) => Promise<Json>;
   setSessionArtifacts: (artifacts: Json[]) => void;
   previewArtifact: (artifact: Json, source?: HTMLButtonElement, list?: HTMLElement) => void | Promise<void>;
   openInspector: () => void;
@@ -68,7 +69,15 @@ export class ArtifactController {
 
   async uploadData(sessionId: string, input: { name: string; mimeType: string; contentBase64: string }): Promise<Json> {
     const response = await this.#options.api(`/api/v1/sessions/${sessionId}/artifacts`, "POST", input);
-    const artifact = response.data as Json;
+    return this.#recordUpload(sessionId, response.data as Json);
+  }
+
+  async uploadFile(sessionId: string, file: File): Promise<Json> {
+    const response = await this.#options.uploadFile(sessionId, file);
+    return this.#recordUpload(sessionId, response.data as Json);
+  }
+
+  #recordUpload(sessionId: string, artifact: Json): Json {
     if (this.#sessionId !== sessionId) {
       this.#sessionId = sessionId;
       this.#sessionArtifacts = [];

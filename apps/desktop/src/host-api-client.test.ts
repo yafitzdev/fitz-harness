@@ -22,6 +22,15 @@ describe("HostApiClient", () => {
     expect(request).toHaveBeenCalledWith({ path: "/api/v1/sessions/session-1", method: "DELETE" });
   });
 
+  it("parses streamed artifact upload responses through the same error boundary", async () => {
+    const request = vi.fn(async () => ({ status: 200, body: "{}" }));
+    const uploadArtifact = vi.fn(async () => ({ status: 201, body: JSON.stringify({ data: { id: "video-1" } }) }));
+    const api = new HostApiClient({ request, uploadArtifact });
+    const file = new File(["video"], "motion.mp4", { type: "video/mp4" });
+    await expect(api.uploadArtifact<{ data: { id: string } }>("session-1", file)).resolves.toEqual({ data: { id: "video-1" } });
+    expect(uploadArtifact).toHaveBeenCalledWith({ sessionId: "session-1", file });
+  });
+
   it("normalizes structured host errors", async () => {
     const request = vi.fn(async () => ({
       status: 409,

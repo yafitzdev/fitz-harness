@@ -1,10 +1,19 @@
 import { ComposerControls, type ComposerControlsElements } from "./composer-controls.js";
+import { inferMimeTypeFromFilename } from "@fitz/media";
 import { svgIcon as svg, textBlock } from "../primitives/dom.js";
 import type { OverlayHost } from "../primitives/overlay-host.js";
 import type { DesktopBridge } from "../../preload.js";
-import type { MediaModality } from "@fitz/protocol";
+import { MEDIA_REFERENCE_MAX_BYTES, type MediaModality } from "@fitz/protocol";
 
-export type PastedAttachment = { dataUrl: string; mimeType: string; name: string; kind: "image" | "pdf" | "file" };
+export type AttachmentKind = "image" | "video" | "audio" | "pdf" | "file";
+export type PastedAttachment = {
+  dataUrl?: string;
+  file?: File;
+  previewUrl?: string;
+  mimeType: string;
+  name: string;
+  kind: AttachmentKind;
+};
 export interface ComposerSubmission { content: string; mediaCommand?: MediaModality }
 
 export interface ComposerOptions {
@@ -21,7 +30,7 @@ export interface ComposerOptions {
   onValueChange: (text: string) => void;
   onAttach: () => void;
   onDismissProject: () => void;
-  onPreviewPasted: (kind: "image" | "pdf", dataUrl: string, mimeType: string, name: string) => void;
+  onPreviewPasted: (kind: Exclude<AttachmentKind, "file">, url: string, mimeType: string, name: string) => void;
   onWorktreeCreated: (path: string, branch: string) => void | Promise<void>;
   onError: (message: string) => void;
   isRunning: () => boolean;
@@ -296,6 +305,7 @@ export class Composer {
     this.resize();
     this.resetHistory();
     this.composerAttachments.replaceChildren();
+    for (const pasted of this.pastedFiles) this.revokePreview(pasted);
     this.pastedFiles.splice(0);
     this.refreshAttachments();
   }
@@ -364,9 +374,9 @@ export class Composer {
       const index = this.pastedFiles.indexOf(pasted);
       if (index >= 0) this.pastedFiles.splice(index, 1);
     }
-    captured.forEach((pasted) => pasted.chip.remove());
+    captured.forEach((pasted) => { pasted.chip.remove(); this.revokePreview(pasted); });
     this.refreshAttachments();
-    return captured.map((pasted) => ({ dataUrl: pasted.dataUrl, mimeType: pasted.mimeType, name: pasted.name, kind: pasted.kind }));
+    return captured.map(({ chip: _chip, ...attachment }) => attachment);
   }
 
   /**
@@ -376,9 +386,10 @@ export class Composer {
    */
   attachFile(file: File): void {
     if (this.options.isRunning()) return;
-    const kind = file.type.startsWith("image/") ? "image" : file.type === "application/pdf" ? "pdf" : "file";
-    if (file.size > 5_000_000) { this.options.onError("Attached file is too large (max 5 MB)"); return; }
-    this.readPastedFile(file, kind);
+    const kind = attachmentKind(file.type, file.name);
+    const limit = attachmentLimit(kind);
+    if (file.size > limit) { this.options.onError(`Attached ${kind} is too large (max ${formatMegabytes(limit)})`); return; }
+    this.stageSelectedFile(file, kind);
   }
 
   closePopovers(): void {
@@ -554,20 +565,22 @@ export class Composer {
       if (this.options.isRunning()) return;
       const file = item.getAsFile();
       if (!file) continue;
-      if (file.size > 5_000_000) { this.options.onError("Pasted file is too large (max 5 MB)"); return; }
+      // Clipboard Files do not reliably expose a local filesystem path, so
+      // pasted payloads retain the bounded JSON upload path.
+      const limit = 5_000_000;
+      if (file.size > limit) { this.options.onError(`Pasted ${kind} is too large (max ${formatMegabytes(limit)})`); return; }
       this.readPastedFile(file, kind);
       break;
     }
   }
 
-  private readPastedFile(file: File, kind: "image" | "pdf" | "file"): void {
+  private readPastedFile(file: File, kind: "image" | "pdf"): void {
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = reader.result as string;
       const name = kind === "pdf"
         ? (file.name && /\.pdf$/i.test(file.name) ? file.name : `document-${Date.now()}.pdf`)
-        : kind === "image" ? `screenshot-${Date.now()}.png`
-        : (file.name || `file-${Date.now()}`);
+        : `screenshot-${Date.now()}.png`;
       const chip = this.createPastedFileChip(dataUrl, file.type || (kind === "pdf" ? "application/pdf" : "application/octet-stream"), name, kind, () => this.removePastedFile(chip));
       this.composerAttachments.append(chip);
       this.pastedFiles.push({ dataUrl, mimeType: file.type || (kind === "pdf" ? "application/pdf" : "application/octet-stream"), name, kind, chip });
@@ -576,10 +589,19 @@ export class Composer {
     reader.readAsDataURL(file);
   }
 
-  private createPastedFileChip(dataUrl: string, mimeType: string, name: string, kind: "image" | "pdf" | "file", onRemove: () => void): HTMLElement {
+  private stageSelectedFile(file: File, kind: AttachmentKind): void {
+    const previewUrl = kind === "file" ? undefined : URL.createObjectURL(file);
+    const chip = this.createPastedFileChip(previewUrl, file.type || "application/octet-stream", file.name || `file-${Date.now()}`, kind, () => this.removePastedFile(chip));
+    this.composerAttachments.append(chip);
+    this.pastedFiles.push({ file, ...(previewUrl ? { previewUrl } : {}), mimeType: file.type || "application/octet-stream", name: file.name || `file-${Date.now()}`, kind, chip });
+    this.refreshAttachments();
+  }
+
+  private createPastedFileChip(sourceUrl: string | undefined, mimeType: string, name: string, kind: AttachmentKind, onRemove: () => void): HTMLElement {
     const chip = document.createElement("div");
-    chip.className = `attachment-chip ${kind === "image" ? "image-chip" : kind === "pdf" ? "pdf-chip" : "file-chip"}`;
-    if (kind === "image") {
+    const visualMedia = kind === "image" || kind === "video";
+    chip.className = `attachment-chip ${visualMedia ? `${kind}-chip` : kind === "pdf" ? "pdf-chip" : kind === "audio" ? "audio-chip" : "file-chip"}`;
+    if (visualMedia) {
       chip.style.width = "96px";
       chip.style.height = "96px";
       chip.style.minWidth = "96px";
@@ -599,18 +621,30 @@ export class Composer {
     } else {
       const preview = document.createElement("button");
       preview.type = "button";
-      preview.className = `attachment-preview ${kind === "pdf" ? "pdf-preview" : "image-preview"}`;
-      preview.title = kind === "pdf" ? "Preview PDF" : "Preview image";
+      preview.className = `attachment-preview ${kind}-preview`;
+      preview.title = `Preview ${kind}`;
       preview.setAttribute("aria-label", preview.title);
       preview.addEventListener("click", () => {
-        this.options.onPreviewPasted(kind, dataUrl, mimeType, name);
+        if (sourceUrl) this.options.onPreviewPasted(kind, sourceUrl, mimeType, name);
       });
 
       if (kind === "image") {
         const img = document.createElement("img");
-        img.src = dataUrl;
+        img.src = sourceUrl ?? "";
         img.alt = "Pasted image";
         preview.append(img);
+      } else if (kind === "video") {
+        const video = document.createElement("video");
+        video.src = sourceUrl ?? "";
+        video.muted = true;
+        video.preload = "metadata";
+        preview.append(video);
+      } else if (kind === "audio") {
+        const icon = svg('<path d="M4 12V8m3 6V6m3 10V4m3 10V6m3 6V8"></path>');
+        const label = document.createElement("span");
+        label.className = "file-name";
+        label.textContent = name;
+        preview.append(icon, label);
       } else {
         const icon = svg('<path d="M5 2.8h6l4 4v10.4H5z"></path><path d="M11 2.8v4h4"></path><path d="M7.5 9.5h5M7.5 12h5M7.5 14.5h3"></path>');
         icon.setAttribute("aria-hidden", "true");
@@ -634,9 +668,16 @@ export class Composer {
 
   private removePastedFile(chip: HTMLElement): void {
     const index = this.pastedFiles.findIndex((pasted) => pasted.chip === chip);
-    if (index >= 0) this.pastedFiles.splice(index, 1);
+    if (index >= 0) {
+      const [pasted] = this.pastedFiles.splice(index, 1);
+      if (pasted) this.revokePreview(pasted);
+    }
     chip.remove();
     this.refreshAttachments();
+  }
+
+  private revokePreview(attachment: PastedAttachment): void {
+    if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
   }
 
   private navigatePromptHistory(direction: -1 | 1): boolean {
@@ -738,3 +779,23 @@ export class Composer {
 }
 
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+
+function attachmentKind(mimeType: string, name = ""): AttachmentKind {
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("video/")) return "video";
+  if (mimeType.startsWith("audio/")) return "audio";
+  if (mimeType === "application/pdf") return "pdf";
+  const inferred = inferMimeTypeFromFilename(name);
+  if (inferred.startsWith("image/")) return "image";
+  if (inferred.startsWith("video/")) return "video";
+  if (inferred.startsWith("audio/")) return "audio";
+  if (inferred === "application/pdf") return "pdf";
+  return "file";
+}
+
+function attachmentLimit(kind: AttachmentKind): number {
+  if (kind === "image" || kind === "video" || kind === "audio") return MEDIA_REFERENCE_MAX_BYTES[kind];
+  return 5_000_000;
+}
+
+function formatMegabytes(bytes: number): string { return `${bytes / 1_000_000} MB`; }

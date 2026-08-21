@@ -200,9 +200,9 @@ const composer = new Composer({
   onValueChange: () => { conversationContext.refresh(); refreshComposerState(); },
   onAttach: () => artifactController.choose(),
   onDismissProject: showNewChatLanding,
-  onPreviewPasted: (kind, dataUrl, mimeType, name) => {
-    if (kind === "pdf") inspectorPanel.previewPdf(dataUrl, mimeType, name);
-    else inspectorPanel.previewImage(dataUrl, mimeType, name);
+  onPreviewPasted: (kind, url, mimeType, name) => {
+    if (kind === "pdf") inspectorPanel.previewPdf(url, mimeType, name);
+    else inspectorPanel.previewMedia(kind, url, mimeType, name);
   },
   onWorktreeCreated: async (path) => {
     const project = projects.activeProject();
@@ -345,6 +345,7 @@ const artifactController = new ArtifactController({
   getSessionId: () => projects.currentSessionId,
   isNewChat: () => conversationSessions.newChat,
   api,
+  uploadFile: (sessionId, file) => hostApi.uploadArtifact<Json>(sessionId, file),
   setSessionArtifacts: (items) => inspectorPanel.setSessionArtifacts(items),
   previewArtifact: (artifact, source, list) => inspectorPanel.previewArtifact(artifact, source, list),
   openInspector: () => inspectorPanel.open(),
@@ -453,11 +454,13 @@ const promptSubmission = new PromptSubmissionController({
   setDraft: (value) => composer.setDraft(value),
   resetWarmup: () => agentRuns.resetWarmup(),
   uploadAttachment: async (sessionId, attachment) => {
-    const artifact = await artifactController.uploadData(sessionId, {
-      name: attachment.kind === "image" ? `screenshot-${Date.now()}.png` : attachment.name,
-      mimeType: attachment.mimeType,
-      contentBase64: attachment.dataUrl.split(",")[1]!,
-    });
+    const artifact = attachment.file
+      ? await artifactController.uploadFile(sessionId, attachment.file)
+      : await artifactController.uploadData(sessionId, {
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          contentBase64: attachment.dataUrl?.split(",")[1] ?? "",
+        });
     return artifact as { id: string; name: string; mimeType: string; kind: string; byteSize?: number };
   },
   discardUploadedAttachment: (sessionId, artifactId) => artifactController.discardUpload(sessionId, artifactId),

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from "electron";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -9,7 +9,7 @@ import { isAllowedExternalUrl, validateHostUrl } from "./security.js";
 import { readProjectResource } from "./resource-preview.js";
 import electronUpdater from "electron-updater";
 import { HostSupervisor } from "./host-supervisor.js";
-import { HostClient, HostRequestError, hostRequestDeadline } from "./host-client.js";
+import { HOST_REQUEST_DEADLINES, HostClient, HostRequestError, hostRequestDeadline } from "./host-client.js";
 import { createModelUnloadOnQuitHandler } from "./model-unload-on-quit.js";
 import { readThemeColor } from "./theme-token.js";
 import { InAppBrowserController } from "./in-app-browser-main.js";
@@ -53,6 +53,44 @@ ipcMain.handle("fitz:request", async (event, input: unknown) => {
       ...(input.body !== undefined ? { body: input.body } : {}),
       responseType,
       timeoutMs: hostRequestDeadline(path, responseType),
+      signal: controller.signal,
+    });
+    if (result.status === 401) localDeviceReady = false;
+    return result;
+  } catch (error) {
+    if (error instanceof HostRequestError && error.code === "network") {
+      localHostReady = false;
+      localDeviceReady = false;
+    }
+    throw error;
+  } finally {
+    event.sender.removeListener("destroyed", cancel);
+  }
+});
+ipcMain.handle("fitz:upload-artifact", async (event, input: unknown) => {
+  if (!isRecord(input)) throw new TypeError("Artifact upload must be an object");
+  if (!await ensureLocalHost()) throw new Error("The local Fitz service is still starting");
+  if (!await ensureLocalDevice()) throw new Error("The desktop could not initialize its local Fitz service");
+  const sessionId = requireBoundedText(input.sessionId, "Session ID", 200);
+  const path = requireLocalPath(input.path);
+  const name = requireBoundedText(input.name, "Artifact name", 255);
+  const mimeType = requireBoundedText(input.mimeType, "Artifact MIME type", 200);
+  const stat = statSync(path);
+  if (!stat.isFile()) throw new Error("The selected artifact is not a file");
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  event.sender.once("destroyed", cancel);
+  try {
+    const result = await hostClient.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/artifacts/content`, {
+      method: "POST",
+      rawBody: createReadStream(path) as unknown as BodyInit,
+      headers: {
+        "content-type": "application/x-fitz-artifact",
+        "content-length": String(stat.size),
+        "x-fitz-artifact-name": encodeURIComponent(name),
+        "x-fitz-artifact-mime": mimeType,
+      },
+      timeoutMs: HOST_REQUEST_DEADLINES.diagnostic,
       signal: controller.signal,
     });
     if (result.status === 401) localDeviceReady = false;
@@ -357,7 +395,7 @@ function desktopErrorMessage(error: unknown): string { return error instanceof E
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function commandLineValue(name: string): string | undefined { const prefix = `--${name}=`; return process.argv.find((value) => value.startsWith(prefix))?.slice(prefix.length); }
 function isLoopbackHost(value: URL): boolean { const name = value.hostname.replace(/^\[|\]$/g, "").toLowerCase(); return name === "127.0.0.1" || name === "::1" || name === "localhost"; }
-function requireLocalPath(value: unknown): string { if (typeof value !== "string" || !isAbsolute(value)) throw new Error("A valid absolute project path is required"); return value; }
+function requireLocalPath(value: unknown): string { if (typeof value !== "string" || !isAbsolute(value)) throw new Error("A valid absolute local path is required"); return value; }
 function requireBranchName(value: unknown): string { if (typeof value !== "string" || !value.trim() || value.length > 200 || /[\s~^:?*\\\[\]]/.test(value) || value.includes("..") || value.includes("@{")) throw new Error("Invalid branch name"); return value.trim(); }
 function requireBoundedText(value: unknown, label: string, maximum: number): string { if (typeof value !== "string" || !value.trim() || value.trim().length > maximum) throw new Error(`${label} is required and must be at most ${maximum} characters`); return value.trim(); }
 function deviceTokenPath(): string { return deviceTokenPathForOrigin(new URL(hostUrl).origin); }

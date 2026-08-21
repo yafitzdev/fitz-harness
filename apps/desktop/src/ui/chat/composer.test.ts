@@ -361,7 +361,7 @@ describe("Composer", () => {
 
   it("rejects attach-button files over 5 MB and ignores attach while running", () => {
     const { composer, calls } = setup();
-    composer.attachFile(new File([new Uint8Array(5_000_001)], "big.png", { type: "image/png" }));
+    composer.attachFile(new File([new Uint8Array(5_000_001)], "big.bin", { type: "application/octet-stream" }));
     expect(calls.onError).toHaveBeenCalledWith("Attached file is too large (max 5 MB)");
     expect(composer.root.querySelectorAll(".attachment-chip").length).toBe(0);
 
@@ -372,13 +372,25 @@ describe("Composer", () => {
 
   it("rejects pasted files over 5 MB and ignores pastes while running", () => {
     const { composer, calls } = setup();
-    pasteFiles(composer, [{ bytes: [new Uint8Array(5_000_001)], name: "big.png", mimeType: "image/png" }]);
-    expect(calls.onError).toHaveBeenCalledWith("Pasted file is too large (max 5 MB)");
+    pasteFiles(composer, [{ bytes: [new Uint8Array(5_000_001)], name: "big.pdf", mimeType: "application/pdf" }]);
+    expect(calls.onError).toHaveBeenCalledWith("Pasted pdf is too large (max 5 MB)");
     expect(composer.root.querySelectorAll(".attachment-chip").length).toBe(0);
 
     const running = setup({ isRunning: () => true });
     pasteFiles(running.composer, [{ bytes: ["x"], name: "mid.png", mimeType: "image/png" }]);
     expect(running.composer.root.querySelectorAll(".attachment-chip").length).toBe(0);
+  });
+
+  it("stages video and audio files as typed, previewable reference chips", () => {
+    const { composer } = setup();
+    composer.attachFile(new File(["video"], "motion.mp4", { type: "video/mp4" }));
+    composer.attachFile(new File(["audio"], "voice.wav", { type: "audio/wav" }));
+    expect(composer.root.querySelectorAll(".video-chip")).toHaveLength(1);
+    expect(composer.root.querySelectorAll(".audio-chip")).toHaveLength(1);
+    expect(composer.peekPastedAttachments().map(({ kind, name, file }) => ({ kind, name, hasFile: Boolean(file) }))).toEqual([
+      { kind: "video", name: "motion.mp4", hasFile: true },
+      { kind: "audio", name: "voice.wav", hasFile: true },
+    ]);
   });
 
   it("adds artifact chips and clears them while preserving pasted chips", async () => {

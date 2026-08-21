@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { RouteNotFoundError, type RouteResolver } from "@fitz/inference-core";
-import { classifyArtifact, normalizeMimeType } from "@fitz/media";
-import { LOCAL_MAIN_CONTEXT_TOKENS, type SessionQuerySection, type SessionQueryService, type SessionRecord } from "@fitz/protocol";
+import { classifyArtifact, inferMimeTypeFromFilename, normalizeMimeType } from "@fitz/media";
+import { LOCAL_MAIN_CONTEXT_TOKENS, MEDIA_REFERENCE_MAX_BYTES, type SessionQuerySection, type SessionQueryService, type SessionRecord } from "@fitz/protocol";
 import type { AuthenticatedPrincipal, SecurityService } from "@fitz/security";
-import type { ArtifactRepository, SqliteStore } from "@fitz/storage";
+import type { ArtifactRepository, BlobSource, SqliteStore } from "@fitz/storage";
 import type { ContextManager } from "@fitz/context";
 import { ConversationTurnError, type ConversationTurnService } from "./conversation-turns.js";
 
@@ -29,6 +29,32 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
   const principalFor = (request: object) => principals.get(request);
   const sessionFor = (sessionId: string) => store.getSession(sessionId);
   const canAccess = (ownerUserId: string | undefined, request: object) => canAccessOwner(principalFor(request), ownerUserId);
+  const persistArtifact = async (input: {
+    sessionId: string;
+    principal: AuthenticatedPrincipal | undefined;
+    name: string;
+    mimeType: string;
+    source: BlobSource;
+    maxBytes: number;
+    metadata?: Record<string, unknown>;
+  }) => {
+    const artifact = await artifacts.create({
+      id: randomUUID(),
+      sessionId: input.sessionId,
+      name: input.name,
+      mimeType: input.mimeType,
+      kind: classifyArtifact(input.mimeType, input.name),
+      createdAt: new Date().toISOString(),
+      metadata: input.metadata ?? {},
+      ...(input.principal ? { createdByUserId: input.principal.user.id } : {}),
+    }, input.source, { maxBytes: input.maxBytes });
+    security?.audit("artifact.created", input.principal?.user.id, "artifact", artifact.id, {
+      sessionId: input.sessionId,
+      mimeType: input.mimeType,
+      byteSize: artifact.byteSize,
+    });
+    return artifact;
+  };
 
   app.get("/api/v1/projects", async (request) => {
     const principal = principalFor(request);
@@ -376,21 +402,36 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
       const mimeType = normalizeMimeType(requireString(body.mimeType, "mimeType"));
       const content = decodeBase64(body.contentBase64);
       if (content.byteLength > 5_000_000) throw new TypeError("Artifact exceeds the 5000000 byte limit");
-      const artifact = await artifacts.create({
-        id: randomUUID(),
+      const artifact = await persistArtifact({
         sessionId: session.id,
+        principal,
         name,
         mimeType,
-        kind: classifyArtifact(mimeType, name),
-        createdAt: new Date().toISOString(),
+        source: content,
+        maxBytes: 5_000_000,
         metadata: isRecord(body.metadata) ? body.metadata : {},
-        ...(principal ? { createdByUserId: principal.user.id } : {}),
-      }, content, { maxBytes: 5_000_000 });
-      security?.audit("artifact.created", principal?.user.id, "artifact", artifact.id, {
-        sessionId: session.id,
-        mimeType,
-        byteSize: artifact.byteSize,
       });
+      return reply.code(201).send({ data: artifact });
+    } catch (error) {
+      return reply.code(400).send({ error: errorMessage(error) });
+    }
+  });
+
+  app.post("/api/v1/sessions/:sessionId/artifacts/content", async (request, reply) => {
+    try {
+      const session = sessionFor((request.params as { sessionId: string }).sessionId);
+      if (!session) return reply.code(404).send({ error: "Session not found" });
+      const principal = principalFor(request);
+      if (!canAccessOwner(principal, session.ownerUserId)) return reply.code(403).send({ error: "Session access denied" });
+      const encodedName = singleHeader(request.headers["x-fitz-artifact-name"], "x-fitz-artifact-name");
+      const name = decodeArtifactName(encodedName);
+      const mimeType = uploadMimeType(singleHeader(request.headers["x-fitz-artifact-mime"], "x-fitz-artifact-mime"), name);
+      const maxBytes = artifactUploadLimit(mimeType);
+      const declaredLength = request.headers["content-length"] === undefined ? undefined : Number(request.headers["content-length"]);
+      if (declaredLength !== undefined && (!Number.isSafeInteger(declaredLength) || declaredLength < 0)) throw new TypeError("Invalid artifact Content-Length");
+      if (declaredLength !== undefined && declaredLength > maxBytes) throw new TypeError(`Artifact exceeds the ${maxBytes} byte limit`);
+      if (!isBlobSource(request.body)) throw new TypeError("Artifact body must be a binary stream");
+      const artifact = await persistArtifact({ sessionId: session.id, principal, name, mimeType, source: request.body, maxBytes });
       return reply.code(201).send({ data: artifact });
     } catch (error) {
       return reply.code(400).send({ error: errorMessage(error) });
@@ -562,6 +603,39 @@ function decodeBase64(value: unknown): Buffer {
 
 function safeFilename(value: string): string {
   return value.replace(/[\r\n"\\/]/g, "_").slice(0, 160) || "artifact";
+}
+
+function singleHeader(value: string | string[] | undefined, name: string): string {
+  if (typeof value !== "string" || !value) throw new TypeError(`${name} header is required`);
+  return value;
+}
+
+function decodeArtifactName(value: string): string {
+  let decoded: string;
+  try { decoded = decodeURIComponent(value); }
+  catch { throw new TypeError("x-fitz-artifact-name must be URI encoded"); }
+  const name = requireString(decoded, "Artifact name");
+  if (name.length > 255 || /[\0\r\n]/.test(name)) throw new TypeError("Artifact name is invalid");
+  return name;
+}
+
+function artifactUploadLimit(mimeType: string): number {
+  if (mimeType.startsWith("image/")) return MEDIA_REFERENCE_MAX_BYTES.image;
+  if (mimeType.startsWith("video/")) return MEDIA_REFERENCE_MAX_BYTES.video;
+  if (mimeType.startsWith("audio/")) return MEDIA_REFERENCE_MAX_BYTES.audio;
+  return 5_000_000;
+}
+
+function uploadMimeType(value: string, name: string): string {
+  const declared = normalizeMimeType(value);
+  if (declared !== "application/octet-stream") return declared;
+  return inferMimeTypeFromFilename(name, declared);
+}
+
+function isBlobSource(value: unknown): value is BlobSource {
+  return value instanceof Uint8Array
+    || (typeof value === "object" && value !== null && Symbol.asyncIterator in value
+      && typeof (value as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] === "function");
 }
 
 function resolveByteRange(header: string | undefined, total: number): { start: number; end: number } | "unsatisfiable" | null {

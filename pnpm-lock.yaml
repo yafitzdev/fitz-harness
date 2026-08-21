@@ -181,6 +181,9 @@ importers:
       '@fitz/inference-core':
         specifier: workspace:*
         version: link:../inference-core
+      '@fitz/media':
+        specifier: workspace:*
+        version: link:../media
       '@fitz/protocol':
         specifier: workspace:*
         version: link:../protocol

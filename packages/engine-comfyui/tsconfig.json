@@ -10,6 +10,7 @@
   "exclude": ["src/**/*.test.ts"],
   "references": [
     { "path": "../protocol" },
+    { "path": "../media" },
     { "path": "../inference-core" }
   ]
 }

@@ -71,10 +71,11 @@
 .attachment-preview { width: 100%; height: 100%; display: grid; align-content: end; padding: 8px; overflow: hidden; border-radius: inherit; background: transparent; color: inherit; cursor: pointer; text-align: left; }
 .attachment-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .attachment-chip small { color: var(--muted); font-size: 10px; }
-.image-chip { padding: 2px; }
-.image-chip .attachment-preview { display: block; padding: 0; border-radius: 10px; cursor: zoom-in; }
-.image-chip img { width: 100%; height: 100%; display: block; object-fit: cover; border-radius: inherit; }
-.image-chip .attachment-preview:hover img, .image-chip .attachment-preview:focus-visible img { outline: 2px solid var(--accent); outline-offset: -2px; }
+.image-chip, .video-chip { padding: 2px; }
+.image-chip .attachment-preview, .video-chip .attachment-preview { display: block; padding: 0; border-radius: 10px; cursor: zoom-in; }
+.image-chip img, .video-chip video { width: 100%; height: 100%; display: block; object-fit: cover; border-radius: inherit; }
+.image-chip .attachment-preview:hover img, .image-chip .attachment-preview:focus-visible img,
+.video-chip .attachment-preview:hover video, .video-chip .attachment-preview:focus-visible video { outline: 2px solid var(--accent); outline-offset: -2px; }
 .pdf-chip .attachment-preview { display: grid; grid-template-rows: 1fr auto; place-items: center; gap: 3px; padding: 8px; text-align: center; cursor: zoom-in; }
 .pdf-chip .attachment-preview svg { width: 22px; height: 22px; color: var(--muted); }
 .pdf-chip .attachment-preview:hover svg, .pdf-chip .attachment-preview:focus-visible svg { color: var(--text); }
@@ -82,6 +83,8 @@
 .file-chip .file-chip-body { width: 100%; height: 100%; display: grid; grid-template-rows: 1fr auto; place-items: center; gap: 3px; padding: 8px; text-align: center; }
 .file-chip .file-chip-body svg { width: 22px; height: 22px; color: var(--muted); }
 .file-chip .file-name { max-width: 100%; }
+.audio-chip .attachment-preview { display: grid; grid-template-rows: 1fr auto; place-items: center; gap: 3px; padding: 8px; text-align: center; }
+.audio-chip .attachment-preview svg { width: 26px; height: 26px; color: var(--muted); }
 .attachment-remove { position: absolute; top: -7px; right: -7px; width: 22px; height: 22px; display: grid; place-items: center; padding: 0 0 2px; border: 1px solid var(--grey-500); border-radius: 50%; background: var(--grey-900); color: var(--grey-100); font-size: 17px; line-height: 1; cursor: pointer; }
 .attachment-remove:hover { background: var(--text); transform: scale(1.06); }
 .prompt-row { position: relative; z-index: 1; display: flex; align-items: flex-start; min-width: 0; }

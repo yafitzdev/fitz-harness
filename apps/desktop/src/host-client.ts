@@ -6,6 +6,9 @@ export type HostResponseType = "text" | "base64";
 export interface HostRequestOptions {
   method?: string;
   body?: unknown;
+  /** Binary/streaming body used only by trusted main-process call sites. */
+  rawBody?: BodyInit;
+  headers?: Readonly<Record<string, string>>;
   responseType?: HostResponseType;
   authenticated?: boolean;
   timeoutMs?: number;
@@ -62,17 +65,22 @@ export class HostClient {
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const signal = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
     const token = options.authenticated === false ? undefined : this.#getToken();
+    if (options.body !== undefined && options.rawBody !== undefined) throw new TypeError("Host request cannot have JSON and raw bodies together");
+    const init: RequestInit & { duplex?: "half" } = {
+      method,
+      headers: {
+        accept: options.responseType === "base64" ? "*/*" : "application/json",
+        ...(options.body !== undefined ? { "content-type": "application/json" } : {}),
+        ...options.headers,
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+      ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
+      ...(options.rawBody !== undefined ? { body: options.rawBody } : {}),
+      signal,
+    };
+    if (options.rawBody !== undefined && isStreamingBody(options.rawBody)) init.duplex = "half";
     try {
-      return await this.#fetch(new URL(safePath, this.#origin), {
-        method,
-        headers: {
-          accept: options.responseType === "base64" ? "*/*" : "application/json",
-          ...(options.body !== undefined ? { "content-type": "application/json" } : {}),
-          ...(token ? { authorization: `Bearer ${token}` } : {}),
-        },
-        ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
-        signal,
-      });
+      return await this.#fetch(new URL(safePath, this.#origin), init);
     } catch (error) {
       if (options.signal?.aborted) throw new HostRequestError("cancelled", `The host request to ${safePath} was cancelled`, false, error);
       if (timeoutSignal.aborted) throw new HostRequestError("timeout", `The host did not respond to ${safePath} within ${timeoutMs} ms`, true, error);
@@ -89,6 +97,11 @@ export class HostClient {
         : await response.text(),
     };
   }
+}
+
+function isStreamingBody(value: BodyInit): boolean {
+  return typeof value === "object" && value !== null
+    && ("getReader" in value || Symbol.asyncIterator in value);
 }
 
 function normalizeMethod(value: string | undefined): HostRequestMethod {

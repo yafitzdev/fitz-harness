@@ -61,6 +61,12 @@ export class ResourceInspector {
 
   /** Previews a locally pasted image (data URL) in the Inspector. */
   previewImage(dataUrl: string, mimeType: string, name: string): void {
+    this.previewMedia("image", dataUrl, mimeType, name);
+  }
+
+  /** Previews locally staged image/video/audio media without materializing it
+   * through the host first. Picker files arrive as blob URLs. */
+  previewMedia(kind: "image" | "video" | "audio", url: string, _mimeType: string, name: string): void {
     this.#revokeObjectUrl();
     this.#resource = undefined;
     this.#preview = undefined;
@@ -68,11 +74,12 @@ export class ResourceInspector {
     this.#setOpenButton(true);
     this.#options.openPanel();
     this.#options.preview.replaceChildren();
-    const img = document.createElement("img");
-    img.className = "inspector-media";
-    img.alt = name;
-    img.src = dataUrl;
-    this.#options.preview.append(img);
+    const node = document.createElement(kind === "image" ? "img" : kind) as HTMLImageElement | HTMLMediaElement;
+    node.className = "inspector-media";
+    if (node instanceof HTMLImageElement) node.alt = name;
+    else node.controls = true;
+    node.src = url;
+    this.#options.preview.append(node);
   }
 
   /** Previews a locally pasted PDF (data URL) in the Inspector. */
@@ -95,7 +102,7 @@ export class ResourceInspector {
     // Chromium's separate sandboxed process. Chromium's viewer also renders
     // data: URL PDFs unreliably, so the content is served as a same-process
     // blob URL instead.
-    frame.src = this.#objectUrl(this.#base64FromDataUrl(dataUrl), mimeType);
+    frame.src = dataUrl.startsWith("blob:") ? dataUrl : this.#objectUrl(this.#base64FromDataUrl(dataUrl), mimeType);
     this.#options.preview.append(frame);
   }
 

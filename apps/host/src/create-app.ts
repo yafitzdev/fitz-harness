@@ -176,6 +176,10 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     // JSON body limit: must fit the largest artifact (5 MB) as padded base64 plus envelope.
     bodyLimit: 8 * 1024 * 1024,
   });
+  // Large local media references bypass the JSON/base64 boundary. The route
+  // streams this body directly into the artifact repository, whose own limit
+  // remains the authoritative byte-count check even without Content-Length.
+  app.addContentTypeParser("application/x-fitz-artifact", (_request, payload, done) => done(null, payload));
   const store = options.store ?? SqliteStore.memory();
   const artifacts = options.artifacts ?? new ArtifactRepository(store, new MemoryBlobStore());
   const storageDurability = options.storageDurability;

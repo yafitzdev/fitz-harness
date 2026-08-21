@@ -17,6 +17,15 @@ export function isActiveMediaJobStatus(status: string): status is ActiveMediaJob
 
 export type MediaGenerationOperation = "generate" | "edit" | "animate" | "reference";
 
+/** Upload ceilings shared by the desktop preflight and the authoritative host
+ * stream boundary. Ref2VA source clips are short, but can be materially larger
+ * than ordinary chat attachments. */
+export const MEDIA_REFERENCE_MAX_BYTES: Readonly<Record<MediaModality, number>> = {
+  image: 25_000_000,
+  video: 500_000_000,
+  audio: 200_000_000,
+};
+
 /** Durable or provider-addressed media used to condition a generation. The
  * modality is optional for legacy image-only callers; the host resolves it
  * from Fitz artifact metadata and materializes it before engine submission. */

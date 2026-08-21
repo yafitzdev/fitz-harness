@@ -9,6 +9,7 @@ function setup(overrides: { sessionId?: string; newChat?: boolean; artifacts?: R
   const pickButton = document.createElement("button");
   const calls = {
     api: vi.fn(overrides.api ?? (async () => ({ data: overrides.artifacts ?? [] }))),
+    uploadFile: vi.fn(async () => ({ data: { id: "streamed" } })),
     setSessionArtifacts: vi.fn(),
     previewArtifact: vi.fn(),
     openInspector: vi.fn(),
@@ -99,6 +100,16 @@ describe("ArtifactController", () => {
 
     await controller.uploadData("session-1", { name: "dropped.txt", mimeType: "text/plain", contentBase64: "aGVsbG8=" });
 
+    expect(calls.setSessionArtifacts).toHaveBeenLastCalledWith([artifact]);
+  });
+
+  it("records a file streamed through the main process in the same repository", async () => {
+    const artifact = { id: "video", name: "motion.mp4", sha256: "def", byteSize: 5, kind: "video" };
+    const { controller, calls } = setup({ sessionId: "session-1" });
+    calls.uploadFile.mockResolvedValueOnce({ data: artifact });
+    const file = new File(["video"], "motion.mp4", { type: "video/mp4" });
+    await expect(controller.uploadFile("session-1", file)).resolves.toEqual(artifact);
+    expect(calls.uploadFile).toHaveBeenCalledWith("session-1", file);
     expect(calls.setSessionArtifacts).toHaveBeenLastCalledWith([artifact]);
   });
 

@@ -16,6 +16,7 @@ import type {
   StopMode,
   StopReport,
 } from "@fitz/inference-core";
+import { extensionForMimeType } from "@fitz/media";
 import type {
   LaunchSpec,
   MediaGenerationParams,
@@ -430,7 +431,7 @@ function mediaModalityForMimeType(mimeType: string): MediaModality | undefined {
 }
 
 function mediaExtension(mimeType: string, modality: MediaModality): string {
-  const extension = Object.entries(EXTENSION_MIME).find(([, candidate]) => candidate === mimeType)?.[0];
+  const extension = extensionForMimeType(mimeType);
   if (extension) return extension;
   return modality === "image" ? "png" : modality === "video" ? "mp4" : "wav";
 }
@@ -481,10 +482,14 @@ const EXTENSION_MIME: Record<string, string> = {
   mp4: "video/mp4",
   webm: "video/webm",
   ogv: "video/ogg",
+  mov: "video/quicktime",
+  mkv: "video/x-matroska",
   wav: "audio/wav",
   mp3: "audio/mpeg",
   flac: "audio/flac",
   ogg: "audio/ogg",
+  m4a: "audio/mp4",
+  aac: "audio/aac",
 };
 
 function mimeTypeForOutput(file: ComfyUIFileRef): string {

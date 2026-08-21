@@ -22,6 +22,19 @@ describe("HostClient", () => {
     }));
   });
 
+  it("forwards a streaming artifact body with the Node fetch duplex contract", async () => {
+    const request = vi.fn<typeof fetch>(async () => new Response("{}", { status: 201 }));
+    const client = new HostClient({ origin: new URL("http://127.0.0.1:8787"), getToken: () => "secret", fetch: request });
+    const body = new ReadableStream<Uint8Array>({ start: (controller) => { controller.enqueue(new Uint8Array([1])); controller.close(); } });
+    await client.request("/api/v1/sessions/s1/artifacts/content", {
+      method: "POST", rawBody: body, headers: { "content-type": "application/x-fitz-artifact" },
+    });
+    expect(request).toHaveBeenCalledWith(expect.any(URL), expect.objectContaining({
+      method: "POST", body, duplex: "half",
+      headers: expect.objectContaining({ "content-type": "application/x-fitz-artifact", authorization: "Bearer secret" }),
+    }));
+  });
+
   it("turns deadline expiry into a retryable typed error", async () => {
     const request = vi.fn<typeof fetch>(async (_url, init) => new Promise<Response>((_resolve, reject) => {
       init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });

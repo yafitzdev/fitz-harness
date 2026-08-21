@@ -248,6 +248,12 @@ export class InspectorPanel {
     tab.inspector!.previewImage(dataUrl, mimeType, name);
   }
 
+  previewMedia(kind: "image" | "video" | "audio", url: string, mimeType: string, name: string): void {
+    const tab = this.#addResourceTab(`pasted:${++this.#pastedCounter}`, name);
+    this.#activateTab(tab.id);
+    tab.inspector!.previewMedia(kind, url, mimeType, name);
+  }
+
   /** Previews a locally pasted PDF (data URL) in its own tab. */
   previewPdf(dataUrl: string, mimeType: string, name: string): void {
     const tab = this.#addResourceTab(`pasted:${++this.#pastedCounter}`, name);

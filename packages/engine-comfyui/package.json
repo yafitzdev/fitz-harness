@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@fitz/inference-core": "workspace:*",
+    "@fitz/media": "workspace:*",
     "@fitz/protocol": "workspace:*"
   }
 }

@@ -489,10 +489,10 @@ describe("PromptSubmissionController", () => {
     const request = mediaCreationRequest(options);
     expect(options.uploadAttachment).toHaveBeenCalledWith("session-1", attachment);
     expect(options.consumeAttachments).toHaveBeenCalledWith([attachment]);
-    expect(request.refs).toEqual([{ artifactId: "artifact-1" }]);
+    expect(request.refs).toEqual([{ artifactId: "artifact-1", modality: "image" }]);
 
     await request.submit({ prompt: "make it match" });
-    expect(options.submitMedia).toHaveBeenCalledWith(expect.objectContaining({ operation: "edit", refs: [{ artifactId: "artifact-1" }] }));
+    expect(options.submitMedia).toHaveBeenCalledWith(expect.objectContaining({ operation: "edit", refs: [{ artifactId: "artifact-1", modality: "image" }] }));
     expect(options.startRun).not.toHaveBeenCalled();
   });
 
@@ -501,11 +501,37 @@ describe("PromptSubmissionController", () => {
     const { controller, options } = setup({ peekAttachments: () => [attachment], draft: () => ({ content: "gentle camera orbit", mediaCommand: "video" }) });
     await controller.submit();
     const request = mediaCreationRequest(options);
-    expect(request.refs).toEqual([{ artifactId: "artifact-1" }]);
+    expect(request.refs).toEqual([{ artifactId: "artifact-1", modality: "image" }]);
     await request.submit({ prompt: "gentle camera orbit", durationSeconds: 4 });
     expect(options.submitMedia).toHaveBeenCalledWith(expect.objectContaining({
-      operation: "animate", refs: [{ artifactId: "artifact-1" }], durationSeconds: 4,
+      operation: "animate", refs: [{ artifactId: "artifact-1", modality: "image" }], durationSeconds: 4,
     }));
+  });
+
+  it("submits mixed image, video, and audio inputs through Ref2VA", async () => {
+    const attachments = [
+      { kind: "image" as const, file: new File(["image"], "face.png", { type: "image/png" }), mimeType: "image/png", name: "face.png" },
+      { kind: "video" as const, file: new File(["video"], "motion.mp4", { type: "video/mp4" }), mimeType: "video/mp4", name: "motion.mp4" },
+      { kind: "audio" as const, file: new File(["audio"], "voice.wav", { type: "audio/wav" }), mimeType: "audio/wav", name: "voice.wav" },
+    ];
+    let artifact = 0;
+    const { controller, options } = setup({
+      peekAttachments: () => attachments,
+      draft: () => ({ content: "<Picture 1> follows <Video 1> with <Audio 2>", mediaCommand: "video" }),
+      uploadAttachment: vi.fn(async (_sessionId, attachment) => ({
+        id: `artifact-${++artifact}`, name: attachment.name, mimeType: attachment.mimeType, kind: attachment.kind,
+      })),
+    });
+    await controller.submit();
+    const request = mediaCreationRequest(options);
+    expect(request.refs).toEqual([
+      { artifactId: "artifact-1", modality: "image" },
+      { artifactId: "artifact-2", modality: "video" },
+      { artifactId: "artifact-3", modality: "audio" },
+    ]);
+    await request.submit({ prompt: "use the references" });
+    expect(options.submitMedia).toHaveBeenCalledWith(expect.objectContaining({ operation: "reference", refs: request.refs }));
+    expect(options.consumeAttachments).toHaveBeenCalledWith(attachments);
   });
 
   it("does not upload refs for audio commands", async () => {

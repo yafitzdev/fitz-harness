@@ -70,7 +70,15 @@ describe("MediaCreationForm", () => {
   it("shows the reference count when reference images are attached", () => {
     const { form, messages } = setup();
     show(form, { refs: [{ artifactId: "a" }, { artifactId: "b" }] });
-    expect(cardOf(messages).querySelector(".media-approval-references")!.textContent).toBe("2 references attached");
+    expect(cardOf(messages).querySelector(".media-approval-references")!.textContent).toBe("2 references attached · 2 images");
+  });
+
+  it("explains Ref2VA prompt tags for mixed video references", () => {
+    const { form, messages } = setup();
+    show(form, { modality: "video", refs: [{ artifactId: "picture", modality: "image" }, { artifactId: "motion", modality: "video" }, { artifactId: "voice", modality: "audio" }] });
+    expect(cardOf(messages).textContent).toContain("1 image · 1 video · 1 audio");
+    expect(cardOf(messages).textContent).toContain("<Picture 1>");
+    expect(cardOf(messages).textContent).toContain("soundtrack is paired automatically");
   });
 
   it("collects prompt and parameters on create and dismisses the card", async () => {

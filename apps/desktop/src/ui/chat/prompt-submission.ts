@@ -1,4 +1,4 @@
-import type { AgentEffort, MediaModality } from "@fitz/protocol";
+import type { AgentEffort, MediaGenerationReference, MediaModality } from "@fitz/protocol";
 import type { ComposerSubmission, PastedAttachment } from "./composer.js";
 import type { MediaCreationParams } from "./media-creation-form.js";
 import type { MessageAttachment } from "./conversation-message-feed.js";
@@ -53,7 +53,7 @@ export interface PromptSubmissionOptions {
     routeId: string;
     clientRequestId: string;
     modality: MediaModality;
-    operation?: "generate" | "edit" | "animate";
+    operation?: "generate" | "edit" | "animate" | "reference";
     prompt: string;
     sessionId: string;
     size?: string;
@@ -62,13 +62,13 @@ export interface PromptSubmissionOptions {
     lyrics?: string;
     durationSeconds?: number;
     fps?: number;
-    refs?: Array<{ artifactId: string }>;
+    refs?: MediaGenerationReference[];
   }) => Promise<{ id: string }>;
   /** Shows the inline media creation card (prompt + parameters) in the chat for a media command. */
   showMediaCreation: (request: {
     modality: MediaModality;
     prompt: string;
-    refs: Array<{ artifactId: string }>;
+    refs: MediaGenerationReference[];
     submit: (params: MediaCreationParams) => Promise<void>;
   }) => void;
   /** Renders the queued media card and starts following the job (separate from agent runs). */
@@ -178,10 +178,12 @@ export class PromptSubmissionController {
     if (this.#options.isSessionCurrent?.(sessionId) === false) return;
 
     this.#options.resetWarmup();
-    // Media generation only consumes pasted reference images (and audio takes
-    // no references); regular messages upload every attachment for the agent.
+    // Media generation consumes only modalities its command can reference;
+    // unrelated files stay staged for the next regular message.
     const uploadable = mediaCommand
-      ? mediaCommand === "audio" ? [] : attachments.filter((attachment) => attachment.kind === "image")
+      ? attachments.filter((attachment) => mediaCommand === "video"
+        ? attachment.kind === "image" || attachment.kind === "video" || attachment.kind === "audio"
+        : mediaCommand === "image" && attachment.kind === "image")
       : attachments;
     const retryable = !existingUserMessage && !mediaCommand && this.#matchesRetryableRun(sessionId, content, settings, attachments)
       ? this.#retryableRun
@@ -212,8 +214,8 @@ export class PromptSubmissionController {
     // straight to the media pipeline so no model can refuse a tool call.
     if (mediaCommand) {
       const refs = uploaded
-        .filter(({ attachment }) => attachment.kind === "image")
-        .map(({ artifact }) => ({ artifactId: artifact.id }));
+        .filter(({ attachment }) => attachment.kind === "image" || attachment.kind === "video" || attachment.kind === "audio")
+        .map(({ artifact, attachment }): MediaGenerationReference => ({ artifactId: artifact.id, modality: attachment.kind as MediaModality }));
       const displayContent = `/${mediaCommand}${content ? ` ${content}` : ""}`;
       const retryableMedia = this.#retryableMediaMessage?.sessionId === sessionId
         && this.#retryableMediaMessage.displayContent === displayContent
@@ -260,7 +262,8 @@ export class PromptSubmissionController {
               clientRequestId: mediaJobRequestId,
               modality: mediaCommand,
               ...(mediaCommand === "image" && refs.length > 0 ? { operation: "edit" } : {}),
-              ...(mediaCommand === "video" && refs.length > 0 ? { operation: "animate" } : {}),
+              ...(mediaCommand === "video" && refs.length === 1 && refs[0]?.modality === "image" ? { operation: "animate" } : {}),
+              ...(mediaCommand === "video" && (refs.length > 1 || refs[0]?.modality === "video" || refs[0]?.modality === "audio") ? { operation: "reference" } : {}),
               prompt: params.prompt,
               sessionId,
               ...(params.size ? { size: params.size } : {}),
@@ -269,7 +272,7 @@ export class PromptSubmissionController {
               ...(params.lyrics ? { lyrics: params.lyrics } : {}),
               ...(params.durationSeconds !== undefined ? { durationSeconds: params.durationSeconds } : {}),
               ...(params.fps !== undefined ? { fps: params.fps } : {}),
-              ...(refs.length > 0 && mediaCommand !== "audio" ? { refs } : {}),
+              ...(refs.length > 0 ? { refs } : {}),
             });
             if (this.#options.isSessionCurrent?.(sessionId) === false) return;
             this.#options.onMediaJobSubmitted(job.id, mediaCommand);
@@ -420,6 +423,6 @@ function messageAttachment(uploaded: UploadedAttachment): MessageAttachment {
     mimeType: uploaded.artifact.mimeType ?? uploaded.attachment.mimeType,
     kind: uploaded.artifact.kind ?? uploaded.attachment.kind,
     ...(uploaded.artifact.byteSize !== undefined ? { byteSize: uploaded.artifact.byteSize } : {}),
-    dataUrl: uploaded.attachment.dataUrl,
+    ...(uploaded.attachment.dataUrl ? { dataUrl: uploaded.attachment.dataUrl } : {}),
   };
 }

@@ -1,4 +1,4 @@
-import type { MediaModality } from "@fitz/protocol";
+import type { MediaGenerationReference, MediaModality } from "@fitz/protocol";
 import { validateMediaGenerationParams } from "@fitz/media";
 import { scrollToLatestIfFollowing } from "./conversation-scroll.js";
 import { createMediaCard } from "./media-card.js";
@@ -17,7 +17,7 @@ export interface MediaCreationParams {
 export interface MediaCreationRequest {
   modality: MediaModality;
   prompt: string;
-  refs: Array<{ artifactId: string }>;
+  refs: MediaGenerationReference[];
   /** Invoked when the user confirms; the card is dismissed on resolve and stays on reject. */
   onCreate: (params: MediaCreationParams) => Promise<void>;
 }
@@ -99,8 +99,20 @@ export class MediaCreationForm {
     if (request.refs.length > 0) {
       const references = document.createElement("p");
       references.className = "media-approval-references";
-      references.textContent = `${request.refs.length} reference${request.refs.length === 1 ? "" : "s"} attached`;
+      const counts = referenceCounts(request.refs);
+      const detail = (["image", "video", "audio"] as const)
+        .flatMap((modality) => counts[modality] ? [`${counts[modality]} ${modality}${counts[modality] === 1 ? "" : "s"}`] : [])
+        .join(" · ");
+      references.textContent = `${request.refs.length} reference${request.refs.length === 1 ? "" : "s"} attached${detail ? ` · ${detail}` : ""}`;
       form.append(references);
+      const usesRef2VA = request.modality === "video"
+        && (request.refs.length > 1 || request.refs.some((reference) => reference.modality === "video" || reference.modality === "audio"));
+      if (usesRef2VA) {
+        const hint = document.createElement("p");
+        hint.className = "media-approval-references";
+        hint.textContent = "Refer to inputs in the prompt as <Picture 1>, <Video 1>, and <Audio 1>. A video's soundtrack is paired automatically.";
+        form.append(hint);
+      }
     }
 
     const actions = document.createElement("footer");
@@ -209,4 +221,10 @@ export class MediaCreationForm {
     label.append(title, shell);
     return label;
   }
+}
+
+function referenceCounts(refs: readonly MediaGenerationReference[]): Record<MediaModality, number> {
+  const counts: Record<MediaModality, number> = { image: 0, video: 0, audio: 0 };
+  for (const reference of refs) counts[reference.modality ?? "image"]++;
+  return counts;
 }

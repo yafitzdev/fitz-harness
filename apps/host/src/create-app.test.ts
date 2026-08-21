@@ -1611,6 +1611,33 @@ describe("Fitz host", () => {
     const accepted = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/artifacts`, payload: { name: "medium.pdf", mimeType: "application/pdf", contentBase64: Buffer.alloc(2_000_000, 1).toString("base64") } }); expect(accepted.statusCode).toBe(201); expect(accepted.json().data).toEqual(expect.objectContaining({ kind: "pdf", byteSize: 2_000_000 }));
     const rejected = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/artifacts`, payload: { name: "big.pdf", mimeType: "application/pdf", contentBase64: Buffer.alloc(5_000_001, 1).toString("base64") } }); expect(rejected.statusCode).toBe(400); expect(String(rejected.json().error.message)).toContain("byte limit"); await runtime.app.close(); });
 
+  it("streams large media references without crossing the JSON/base64 boundary", async () => {
+    const runtime = createHost();
+    try {
+      const session = await runtime.app.inject({ method: "POST", url: "/api/v1/chats", payload: { title: "Media references" } });
+      const sessionId = session.json().data.id as string;
+      const payload = Buffer.alloc(5_000_001, 7);
+      const uploaded = await runtime.app.inject({
+        method: "POST",
+        url: `/api/v1/sessions/${sessionId}/artifacts/content`,
+        headers: {
+          "content-type": "application/x-fitz-artifact",
+          "x-fitz-artifact-name": encodeURIComponent("reference clip.mp4"),
+          "x-fitz-artifact-mime": "application/octet-stream",
+        },
+        payload,
+      });
+      expect(uploaded.statusCode, uploaded.body).toBe(201);
+      expect(uploaded.json().data).toEqual(expect.objectContaining({
+        name: "reference clip.mp4", mimeType: "video/mp4", kind: "video", byteSize: payload.byteLength,
+      }));
+      const content = await runtime.app.inject({ method: "GET", url: `/api/v1/artifacts/${uploaded.json().data.id}/content` });
+      expect(content.rawPayload).toEqual(payload);
+    } finally {
+      await runtime.app.close();
+    }
+  }, 20_000);
+
   it("serves artifact content with single-range byte support", async () => { const runtime = createHost(); const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Range" } }); const session = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${project.json().data.id}/sessions`, payload: { title: "Range" } }); const body = "0123456789abcdef"; const created = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${session.json().data.id}/artifacts`, payload: { name: "range.bin", mimeType: "application/octet-stream", contentBase64: Buffer.from(body).toString("base64") } }); const artifactId = created.json().data.id as string; const url = `/api/v1/artifacts/${artifactId}/content`;
     const full = await runtime.app.inject({ method: "GET", url }); expect(full.statusCode).toBe(200); expect(full.body).toBe(body); expect(full.headers["accept-ranges"]).toBe("bytes"); expect(full.headers["x-content-type-options"]).toBe("nosniff"); expect(full.headers["content-disposition"]).toContain("attachment");
     const head = await runtime.app.inject({ method: "GET", url, headers: { range: "bytes=0-4" } }); expect(head.statusCode).toBe(206); expect(head.body).toBe("01234"); expect(head.headers["content-range"]).toBe("bytes 0-4/16"); expect(head.headers["accept-ranges"]).toBe("bytes"); expect(head.headers["x-content-type-options"]).toBe("nosniff");
