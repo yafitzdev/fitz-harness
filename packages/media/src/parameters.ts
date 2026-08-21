@@ -15,6 +15,9 @@ export function validateMediaGenerationParams(params: MediaGenerationParams): Me
   if (params.operation === "animate" && params.refs?.length !== 1) {
     throw new TypeError("animate operation requires exactly one source image reference");
   }
+  if (params.operation === "reference" && !params.refs?.length) {
+    throw new TypeError("reference operation requires at least one media reference");
+  }
 
   positiveFinite(params.durationSeconds, "durationSeconds");
   positiveFinite(params.fps, "fps");

@@ -38,7 +38,9 @@ export interface ModalityCapabilities {
     maxDurationSeconds?: number;
     maxFps?: number;
     maxResolution?: string; // e.g. "768x768", "1280x720", "2560x1440"
-    maxRefs?: number; // H3 accepts up to 12 multimodal refs
+    maxRefs?: number;
+    /** Per-input ceilings for multimodal reference workflows. */
+    maxRefsByModality?: Partial<Record<MediaModality, number>>;
     maxFrames?: number;
   };
 }

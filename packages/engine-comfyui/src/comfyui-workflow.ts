@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import type { MediaGenerationParams, Recipe, ValidationIssue } from "@fitz/protocol";
+import type { MediaGenerationParams, MediaModality, Recipe, ValidationIssue } from "@fitz/protocol";
 
 /** Node-id → inputs overrides for injecting generation params into a pinned
  * workflow without requiring placeholder strings in the graph. */
@@ -7,6 +7,22 @@ export interface ComfyUIWorkflowOverrides {
   promptNodeId?: string;
   negativeNodeId?: string;
   seedNodeIds?: string[];
+}
+
+/** Declarative target for dynamic ComfyUI reference inputs. Prefixes are the
+ * flattened v3 input names accepted by `/prompt` (for example
+ * `ref_images.ref_image_`). The executor rebuilds those into Autogrow maps. */
+export interface ComfyUIReferenceBindings {
+  targetNodeId: string;
+  imageInputPrefix?: string;
+  videoInputPrefix?: string;
+  videoAudioInputPrefix?: string;
+  audioInputPrefix?: string;
+}
+
+export interface ComfyUIUploadedReference {
+  name: string;
+  modality: MediaModality;
 }
 
 /** Typed recipe configuration consumed by the ComfyUI engine adapter. */
@@ -23,6 +39,8 @@ export interface ComfyUIConfiguration {
   comfyuiWorkflow?: Readonly<Record<string, unknown>>;
   comfyuiEditWorkflow?: Readonly<Record<string, unknown>>;
   comfyuiAnimateWorkflow?: Readonly<Record<string, unknown>>;
+  comfyuiReferenceWorkflow?: Readonly<Record<string, unknown>>;
+  comfyuiReferenceBindings?: ComfyUIReferenceBindings;
   comfyuiWorkflowPath?: string;
   outputFormats?: string[];
   defaults?: Readonly<Record<string, unknown>>;
@@ -46,6 +64,8 @@ export function readComfyUIConfiguration(recipe: Recipe): ComfyUIConfiguration {
     ...(value.comfyuiWorkflow !== undefined ? { comfyuiWorkflow: parseWorkflowValue(value.comfyuiWorkflow) } : {}),
     ...(value.comfyuiEditWorkflow !== undefined ? { comfyuiEditWorkflow: parseWorkflowValue(value.comfyuiEditWorkflow) } : {}),
     ...(value.comfyuiAnimateWorkflow !== undefined ? { comfyuiAnimateWorkflow: parseWorkflowValue(value.comfyuiAnimateWorkflow) } : {}),
+    ...(value.comfyuiReferenceWorkflow !== undefined ? { comfyuiReferenceWorkflow: parseWorkflowValue(value.comfyuiReferenceWorkflow) } : {}),
+    ...(value.comfyuiReferenceBindings !== undefined ? { comfyuiReferenceBindings: readReferenceBindings(value.comfyuiReferenceBindings) } : {}),
     ...(value.comfyuiWorkflowPath !== undefined ? { comfyuiWorkflowPath: stringValue(value.comfyuiWorkflowPath, "comfyuiWorkflowPath") } : {}),
     ...(value.outputFormats !== undefined ? { outputFormats: stringArray(value.outputFormats, "outputFormats") } : {}),
     ...(value.defaults !== undefined ? { defaults: readDefaults(value.defaults) } : {}),
@@ -74,6 +94,15 @@ export function validateComfyUIConfiguration(recipe: Recipe): ValidationIssue[] 
     }
     if (config.comfyuiAnimateWorkflow !== undefined && !isComfyUIWorkflowGraph(config.comfyuiAnimateWorkflow)) {
       issues.push({ level: "error", code: "invalid_animate_workflow_graph", message: "comfyuiAnimateWorkflow must be a non-empty object of { class_type, inputs } nodes" });
+    }
+    if (config.comfyuiReferenceWorkflow !== undefined && !isComfyUIWorkflowGraph(config.comfyuiReferenceWorkflow)) {
+      issues.push({ level: "error", code: "invalid_reference_workflow_graph", message: "comfyuiReferenceWorkflow must be a non-empty object of { class_type, inputs } nodes" });
+    }
+    if ((config.comfyuiReferenceWorkflow === undefined) !== (config.comfyuiReferenceBindings === undefined)) {
+      issues.push({ level: "error", code: "incomplete_reference_workflow", message: "comfyuiReferenceWorkflow and comfyuiReferenceBindings must be configured together" });
+    } else if (config.comfyuiReferenceWorkflow && config.comfyuiReferenceBindings
+      && !(config.comfyuiReferenceBindings.targetNodeId in config.comfyuiReferenceWorkflow)) {
+      issues.push({ level: "error", code: "missing_reference_target", message: "comfyuiReferenceBindings.targetNodeId is not present in comfyuiReferenceWorkflow" });
     }
     const external = config.baseUrl !== undefined;
     const managed = config.executable !== undefined || config.cwd !== undefined || config.launchArgs !== undefined;
@@ -154,6 +183,49 @@ export function substituteWorkflow(
     }
     node.inputs = substituteInputs(inputs, params, size, referenceNames);
   }
+  return clone;
+}
+
+/** Adds core ComfyUI loader nodes and wires each typed upload into a flattened
+ * dynamic input on the configured reference-conditioning node. Video inputs are
+ * demuxed once so H3 receives both frame tensors and their paired soundtracks. */
+export function bindReferenceInputs(
+  graph: Readonly<Record<string, unknown>>,
+  references: readonly ComfyUIUploadedReference[],
+  bindings: ComfyUIReferenceBindings,
+): Record<string, unknown> {
+  const clone = structuredClone(graph) as Record<string, Record<string, unknown>>;
+  const target = clone[bindings.targetNodeId];
+  if (!isRecord(target) || !isRecord(target.inputs)) {
+    throw new TypeError(`ComfyUI reference target node is invalid: ${bindings.targetNodeId}`);
+  }
+  const inputs = { ...target.inputs };
+  const counters: Record<MediaModality, number> = { image: 0, video: 0, audio: 0 };
+  let nextId = nextWorkflowNodeId(clone);
+
+  for (const reference of references) {
+    const index = counters[reference.modality]++;
+    const loadId = String(nextId++);
+    if (reference.modality === "image") {
+      const prefix = requiredBindingPrefix(bindings.imageInputPrefix, "image");
+      clone[loadId] = { class_type: "LoadImage", inputs: { image: reference.name } };
+      inputs[`${prefix}${index}`] = [loadId, 0];
+      continue;
+    }
+    if (reference.modality === "audio") {
+      const prefix = requiredBindingPrefix(bindings.audioInputPrefix, "audio");
+      clone[loadId] = { class_type: "LoadAudio", inputs: { audio: reference.name } };
+      inputs[`${prefix}${index}`] = [loadId, 0];
+      continue;
+    }
+    const videoPrefix = requiredBindingPrefix(bindings.videoInputPrefix, "video");
+    const componentsId = String(nextId++);
+    clone[loadId] = { class_type: "LoadVideo", inputs: { file: reference.name } };
+    clone[componentsId] = { class_type: "GetVideoComponents", inputs: { video: [loadId, 0] } };
+    inputs[`${videoPrefix}${index}`] = [componentsId, 0];
+    if (bindings.videoAudioInputPrefix) inputs[`${bindings.videoAudioInputPrefix}${index}`] = [componentsId, 1];
+  }
+  target.inputs = inputs;
   return clone;
 }
 
@@ -259,6 +331,33 @@ function readComfyUIOverrides(value: unknown): ComfyUIWorkflowOverrides {
     ...(value.negativeNodeId !== undefined ? { negativeNodeId: stringValue(value.negativeNodeId, "comfyuiOverrides.negativeNodeId") } : {}),
     ...(value.seedNodeIds !== undefined ? { seedNodeIds: stringArray(value.seedNodeIds, "comfyuiOverrides.seedNodeIds") } : {}),
   };
+}
+
+function readReferenceBindings(value: unknown): ComfyUIReferenceBindings {
+  if (!isRecord(value)) throw new TypeError("comfyuiReferenceBindings must be an object");
+  const bindings: ComfyUIReferenceBindings = {
+    targetNodeId: stringValue(value.targetNodeId, "comfyuiReferenceBindings.targetNodeId"),
+    ...(value.imageInputPrefix !== undefined ? { imageInputPrefix: stringValue(value.imageInputPrefix, "comfyuiReferenceBindings.imageInputPrefix") } : {}),
+    ...(value.videoInputPrefix !== undefined ? { videoInputPrefix: stringValue(value.videoInputPrefix, "comfyuiReferenceBindings.videoInputPrefix") } : {}),
+    ...(value.videoAudioInputPrefix !== undefined ? { videoAudioInputPrefix: stringValue(value.videoAudioInputPrefix, "comfyuiReferenceBindings.videoAudioInputPrefix") } : {}),
+    ...(value.audioInputPrefix !== undefined ? { audioInputPrefix: stringValue(value.audioInputPrefix, "comfyuiReferenceBindings.audioInputPrefix") } : {}),
+  };
+  if (!bindings.imageInputPrefix && !bindings.videoInputPrefix && !bindings.audioInputPrefix) {
+    throw new TypeError("comfyuiReferenceBindings must declare at least one media input prefix");
+  }
+  if (bindings.videoAudioInputPrefix && !bindings.videoInputPrefix) {
+    throw new TypeError("comfyuiReferenceBindings.videoAudioInputPrefix requires videoInputPrefix");
+  }
+  return bindings;
+}
+
+function nextWorkflowNodeId(graph: Readonly<Record<string, unknown>>): number {
+  return Math.max(0, ...Object.keys(graph).map(Number).filter(Number.isSafeInteger)) + 1;
+}
+
+function requiredBindingPrefix(value: string | undefined, modality: MediaModality): string {
+  if (!value) throw new TypeError(`ComfyUI reference workflow does not accept ${modality} references`);
+  return value;
 }
 
 export function isComfyUIWorkflowGraph(value: unknown): value is Readonly<Record<string, unknown>> {

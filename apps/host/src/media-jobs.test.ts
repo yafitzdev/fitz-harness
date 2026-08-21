@@ -129,7 +129,7 @@ describe("Fitz host media jobs", () => {
       expect(editResponse.json().data.sourceJobId).toBe(original.id);
       expect(editResponse.json().data.execution.recipeId).toBe("h3-img");
       expect(editResponse.json().data.params).toEqual({
-        operation: "edit", prompt: "change the dog to a cat", refs: [{ artifactId: original.artifactId }],
+        operation: "edit", prompt: "change the dog to a cat", refs: [{ artifactId: original.artifactId, modality: "image" }],
       });
       const edited = await waitForJobStatus(runtime, editResponse.json().data.id, "completed");
       const artifact = runtime.store.getArtifact(edited.artifactId);
@@ -393,6 +393,94 @@ describe("Fitz host media jobs", () => {
       expect(submitted.json().data.params).toEqual(expect.objectContaining({ size: "1280x720", durationSeconds: 6, fps: 30 }));
       await waitFor(() => mediaFake.submitted.length === 1);
       expect(mediaFake.submitted[0]?.params).toEqual(expect.objectContaining({ size: "1280x720", durationSeconds: 6, fps: 30 }));
+    } finally {
+      await runtime.app.close();
+    }
+  });
+
+  it("admits typed Ref2VA artifacts and materializes every modality for the engine", async () => {
+    const mediaFake = new FakeMediaEngineAdapter();
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), mediaFake] });
+    try {
+      const recipe = mediaRecipe("h3-video", ["video"]);
+      recipe.capabilities.modalities = {
+        input: ["text", "image", "video", "audio"],
+        output: ["video"],
+        limits: { maxRefs: 15, maxRefsByModality: { image: 9, video: 3, audio: 3 } },
+      };
+      const registered = await runtime.app.inject({
+        method: "PUT", url: "/api/v1/management/recipes/h3-video", payload: recipe,
+      });
+      expect(registered.statusCode, registered.body).toBe(200);
+      await assignRoute(runtime, "video", "h3-video");
+      const chat = await runtime.app.inject({ method: "POST", url: "/api/v1/chats", payload: { title: "References" } });
+      const sessionId = chat.json().data.id as string;
+      const fixtures = [
+        { name: "identity.png", mimeType: "image/png", bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47]), modality: "image" },
+        { name: "motion.mp4", mimeType: "video/mp4", bytes: Buffer.from("video"), modality: "video" },
+        { name: "voice.wav", mimeType: "audio/wav", bytes: Buffer.from("audio"), modality: "audio" },
+      ] as const;
+      const refs: Array<{ artifactId: string; modality: MediaModality }> = [];
+      for (const fixture of fixtures) {
+        const uploaded = await runtime.app.inject({
+          method: "POST",
+          url: `/api/v1/sessions/${sessionId}/artifacts`,
+          payload: { name: fixture.name, mimeType: fixture.mimeType, contentBase64: fixture.bytes.toString("base64") },
+        });
+        expect(uploaded.statusCode, uploaded.body).toBe(201);
+        refs.push({ artifactId: uploaded.json().data.id as string, modality: fixture.modality });
+      }
+
+      const submitted = await runtime.app.inject({
+        method: "POST",
+        url: "/api/v1/media/jobs",
+        payload: {
+          routeId: "video",
+          modality: "video",
+          sessionId,
+          params: { operation: "reference", prompt: "use all references", refs },
+        },
+      });
+      expect(submitted.statusCode, submitted.body).toBe(202);
+      expect(submitted.json().data.params.refs).toEqual(refs);
+      await waitForJobStatus(runtime, submitted.json().data.id as string, "completed");
+      expect(mediaFake.submitted.at(-1)?.params).toMatchObject({
+        operation: "reference",
+        refs: [
+          { modality: "image", url: expect.stringMatching(/^data:image\/png;base64,/) },
+          { modality: "video", url: expect.stringMatching(/^data:video\/mp4;base64,/) },
+          { modality: "audio", url: expect.stringMatching(/^data:audio\/wav;base64,/) },
+        ],
+      });
+    } finally {
+      await runtime.app.close();
+    }
+  });
+
+  it("rejects Ref2VA inputs above a per-modality limit instead of silently dropping them", async () => {
+    const runtime = createHost({ adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter()] });
+    try {
+      const recipe = mediaRecipe("h3-video", ["video"]);
+      recipe.capabilities.modalities = {
+        input: ["text", "audio"], output: ["video"],
+        limits: { maxRefs: 15, maxRefsByModality: { audio: 3 } },
+      };
+      await runtime.app.inject({ method: "PUT", url: "/api/v1/management/recipes/h3-video", payload: recipe });
+      await assignRoute(runtime, "video", "h3-video");
+      const submitted = await runtime.app.inject({
+        method: "POST",
+        url: "/api/v1/media/jobs",
+        payload: {
+          routeId: "video", modality: "video",
+          params: {
+            operation: "reference", prompt: "too many voices",
+            refs: Array.from({ length: 4 }, (_, index) => ({ url: `data:audio/wav;base64,${index}`, modality: "audio" })),
+          },
+        },
+      });
+      expect(submitted.statusCode).toBe(400);
+      expect(String(submitted.json().error.message)).toContain("at most 3 audio references");
+      expect(runtime.store.listMediaJobs({})).toEqual([]);
     } finally {
       await runtime.app.close();
     }

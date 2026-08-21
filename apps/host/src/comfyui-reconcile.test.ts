@@ -5,13 +5,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { SqliteStore } from "@fitz/storage";
 import type { FitzRuntimePaths } from "./runtime-paths.js";
 import { createComfyUIPlaybook } from "./comfyui-playbook.js";
-import { localComfyUIPaths, localComfyUIRecipeIds, reconcileLocalComfyUIConfiguration } from "./comfyui-reconcile.js";
+import { localComfyUIPaths, localComfyUIRecipeIds, localH3ReferenceModelInstalled, reconcileLocalComfyUIConfiguration } from "./comfyui-reconcile.js";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 describe("local ComfyUI reconciliation", () => {
-  it("registers the installed engine and H3 recipe as one configured playbook", () => {
+  it("registers the installed engine and enables Ref2VA when its checkpoint is present", () => {
     const root = mkdtempSync(join(tmpdir(), "fitz-comfy-reconcile-")); roots.push(root);
     const paths: FitzRuntimePaths = {
       dataRoot: join(root, "data"), databasePath: join(root, "data", "fitz.db"), piAgentDir: join(root, "data", "pi"),
@@ -22,6 +22,7 @@ describe("local ComfyUI reconciliation", () => {
     for (const file of [
       join(local.hostEngineDir, "main.py"), local.hostEnvironmentMarker, local.hostModelConfigPath,
       join(paths.modelRoot, "comfyui", "diffusion_models", "minimax_h3_fl2va_pruned_int8_convrot.safetensors"),
+      join(paths.modelRoot, "comfyui", "diffusion_models", "minimax_h3_ref2va_pruned_int8_convrot.safetensors"),
       join(paths.modelRoot, "comfyui", "text_encoders", "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"),
       join(paths.modelRoot, "comfyui", "vae", "minimax_h3_video_vae_fp16.safetensors"),
       join(paths.modelRoot, "comfyui", "vae", "minimax_h3_audio_vae_fp32.safetensors"),
@@ -31,8 +32,22 @@ describe("local ComfyUI reconciliation", () => {
     expect(store.getEngine("comfyui")).toMatchObject({ folderName: "ComfyUI", displayName: "comfyui", connectionMode: "managed" });
     expect(store.getEngine("comfyui")?.launchArguments).toContain(local.baseDir);
     expect(localComfyUIRecipeIds(paths)).toEqual(["h3-video"]);
+    expect(localH3ReferenceModelInstalled(paths)).toBe(true);
     expect(store.listRecipes().filter((recipe) => recipe.playbookId === "comfyui")).toEqual([
-      expect.objectContaining({ id: "h3-video", playbookId: "comfyui" }),
+      expect.objectContaining({
+        id: "h3-video",
+        playbookId: "comfyui",
+        capabilities: expect.objectContaining({
+          modalities: expect.objectContaining({
+            input: ["text", "image", "video", "audio"],
+            limits: expect.objectContaining({ maxRefs: 15, maxRefsByModality: { image: 9, video: 3, audio: 3 } }),
+          }),
+        }),
+        configuration: expect.objectContaining({
+          comfyuiReferenceWorkflow: expect.any(Object),
+          comfyuiReferenceBindings: expect.objectContaining({ targetNodeId: "104" }),
+        }),
+      }),
     ]);
     store.close();
   });

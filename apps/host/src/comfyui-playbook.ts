@@ -32,9 +32,12 @@ export interface ComfyUIPlaybookOptions {
   runtimeId?: string;
   /** Recipes whose independently stored model artifacts are available. */
   recipeIds?: readonly ComfyUIRecipeId[];
+  /** The optional Ref2VA checkpoint is installed alongside the base H3 files. */
+  h3ReferenceEnabled?: boolean;
 }
 
 const OFFICIAL_H3_MODEL = "minimax_h3_fl2va_pruned_int8_convrot.safetensors";
+const OFFICIAL_H3_REFERENCE_MODEL = "minimax_h3_ref2va_pruned_int8_convrot.safetensors";
 const MINIMAX_MUSIC3_MODEL = "minimax_music3_dit_fp16.safetensors";
 const MINIMAX_MUSIC3_ENCODER = "minimax_music3_text_encoder_pruned_int8_convrot.safetensors";
 const MINIMAX_MUSIC3_VAE = "minimax_music3_dav.safetensors";
@@ -100,6 +103,54 @@ function h3VideoWorkflow(unetName: string, firstFrame?: string) {
       class_type: "SaveVideo",
       inputs: { video: ["91", 0], filename_prefix: "fitz-h3", format: "auto", codec: "auto" },
     },
+  };
+}
+
+/** API-form translation of Comfy-Org's native H3 Ref2VA graph. Reference
+ * loader nodes are added by the ComfyUI adapter after typed artifacts have
+ * been uploaded; the target uses flattened v3 Autogrow input names. */
+function h3ReferenceWorkflow() {
+  return {
+    "6": { class_type: "UNETLoader", inputs: { unet_name: OFFICIAL_H3_REFERENCE_MODEL, weight_dtype: "default" } },
+    "13": {
+      class_type: "CLIPLoader",
+      inputs: { clip_name: "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", type: "minimax", device: "default" },
+    },
+    "11": { class_type: "VAELoader", inputs: { vae_name: "minimax_h3_video_vae_fp16.safetensors" } },
+    "24": { class_type: "VAELoader", inputs: { vae_name: "minimax_h3_audio_vae_fp32.safetensors" } },
+    "111": { class_type: "PrimitiveFloat", inputs: { value: "{{duration_seconds}}" } },
+    "107": {
+      class_type: "ComfyMathExpression",
+      inputs: {
+        expression: "max(5, round(a * {{fps}})) + (5 - (max(5, round(a * {{fps}})) % 17)) % 17",
+        "values.a": ["111", 0],
+      },
+    },
+    "104": {
+      class_type: "MiniMaxH3ReferenceToVideo",
+      inputs: {
+        clip: ["13", 0],
+        vae: ["11", 0],
+        audio_vae: ["24", 0],
+        prompt: "{{prompt}}",
+        width: "{{width}}",
+        height: "{{height}}",
+        length: ["107", 1],
+        ref_image_size: "match",
+      },
+    },
+    "16": { class_type: "BasicGuider", inputs: { model: ["6", 0], conditioning: ["104", 0] } },
+    "15": { class_type: "RandomNoise", inputs: { noise_seed: "{{seed}}" } },
+    "17": { class_type: "KSamplerSelect", inputs: { sampler_name: "{{sampler}}" } },
+    "9": { class_type: "BasicScheduler", inputs: { model: ["6", 0], scheduler: "simple", steps: "{{steps}}", denoise: 1 } },
+    "14": {
+      class_type: "SamplerCustomAdvanced",
+      inputs: { noise: ["15", 0], guider: ["16", 0], sampler: ["17", 0], sigmas: ["9", 0], latent_image: ["104", 1] },
+    },
+    "10": { class_type: "VAEDecode", inputs: { samples: ["14", 0], vae: ["11", 0] } },
+    "23": { class_type: "VAEDecodeAudio", inputs: { samples: ["14", 0], vae: ["24", 0] } },
+    "91": { class_type: "CreateVideo", inputs: { images: ["10", 0], audio: ["23", 0], fps: "{{fps}}", bit_depth: 8 } },
+    "92": { class_type: "SaveVideo", inputs: { video: ["91", 0], filename_prefix: "fitz-h3-reference", format: "auto", codec: "auto" } },
   };
 }
 
@@ -274,16 +325,28 @@ export function createComfyUIPlaybook(options: ComfyUIPlaybookOptions): ComfyUIP
   if (recipeIds.has("h3-video")) {
     recipes.push(recipe({
       id: "h3-video",
-      displayName: "MiniMax H3 · Text/Image to Video",
-      modelId: "minimax-h3-fl2va-int8",
-      modalities: { input: ["text", "image"], output: ["video"] },
-      limits: { maxDurationSeconds: 6, maxFps: 30, maxResolution: "1344x768", maxRefs: 1 },
+      displayName: options.h3ReferenceEnabled ? "MiniMax H3 · Text/Image/Reference to Video" : "MiniMax H3 · Text/Image to Video",
+      modelId: options.h3ReferenceEnabled ? "minimax-h3-fl2va+ref2va-int8" : "minimax-h3-fl2va-int8",
+      modalities: { input: options.h3ReferenceEnabled ? ["text", "image", "video", "audio"] : ["text", "image"], output: ["video"] },
+      limits: options.h3ReferenceEnabled
+        ? { maxDurationSeconds: 6, maxFps: 30, maxResolution: "1344x768", maxRefs: 15, maxRefsByModality: { image: 9, video: 3, audio: 3 } }
+        : { maxDurationSeconds: 6, maxFps: 30, maxResolution: "1344x768", maxRefs: 1 },
       configuration: {
         ...launch,
         expectedVramMiB: expectedVramMiB ?? 24_576,
         readinessTimeoutMs: 300_000,
         comfyuiWorkflow: h3VideoWorkflow(OFFICIAL_H3_MODEL),
         comfyuiAnimateWorkflow: h3VideoWorkflow(OFFICIAL_H3_MODEL, "{{ref_0}}"),
+        ...(options.h3ReferenceEnabled ? {
+          comfyuiReferenceWorkflow: h3ReferenceWorkflow(),
+          comfyuiReferenceBindings: {
+            targetNodeId: "104",
+            imageInputPrefix: "ref_images.ref_image_",
+            videoInputPrefix: "ref_videos.ref_video_",
+            videoAudioInputPrefix: "ref_video_audios.ref_video_audio_",
+            audioInputPrefix: "ref_audios.ref_audio_",
+          },
+        } : {}),
         outputFormats: ["mp4"],
         // MiniMaxH3ImageToVideo declares a 32-pixel spatial grid. A 720px
         // height creates mismatched keyframe/video latents and fails during
@@ -412,7 +475,13 @@ function recipe(input: {
   displayName: string;
   modelId: string;
   modalities: { input: Array<"text" | "image" | "video" | "audio">; output: Array<"image" | "video" | "audio"> };
-  limits?: { maxDurationSeconds?: number; maxFps?: number; maxResolution?: string; maxRefs?: number };
+  limits?: {
+    maxDurationSeconds?: number;
+    maxFps?: number;
+    maxResolution?: string;
+    maxRefs?: number;
+    maxRefsByModality?: { image?: number; video?: number; audio?: number };
+  };
   configuration: Record<string, unknown>;
 }): Recipe {
   return {

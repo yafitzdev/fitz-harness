@@ -42,4 +42,17 @@ describe("validateMediaGenerationParams", () => {
       prompt: "make it move", operation: "animate", refs: [{ artifactId: "source" }],
     });
   });
+
+  it("requires at least one reference for multimodal reference generation", () => {
+    expect(() => validateMediaGenerationParams({ prompt: "match this voice", operation: "reference" })).toThrow("at least one media reference");
+    expect(validateMediaGenerationParams({
+      prompt: "match this voice",
+      operation: "reference",
+      refs: [{ artifactId: "voice", modality: "audio" }],
+    })).toEqual({
+      prompt: "match this voice",
+      operation: "reference",
+      refs: [{ artifactId: "voice", modality: "audio" }],
+    });
+  });
 });

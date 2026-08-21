@@ -27,7 +27,7 @@ import { resolveRuntimePaths } from "./runtime-paths.js";
 import { NInferRuntimeManager } from "./ninfer-runtime.js";
 import { managedLinuxRuntimeLayout, managedLinuxRuntimeMap, terminateManagedLinuxRuntime } from "./managed-linux-runtime.js";
 import { AgentSafetyService } from "./agent-safety/index.js";
-import { localComfyUIPaths, localComfyUIRecipeIds, reconcileLocalComfyUIConfiguration } from "./comfyui-reconcile.js";
+import { localComfyUIPaths, localComfyUIRecipeIds, localH3ReferenceModelInstalled, reconcileLocalComfyUIConfiguration } from "./comfyui-reconcile.js";
 import { ensureComfyUISafeModeExtension } from "./comfyui-safe-mode.js";
 import { DEFAULT_RECIPES, DEFAULT_ROUTES } from "./defaults.js";
 import { HostInstanceLock } from "./host-instance-lock.js";
@@ -298,6 +298,7 @@ function installedLocalComfyUIPlaybook() {
     runtime: "linux-managed",
     runtimeId: linuxRuntimeLayout.id,
     recipeIds,
+    h3ReferenceEnabled: recipeIds.includes("h3-video") && localH3ReferenceModelInstalled(runtimePaths),
   });
 }
 

@@ -28,15 +28,17 @@ import type {
 import { ComfyUIClient, ComfyUIProgressListener, type ComfyUIFileRef, type ComfyUIHistoryEntry, type ComfyUIWebSocketFactory } from "./comfyui-client.js";
 import {
   applyGenerationDefaults,
+  bindReferenceInputs,
   isComfyUIWorkflowGraph,
   readComfyUIConfiguration,
   substituteWorkflow,
   validateComfyUIConfiguration,
   type ComfyUIConfiguration,
+  type ComfyUIUploadedReference,
 } from "./comfyui-workflow.js";
 
-export { readComfyUIConfiguration, substituteWorkflow, validateComfyUIConfiguration } from "./comfyui-workflow.js";
-export type { ComfyUIConfiguration, ComfyUIWorkflowOverrides } from "./comfyui-workflow.js";
+export { bindReferenceInputs, readComfyUIConfiguration, substituteWorkflow, validateComfyUIConfiguration } from "./comfyui-workflow.js";
+export type { ComfyUIConfiguration, ComfyUIReferenceBindings, ComfyUIUploadedReference, ComfyUIWorkflowOverrides } from "./comfyui-workflow.js";
 
 export interface ComfyUIHandle extends EngineInstanceHandle {
   modelId: string;
@@ -249,15 +251,23 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
     if (request.params.operation === "animate" && !instance.config.comfyuiAnimateWorkflow) {
       throw new Error(`ComfyUI recipe ${instance.recipeId} does not configure an image animation workflow`);
     }
+    if (request.params.operation === "reference" && !instance.config.comfyuiReferenceWorkflow) {
+      throw new Error(`ComfyUI recipe ${instance.recipeId} does not configure a reference generation workflow`);
+    }
     const graph = request.params.operation === "edit"
       ? instance.config.comfyuiEditWorkflow!
       : request.params.operation === "animate"
         ? instance.config.comfyuiAnimateWorkflow!
-        : await this.#loadWorkflow(instance, signal);
+        : request.params.operation === "reference"
+          ? instance.config.comfyuiReferenceWorkflow!
+          : await this.#loadWorkflow(instance, signal);
     const overrides = instance.config.comfyuiOverrides;
     const params = applyGenerationDefaults(request.params, instance.config.defaults);
-    const referenceNames = await this.#uploadReferences(instance, params, signal);
-    const substituted = substituteWorkflow(graph, params, overrides, referenceNames);
+    const references = await this.#uploadReferences(instance, params, signal);
+    const bound = request.params.operation === "reference"
+      ? bindReferenceInputs(graph, references, instance.config.comfyuiReferenceBindings!)
+      : graph;
+    const substituted = substituteWorkflow(bound, params, overrides, references.map((reference) => reference.name));
     const clientId = randomUUID();
     // Open the progress socket before POSTing so it is (likely) connected by
     // the time the server starts executing the prompt.
@@ -272,24 +282,31 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
     }
   }
 
-  async #uploadReferences(instance: ComfyUIHandle, params: MediaGenerationParams, signal: AbortSignal): Promise<string[]> {
+  async #uploadReferences(instance: ComfyUIHandle, params: MediaGenerationParams, signal: AbortSignal): Promise<ComfyUIUploadedReference[]> {
     const refs = params.refs ?? [];
-    const uploaded: string[] = [];
+    const uploaded: ComfyUIUploadedReference[] = [];
     for (const [index, ref] of refs.entries()) {
       if (!("url" in ref)) throw new Error("ComfyUI received an unresolved Fitz artifact reference");
       const response = await this.#fetch(ref.url, { signal });
-      if (!response.ok) throw new Error(`Reference image download failed (HTTP ${response.status})`);
+      if (!response.ok) throw new Error(`Reference media download failed (HTTP ${response.status})`);
       const mimeType = response.headers.get("content-type")?.split(";", 1)[0] || "image/png";
-      if (!mimeType.startsWith("image/")) throw new Error(`Reference ${index + 1} is not an image (${mimeType})`);
-      const extension = imageExtension(mimeType);
-      const result = await instance.client.uploadImage(
+      const modality = mediaModalityForMimeType(mimeType);
+      if (!modality) throw new Error(`Reference ${index + 1} is not image, video, or audio media (${mimeType})`);
+      if (ref.modality && ref.modality !== modality) {
+        throw new Error(`Reference ${index + 1} declares ${ref.modality} but contains ${mimeType}`);
+      }
+      const extension = mediaExtension(mimeType, modality);
+      const result = await instance.client.uploadInput(
         instance.baseUrl,
         new Uint8Array(await response.arrayBuffer()),
         `fitz-reference-${randomUUID()}.${extension}`,
         mimeType,
         signal,
       );
-      uploaded.push(result.subfolder ? `${result.subfolder}/${result.name}` : result.name);
+      uploaded.push({
+        name: result.subfolder ? `${result.subfolder}/${result.name}` : result.name,
+        modality,
+      });
     }
     return uploaded;
   }
@@ -405,11 +422,17 @@ export class ComfyUIEngineAdapter implements MediaEngineAdapter<ComfyUIHandle> {
   }
 }
 
-function imageExtension(mimeType: string): string {
-  if (mimeType === "image/jpeg") return "jpg";
-  if (mimeType === "image/webp") return "webp";
-  if (mimeType === "image/gif") return "gif";
-  return "png";
+function mediaModalityForMimeType(mimeType: string): MediaModality | undefined {
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("video/")) return "video";
+  if (mimeType.startsWith("audio/")) return "audio";
+  return undefined;
+}
+
+function mediaExtension(mimeType: string, modality: MediaModality): string {
+  const extension = Object.entries(EXTENSION_MIME).find(([, candidate]) => candidate === mimeType)?.[0];
+  if (extension) return extension;
+  return modality === "image" ? "png" : modality === "video" ? "mp4" : "wav";
 }
 
 // ---------------------------------------------------------------------------

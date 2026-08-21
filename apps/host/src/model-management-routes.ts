@@ -524,6 +524,13 @@ function parseModalities(value: Record<string, unknown>): ModalityCapabilities {
         ...(typeof value.limits.maxFps === "number" ? { maxFps: value.limits.maxFps } : {}),
         ...(typeof value.limits.maxResolution === "string" ? { maxResolution: value.limits.maxResolution } : {}),
         ...(typeof value.limits.maxRefs === "number" ? { maxRefs: value.limits.maxRefs } : {}),
+        ...(isRecord(value.limits.maxRefsByModality) ? {
+          maxRefsByModality: {
+            ...(typeof value.limits.maxRefsByModality.image === "number" ? { image: value.limits.maxRefsByModality.image } : {}),
+            ...(typeof value.limits.maxRefsByModality.video === "number" ? { video: value.limits.maxRefsByModality.video } : {}),
+            ...(typeof value.limits.maxRefsByModality.audio === "number" ? { audio: value.limits.maxRefsByModality.audio } : {}),
+          },
+        } : {}),
         ...(typeof value.limits.maxFrames === "number" ? { maxFrames: value.limits.maxFrames } : {}),
       }
     : undefined;

@@ -368,8 +368,10 @@ function parseMediaParams(value: unknown): MediaGenerationParams {
     ...(Array.isArray(body.refs) ? {
       refs: body.refs.map((ref) => {
         if (!isRecord(ref)) throw new TypeError("params.refs entries must be objects");
-        if (typeof ref.artifactId === "string" && ref.artifactId) return { artifactId: ref.artifactId };
-        if (typeof ref.url === "string" && ref.url) return { url: ref.url };
+        const modality = ref.modality === "image" || ref.modality === "video" || ref.modality === "audio" ? ref.modality : undefined;
+        if (ref.modality !== undefined && !modality) throw new TypeError("params.refs modality must be image, video, or audio");
+        if (typeof ref.artifactId === "string" && ref.artifactId) return { artifactId: ref.artifactId, ...(modality ? { modality } : {}) };
+        if (typeof ref.url === "string" && ref.url) return { url: ref.url, ...(modality ? { modality } : {}) };
         throw new TypeError("params.refs entries must have artifactId or url");
       }),
     } : {}),
@@ -383,10 +385,10 @@ function parseMediaParams(value: unknown): MediaGenerationParams {
   };
 }
 
-function parseMediaOperation(value: unknown): "generate" | "edit" | "animate" | undefined {
+function parseMediaOperation(value: unknown): "generate" | "edit" | "animate" | "reference" | undefined {
   if (value === undefined) return undefined;
-  if (value === "generate" || value === "edit" || value === "animate") return value;
-  throw new TypeError("params.operation must be generate, edit, or animate");
+  if (value === "generate" || value === "edit" || value === "animate" || value === "reference") return value;
+  throw new TypeError("params.operation must be generate, edit, animate, or reference");
 }
 
 function parseImageGenerationRequest(value: unknown): ImageGenerationRequest {

@@ -34,11 +34,13 @@ export interface ComfyUIClientOptions {
   fetch?: typeof globalThis.fetch;
 }
 
-export interface ComfyUIUploadedImage {
+export interface ComfyUIUploadedInput {
   name: string;
   subfolder: string;
   type: "input";
 }
+
+export type ComfyUIUploadedImage = ComfyUIUploadedInput;
 
 export class ComfyUIClient {
   readonly #fetch: typeof globalThis.fetch;
@@ -59,16 +61,16 @@ export class ComfyUIClient {
     }
   }
 
-  /** Upload a reference image to ComfyUI's input store. Workflows receive the
-   * returned relative name through a LoadImage node; provider and Fitz artifact
-   * URLs therefore never leak into the pinned workflow graph. */
-  async uploadImage(
+  /** Uploads reference media to ComfyUI's input store. ComfyUI's historical
+   * `/upload/image` endpoint is also the generic upload endpoint consumed by
+   * core LoadImage, LoadVideo, and LoadAudio nodes. */
+  async uploadInput(
     baseUrl: string,
     bytes: Uint8Array,
     filename: string,
     mimeType: string,
     signal?: AbortSignal,
-  ): Promise<ComfyUIUploadedImage> {
+  ): Promise<ComfyUIUploadedInput> {
     const body = new FormData();
     const imageBuffer = new ArrayBuffer(bytes.byteLength);
     new Uint8Array(imageBuffer).set(bytes);
@@ -91,6 +93,16 @@ export class ComfyUIClient {
       subfolder: typeof payload.subfolder === "string" ? payload.subfolder : "",
       type: "input",
     };
+  }
+
+  async uploadImage(
+    baseUrl: string,
+    bytes: Uint8Array,
+    filename: string,
+    mimeType: string,
+    signal?: AbortSignal,
+  ): Promise<ComfyUIUploadedInput> {
+    return this.uploadInput(baseUrl, bytes, filename, mimeType, signal);
   }
 
   /** POST /prompt with the pinned workflow graph; returns the server-side prompt id. */

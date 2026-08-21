@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { MediaGenerationRequest, Recipe } from "@fitz/protocol";
 import { ComfyUIEngineAdapter } from "./comfyui-adapter.js";
 import {
+  bindReferenceInputs,
   readComfyUIConfiguration,
   substituteWorkflow,
   validateComfyUIConfiguration,
@@ -187,6 +188,47 @@ describe("substituteWorkflow", () => {
   });
 });
 
+describe("bindReferenceInputs", () => {
+  it("adds typed loaders and flattened Ref2VA autogrow inputs", () => {
+    const graph = bindReferenceInputs(
+      { "104": { class_type: "MiniMaxH3ReferenceToVideo", inputs: { prompt: "scene" } } },
+      [
+        { name: "identity.png", modality: "image" },
+        { name: "motion.mp4", modality: "video" },
+        { name: "voice.wav", modality: "audio" },
+      ],
+      {
+        targetNodeId: "104",
+        imageInputPrefix: "ref_images.ref_image_",
+        videoInputPrefix: "ref_videos.ref_video_",
+        videoAudioInputPrefix: "ref_video_audios.ref_video_audio_",
+        audioInputPrefix: "ref_audios.ref_audio_",
+      },
+    );
+
+    expect(graph).toMatchObject({
+      "104": { inputs: {
+        "ref_images.ref_image_0": ["105", 0],
+        "ref_videos.ref_video_0": ["107", 0],
+        "ref_video_audios.ref_video_audio_0": ["107", 1],
+        "ref_audios.ref_audio_0": ["108", 0],
+      } },
+      "105": { class_type: "LoadImage", inputs: { image: "identity.png" } },
+      "106": { class_type: "LoadVideo", inputs: { file: "motion.mp4" } },
+      "107": { class_type: "GetVideoComponents", inputs: { video: ["106", 0] } },
+      "108": { class_type: "LoadAudio", inputs: { audio: "voice.wav" } },
+    });
+  });
+
+  it("rejects a reference modality the graph did not declare", () => {
+    expect(() => bindReferenceInputs(
+      { "1": { class_type: "Reference", inputs: {} } },
+      [{ name: "motion.mp4", modality: "video" }],
+      { targetNodeId: "1", imageInputPrefix: "images.image_" },
+    )).toThrow("does not accept video references");
+  });
+});
+
 describe("ComfyUIEngineAdapter configuration surface", () => {
   it("reads the configuration with typed validation", () => {
     const config = readComfyUIConfiguration(recipeFor({
@@ -194,6 +236,8 @@ describe("ComfyUIEngineAdapter configuration surface", () => {
       comfyuiWorkflow: JSON.stringify(VIDEO_WORKFLOW), outputFormats: ["mp4"],
       comfyuiEditWorkflow: VIDEO_WORKFLOW,
       comfyuiAnimateWorkflow: VIDEO_WORKFLOW,
+      comfyuiReferenceWorkflow: VIDEO_WORKFLOW,
+      comfyuiReferenceBindings: { targetNodeId: "1", imageInputPrefix: "refs.image_" },
       defaults: { resolution: "1280x720", fps: 30 }, comfyuiOverrides: { promptNodeId: "1", seedNodeIds: ["1"] },
     }));
     expect(config).toMatchObject({
@@ -207,7 +251,17 @@ describe("ComfyUIEngineAdapter configuration surface", () => {
     expect(config.comfyuiWorkflow).toEqual(VIDEO_WORKFLOW);
     expect(config.comfyuiEditWorkflow).toEqual(VIDEO_WORKFLOW);
     expect(config.comfyuiAnimateWorkflow).toEqual(VIDEO_WORKFLOW);
+    expect(config.comfyuiReferenceWorkflow).toEqual(VIDEO_WORKFLOW);
+    expect(config.comfyuiReferenceBindings).toEqual({ targetNodeId: "1", imageInputPrefix: "refs.image_" });
     expect(config.defaults).toEqual({ resolution: "1280x720", fps: 30 });
+  });
+
+  it("requires the reference graph and bindings as one configuration unit", () => {
+    expect(validateComfyUIConfiguration(recipeFor({
+      baseUrl: "http://127.0.0.1:8188",
+      comfyuiWorkflow: VIDEO_WORKFLOW,
+      comfyuiReferenceWorkflow: VIDEO_WORKFLOW,
+    }))).toEqual([expect.objectContaining({ code: "incomplete_reference_workflow" })]);
   });
 
   it("estimates VRAM from the recipe configuration", async () => {
@@ -428,6 +482,55 @@ describe("ComfyUIEngineAdapter progress streaming", () => {
     }), new AbortController().signal)).rejects.toThrow("does not configure an image animation workflow");
   });
 
+  it("selects the Ref2VA graph and binds image, video, paired audio, and standalone audio", async () => {
+    let submitted: Record<string, unknown> | undefined;
+    const adapter = new ComfyUIEngineAdapter({
+      validatePaths: false,
+      createWebSocket: () => new FakeWebSocket(),
+      fetch: stubFetch({ captureSubmit: (body) => { submitted = body; } }),
+    });
+    const referenceWorkflow = {
+      "104": { class_type: "MiniMaxH3ReferenceToVideo", inputs: { prompt: "{{prompt}}" } },
+    };
+    const recipe = recipeFor({
+      baseUrl: "http://127.0.0.1:8188",
+      comfyuiWorkflow: VIDEO_WORKFLOW,
+      comfyuiReferenceWorkflow: referenceWorkflow,
+      comfyuiReferenceBindings: {
+        targetNodeId: "104",
+        imageInputPrefix: "ref_images.ref_image_",
+        videoInputPrefix: "ref_videos.ref_video_",
+        videoAudioInputPrefix: "ref_video_audios.ref_video_audio_",
+        audioInputPrefix: "ref_audios.ref_audio_",
+      },
+    });
+    const spec = await adapter.buildLaunchSpec(recipe, { host: "127.0.0.1", port: 0 });
+    const instance = await adapter.start(recipe, spec, new AbortController().signal);
+    await adapter.submit(instance, mediaRequest("video", {
+      operation: "reference",
+      prompt: "<Picture 1> follows <Video 1> and speaks like <Audio 2>",
+      refs: [
+        { url: "data:image/png;base64,AA==", modality: "image" },
+        { url: "data:video/mp4;base64,AA==", modality: "video" },
+        { url: "data:audio/wav;base64,AA==", modality: "audio" },
+      ],
+    }), new AbortController().signal);
+
+    expect(submitted?.prompt).toMatchObject({
+      "104": { inputs: {
+        prompt: "<Picture 1> follows <Video 1> and speaks like <Audio 2>",
+        "ref_images.ref_image_0": ["105", 0],
+        "ref_videos.ref_video_0": ["107", 0],
+        "ref_video_audios.ref_video_audio_0": ["107", 1],
+        "ref_audios.ref_audio_0": ["108", 0],
+      } },
+      "105": { class_type: "LoadImage" },
+      "106": { class_type: "LoadVideo" },
+      "107": { class_type: "GetVideoComponents" },
+      "108": { class_type: "LoadAudio" },
+    });
+  });
+
   it("reports WebSocket-streamed progress for a running job", async () => {
     const sockets: FakeWebSocket[] = [];
     let submitted: Record<string, unknown> | undefined;
@@ -550,7 +653,8 @@ function stubFetch(options: StubFetchOptions): typeof fetch {
     const raw = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
     const url = new URL(raw);
     if (url.protocol === "data:") {
-      return new Response(new Uint8Array([0]), { status: 200, headers: { "content-type": "image/png" } });
+      const mimeType = /^data:([^;,]+)/i.exec(raw)?.[1] ?? "image/png";
+      return new Response(new Uint8Array([0]), { status: 200, headers: { "content-type": mimeType } });
     }
     if (url.pathname === "/prompt") {
       if (typeof init?.body === "string") {

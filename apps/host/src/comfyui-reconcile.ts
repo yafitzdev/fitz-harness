@@ -47,6 +47,10 @@ export function localH3RuntimeInstalled(paths: FitzRuntimePaths, local = localCo
   ].every((path) => existsSync(path));
 }
 
+export function localH3ReferenceModelInstalled(paths: FitzRuntimePaths): boolean {
+  return existsSync(join(paths.modelRoot, "comfyui", "diffusion_models", "minimax_h3_ref2va_pruned_int8_convrot.safetensors"));
+}
+
 export function localComfyUIRuntimeInstalled(local: LocalComfyUIPaths): boolean {
   return localComfyUIRuntimeFiles(local).every((path) => existsSync(path));
 }
@@ -111,6 +115,7 @@ export function reconcileLocalComfyUIConfiguration(store: SqliteStore, paths: Fi
     runtime: "linux-managed",
     runtimeId: "inference-linux",
     recipeIds,
+    h3ReferenceEnabled: recipeIds.includes("h3-video") && localH3ReferenceModelInstalled(paths),
   });
   const now = new Date().toISOString();
   const existingEngine = store.getEngine(playbook.id);

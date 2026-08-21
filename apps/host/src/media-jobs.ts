@@ -3,6 +3,7 @@ import { Readable } from "node:stream";
 import type {
   ArtifactRecord,
   MediaGenerationParams,
+  MediaGenerationReference,
   MediaGenerationResult,
   MediaJobEvent,
   MediaJobRecord,
@@ -119,10 +120,9 @@ export class MediaJobCoordinator {
     }
 
     const requestedParams = constrainMediaParams(validateMediaGenerationParams(input.params), recipe);
-    if (requestedParams.refs?.length && !recipe.capabilities.modalities?.input.includes("image")) {
-      throw new TypeError(`Recipe ${recipe.id} does not accept image references`);
-    }
-    const resolvedParams = this.#scheduler.resolveMediaParams(route.id, requestedParams, input.recipeId);
+    const typedParams = this.#resolveReferenceModalities(requestedParams);
+    this.#validateRecipeReferences(typedParams, recipe);
+    const resolvedParams = this.#scheduler.resolveMediaParams(route.id, typedParams, input.recipeId);
     const params = await this.#preserveAnimationAspectRatio(resolvedParams, recipe);
     const executionParams = await this.#materializeReferences(params);
     const id = randomUUID();
@@ -184,7 +184,7 @@ export class MediaJobCoordinator {
    * and lets local/remote media engines consume the same reference contract. */
   async #materializeReferences(params: MediaGenerationParams): Promise<MediaGenerationParams> {
     if (!params.refs?.length) return params;
-    const refs: Array<{ url: string }> = [];
+    const refs: MediaGenerationReference[] = [];
     for (const ref of params.refs) {
       if ("url" in ref) {
         refs.push(ref);
@@ -192,12 +192,58 @@ export class MediaJobCoordinator {
       }
       const artifact = this.#store.getArtifact(ref.artifactId);
       if (!artifact) throw new TypeError(`Reference artifact not found: ${ref.artifactId}`);
-      if (!artifact.mimeType.startsWith("image/")) throw new TypeError(`Reference artifact is not an image: ${ref.artifactId}`);
+      const modality = mediaModalityForArtifact(artifact);
+      if (!modality) throw new TypeError(`Reference artifact is not image, video, or audio media: ${ref.artifactId}`);
+      if (ref.modality && ref.modality !== modality) throw new TypeError(`Reference artifact ${ref.artifactId} is ${modality}, not ${ref.modality}`);
       const bytes = await this.#artifacts.read(ref.artifactId);
       if (!bytes) throw new TypeError(`Reference artifact content is unavailable: ${ref.artifactId}`);
-      refs.push({ url: `data:${artifact.mimeType};base64,${Buffer.from(bytes).toString("base64")}` });
+      refs.push({ url: `data:${artifact.mimeType};base64,${Buffer.from(bytes).toString("base64")}`, modality });
     }
     return { ...params, refs };
+  }
+
+  /** Resolves reference modalities from durable artifact metadata before the
+   * job is recorded. This makes retries deterministic and lets admission
+   * validate per-modality recipe limits without reading blob payloads. */
+  #resolveReferenceModalities(params: MediaGenerationParams): MediaGenerationParams {
+    if (!params.refs?.length) return params;
+    const refs = params.refs.map((ref, index): MediaGenerationReference => {
+      if ("artifactId" in ref) {
+        const artifact = this.#store.getArtifact(ref.artifactId);
+        if (!artifact) throw new TypeError(`Reference artifact not found: ${ref.artifactId}`);
+        const modality = mediaModalityForArtifact(artifact);
+        if (!modality) throw new TypeError(`Reference artifact is not image, video, or audio media: ${ref.artifactId}`);
+        if (ref.modality && ref.modality !== modality) throw new TypeError(`Reference artifact ${ref.artifactId} is ${modality}, not ${ref.modality}`);
+        return { artifactId: ref.artifactId, modality };
+      }
+      const modality = ref.modality ?? mediaModalityForUrl(ref.url)
+        ?? (params.operation === "edit" || params.operation === "animate" ? "image" : undefined);
+      if (!modality) throw new TypeError(`Reference ${index + 1} must declare whether it is image, video, or audio media`);
+      return { url: ref.url, modality };
+    });
+    return { ...params, refs };
+  }
+
+  #validateRecipeReferences(params: MediaGenerationParams, recipe: Recipe): void {
+    if (!params.refs?.length) return;
+    const capabilities = recipe.capabilities.modalities;
+    if (!capabilities) throw new TypeError(`Recipe ${recipe.id} does not accept media references`);
+    const counts: Record<MediaModality, number> = { image: 0, video: 0, audio: 0 };
+    for (const ref of params.refs) {
+      const modality = ref.modality ?? "image";
+      if (!capabilities.input.includes(modality)) throw new TypeError(`Recipe ${recipe.id} does not accept ${modality} references`);
+      counts[modality]++;
+    }
+    const limits = capabilities.limits;
+    if (typeof limits?.maxRefs === "number" && params.refs.length > limits.maxRefs) {
+      throw new TypeError(`Recipe ${recipe.id} accepts at most ${limits.maxRefs} references`);
+    }
+    for (const modality of ["image", "video", "audio"] as const) {
+      const maximum = limits?.maxRefsByModality?.[modality];
+      if (typeof maximum === "number" && counts[modality] > maximum) {
+        throw new TypeError(`Recipe ${recipe.id} accepts at most ${maximum} ${modality} references`);
+      }
+    }
   }
 
   /** Animation resolutions are a bounding canvas, not permission to distort
@@ -215,7 +261,7 @@ export class MediaJobCoordinator {
     return { ...params, size: fitAspectRatio(source, budget, grid) };
   }
 
-  async #referenceDimensions(ref: { artifactId: string } | { url: string }): Promise<ImageDimensions | undefined> {
+  async #referenceDimensions(ref: MediaGenerationReference): Promise<ImageDimensions | undefined> {
     if ("url" in ref) return dimensionsFromDataUrl(ref.url);
     const artifact = this.#store.getArtifact(ref.artifactId);
     if (!artifact) return undefined;
@@ -555,9 +601,6 @@ function constrainMediaParams(params: MediaGenerationParams, recipe: Recipe): Me
     const constrained = constrainResolution(next.size, parseResolution(limits.maxResolution), grid);
     if (constrained !== undefined) next.size = constrained;
   }
-  if (typeof limits.maxRefs === "number" && next.refs && next.refs.length > limits.maxRefs) {
-    next.refs = next.refs.slice(0, limits.maxRefs);
-  }
   return next;
 }
 
@@ -675,6 +718,28 @@ function extensionFor(mimeType: string): string {
     "audio/webm": ".weba",
   };
   return table[mimeType] ?? `.${mimeType.split("/")[1]?.replace(/[^a-z0-9]/gi, "") ?? "bin"}`.slice(0, MAX_ARTIFACT_NAME_LENGTH);
+}
+
+function mediaModalityForArtifact(artifact: ArtifactRecord): MediaModality | undefined {
+  if (artifact.kind === "image" || artifact.mimeType.startsWith("image/")) return "image";
+  if (artifact.kind === "video" || artifact.mimeType.startsWith("video/")) return "video";
+  if (artifact.kind === "audio" || artifact.mimeType.startsWith("audio/")) return "audio";
+  return undefined;
+}
+
+function mediaModalityForUrl(value: string): MediaModality | undefined {
+  const dataType = /^data:(image|video|audio)\//i.exec(value)?.[1]?.toLowerCase();
+  if (dataType === "image" || dataType === "video" || dataType === "audio") return dataType;
+  try {
+    const extension = new URL(value).pathname.split(".").pop()?.toLowerCase();
+    if (["png", "jpg", "jpeg", "webp", "gif", "avif"].includes(extension ?? "")) return "image";
+    if (["mp4", "webm", "mov", "mkv", "avi", "ogv"].includes(extension ?? "")) return "video";
+    if (["wav", "mp3", "flac", "ogg", "m4a", "aac"].includes(extension ?? "")) return "audio";
+  } catch {
+    // The adapter will report an invalid URL after the domain boundary has
+    // required an explicit modality for ambiguous references.
+  }
+  return undefined;
 }
 
 function artifactTimestamp(value: Date): string {

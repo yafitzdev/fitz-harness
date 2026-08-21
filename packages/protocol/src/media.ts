@@ -15,7 +15,15 @@ export function isActiveMediaJobStatus(status: string): status is ActiveMediaJob
   return (ACTIVE_MEDIA_JOB_STATUSES as readonly string[]).includes(status);
 }
 
-export type MediaGenerationOperation = "generate" | "edit" | "animate";
+export type MediaGenerationOperation = "generate" | "edit" | "animate" | "reference";
+
+/** Durable or provider-addressed media used to condition a generation. The
+ * modality is optional for legacy image-only callers; the host resolves it
+ * from Fitz artifact metadata and materializes it before engine submission. */
+export type MediaGenerationReference = (
+  | { artifactId: string; url?: never }
+  | { url: string; artifactId?: never }
+) & { modality?: MediaModality };
 
 export interface MediaGenerationParams {
   prompt: string;
@@ -27,8 +35,9 @@ export interface MediaGenerationParams {
   /** Optional song lyrics. Audio recipes that support structure-aware music
    * generation consume section tags such as [Verse] and [Chorus]. */
   lyrics?: string;
-  /** image-to-video / reference editing. `url` may be a provider URL or a Fitz artifact download URL. */
-  refs?: Array<{ artifactId: string } | { url: string }>;
+  /** Image editing, first-frame animation, or multimodal reference generation.
+   * `url` may be a provider URL, data URL, or Fitz artifact download URL. */
+  refs?: MediaGenerationReference[];
   size?: string; // "1024x1024", "768x768", "1280x720", ...
   durationSeconds?: number;
   fps?: number;
