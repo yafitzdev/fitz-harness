@@ -42,6 +42,7 @@ import { PlaybookWorkspaceController } from "./ui/playbooks/playbook-workspace.j
 import { ProjectsController } from "./ui/projects/projects.js";
 import { ProjectSidebarController } from "./ui/sidebar/project-sidebar.js";
 import { SidebarActivityController } from "./ui/sidebar/sidebar-activity.js";
+import { LocalHostBootstrapController, type LocalHostBootstrapSnapshot } from "./ui/startup/local-host-bootstrap.js";
 import { WorkQueueController } from "./ui/queue/work-queue.js";
 import { ArtifactController } from "./ui/artifacts/artifact-controller.js";
 import { assertHostContract, HostRequestError } from "./client-error.js";
@@ -59,6 +60,7 @@ let sidebarActivity: SidebarActivityController | undefined;
 let currentUserId: string | undefined;
 let managementConfiguration: ManagementConfiguration | undefined;
 let initialNavigationPending = true;
+let workspaceBootstrap: LocalHostBootstrapController;
 
 const shell = query(".app-shell");
 const workspaceHeader = query(".workspace-header");
@@ -311,8 +313,14 @@ const conversationLanding = new ConversationLanding({
   messages,
   clearActivity: () => activityTimeline.clear(),
   createProject: () => projectSidebar.beginCreateProject(),
-  retryConnection: async () => { await window.fitz.retryLocalHost(); await initialize(); },
+  retryConnection: () => workspaceBootstrap.retry(),
   updateTitles,
+});
+workspaceBootstrap = new LocalHostBootstrapController({
+  connect: loadLocalWorkspace,
+  restartHost: () => window.fitz.retryLocalHost(),
+  onStateChange: reflectLocalHostState,
+  errorMessage,
 });
 const agentQueue = new WorkQueueController({
   list: element("request-queue"),
@@ -870,46 +878,43 @@ window.addEventListener("fitz:open-resource", (event) => {
 element("context-add").addEventListener("click", () => artifactController.choose());
 document.addEventListener("click", closePopovers);
 
-let initialization: Promise<void> | undefined;
-let initialized = false;
 async function initialize(): Promise<void> {
-  if (initialized) return;
-  if (initialization) return initialization;
-  const attempt = initializeLocalWorkspace();
-  initialization = attempt;
-  void attempt.finally(() => { if (initialization === attempt) initialization = undefined; });
-  return attempt;
+  return workspaceBootstrap.start();
 }
 
-async function initializeLocalWorkspace(): Promise<void> {
-  try {
-    setStatus("Starting local services", "loading");
-    const health = await api("/health");
-    assertHostContract(health);
-    const identity = await api("/api/v1/me");
-    await connectionWorkspace.sync(false);
-    currentUserId = identity.data?.user?.id;
-    engineState.textContent = health.engine?.state ?? "UNLOADED";
-    routeState.textContent = composer.controls.routeLabel;
-    setStatus(health.engine?.state ?? "Ready", "idle");
-    await projects.load(undefined, undefined, !initialNavigationPending);
-    sidebarActivity?.start();
-    if (initialNavigationPending) {
-      initialNavigationPending = false;
-      openNewChat();
-    }
-    await loadManagementConfiguration(false);
-    // The hosting switch now lives in the sidebar, so refresh its state on boot.
-    void hostingPageController.load();
-    initialized = true;
-  } catch (error) {
-    console.warn("Local Fitz services are not ready yet", error);
-    engineState.textContent = "STARTING";
-    setStatus("Starting local services", "loading");
-    void window.fitz.retryLocalHost().catch(() => false);
-  } finally {
-    refreshComposerState();
+async function loadLocalWorkspace(): Promise<void> {
+  const health = await api("/health");
+  assertHostContract(health);
+  const identity = await api("/api/v1/me");
+  await connectionWorkspace.sync(false);
+  currentUserId = identity.data?.user?.id;
+  engineState.textContent = health.engine?.state ?? "UNLOADED";
+  routeState.textContent = composer.controls.routeLabel;
+  setStatus(health.engine?.state ?? "Ready", "idle");
+  await projects.load(undefined, undefined, !initialNavigationPending);
+  sidebarActivity?.start();
+  if (initialNavigationPending) {
+    initialNavigationPending = false;
+    openNewChat();
   }
+  await loadManagementConfiguration(false);
+  // The hosting switch now lives in the sidebar, so refresh its state on boot.
+  void hostingPageController.load();
+}
+
+function reflectLocalHostState(snapshot: LocalHostBootstrapSnapshot): void {
+  if (snapshot.state === "connecting" || snapshot.state === "retrying") {
+    const retrying = snapshot.state === "retrying";
+    engineState.textContent = "STARTING";
+    setStatus(retrying ? "Restarting local services" : "Starting local services", "loading");
+    conversationLanding.showConnectionPending(retrying);
+  } else if (snapshot.state === "offline") {
+    console.warn("Local Fitz services are unavailable", snapshot.detail);
+    engineState.textContent = "OFFLINE";
+    setStatus("Host offline", "error");
+    conversationLanding.showConnectionFailure(snapshot.detail ?? "The local Fitz host did not respond.");
+  }
+  refreshComposerState();
 }
 
 // Connections and chat resolve labels through one shared role formatter. Cloud
@@ -1144,7 +1149,7 @@ function appendChangeSummary(files: Array<{ path: string; action: "edited" | "cr
 }
 
 function refreshComposerState(): void {
-  const ready = Boolean((projects.currentSessionId || conversationSessions.newChat) && composer.controls.routeId);
+  const ready = Boolean(workspaceBootstrap?.isReady && (projects.currentSessionId || conversationSessions.newChat) && composer.controls.routeId);
   artifactController.setEnabled(Boolean(projects.currentSessionId));
   // The attach button also unlocks in a new chat so files can be staged for the first message.
   composer.setState({ ready, running: agentRuns.active, generating: mediaJobs.active, hasSession: Boolean(projects.currentSessionId || conversationSessions.newChat) });

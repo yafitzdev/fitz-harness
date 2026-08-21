@@ -48,10 +48,24 @@ export class ConversationLanding {
     this.#options.updateTitles();
   }
 
+  showConnectionPending(retrying = false): void {
+    this.#reset(false);
+    const landing = document.createElement("div");
+    landing.className = "landing";
+    landing.setAttribute("role", "status");
+    const heading = document.createElement("h1");
+    heading.textContent = retrying ? "Restarting Fitz host" : "Starting Fitz host";
+    const message = document.createElement("p");
+    message.textContent = "Your workspace will appear when local services are ready.";
+    landing.append(heading, message);
+    this.#options.messages.append(landing);
+  }
+
   showConnectionFailure(detail: string): void {
     this.#reset(false);
     const landing = document.createElement("div");
     landing.className = "landing";
+    landing.setAttribute("role", "alert");
     const heading = document.createElement("h1");
     heading.textContent = "Fitz host is offline";
     const message = document.createElement("p");

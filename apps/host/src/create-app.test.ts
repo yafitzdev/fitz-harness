@@ -82,6 +82,28 @@ describe("Fitz host", () => {
     } finally { await runtime.app.close(); }
   });
 
+  it("repairs a persisted Default whose adapter is unavailable in the active engine mode", async () => {
+    const store = SqliteStore.memory();
+    store.upsertRecipe({
+      id: "persisted-ninfer-default",
+      playbookId: "ninfer",
+      displayName: "Persisted NInfer model",
+      adapter: "ninfer",
+      modelId: "persisted-model",
+      contextTokens: 100_000,
+      capabilities: { chatCompletions: true, streaming: true, toolCalls: true, responseFormat: false, minP: true, maxConcurrentGenerations: 1 },
+      lifecycle: { loadPolicy: "onDemand", evictionPolicy: "never", idleTtlSeconds: 0, minimumResidencySeconds: 0 },
+      configuration: {},
+    });
+    store.upsertRoute({ id: "default", displayName: "Local", recipeId: "persisted-ninfer-default", enabled: true, isDefault: true });
+
+    const runtime = createHost({ store });
+    try {
+      expect(runtime.routes.resolve("default").recipe).toMatchObject({ id: "fake-best", adapter: "fake" });
+      expect(runtime.lifecycle.pinnedRecipe()).toMatchObject({ id: "fake-best", adapter: "fake" });
+    } finally { await runtime.app.close(); }
+  });
+
   it("exposes durable usage aggregates after a terminal request", async () => {
     const store = SqliteStore.memory();
     const security = new SecurityService(store, "usage-pepper");

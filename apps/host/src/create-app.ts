@@ -183,6 +183,10 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const sessionQuery = options.sessionQuery ?? new SqliteSessionQueryService(store, { artifacts });
   const authMode = options.authMode ?? "disabled";
   const security = options.security ?? (authMode === "required" ? new SecurityService(store, options.authPepper ?? "") : undefined);
+  const fakeAdapter = options.adapters ? options.fakeAdapter : (options.fakeAdapter ?? new FakeEngineAdapter());
+  const configuredAdapters = options.adapters
+    ?? (fakeAdapter ? [fakeAdapter, new OpenAICompatibleEngineAdapter()] : [new OpenAICompatibleEngineAdapter()]);
+  const supportedAdapterIds = new Set(configuredAdapters.map((adapter) => adapter.id));
   const recoveredInterruptedRequests = store.recoverInterruptedRequests();
   const recoveredGpuWork = store.recoverInterruptedGpuWork();
   const recoveredInferenceEvidence = store.recoverInterruptedInferenceEvidence();
@@ -194,7 +198,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     options.initialRecipes ?? DEFAULT_RECIPES,
     options.initialRoutes ?? DEFAULT_ROUTES,
   );
-  ensureDefaultRoute(store, options.initialRecipes ?? DEFAULT_RECIPES, options.initialRoutes ?? DEFAULT_ROUTES);
+  ensureDefaultRoute(store, options.initialRecipes ?? DEFAULT_RECIPES, options.initialRoutes ?? DEFAULT_ROUTES, supportedAdapterIds);
   for (const retiredRouteId of ["fast", "smart", "subagent"]) store.deleteRoute(retiredRouteId);
   discardLegacyConsumerConnections(store);
   discardLegacyRecipeAgentTopologies(store);
@@ -209,7 +213,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     // Reconciliation may dematerialize the selected model after its payload was
     // removed. Preserve the one-Default invariant with the engine mode's valid
     // seed rather than leaving a dangling assignment or crashing the host.
-    ensureDefaultRoute(store, options.initialRecipes ?? DEFAULT_RECIPES, options.initialRoutes ?? DEFAULT_ROUTES);
+    ensureDefaultRoute(store, options.initialRecipes ?? DEFAULT_RECIPES, options.initialRoutes ?? DEFAULT_ROUTES, supportedAdapterIds);
     const reconciledDefault = store.listRoutes().find((route) => route.id === "default")!;
     const reconciledDefaultRecipe = store.listRecipes().find((recipe) => recipe.id === reconciledDefault.recipeId)!;
     routes.upsertRecipe(reconciledDefaultRecipe);
@@ -220,7 +224,6 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const userRoutes = new UserRouteResolver(store, routes);
   ensureMediaRoutes(store, routes);
   const events = new LifecycleEventBus(1_000, store.latestLifecycleSequence());
-  const fakeAdapter = options.adapters ? options.fakeAdapter : (options.fakeAdapter ?? new FakeEngineAdapter());
   // Provider templates register a thin MediaProviderEngineAdapter per template
   // (id = template id), so media recipes resolve in the same adapter registry
   // as local media engines (§5.7).
@@ -235,8 +238,6 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   // need the three provider-template adapters. Treating `options.adapters` as a
   // replacement made fal/Replicate/openai-media configurable in the UI while
   // leaving the packaged host unable to execute them.
-  const configuredAdapters = options.adapters
-    ?? (fakeAdapter ? [fakeAdapter, new OpenAICompatibleEngineAdapter()] : [new OpenAICompatibleEngineAdapter()]);
   const configuredAdapterIds = new Set(configuredAdapters.map((adapter) => adapter.id));
   const adapterList = [
     ...configuredAdapters,
@@ -756,10 +757,10 @@ function seedDefaults(store: SqliteStore, recipes: Recipe[], routes: Route[]): v
   }
 }
 
-function ensureDefaultRoute(store: SqliteStore, recipes: Recipe[], routes: Route[]): void {
+function ensureDefaultRoute(store: SqliteStore, recipes: Recipe[], routes: Route[], supportedAdapterIds: ReadonlySet<string>): void {
   const existing = store.listRoutes().find((route) => route.id === "default");
   const existingRecipe = existing ? store.listRecipes().find((recipe) => recipe.id === existing.recipeId) : undefined;
-  if (existing && existingRecipe && isLocalTextRecipe(existingRecipe)) {
+  if (existing && existingRecipe && isLocalTextRecipe(existingRecipe) && supportedAdapterIds.has(existingRecipe.adapter)) {
     if (existing.displayName !== "Local") store.upsertRoute({ ...existing, displayName: "Local" });
     return;
   }

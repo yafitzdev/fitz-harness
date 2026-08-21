@@ -34,4 +34,16 @@ describe("ConversationLanding", () => {
     messages.querySelector<HTMLButtonElement>(".primary-button")!.click();
     expect(calls.retryConnection).toHaveBeenCalledOnce();
   });
+
+  it("renders distinct connecting and offline recovery states", () => {
+    const { landing, messages } = setup();
+    landing.showConnectionPending();
+    expect(messages.querySelector('[role="status"]')?.textContent).toContain("Starting Fitz host");
+    expect(messages.querySelector("button")).toBeNull();
+    landing.showConnectionPending(true);
+    expect(messages.textContent).toContain("Restarting Fitz host");
+    landing.showConnectionFailure("Timed out");
+    expect(messages.querySelector('[role="alert"]')?.textContent).toContain("Timed out");
+    expect(messages.querySelector("button")?.textContent).toBe("Try again");
+  });
 });
