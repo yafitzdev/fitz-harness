@@ -65,6 +65,14 @@ function click(target: Element): void { target.dispatchEvent(new MouseEvent("cli
 beforeEach(() => document.body.replaceChildren());
 
 describe("ComposerControls", () => {
+  it("defaults new and invalid preferences to Ask first while preserving explicit Full access", () => {
+    expect(setup().controls.accessMode).toBe("ask");
+    document.body.replaceChildren();
+    expect(setup(memoryStorage({ "fitz-access-mode": "unknown" })).controls.accessMode).toBe("ask");
+    document.body.replaceChildren();
+    expect(setup(memoryStorage({ "fitz-access-mode": "full" })).controls.accessMode).toBe("full");
+  });
+
   it("owns route and effort options, labels, and user selection callbacks", () => {
     const { controls, elements, calls } = setup();
     controls.setRoutes([

@@ -44,6 +44,9 @@ export function createHostingPageClient(request: HostingPageApi): HostingPageCli
 
 export interface HostingPageElements {
   enabled: HTMLInputElement;
+  enableConfirmation: HTMLElement;
+  cancelEnable: HTMLButtonElement;
+  confirmEnable: HTMLButtonElement;
   stateLabel: HTMLElement | undefined;
   stateMessage: HTMLElement | undefined;
   publicUrl?: HTMLElement;
@@ -80,7 +83,9 @@ export class HostingPageController {
   constructor(elements: HostingPageElements, options: HostingPageOptions) {
     this.#elements = elements;
     this.#options = options;
-    elements.enabled.addEventListener("change", () => void this.#toggleHosting());
+    elements.enabled.addEventListener("change", () => void this.#handleHostingToggle());
+    elements.cancelEnable.addEventListener("click", () => this.#cancelEnable());
+    elements.confirmEnable.addEventListener("click", () => void this.#confirmEnable());
     elements.startAtLogin.addEventListener("change", () => void this.#toggleStartup());
     elements.repair.addEventListener("click", () => void this.#repair());
     elements.copyUrl.addEventListener("click", () => void this.#copy(this.#status?.publicUrl, "Hosting URL copied", elements.copyUrl));
@@ -114,6 +119,7 @@ export class HostingPageController {
     this.#status = status;
     this.#elements.enabled.disabled = false;
     this.#elements.enabled.checked = status.enabled === true;
+    if (status.enabled) this.#hideEnableConfirmation();
     if (this.#elements.stateLabel) this.#elements.stateLabel.textContent = status.online ? "Online" : status.enabled ? "Needs attention" : "Off";
     if (this.#elements.stateMessage) this.#elements.stateMessage.textContent = status.online ? "Friends can connect with the URL and their API key." : status.message ?? (status.enabled ? "The public endpoint is not reachable." : "Remote connections are disabled.");
     if (this.#elements.publicUrl) this.#elements.publicUrl.textContent = status.publicUrl ?? "Not available yet";
@@ -133,8 +139,35 @@ export class HostingPageController {
     ]);
   }
 
-  async #toggleHosting(): Promise<void> {
-    const enabled = this.#elements.enabled.checked;
+  #handleHostingToggle(): void {
+    if (this.#elements.enabled.checked && !this.#status?.enabled) {
+      this.#elements.enabled.checked = false;
+      this.#elements.enableConfirmation.hidden = false;
+      this.#elements.enabled.setAttribute("aria-expanded", "true");
+      this.#elements.confirmEnable.focus();
+      return;
+    }
+    this.#hideEnableConfirmation();
+    void this.#setHostingEnabled(false);
+  }
+
+  #cancelEnable(): void {
+    this.#hideEnableConfirmation();
+    this.#elements.enabled.checked = this.#status?.enabled === true;
+    this.#elements.enabled.focus();
+  }
+
+  async #confirmEnable(): Promise<void> {
+    this.#hideEnableConfirmation();
+    await this.#setHostingEnabled(true);
+  }
+
+  #hideEnableConfirmation(): void {
+    this.#elements.enableConfirmation.hidden = true;
+    this.#elements.enabled.setAttribute("aria-expanded", "false");
+  }
+
+  async #setHostingEnabled(enabled: boolean): Promise<void> {
     this.#elements.enabled.disabled = true;
     try {
       const response = await this.#options.api.setEnabled(enabled);

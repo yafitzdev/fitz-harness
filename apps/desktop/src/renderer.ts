@@ -669,6 +669,9 @@ const administrationPageController = new AdministrationPageController({
 });
 const hostingPageController = new HostingPageController({
   enabled: element("hosting-enabled") as HTMLInputElement,
+  enableConfirmation: element("hosting-enable-confirmation"),
+  cancelEnable: element("cancel-hosting-enable") as HTMLButtonElement,
+  confirmEnable: element("confirm-hosting-enable") as HTMLButtonElement,
   stateLabel: document.getElementById("hosting-state-label") ?? undefined,
   stateMessage: document.getElementById("hosting-state-message") ?? undefined,
   copyUrl: element("copy-hosting-url") as HTMLButtonElement,

@@ -107,11 +107,19 @@
 
         <div class="sidebar-footer">
           <div class="sidebar-content-divider" aria-hidden="true"></div>
+          <div id="hosting-enable-confirmation" class="sidebar-hosting-confirmation" role="dialog" aria-labelledby="hosting-enable-title" hidden>
+            <strong id="hosting-enable-title">Enable public hosting?</strong>
+            <p>Fitz will be published at your Tailscale Funnel URL. Anyone with a valid API key can connect.</p>
+            <div>
+              <button id="cancel-hosting-enable" type="button">Cancel</button>
+              <button id="confirm-hosting-enable" type="button">Enable hosting</button>
+            </div>
+          </div>
           <div class="sidebar-hosting" aria-label="Public hosting">
             <em class="sidebar-hosting-title">Hosting</em>
             <button id="copy-hosting-url" type="button" title="Copy public server URL" aria-label="Copy public server URL">Copy URL</button>
             <label class="hosting-switch sidebar-hosting-switch">
-              <input id="hosting-enabled" type="checkbox">
+              <input id="hosting-enabled" type="checkbox" aria-label="Enable public hosting" aria-controls="hosting-enable-confirmation" aria-expanded="false">
               <span aria-hidden="true"></span>
             </label>
           </div>

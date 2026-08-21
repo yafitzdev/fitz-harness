@@ -319,7 +319,7 @@ export class ComposerControls {
 
   private storedAccessMode(): AccessMode {
     const value = this.storage.getItem("fitz-access-mode");
-    return value === "ask" || value === "read-only" ? value : "full";
+    return value === "full" || value === "read-only" ? value : "ask";
   }
 
   private setAccessMode(mode: AccessMode): void {

@@ -34,6 +34,13 @@
 .sidebar-hosting button.is-copied { background: var(--status-success-tint); color: var(--status-success); }
 .sidebar-hosting button.is-copied:hover { background: var(--status-success-tint); }
 .sidebar-hosting button.is-copied:disabled { opacity: 1; }
+.sidebar-hosting-confirmation { display: grid; gap: 8px; margin: 0 7px 6px; padding: 11px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--grey-200); color: var(--sidebar-text); box-shadow: var(--elevation-stroke), var(--shadow-popover); }
+.sidebar-hosting-confirmation[hidden] { display: none; }
+.sidebar-hosting-confirmation strong { font-size: 12px; }
+.sidebar-hosting-confirmation p { margin: 0; color: var(--sidebar-subtle); font-size: 10.5px; line-height: 1.45; }
+.sidebar-hosting-confirmation > div { display: flex; justify-content: flex-end; gap: 7px; }
+.sidebar-hosting-confirmation button { min-height: 28px; padding: 0 9px; border-radius: var(--radius-md); background: var(--tint-5); color: var(--sidebar-text); cursor: pointer; font-size: 10.5px; }
+.sidebar-hosting-confirmation button:last-child { background: var(--accent); color: white; }
 .sidebar-hosting-switch { margin-left: auto; grid-template-columns: 40px; }
 .sidebar-hosting-switch > span { width: 40px; height: 24px; border-radius: 16px; }
 .sidebar-hosting-switch > span::after { width: 18px; height: 18px; }
