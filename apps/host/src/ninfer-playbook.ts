@@ -39,7 +39,7 @@ function recipe(
     runtime.executable,
     {
       maxContext: profile.maxContextTokens,
-      kvCapacity: "auto",
+      kvCapacity: profile.kvCapacityTokens,
       maxConcurrency: profile.maxConcurrency,
       vision: profile.vision,
       thinking: true,

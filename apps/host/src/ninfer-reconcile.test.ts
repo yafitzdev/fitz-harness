@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { SqliteStore } from "@fitz/storage";
 import { createNInferPlaybook } from "./ninfer-playbook.js";
-import { QWEN36_35B_RECIPE_ID, QWEN38_GROUPWISE_RECIPE_ID } from "./ninfer-model-profiles.js";
+import { QWEN36_35B_RECIPE_ID, QWEN38_GROUPWISE_RECIPE_ID, QWEN38_NVFP4_RECIPE_ID } from "./ninfer-model-profiles.js";
 import { reconcileNInferConfiguration } from "./ninfer-reconcile.js";
 
 const runtime = {
@@ -36,6 +36,25 @@ describe("reconcileNInferConfiguration", () => {
         configuration: { maxConcurrency: 3, kvCapacity: "auto", maxContext: 131_072, thinking: true },
       });
       expect(store.listRecipes().find((recipe) => recipe.id === current.id)).not.toHaveProperty("agentTopology");
+    } finally {
+      store.close();
+    }
+  });
+
+  it("replaces unsafe automatic KV sizing for the NVFP4 worker pool", () => {
+    const store = SqliteStore.memory();
+    try {
+      const current = createNInferPlaybook(runtime).recipes.find((recipe) => recipe.id === QWEN38_NVFP4_RECIPE_ID)!;
+      store.upsertRecipe({
+        ...current,
+        configuration: { ...current.configuration, kvCapacity: "auto" },
+      });
+
+      reconcileNInferConfiguration(store, runtime);
+
+      expect(store.listRecipes().find((recipe) => recipe.id === QWEN38_NVFP4_RECIPE_ID)).toMatchObject({
+        configuration: { maxContext: 131_072, kvCapacity: 131_072, maxConcurrency: 3 },
+      });
     } finally {
       store.close();
     }

@@ -13,6 +13,7 @@ export interface NInferModelProfile {
   fileName: string;
   draftTokens: number;
   maxContextTokens: number;
+  kvCapacityTokens: number | "auto";
   modelContextTokens: number;
   maxConcurrency: number;
   kvDtype: NInferKvDtype;
@@ -34,6 +35,7 @@ export const NINFER_MODEL_PROFILES: readonly NInferModelProfile[] = [
     fileName: "qwen3_8_27b.ninfer",
     draftTokens: 4,
     maxContextTokens: LOCAL_MAIN_CONTEXT_TOKENS,
+    kvCapacityTokens: "auto",
     modelContextTokens: 262_144,
     maxConcurrency: 1,
     kvDtype: "bf16",
@@ -47,6 +49,10 @@ export const NINFER_MODEL_PROFILES: readonly NInferModelProfile[] = [
     fileName: "qwen3_8_27b_nvfp4.ninfer",
     draftTokens: 4,
     maxContextTokens: LOCAL_MAIN_CONTEXT_TOKENS,
+    // Automatic sizing leaves only NInfer's generic CUDA headroom. Under
+    // WSL/WDDM that lets desktop allocations evict model pages over PCIe.
+    // One full local context still admits three ordinary worker contexts.
+    kvCapacityTokens: LOCAL_MAIN_CONTEXT_TOKENS,
     modelContextTokens: 262_144,
     maxConcurrency: LOCAL_MAX_CONCURRENT_AGENTS,
     kvDtype: "int8",
@@ -60,6 +66,7 @@ export const NINFER_MODEL_PROFILES: readonly NInferModelProfile[] = [
     fileName: "qwen3_6_35b_a3b.ninfer",
     draftTokens: 4,
     maxContextTokens: LOCAL_MAIN_CONTEXT_TOKENS,
+    kvCapacityTokens: "auto",
     modelContextTokens: 262_144,
     maxConcurrency: LOCAL_MAX_CONCURRENT_AGENTS,
     kvDtype: "int8",

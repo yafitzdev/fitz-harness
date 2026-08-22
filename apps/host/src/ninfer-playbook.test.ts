@@ -26,6 +26,7 @@ describe("production NiNfer playbook", () => {
     expect(playbook.recipes.map((recipe) => recipe.capabilities.maxConcurrentGenerations)).toEqual([1, 3, 3]);
     expect(playbook.recipes.every((recipe) => readNInferConfiguration(recipe).thinking)).toBe(true);
     expect(playbook.recipes.map((recipe) => readNInferConfiguration(recipe).draftTokens)).toEqual([4, 4, 4]);
+    expect(playbook.recipes.map((recipe) => readNInferConfiguration(recipe).kvCapacity)).toEqual(["auto", 131_072, "auto"]);
     expect(playbook.routes).toEqual([expect.objectContaining({ id: "default", recipeId: playbook.recipes[0]!.id, isDefault: true })]);
   });
 
@@ -55,7 +56,7 @@ describe("production NiNfer playbook", () => {
       configuration: {
         artifact: "/opt/fitz/llm/models/ninfer/qwen3_8_27b_nvfp4.ninfer",
         maxContext: 131_072,
-        kvCapacity: "auto",
+        kvCapacity: 131_072,
         kvDtype: "int8",
       },
     });
