@@ -65,7 +65,7 @@ ensureComfyUISafeModeExtension(localComfyUIPaths(runtimePaths).hostBaseDir);
 const linuxRuntimeLayout = managedLinuxRuntimeLayout(runtimePaths);
 const linuxRuntimes = managedLinuxRuntimeMap(linuxRuntimeLayout);
 const ninferRuntime = engineMode === "ninfer" && process.platform === "win32"
-  ? new NInferRuntimeManager({ paths: runtimePaths, sourceDistribution: process.env.FITZ_NINFER_SOURCE_WSL_DISTRIBUTION ?? "Ubuntu" })
+  ? new NInferRuntimeManager({ paths: runtimePaths })
   : undefined;
 const engineOptions = engineModeOptions(engineMode);
 const store = new SqliteStore(databasePath);

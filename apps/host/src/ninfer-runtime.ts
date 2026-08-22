@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { FitzRuntimePaths } from "./runtime-paths.js";
@@ -15,6 +15,8 @@ import { NINFER_MODEL_PROFILES } from "./ninfer-model-profiles.js";
 const execFileAsync = promisify(execFile);
 
 const KNOWN_MODELS = NINFER_MODEL_PROFILES.map(({ registrationId: id, fileName }) => ({ id, fileName }));
+const CUDA_CUDART_PATH = "/usr/local/cuda-13.1/targets/x86_64-linux/lib/libcudart.so.13";
+const CUDA_KEYRING_URL = "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb";
 
 export interface NInferRuntimeLayout extends ManagedLinuxRuntimeLayout {
   modelRoot: string;
@@ -50,7 +52,6 @@ type CommandRunner = (file: string, args: string[], options?: { timeout?: number
 export interface NInferRuntimeManagerOptions {
   paths: FitzRuntimePaths;
   platform?: NodeJS.Platform;
-  sourceDistribution?: string;
   run?: CommandRunner;
 }
 
@@ -98,7 +99,6 @@ export class NInferRuntimeManager {
   readonly layout: NInferRuntimeLayout;
   readonly #paths: FitzRuntimePaths;
   readonly #platform: NodeJS.Platform;
-  readonly #sourceDistribution: string;
   readonly #run: CommandRunner;
   #operation: Promise<void> | undefined;
   #working: NInferRuntimeStatus | undefined;
@@ -107,7 +107,6 @@ export class NInferRuntimeManager {
   constructor(options: NInferRuntimeManagerOptions) {
     this.#paths = options.paths;
     this.#platform = options.platform ?? process.platform;
-    this.#sourceDistribution = options.sourceDistribution ?? "Ubuntu";
     this.#run = options.run ?? defaultCommandRunner;
     const shared = managedLinuxRuntimeLayout(options.paths);
     const hostRoot = shared.hostRoot;
@@ -127,8 +126,9 @@ export class NInferRuntimeManager {
     if (this.#failure) return this.#base("failed", "failed", 0, this.#failure, models);
     if (!installed) return this.#base("not-installed", "not-installed", 0, "Set up the canonical inference runtime.", models);
     const engineReady = await this.#guestTest("-x", this.layout.executable);
+    const dependenciesReady = await this.#guestTest("-r", CUDA_CUDART_PATH);
     const installedModels = models.filter((model) => model.sourcePresent || model.runtimePresent);
-    const complete = engineReady && installedModels.length > 0 && installedModels.every((model) => model.runtimePresent);
+    const complete = engineReady && dependenciesReady && installedModels.length > 0 && installedModels.every((model) => model.runtimePresent);
     return this.#base(complete ? "ready" : "not-installed", complete ? "ready" : "migration-needed", complete ? 100 : 25, complete ? "Ready." : "The NInfer engine or its registered models are incomplete.", models);
   }
 
@@ -152,11 +152,8 @@ export class NInferRuntimeManager {
       await this.#run("wsl.exe", ["--install", "Ubuntu-24.04", "--name", this.layout.distribution, "--location", this.layout.hostRoot, "--no-launch", "--web-download"], { timeout: 20 * 60_000 });
     }
     this.#setWorking("installing-dependencies", 15, "Installing the NInfer runtime libraries…");
-    await this.#guestShell("apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates ffmpeg libcurl4 && rm -rf /var/lib/apt/lists/*", 20 * 60_000);
+    await this.#installRuntimeDependencies();
     await this.#guestShell(`install -d -m 0755 ${shellQuote(this.layout.modelRoot)} ${shellQuote(dirname(this.layout.executable))} ${shellQuote(`${this.layout.guestRoot}/logs`)}`, 30_000);
-
-    this.#setWorking("copying-cuda-runtime", 24, "Copying the small CUDA runtime dependency set…");
-    await this.#copyCudaRuntime();
 
     if (!await this.#guestTest("-x", this.layout.executable)) {
       const builtExecutable = `${this.layout.engineRoot}/ninfer/build/apps/ninfer-serve`;
@@ -203,15 +200,21 @@ export class NInferRuntimeManager {
     this.#setWorking("ready", 100, "Ready.");
   }
 
-  async #copyCudaRuntime(): Promise<void> {
-    const archive = resolve(join(this.#paths.runtimeRoot, ".ninfer-cuda-runtime.tar"));
-    assertInside(this.#paths.runtimeRoot, archive);
-    try {
-      await this.#run("wsl.exe", ["-d", this.#sourceDistribution, "-u", "root", "--", "sh", "-c", `set -eu; tar -chf ${shellQuote(guestPath(archive))} /usr/local/cuda-13.1/targets/x86_64-linux/lib/libcudart.so.13 /usr/local/cuda/targets/x86_64-linux/lib/libOpenCL.so.1`], { timeout: 120_000 });
-      await this.#guestShell(`tar -xf ${shellQuote(guestPath(archive))} -C /`, 120_000);
-    } finally {
-      await rm(archive, { force: true });
-    }
+  async #installRuntimeDependencies(): Promise<void> {
+    await this.#guestShell([
+      "set -eu",
+      "export DEBIAN_FRONTEND=noninteractive",
+      "apt-get update",
+      "apt-get install -y --no-install-recommends ca-certificates curl ffmpeg libcurl4 ocl-icd-libopencl1",
+      "cuda_keyring=$(mktemp)",
+      "trap 'rm -f \"$cuda_keyring\"' EXIT",
+      `curl -fsSL ${shellQuote(CUDA_KEYRING_URL)} -o "$cuda_keyring"`,
+      "dpkg -i \"$cuda_keyring\"",
+      "apt-get update",
+      "apt-get install -y --no-install-recommends cuda-cudart-13-1",
+      "rm -rf /var/lib/apt/lists/*",
+      `test -r ${shellQuote(CUDA_CUDART_PATH)}`,
+    ].join("\n"), 20 * 60_000);
   }
 
   async #modelStatus(): Promise<NInferRuntimeModelStatus[]> {
@@ -234,7 +237,7 @@ export class NInferRuntimeManager {
     } catch { return false; }
   }
 
-  async #guestTest(flag: "-x" | "-f", path: string): Promise<boolean> {
+  async #guestTest(flag: "-x" | "-f" | "-r", path: string): Promise<boolean> {
     try { await this.#run("wsl.exe", ["-d", this.layout.distribution, "-u", "root", "--", "test", flag, path], { timeout: 15_000 }); return true; }
     catch { return false; }
   }
@@ -268,12 +271,6 @@ async function defaultCommandRunner(file: string, args: string[], options: { tim
 function assertInside(parent: string, target: string): void {
   const rel = relative(resolve(parent), resolve(target));
   if (rel.startsWith("..") || resolve(parent) === resolve(target)) throw new Error(`Path escapes managed runtime root: ${target}`);
-}
-
-function guestPath(hostPath: string): string {
-  const windowsPath = /^([A-Za-z]):[\\/](.*)$/.exec(hostPath);
-  if (!windowsPath) return hostPath.replaceAll("\\", "/");
-  return `/mnt/${windowsPath[1]!.toLowerCase()}/${windowsPath[2]!.replaceAll("\\", "/")}`;
 }
 
 function shellQuote(value: string): string { return `'${value.replaceAll("'", `'\\''`)}'`; }
