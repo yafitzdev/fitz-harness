@@ -41,11 +41,15 @@ describe("durable agent plans", () => {
     expect(rejected.details).toEqual(expect.objectContaining({ status: "rejected" }));
 
     await execute(tool, { action: "update", item_id: "inspect", status: "completed", result: "Runtime inspected" });
-    await execute(tool, { action: "update", item_id: "implement", status: "completed", result: "Implemented" });
-    await execute(tool, { action: "ready" });
+    const completed = await execute(tool, { action: "update", item_id: "implement", status: "completed", result: "Implemented" });
 
+    expect(completed.details).toEqual(expect.objectContaining({ status: "ready_for_answer" }));
     expect(store.getAgentRunPlan("parent")?.status).toBe("ready_for_answer");
     expect(planCompletionIssue(store, "parent")).toBeUndefined();
+    const revision = store.getAgentRunPlan("parent")?.revision;
+    const repeatedReady = await execute(tool, { action: "ready" });
+    expect(repeatedReady.details).toEqual(expect.objectContaining({ status: "ready_for_answer" }));
+    expect(store.getAgentRunPlan("parent")?.revision).toBe(revision);
     completePlanAfterAnswer(store, "parent");
     expect(store.getAgentRunPlan("parent")?.status).toBe("completed");
     store.close();
@@ -57,8 +61,9 @@ describe("durable agent plans", () => {
     await execute(tool, { action: "set", items: [{ id: "inspect", task: "Inspect the relevant evidence" }] });
     await execute(tool, { action: "update", item_id: "inspect", status: "completed", result: "Enough evidence" });
 
+    expect(store.getAgentRunPlan("parent")?.status).toBe("ready_for_answer");
     expect(planAdmissionReason(store, "parent", { toolName: "read", input: { path: "another-file" } }))
-      .toContain("All required plan items are complete");
+      .toContain("Prerequisite work is complete");
     expect(planAdmissionReason(store, "parent", { toolName: "agent_plan", input: { action: "ready" } }))
       .toBeUndefined();
     store.close();
@@ -93,6 +98,27 @@ describe("durable agent plans", () => {
     store.close();
   });
 
+  it("opens the answer phase when reconciliation completes the last worker item", async () => {
+    const store = harness();
+    const tool = createAgentPlanTool({ store }, { runId: "parent" });
+    await execute(tool, { action: "set", items: [
+      { id: "research", task: "Research", worker_eligible: true },
+      { id: "main", task: "Inspect the critical path" },
+    ] });
+    store.createAgentRun({ id: "child", routeId: "fast", status: "running", createdAt: NOW, updatedAt: NOW, lastSequence: 0 }, { model: "fast", messages: [] });
+    assignPlanItemToWorker(store, "parent", "research", "child");
+    await execute(tool, { action: "update", item_id: "main", status: "completed", result: "Critical path complete" });
+    expect(store.getAgentRunPlan("parent")?.status).toBe("active");
+
+    store.updateAgentRun("child", "completed");
+    const reconciled = reconcileAgentPlan(store, "parent");
+
+    expect(reconciled?.items.find((item) => item.id === "research")?.status).toBe("completed");
+    expect(reconciled?.status).toBe("ready_for_answer");
+    expect(planCompletionIssue(store, "parent")).toBeUndefined();
+    store.close();
+  });
+
   it("cannot complete an explicit-worker request without a durable worker assignment", async () => {
     const store = harness();
     const tool = createAgentPlanTool({ store, requiredWorkerRoutes: ["fast"] }, { runId: "parent" });
@@ -109,8 +135,9 @@ describe("durable agent plans", () => {
     assignPlanItemToWorker(store, "parent", "research", "child");
     reconcileAgentPlan(store, "parent");
     await execute(tool, { action: "update", item_id: "main", status: "completed", result: "Critical path complete" });
-    await execute(tool, { action: "ready" });
     expect(store.getAgentRunPlan("parent")?.status).toBe("ready_for_answer");
+    const repeatedReady = await execute(tool, { action: "ready" });
+    expect(repeatedReady.details).toEqual(expect.objectContaining({ status: "ready_for_answer" }));
     store.close();
   });
 

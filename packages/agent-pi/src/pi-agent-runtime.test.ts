@@ -5,7 +5,7 @@ import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SessionForensicsBundle, SessionQueryService } from "@fitz/protocol";
-import { broadFilesystemScanReason, buildFitzSystemInstructions, createSessionLookupTool, createTrashTool, formatSessionSnapshot, limitToolResultContent, PiAgentRuntime, readEnabledExtensionDirs, SESSION_LOOKUP_TOOL, TRASH_TOOL, withoutAssistantTextForTools, type PiSession, type PiSessionFactory, type PiSessionSnapshot } from "./pi-agent-runtime.js";
+import { broadFilesystemScanReason, buildFitzSystemInstructions, createSessionLookupTool, createTrashTool, FITZ_RUNTIME_CONTROL_ACTIVATION, formatSessionSnapshot, limitToolResultContent, PiAgentRuntime, readEnabledExtensionDirs, SESSION_LOOKUP_TOOL, TRASH_TOOL, withoutAssistantTextForTools, type PiSession, type PiSessionFactory, type PiSessionSnapshot } from "./pi-agent-runtime.js";
 
 describe("PiAgentRuntime", () => {
   it("passes Fitz runtime locations to the session factory", async () => {
@@ -104,6 +104,45 @@ describe("PiAgentRuntime", () => {
     expect(prompts[1]).toBe("CONTINUE UNTIL PLAN READY");
     expect(events).toEqual([{ type: "assistant.delta", text: "done" }]);
     expect(ready).toBe(true);
+  });
+
+  it("accepts the final answer produced after the last plan update in the same SDK prompt", async () => {
+    let phase: "active" | "ready_for_answer" = "active";
+    const promptControl = vi.fn(async () => undefined);
+    const runtime = new PiAgentRuntime({
+      runPlan: () => ({
+        initialInstruction: "PLAN FIRST",
+        admissionReason: () => undefined,
+        completionIssue: () => phase === "active" ? "PLAN STILL ACTIVE" : undefined,
+        phase: () => phase,
+      }),
+      createSession: async () => {
+        let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+        return {
+          subscribe: (next) => { listener = next; return () => undefined; },
+          prompt: async () => {
+            listener({ type: "tool_execution_start", toolCallId: "complete-1", toolName: "agent_plan", args: { action: "update", item_id: "report", status: "completed" } });
+            phase = "ready_for_answer";
+            listener({ type: "tool_execution_end", toolCallId: "complete-1", toolName: "agent_plan", result: { details: { status: "ready_for_answer" } } });
+            listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Complete standalone answer." } });
+          },
+          promptControl,
+          steer: async () => undefined,
+          abort: async () => undefined,
+          dispose: () => undefined,
+        };
+      },
+    });
+
+    const events = [];
+    for await (const event of runtime.run({ model: "default", messages: [{ role: "user", content: "finish" }] })) events.push(event);
+
+    expect(promptControl).not.toHaveBeenCalled();
+    expect(events).toEqual([
+      { type: "tool.started", toolCallId: "complete-1", toolName: "agent_plan", input: { action: "update", item_id: "report", status: "completed" } },
+      { type: "tool.completed", toolCallId: "complete-1", toolName: "agent_plan", result: { details: { status: "ready_for_answer" } } },
+      { type: "assistant.delta", text: "Complete standalone answer." },
+    ]);
   });
 
   it("promotes text buffered before a successful ready transition and suppresses the redundant follow-up", async () => {
@@ -685,6 +724,69 @@ describe("PiAgentRuntime", () => {
     expect(events).toEqual([{ type: "assistant.delta", text: "blocked" }]);
     expect(approvals).toBe(0);
   });
+
+  it("does not accumulate discarded runtime-control turns in the real Pi context", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "fitz-pi-control-"));
+    const agentDir = join(cwd, "agent");
+    await mkdir(agentDir, { recursive: true });
+    const requests: any[] = [];
+    let phase: "active" | "ready_for_answer" = "active";
+    const server = createServer(async (request, response) => {
+      let body = "";
+      for await (const chunk of request) body += chunk;
+      requests.push(JSON.parse(body));
+      const attempt = requests.length;
+      if (attempt === 3) phase = "ready_for_answer";
+      const content = attempt === 1 ? "discarded initial draft" : attempt === 2 ? "discarded control draft" : "accepted final answer";
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      sse(response, { choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: null }] });
+      sse(response, { choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 20, completion_tokens: 4 } });
+      response.end("data: [DONE]\n\n");
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected server address");
+    try {
+      const runtime = new PiAgentRuntime({
+        cwd,
+        agentDir,
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        runPlan: () => ({
+          initialInstruction: "PLAN FIRST",
+          required: () => true,
+          admissionReason: () => undefined,
+          completionIssue: () => phase === "active" ? "PLAN STILL ACTIVE" : undefined,
+          phase: () => phase,
+        }),
+      });
+      const events = [];
+      for await (const event of runtime.run({ model: "default", messages: [{ role: "user", content: "finish the task" }], maxTokens: 128 })) events.push(event);
+
+      expect(requests).toHaveLength(3);
+      const firstContext = JSON.stringify(requests[0].messages);
+      const secondContext = JSON.stringify(requests[1].messages);
+      const thirdContext = JSON.stringify(requests[2].messages);
+      const userTexts = (providerRequest: any) => providerRequest.messages
+        .filter((message: any) => message.role === "user")
+        .map((message: any) => typeof message.content === "string" ? message.content : message.content.map((part: any) => part.text ?? "").join(""));
+      expect(userTexts(requests[0])).toEqual(["finish the task"]);
+      expect(userTexts(requests[1])).toEqual(["finish the task", FITZ_RUNTIME_CONTROL_ACTIVATION]);
+      expect(userTexts(requests[2])).toEqual(["finish the task", FITZ_RUNTIME_CONTROL_ACTIVATION]);
+      expect(firstContext).toContain('<fitz_system_prompt id=\\"fitz.root\\"');
+      expect(firstContext).toContain("PLAN FIRST");
+      expect(secondContext).not.toContain("discarded initial draft");
+      expect(thirdContext).not.toContain("discarded initial draft");
+      expect(thirdContext).not.toContain("discarded control draft");
+      expect(secondContext).toContain('<runtime_control purpose=\\"plan\\"');
+      expect(secondContext).toContain("PLAN STILL ACTIVE");
+      expect(JSON.stringify(requests)).not.toContain("Continue the current task using the Fitz runtime control instruction.");
+      expect(events.filter((event) => event.type === "assistant.delta")).toEqual([{ type: "assistant.delta", text: "accepted final answer" }]);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(cwd, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   it("runs the real Pi loop against the selected Fitz route and executes coding tools", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "fitz-pi-"));

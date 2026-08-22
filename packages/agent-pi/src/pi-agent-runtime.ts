@@ -178,6 +178,10 @@ export interface PiAgentRuntimeOptions {
 }
 
 const CODING_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"] as const;
+/** Opaque user-turn activation for a trusted per-request runtime instruction.
+ * It deliberately carries no natural-language instruction for the model to
+ * parrot or reinterpret; the actual control text lives in the system prompt. */
+export const FITZ_RUNTIME_CONTROL_ACTIVATION = "<fitz_runtime_control activation=\"system-prompt\" />";
 /** Read-only tool that reads a past conversation from the Fitz session store. */
 export const SESSION_LOOKUP_TOOL = "fitz_session";
 /** Explicit trash tool: the agent can offer to move files to the run trash instead of deleting. */
@@ -494,7 +498,7 @@ class WorkToolBudget {
   admissionReason(toolCall: PiToolCall): string | undefined {
     if (this.#limit === undefined || TOOL_BUDGET_EXEMPT.has(toolCall.toolName) || this.#admitted.has(toolCall.toolCallId)) return undefined;
     return this.#admitted.size >= this.#limit
-      ? `The ${this.#limit}-call substantive tool budget is exhausted. Do not call more research or mutation tools. Finish the durable plan from the evidence already gathered, state any uncertainty, call agent_plan ready, and answer.`
+      ? `The ${this.#limit}-call substantive tool budget is exhausted. Do not call more research or mutation tools. Finish the durable plan from the evidence already gathered, state any uncertainty, and answer once the last required item automatically opens the final-answer phase.`
       : undefined;
   }
 
@@ -572,6 +576,9 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
     },
   };
   const activeToolLeases = new Map<string, ToolLeaseRelease>();
+  let fitzSystemPrompt = FITZ_SYSTEM_PROMPT_SEED;
+  let piBaseSystemPrompt = FITZ_SYSTEM_PROMPT_SEED;
+  let pendingRuntimeControl: { purpose: string; instruction: string } | undefined;
   const resourceLoader = new sdk.DefaultResourceLoader({
     cwd: options.cwd,
     agentDir: options.agentDir,
@@ -589,6 +596,18 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
       name: "fitz-tool-approval",
       hidden: true,
       factory: (pi) => {
+        // AgentSession resets Agent.state to its resource-loader base before
+        // every prompt. Own that supported pre-turn boundary so the complete
+        // Fitz prompt and any ephemeral runtime control are present on the
+        // very first provider request, not only after a tool turn.
+        pi.on("before_agent_start", (event) => {
+          const constrained = constrainSystemPrompt(fitzSystemPrompt, event.systemPrompt, piBaseSystemPrompt);
+          return {
+            systemPrompt: pendingRuntimeControl
+              ? `${constrained}\n\n${runtimeControlPrompt(pendingRuntimeControl.purpose, pendingRuntimeControl.instruction)}`
+              : constrained,
+          };
+        });
         const acquireLease = async (event: PiToolCall): Promise<undefined> => {
           if (!options.acquireToolLease) return undefined;
           activeToolLeases.get(event.toolCallId)?.();
@@ -645,6 +664,7 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
     sessionManager: sdk.SessionManager.inMemory(options.cwd),
   });
   const session = result.session;
+  piBaseSystemPrompt = session.systemPrompt;
   const toolDefinitions = new Map<string, ToolDefinition>();
   for (const name of enabledTools) {
     const definition = session.getToolDefinition(name);
@@ -664,26 +684,26 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
     // whole-prompt rewrites are constrained by prepareNextTurnWithContext below.
     extensionInstructions: resourceLoader.getAppendSystemPrompt(),
   });
+  // The Fitz inline extension runs after user extensions and rebases Pi's seed
+  // prompt onto this complete contract at the supported pre-turn boundary.
+  // Direct Agent.state assignment is transient because prompt() restores Pi's
+  // private base before starting a completion.
+  fitzSystemPrompt = renderedPrompt.text;
   const seededHistory = chatMessagesToPi(options.history ?? [], options.routeId);
   if (seededHistory.length) {
     session.agent.state.messages = seededHistory;
     for (const message of seededHistory) session.sessionManager.appendMessage(message);
   }
-  session.agent.state.systemPrompt = renderedPrompt.text;
   const withheldAnswerToolCalls = new Set<string>();
-  let pendingRuntimeControl: { purpose: string; instruction: string } | undefined;
   const previousPrepareNextTurnWithContext = session.agent.prepareNextTurnWithContext;
   session.agent.prepareNextTurnWithContext = async (turn, signal) => {
     const prepared = await previousPrepareNextTurnWithContext?.(turn, signal);
     const context = { ...turn.context, ...(prepared?.context ?? {}) };
-    const base = pendingRuntimeControl
-      ? `${renderedPrompt.text}\n\n${runtimeControlPrompt(pendingRuntimeControl.purpose, pendingRuntimeControl.instruction)}`
-      : renderedPrompt.text;
     return {
       ...(prepared ?? {}),
       context: {
         ...context,
-        systemPrompt: constrainSystemPrompt(base, context.systemPrompt),
+        systemPrompt: constrainSystemPrompt(turn.context.systemPrompt, prepared?.context?.systemPrompt),
       },
     };
   };
@@ -698,7 +718,7 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
     prompt: (text, images) => session.prompt(text, images?.length ? { images } : undefined),
     promptControl: async (purpose, instruction) => {
       pendingRuntimeControl = { purpose, instruction };
-      try { await session.prompt("Continue the current task using the Fitz runtime control instruction."); }
+      try { await session.prompt(FITZ_RUNTIME_CONTROL_ACTIVATION); }
       finally { pendingRuntimeControl = undefined; }
     },
     steer: (text) => session.steer(text),
@@ -709,13 +729,22 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
       const leaf = session.sessionManager.getLeafEntry();
       if (lastMessage?.role !== "assistant" || leaf?.type !== "message" || leaf.message.role !== "assistant") return false;
 
+      const parent = leaf.parentId === null ? undefined : session.sessionManager.getEntry(leaf.parentId);
+      const discardControlActivation = isRuntimeControlActivationMessage(messages.at(-2))
+        && parent?.type === "message"
+        && isRuntimeControlActivationMessage(parent.message);
+      const branchFromId = discardControlActivation ? parent.parentId : leaf.parentId;
+
       // Agent.state is the live completion context. SessionManager owns the
       // parallel append-only tree used by AgentSession. Repointing its leaf
-      // preserves the discarded node for diagnostics while excluding it from
-      // the branch used by every subsequent completion.
-      session.agent.state.messages = messages.slice(0, -1);
-      if (leaf.parentId === null) session.sessionManager.resetLeaf();
-      else session.sessionManager.branch(leaf.parentId);
+      // preserves discarded nodes for diagnostics while excluding them from
+      // the branch used by every subsequent completion. A no-tool internal
+      // continuation is one atomic control turn, so discard its opaque user
+      // activation with the rejected assistant draft instead of accumulating
+      // synthetic user messages across retries.
+      session.agent.state.messages = messages.slice(0, discardControlActivation ? -2 : -1);
+      if (branchFromId === null) session.sessionManager.resetLeaf();
+      else session.sessionManager.branch(branchFromId);
       return true;
     },
     withholdLastAssistantText: (toolCallId) => {
@@ -747,6 +776,13 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
       session.dispose();
     },
   };
+}
+
+export function isRuntimeControlActivationMessage(message: { role?: string; content?: unknown } | undefined): boolean {
+  if (message?.role !== "user" || !Array.isArray(message.content) || message.content.length !== 1) return false;
+  const part = message.content[0];
+  return typeof part === "object" && part !== null && "type" in part && "text" in part
+    && part.type === "text" && part.text === FITZ_RUNTIME_CONTROL_ACTIVATION;
 }
 
 /**

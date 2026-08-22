@@ -33,14 +33,14 @@ export function createAgentPlanTool(options: AgentPlanToolsOptions, context: { r
   return {
     name: AGENT_PLAN_TOOL,
     label: "Update task plan",
-    description: "Create, revise, inspect, and finish the prerequisite work plan for this run. Final synthesis is implicit: once every required work item is complete, call action=ready before writing the user-facing answer.",
+    description: "Create, revise, and inspect the prerequisite work plan for this run. Final synthesis is implicit: completing the last required work item automatically opens the final-answer phase; action=ready remains an idempotent compatibility transition.",
     promptSnippet: "Maintain the run's durable task plan and completion state",
     promptGuidelines: [
       "Your first tool call must set a concrete task plan. This is the execution gameplan, not optional narration.",
       "Keep blockers and critical-path tasks owned by the main agent. Mark only independent, bounded speed-up tasks as worker_eligible.",
       "Update main-owned items as you start and complete them. Worker-owned items are updated automatically.",
       "Do not add a synthesis, final-answer, or respond-to-user item; final synthesis is an implicit runtime-owned phase.",
-      "Call ready before writing any part of the final answer. A failed worker is reassigned to the main agent and must be completed there.",
+      "When the last required item completes, write the final answer in the next assistant response. A failed worker is reassigned to the main agent and must be completed there.",
     ],
     parameters,
     execute: async (_toolCallId, params) => {
@@ -76,7 +76,7 @@ export function createAgentPlanTool(options: AgentPlanToolsOptions, context: { r
       }
       try {
         const plan = readyPlan(options.store, runId);
-        return result(`${formatPlan(plan)}\nAll prerequisite work is complete. Now provide one complete, standalone final answer. Do not refer to an earlier draft or call another tool.`, plan, plan.status !== "ready_for_answer");
+        return result(`${formatPlan(plan)}\nAll prerequisite work is complete. Now provide one complete, standalone final answer. Do not refer to an earlier draft or call another tool.`, plan, plan.status !== "ready_for_answer" && plan.status !== "completed");
       } catch (error) {
         return result(error instanceof Error ? error.message : String(error), undefined, true);
       }
@@ -89,7 +89,7 @@ export function planPromptInstruction(): string {
     "If the request can be answered directly without tools, answer normally. Before other tool work, create the durable prerequisite plan with agent_plan action=set.",
     "Keep critical-path work with the main agent and mark only independent, bounded tasks as worker_eligible. Do not add final synthesis as a plan item.",
     "Update main-owned items as work advances, continue independent parent work after delegation, and use status only after ready parent work is exhausted.",
-    "When all required items are complete, call agent_plan action=ready before the standalone final answer. Failed worker items return to the main agent.",
+    "Completing the last required item automatically opens the final-answer phase; then provide the standalone final answer. Failed worker items return to the main agent.",
   ].join(" ");
 }
 
@@ -125,11 +125,12 @@ export function planAdmissionReason(
     return "Create the durable execution plan with agent_plan before using any other tool.";
   }
   if (plan?.status === "ready_for_answer" || plan?.status === "completed") {
+    if (toolCall.toolName === AGENT_PLAN_TOOL && isRecord(toolCall.input) && toolCall.input.action === "ready") return undefined;
     return "Prerequisite work is complete. Return one standalone final answer without starting new work.";
   }
   if (plan && toolCall.toolName !== AGENT_PLAN_TOOL
     && plan.items.filter((item) => item.required).every((item) => item.status === "completed")) {
-    return "All required plan items are complete. Call agent_plan with action=ready and answer from the evidence already gathered.";
+    return "All required plan items are complete. Return one standalone final answer from the evidence already gathered.";
   }
   if (!plan || toolCall.toolName !== AGENT_PLAN_TOOL || !isRecord(toolCall.input)) return undefined;
   const waitsForWorkers = toolCall.input.action === "status"
@@ -157,7 +158,7 @@ export function planCompletionIssue(store: SqliteStore, runId: string): string |
   if (missingWorkers.length) return `Required worker launches are not yet durably assigned: ${missingWorkers.join(", ")}. Ensure the plan contains enough ready worker-eligible items, launch those workers, and continue substantive main-agent work.`;
   const running = plan.items.filter((item) => item.status === "running").map((item) => item.id);
   const pending = plan.items.filter((item) => item.required && item.status !== "completed").map((item) => item.id);
-  if (!pending.length) return "All prerequisite work items are complete. Call agent_plan with action=ready before answering; final synthesis is implicit.";
+  if (!pending.length) return "All prerequisite work items are complete. Return one standalone final answer; final synthesis is implicit.";
   return `The execution plan is not complete. Required items still open: ${pending.join(", ")}.${running.length ? ` Workers/main currently running: ${running.join(", ")}.` : ""} Continue the main-agent work and collect worker status when useful.`;
 }
 
@@ -248,7 +249,7 @@ function setPlan(store: SqliteStore, runId: string, inputs: Array<{ id: string; 
       ...(prior?.error ? { error: prior.error } : {}),
     };
   });
-  const plan: AgentRunPlan = { runId, revision: (existing?.revision ?? 0) + 1, status: "active", items, ...(requiredWorkerRoutes.length ? { requiredWorkerRoutes: [...requiredWorkerRoutes] } : {}), createdAt: existing?.createdAt ?? now, updatedAt: now };
+  const plan = promotePlanIfComplete(store, { runId, revision: (existing?.revision ?? 0) + 1, status: "active", items, ...(requiredWorkerRoutes.length ? { requiredWorkerRoutes: [...requiredWorkerRoutes] } : {}), createdAt: existing?.createdAt ?? now, updatedAt: now } satisfies AgentRunPlan);
   if (!store.saveAgentRunPlan(plan, existing?.revision)) throw new Error("Plan changed concurrently; inspect status and retry");
   return plan;
 }
@@ -281,7 +282,7 @@ function updateMainItem(store: SqliteStore, runId: string, itemId: string, statu
 function readyPlan(store: SqliteStore, runId: string): AgentRunPlan {
   reconcileAgentPlan(store, runId);
   const updated = mutatePlan(store, runId, (plan) => {
-    if (plan.status !== "active") throw new Error("The plan is already ready for its answer");
+    if (plan.status === "ready_for_answer" || plan.status === "completed") return undefined;
     const missingWorkers = missingRequiredWorkers(store, plan);
     if (missingWorkers.length) throw new Error(`Required workers were not launched: ${missingWorkers.join(", ")}`);
     const open = plan.items.filter((item) => item.required && item.status !== "completed");
@@ -320,12 +321,24 @@ function mutatePlan(store: SqliteStore, runId: string, mutate: (plan: AgentRunPl
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const current = store.getAgentRunPlan(runId);
     if (!current) return undefined;
-    const changed = mutate(current);
-    if (!changed) return current;
+    const candidate = mutate(current) ?? current;
+    const changed = promotePlanIfComplete(store, candidate);
+    if (changed === current) return current;
     const next = { ...changed, revision: current.revision + 1, updatedAt: new Date().toISOString() };
     if (store.saveAgentRunPlan(next, current.revision)) return next;
   }
   throw new Error("Plan changed concurrently too many times; inspect status and retry");
+}
+
+/** Keeps the durable phase derived from durable prerequisite state. A model can
+ * still request `ready` explicitly, but it is never responsible for repairing
+ * an active/completed mismatch before Fitz will accept its answer. */
+function promotePlanIfComplete(store: SqliteStore, plan: AgentRunPlan): AgentRunPlan {
+  if (plan.status !== "active") return plan;
+  if (plan.items.some((item) => item.required && item.status !== "completed")) return plan;
+  if (missingRequiredWorkers(store, plan).length) return plan;
+  const { completedAt: _completedAt, ...active } = plan;
+  return { ...active, status: "ready_for_answer" };
 }
 
 function assertAcyclic(items: Array<{ id: string; dependencies: string[] }>): void {
