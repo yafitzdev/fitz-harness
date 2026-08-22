@@ -130,7 +130,7 @@ A configured installation of an engine for a particular environment or hardware 
 Examples:
 
 - “NInfer current CUDA build on this RTX host”
-- “llama.cpp CUDA build in Ubuntu WSL”
+- “llama.cpp CUDA build in the Fitz-Inference runtime”
 - “vLLM Docker deployment on Linux”
 
 A playbook defines shared execution behavior, installation paths, version identity, environment, capability defaults, and lifecycle behavior. It contains one or more recipes.
@@ -219,12 +219,12 @@ A user or device that connects to the host to chat or call the API without manag
 
 ### 5.1 Process boundaries on the current PC
 
-The current hardware environment uses Windows 11 and Ubuntu WSL. The initial process design should be:
+The current hardware environment uses Windows 11 and one Fitz-owned WSL 2 distribution named `Fitz-Inference`. Local inference state is canonical only beneath `/opt/fitz/llm` in that distribution. The process design is:
 
 1. **Fitz Desktop** — Electron application on Windows.
-2. **Fitz Host** — lightweight service, preferably running where Pi and the engines run; initially Ubuntu WSL.
+2. **Fitz Host** — lightweight Windows service that owns routing and launches local engines through the named `inference-linux` runtime.
 3. **Fitz Connectivity** — Tailscale integration, implemented through an adapter. It may use the installed Tailscale daemon initially and a bundled `tsnet` sidecar when appropriate.
-4. **Engine instances** — NInfer, llama.cpp, or another adapter-controlled process in WSL/Linux/Windows/Docker.
+4. **Engine instances** — NInfer, llama.cpp, vLLM, and ComfyUI processes launched inside `Fitz-Inference`; external providers remain explicit remote connections.
 
 The visible desktop window is not the service lifecycle owner. Closing the window must not stop remote access or unload an active generation. The host service should start automatically and consume little memory when no engine is loaded.
 
@@ -483,12 +483,12 @@ This example is illustrative rather than a final schema:
 
 ```yaml
 playbook:
-  id: ninfer-current-wsl
-  name: NInfer — current WSL build
+  id: ninfer
+  name: NInfer
   adapter: ninfer
-  environment: wsl:Ubuntu
-  executable: /path/to/ninfer-serve
-  workingDirectory: /path/to/ninfer-checkout
+  runtimeId: inference-linux
+  executable: /opt/fitz/llm/environments/ninfer/bin/ninfer-serve
+  workingDirectory: /opt/fitz/llm/engines/ninfer
   versionPolicy:
     gitRevision: optional-pinned-revision
     binarySha256: optional-pinned-hash
