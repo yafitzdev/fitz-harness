@@ -19,7 +19,7 @@ import type {
   ResourceEstimate,
   ValidationReport,
 } from "@fitz/protocol";
-import { OpenAICompatibleClient } from "@fitz/engine-openai-compatible";
+import { OpenAICompatibleClient, OpenAICompatibleModelMismatchError } from "@fitz/engine-openai-compatible";
 import {
   readNInferConfiguration,
   validateNInferConfiguration,
@@ -192,6 +192,7 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
 
   async waitUntilReady(instance: NInferInstanceHandle, signal: AbortSignal): Promise<ReadyInfo> {
     const deadline = Date.now() + instance.readinessTimeoutMs;
+    const client = new OpenAICompatibleClient({ fetch: this.#fetch, apiKey: instance.apiKey });
     while (Date.now() < deadline) {
       if (signal.aborted) throw abortError();
       if (hasExited(instance.process)) {
@@ -212,9 +213,13 @@ export class NInferEngineAdapter implements EngineAdapter<NInferInstanceHandle> 
           headers: authorization(instance.apiKey),
           signal: probe.signal,
         });
-        if (response.ok) return { modelId: instance.modelId, baseUrl: instance.baseUrl };
+        if (response.ok) {
+          await client.assertServesModel(instance.baseUrl, instance.modelId, probe.signal);
+          return { modelId: instance.modelId, baseUrl: instance.baseUrl };
+        }
       } catch (error) {
         if (signal.aborted) throw abortError();
+        if (error instanceof OpenAICompatibleModelMismatchError) throw error;
       } finally {
         clearTimeout(probeTimeout);
         signal.removeEventListener("abort", abortProbe);

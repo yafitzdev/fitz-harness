@@ -12,7 +12,7 @@ import type {
   StopReport,
 } from "@fitz/inference-core";
 import type { InferenceDelta, InferenceRequest, LaunchSpec, Recipe, RecipeSpeculativeDecoding, ResourceEstimate, ValidationIssue, ValidationReport } from "@fitz/protocol";
-import { OpenAICompatibleClient } from "./openai-compatible-client.js";
+import { OpenAICompatibleClient, OpenAICompatibleModelMismatchError } from "./openai-compatible-client.js";
 
 export interface ManagedOpenAIConfiguration {
   enginePath: string;
@@ -114,8 +114,14 @@ export class ManagedOpenAIEngineAdapter implements EngineAdapter<ManagedOpenAIHa
     while (Date.now() < deadline) {
       if (signal.aborted) throw abortError();
       if (hasExited(instance.process)) throw new Error(`Engine exited before its API became ready: ${recentLogs(instance.logs)}`);
-      try { if (await instance.client.healthy(instance.baseUrl, instance.healthPath, signal)) return { modelId: instance.modelId, baseUrl: instance.baseUrl }; }
-      catch (error) { if (signal.aborted) throw error; }
+      try {
+        if (await instance.client.healthy(instance.baseUrl, instance.healthPath, signal)) {
+          await instance.client.assertServesModel(instance.baseUrl, instance.modelId, signal);
+          return { modelId: instance.modelId, baseUrl: instance.baseUrl };
+        }
+      } catch (error) {
+        if (signal.aborted || error instanceof OpenAICompatibleModelMismatchError) throw error;
+      }
       await delay(this.#pollIntervalMs, signal);
     }
     throw new Error(`Timed out waiting for the OpenAI-compatible API at ${instance.baseUrl}`);
@@ -145,7 +151,11 @@ export class ManagedOpenAIEngineAdapter implements EngineAdapter<ManagedOpenAIHa
 
   async inspect(instance: ManagedOpenAIHandle): Promise<InstanceInspection> {
     if (hasExited(instance.process)) return { healthy: false, modelId: instance.modelId, detail: recentLogs(instance.logs) };
-    try { return { healthy: await instance.client.healthy(instance.baseUrl, instance.healthPath), modelId: instance.modelId }; }
+    try {
+      const healthy = await instance.client.healthy(instance.baseUrl, instance.healthPath);
+      if (healthy) await instance.client.assertServesModel(instance.baseUrl, instance.modelId);
+      return { healthy, modelId: instance.modelId };
+    }
     catch (error) { return { healthy: false, modelId: instance.modelId, detail: errorMessage(error) }; }
   }
 }

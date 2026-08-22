@@ -40,6 +40,7 @@ describe("llama.cpp model reconciliation", () => {
     })]);
     expect(store.listRecipes()[0]!.lifecycle).toMatchObject({ evictionPolicy: "never", idleTtlSeconds: 0 });
     expect(store.listRecipes()[0]!.configuration.args).toContain("/opt/fitz/llm/models/gguf/org/repo/mmproj-Model-BF16.gguf");
+    expect(store.listRecipes()[0]!.configuration.args).toEqual(expect.arrayContaining(["--alias", "{model}"]));
     expect(store.listRecipes()[0]!.configuration).toMatchObject({ runtime: "linux-managed", runtimeId: "inference-linux" });
     expect(store.listRecipes()[0]!.configuration.args).toEqual(expect.arrayContaining(["--parallel", "3", "--ctx-size", "131072", "--kv-unified", "--cache-type-k", "q8_0", "--cache-type-v", "q8_0"]));
 

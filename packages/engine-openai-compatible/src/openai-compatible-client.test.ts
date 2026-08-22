@@ -27,6 +27,18 @@ describe("OpenAICompatibleClient model discovery", () => {
     }]);
   });
 
+  it("rejects an endpoint that advertises a different served model", async () => {
+    const client = new OpenAICompatibleClient({
+      fetch: async () => new Response(JSON.stringify({ data: [{ id: "Qwen/Qwen3.5-2B" }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    });
+
+    await expect(client.assertServesModel("http://127.0.0.1:19001", "qwen3.8-27b-nvfp4"))
+      .rejects.toThrow(/expected model qwen3\.8-27b-nvfp4, advertised Qwen\/Qwen3\.5-2B.*owned by another inference server/);
+  });
+
   it("accepts chat models and rejects non-chat catalog entries", () => {
     expect(supportsChatCompletions({ id: "command-a", endpoints: ["chat"] })).toBe(true);
     expect(supportsChatCompletions({ id: "custom-chat", capabilities: { chat_completions: true } })).toBe(true);

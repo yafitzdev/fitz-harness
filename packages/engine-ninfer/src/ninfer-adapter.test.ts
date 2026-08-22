@@ -156,6 +156,30 @@ describe("NInferEngineAdapter launch contract", () => {
     );
   });
 
+  it("rejects a healthy port owned by a different inference server", async () => {
+    const adapter = new NInferEngineAdapter({
+      pollIntervalMs: 2,
+      fetch: async (input) => String(input).endsWith("/health")
+        ? new Response(JSON.stringify({ status: "ok" }), { status: 200 })
+        : new Response(JSON.stringify({ data: [{ id: "Qwen/Qwen3.5-2B" }] }), { status: 200 }),
+    });
+    const instance = {
+      id: "collision",
+      recipeId: "recipe",
+      modelId: "qwen3.8-27b-nvfp4",
+      baseUrl: "http://127.0.0.1:19001",
+      startedAt: new Date(),
+      apiKey: "secret-key",
+      process: { exitCode: null, signalCode: null },
+      logs: [],
+      readinessTimeoutMs: 30_000,
+    } as unknown as NInferInstanceHandle;
+
+    await expect(adapter.waitUntilReady(instance, new AbortController().signal)).rejects.toThrow(
+      /expected model qwen3\.8-27b-nvfp4, advertised Qwen\/Qwen3\.5-2B/,
+    );
+  });
+
   it("includes redacted stderr when the engine exits during startup", async () => {
     const adapter = new NInferEngineAdapter();
     const instance = {

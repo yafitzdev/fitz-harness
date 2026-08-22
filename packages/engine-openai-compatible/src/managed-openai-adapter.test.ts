@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Recipe } from "@fitz/protocol";
 import { ManagedOpenAIEngineAdapter, type ManagedOpenAIHandle } from "./managed-openai-adapter.js";
+import { OpenAICompatibleClient } from "./openai-compatible-client.js";
 
 describe("ManagedOpenAIEngineAdapter", () => {
   it("builds an engine-agnostic launch inside the managed inference runtime", async () => {
@@ -69,6 +70,28 @@ describe("ManagedOpenAIEngineAdapter", () => {
       enginePath: "/opt/fitz/llm/engines/vllm", runtime: "wsl", command: "vllm",
       args: [], workingDirectory: ".", healthPath: "/v1/models", readinessTimeoutMs: 30_000,
     }))).resolves.toMatchObject({ valid: false, issues: [expect.objectContaining({ code: "invalid_configuration" })] });
+  });
+
+  it("rejects a managed endpoint that belongs to another served model", async () => {
+    const client = new OpenAICompatibleClient({
+      fetch: async (input) => String(input).endsWith("/health")
+        ? new Response(null, { status: 200 })
+        : new Response(JSON.stringify({ data: [{ id: "Qwen/Qwen3.5-2B" }] }), { status: 200 }),
+    });
+    const adapter = new ManagedOpenAIEngineAdapter({ pollIntervalMs: 1 });
+    const handle = {
+      modelId: "custom-model",
+      baseUrl: "http://127.0.0.1:19001",
+      healthPath: "/health",
+      readinessTimeoutMs: 30_000,
+      process: { exitCode: null, signalCode: null },
+      logs: [],
+      client,
+    } as unknown as ManagedOpenAIHandle;
+
+    await expect(adapter.waitUntilReady(handle, new AbortController().signal)).rejects.toThrow(
+      /expected model custom-model, advertised Qwen\/Qwen3\.5-2B/,
+    );
   });
 
   it("rejects working directories and relative commands that escape the engine checkout", async () => {

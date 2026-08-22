@@ -19,6 +19,7 @@ import { LifecycleEventBus } from "./event-bus.js";
 import { assertTransition } from "./state-machine.js";
 import { ResourceGovernor, SystemResourceMonitor } from "./resources.js";
 import { GpuThermalGuard, ThermalSafetyError } from "./thermal.js";
+import { createAvailablePortAllocator } from "./port-allocator.js";
 
 const MAX_MODEL_IDLE_TTL_MS = 10 * 60 * 1_000;
 
@@ -26,7 +27,7 @@ export interface LifecycleManagerOptions {
   adapters: EngineAdapterRegistry;
   events?: LifecycleEventBus;
   clock?: Clock;
-  allocatePort?: () => number;
+  allocatePort?: () => number | Promise<number>;
   resources?: ResourceGovernor;
   thermalGuard?: GpuThermalGuard;
 }
@@ -42,7 +43,7 @@ export class LifecycleManager {
   readonly thermalGuard: GpuThermalGuard;
   readonly adapters: EngineAdapterRegistry;
   readonly #clock: Clock;
-  readonly #allocatePort: () => number;
+  readonly #allocatePort: () => number | Promise<number>;
   #state: InstanceState = "UNLOADED";
   #instanceId: string | undefined;
   #recipe: Recipe | undefined;
@@ -63,7 +64,7 @@ export class LifecycleManager {
     this.adapters = options.adapters;
     this.events = options.events ?? new LifecycleEventBus();
     this.#clock = options.clock ?? new SystemClock();
-    this.#allocatePort = options.allocatePort ?? sequentialPortAllocator();
+    this.#allocatePort = options.allocatePort ?? createAvailablePortAllocator();
     this.resources = options.resources ?? new ResourceGovernor(new SystemResourceMonitor());
     this.thermalGuard = options.thermalGuard ?? new GpuThermalGuard(this.resources.monitor);
   }
@@ -406,7 +407,7 @@ export class LifecycleManager {
       if (!validation.valid) throw new Error(validation.issues.map((issue) => issue.message).join("; "));
       const estimate = await this.#adapter.estimateResources(recipe);
       await this.resources.assertCanLoad(recipe, estimate);
-      const allocation = { host: "127.0.0.1", port: this.#allocatePort() };
+      const allocation = { host: "127.0.0.1", port: await this.#allocatePort() };
       const spec = await this.#adapter.buildLaunchSpec(recipe, allocation);
       this.#transition("LOADING", "launching-engine");
       this.#handle = await this.#adapter.start(recipe, spec, signal);
@@ -605,13 +606,4 @@ function runtimeRecipeKey(recipe: Recipe): string {
     contextTokens: recipe.contextTokens,
     configuration: recipe.configuration,
   });
-}
-
-function sequentialPortAllocator(first = 19_000, last = 19_999): () => number {
-  let next = first;
-  return () => {
-    const allocated = next;
-    next = next >= last ? first : next + 1;
-    return allocated;
-  };
 }

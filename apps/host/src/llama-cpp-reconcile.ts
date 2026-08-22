@@ -124,7 +124,7 @@ export class LlamaCppModelReconciler {
     const fileName = basename(modelPath, ".gguf");
     const id = `gguf-${slug(fileName)}-${createHash("sha256").update(guestPayloadPath.toLowerCase()).digest("hex").slice(0, 8)}`;
     const guestDirectory = posix.dirname(guestPayloadPath);
-    const args = ["--host", "{host}", "--port", "{port}", "--model", guestPayloadPath];
+    const args = ["--host", "{host}", "--port", "{port}", "--model", guestPayloadPath, "--alias", "{model}"];
     const siblings = readdirSync(dirname(modelPath), { withFileTypes: true }).filter((entry) => entry.isFile()).map((entry) => entry.name);
     const projectors = siblings.filter((name) => /^mmproj.*\.gguf$/i.test(name));
     const projector = projectors.find((name) => name.toLowerCase().endsWith(".muse-glimmer.gguf")) ?? projectors[0];

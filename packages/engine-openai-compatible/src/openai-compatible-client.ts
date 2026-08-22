@@ -21,6 +21,19 @@ export interface OpenAICompatibleModel {
   task?: string;
 }
 
+export class OpenAICompatibleModelMismatchError extends Error {
+  readonly expectedModelId: string;
+  readonly advertisedModelIds: string[];
+
+  constructor(baseUrl: string, expectedModelId: string, advertisedModelIds: string[]) {
+    const advertised = advertisedModelIds.length > 0 ? advertisedModelIds.join(", ") : "none";
+    super(`Endpoint identity mismatch at ${baseUrl}: expected model ${expectedModelId}, advertised ${advertised}. The port is owned by another inference server.`);
+    this.name = "OpenAICompatibleModelMismatchError";
+    this.expectedModelId = expectedModelId;
+    this.advertisedModelIds = advertisedModelIds;
+  }
+}
+
 interface StreamDelta {
   content?: string;
   reasoning_content?: string;
@@ -91,6 +104,13 @@ export class OpenAICompatibleClient {
         ...(typeof value.task === "string" ? { task: value.task } : {}),
       }];
     });
+  }
+
+  async assertServesModel(baseUrl: string, modelId: string, signal?: AbortSignal): Promise<void> {
+    const advertised = await this.listModels(baseUrl, signal);
+    if (!advertised.some((model) => model.id === modelId)) {
+      throw new OpenAICompatibleModelMismatchError(baseUrl, modelId, advertised.map((model) => model.id));
+    }
   }
 
   async *streamChat(
