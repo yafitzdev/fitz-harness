@@ -247,7 +247,6 @@ const projectSidebar = new ProjectSidebarController({
   pinnedMount: element("pinned"),
   pinnedSection: element("pinned-section"),
   chatsMount: element("chats"),
-  searchInput: element("sidebar-search") as HTMLInputElement,
   archivedToggle: element("archived-toggle") as HTMLButtonElement,
   archivedCount: element("archived-count"),
   archivedMount: element("archived-chats"),

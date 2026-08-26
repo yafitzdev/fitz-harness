@@ -23,7 +23,6 @@ function setup() {
   const pinnedSection = element<HTMLElement>("section", "pinned-section");
   const pinnedTree = element<HTMLElement>("nav", "pinned");
   pinnedSection.append(pinnedTree);
-  const searchInput = element<HTMLInputElement>("input", "sidebar-search");
   const archivedSection = element<HTMLElement>("section", "archived-section");
   const archivedToggle = element<HTMLButtonElement>("button", "archived-toggle");
   const archivedCount = element<HTMLElement>("small", "archived-count");
@@ -35,8 +34,8 @@ function setup() {
   const calls = {
     selectProject: vi.fn(), selectSession: vi.fn(), newChat: vi.fn(), openProjectPath: vi.fn(), createWorktree: vi.fn(), archiveProjectChats: vi.fn(), removeProject: vi.fn(), renameSession: vi.fn(), renameProject: vi.fn(), createProject: vi.fn(), chooseFolder: vi.fn(async () => undefined), onError: vi.fn(), archiveSession: vi.fn(), restoreSession: vi.fn(), removeSession: vi.fn(), copyValue: vi.fn(), continueSession: vi.fn(), closePopovers: vi.fn(),
   };
-  const controller = new ProjectSidebarController({ mount: tree, pinnedMount: pinnedTree, pinnedSection, chatsMount: chatsTree, searchInput, archivedToggle, archivedCount, archivedMount: archivedTree, overlayHost, ...calls });
-  return { controller, tree, chatsTree, pinnedTree, pinnedSection, searchInput, archivedSection, archivedToggle, archivedCount, archivedTree, menuElement, calls, overlayHost };
+  const controller = new ProjectSidebarController({ mount: tree, pinnedMount: pinnedTree, pinnedSection, chatsMount: chatsTree, archivedToggle, archivedCount, archivedMount: archivedTree, overlayHost, ...calls });
+  return { controller, tree, chatsTree, pinnedTree, pinnedSection, archivedSection, archivedToggle, archivedCount, archivedTree, menuElement, calls, overlayHost };
 }
 
 function state(): ProjectSidebarState {
@@ -427,27 +426,8 @@ describe("ProjectSidebarController", () => {
     expect(menuElement.hidden).toBe(true);
   });
 
-  it("searches project names and chat titles while expanding matching projects", () => {
-    const { controller, tree, chatsTree, searchInput } = setup();
-    controller.render(state());
-
-    searchInput.value = "beta chat";
-    searchInput.dispatchEvent(new Event("input", { bubbles: true }));
-
-    expect(tree.textContent).toContain("Beta");
-    expect(tree.textContent).toContain("Beta chat");
-    expect(tree.textContent).not.toContain("Alpha");
-    expect(tree.querySelector(".project-group")?.classList.contains("expanded")).toBe(true);
-    expect(chatsTree.textContent).toContain("No matching chats");
-
-    keydown(searchInput, "Escape");
-    expect(searchInput.value).toBe("");
-    expect(tree.textContent).toContain("Alpha");
-    expect(chatsTree.textContent).toContain("Standalone chat");
-  });
-
-  it("shows archived chats in a restorable view and includes them in search", () => {
-    const { controller, searchInput, archivedToggle, archivedCount, archivedTree, calls } = setup();
+  it("shows archived chats in a restorable view", () => {
+    const { controller, archivedToggle, archivedCount, archivedTree, calls } = setup();
     controller.render(state());
     expect(archivedCount.textContent).toBe("2");
     expect(archivedTree.hidden).toBe(true);
@@ -455,16 +435,10 @@ describe("ProjectSidebarController", () => {
     click(archivedToggle);
     expect(archivedTree.hidden).toBe(false);
     expect(archivedTree.textContent).toContain("Archived alpha chat");
+    expect(archivedTree.textContent).toContain("Archived standalone");
     expect(archivedTree.textContent).toContain("Alpha");
     click(archivedTree.querySelector<HTMLButtonElement>('[aria-label="Restore Archived alpha chat"]')!);
     expect(calls.restoreSession).toHaveBeenCalledWith("a-old", "alpha");
-
-    click(archivedToggle);
-    searchInput.value = "archived standalone";
-    searchInput.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(archivedTree.hidden).toBe(false);
-    expect(archivedTree.textContent).toContain("Archived standalone");
-    expect(archivedTree.textContent).not.toContain("Archived alpha chat");
   });
 
   it("fails loudly when the context menu is missing from the shell", () => {
@@ -474,7 +448,6 @@ describe("ProjectSidebarController", () => {
       pinnedMount: element<HTMLElement>("nav", "pinned"),
       pinnedSection: element<HTMLElement>("section", "pinned-section"),
       chatsMount: element<HTMLElement>("nav", "chats"),
-      searchInput: element<HTMLInputElement>("input", "sidebar-search"),
       archivedToggle: element<HTMLButtonElement>("button", "archived-toggle"),
       archivedCount: element<HTMLElement>("small", "archived-count"),
       archivedMount: element<HTMLElement>("nav", "archived-chats"),

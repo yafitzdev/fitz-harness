@@ -33,7 +33,6 @@ export interface ProjectSidebarElements {
   pinnedSection: HTMLElement;
   tree: HTMLElement;
   chatsTree: HTMLElement;
-  search: HTMLInputElement;
   archivedToggle: HTMLButtonElement;
   archivedCount: HTMLElement;
   archivedTree: HTMLElement;
@@ -48,7 +47,6 @@ export interface ProjectSidebarOptions {
   pinnedSection: HTMLElement;
   /** The sidebar tree the controller renders standalone chats into. */
   chatsMount: HTMLElement;
-  searchInput: HTMLInputElement;
   archivedToggle: HTMLButtonElement;
   archivedCount: HTMLElement;
   archivedMount: HTMLElement;
@@ -102,7 +100,6 @@ export class ProjectSidebarController {
   #editing: SidebarEdit | undefined;
   #creatingProject: { rootPath?: string } | undefined;
   #confirmingRemoval: { projectId: string; name: string } | undefined;
-  #query = "";
   #archivedOpen = false;
 
   constructor(options: ProjectSidebarOptions) {
@@ -114,7 +111,6 @@ export class ProjectSidebarController {
       pinnedSection: options.pinnedSection,
       tree: options.mount,
       chatsTree: options.chatsMount,
-      search: options.searchInput,
       archivedToggle: options.archivedToggle,
       archivedCount: options.archivedCount,
       archivedTree: options.archivedMount,
@@ -125,17 +121,6 @@ export class ProjectSidebarController {
     this.#menuElement.addEventListener("click", (event) => event.stopPropagation());
     this.#createDialog = this.#buildCreateDialog();
     document.body.append(this.#createDialog.backdrop);
-    elements.search.addEventListener("input", () => {
-      this.#query = elements.search.value.trim().toLocaleLowerCase();
-      this.render(this.#state);
-    });
-    elements.search.addEventListener("keydown", (event) => {
-      if (event.key !== "Escape" || !elements.search.value) return;
-      event.preventDefault();
-      elements.search.value = "";
-      this.#query = "";
-      this.render(this.#state);
-    });
     elements.archivedToggle.addEventListener("click", () => {
       this.#archivedOpen = !this.#archivedOpen;
       this.#renderArchived();
@@ -147,18 +132,18 @@ export class ProjectSidebarController {
     this.#renderPinned();
     const chatsTree = this.#elements.chatsTree;
     chatsTree.replaceChildren();
-    const unpinnedChats = state.chats.filter((chat) => !this.#pinnedSessions.has(chat.id) && this.#matches(chat.title));
+    const unpinnedChats = state.chats.filter((chat) => !this.#pinnedSessions.has(chat.id));
     if (unpinnedChats.length === 0) {
-      chatsTree.append(this.#empty(this.#query ? "No matching chats" : state.chats.length ? "All chats pinned" : "No chats yet"));
+      chatsTree.append(this.#empty(state.chats.length ? "All chats pinned" : "No chats yet"));
     } else {
       for (const chat of unpinnedChats) chatsTree.append(this.#chatItem(chat));
     }
 
     const tree = this.#elements.tree;
     tree.replaceChildren();
-    const unpinnedProjects = state.projects.filter((project) => !this.#pinnedProjects.has(project.id) && this.#projectMatches(project));
+    const unpinnedProjects = state.projects.filter((project) => !this.#pinnedProjects.has(project.id));
     if (unpinnedProjects.length === 0) {
-      tree.append(this.#empty(this.#query ? "No matching projects" : state.projects.length ? "All projects pinned" : "No projects yet"));
+      tree.append(this.#empty(state.projects.length ? "All projects pinned" : "No projects yet"));
     } else {
       for (const project of unpinnedProjects) {
         if (this.#confirmingRemoval?.projectId === project.id) tree.append(this.#confirmRemoveRow(project));
@@ -221,17 +206,17 @@ export class ProjectSidebarController {
     const sessionsCoveredByProjects = new Set<string>();
     for (const projectId of this.#pinnedProjects) {
       const project = this.#project(projectId);
-      if (!project || !this.#projectMatches(project)) continue;
+      if (!project) continue;
       for (const session of this.#state.sessionsByProject.get(project.id) ?? []) sessionsCoveredByProjects.add(session.id);
       pinnedTree.append(this.#confirmingRemoval?.projectId === project.id ? this.#confirmRemoveRow(project) : this.#pinnedProjectGroup(project));
     }
     for (const sessionId of this.#pinnedSessions) {
       if (sessionsCoveredByProjects.has(sessionId)) continue;
       const standalone = this.#state.chats.find((session) => session.id === sessionId);
-      if (standalone && this.#matches(standalone.title)) { pinnedTree.append(this.#pinnedSessionItem(standalone)); continue; }
+      if (standalone) { pinnedTree.append(this.#pinnedSessionItem(standalone)); continue; }
       for (const project of this.#state.projects) {
         const session = (this.#state.sessionsByProject.get(project.id) ?? []).find((candidate) => candidate.id === sessionId);
-        if (session && (this.#matches(session.title) || this.#matches(project.name))) { pinnedTree.append(this.#pinnedSessionItem(session, project)); break; }
+        if (session) { pinnedTree.append(this.#pinnedSessionItem(session, project)); break; }
       }
     }
     this.#elements.pinnedSection.hidden = pinnedTree.childElementCount === 0;
@@ -242,7 +227,7 @@ export class ProjectSidebarController {
       return this.#editingRow("project-row pinned-row", project.name, 80, (value) => this.#commitEdit(value));
     }
     const group = document.createElement("div");
-    const expanded = Boolean(this.#query) || this.#expandedProjects.has(project.id);
+    const expanded = this.#expandedProjects.has(project.id);
     group.className = "project-group pinned-project-group";
     group.classList.toggle("expanded", expanded);
     group.dataset.projectId = project.id;
@@ -280,7 +265,7 @@ export class ProjectSidebarController {
     if (this.#editing?.kind === "project" && this.#editing.id === project.id) {
       return this.#editingRow("project-row", project.name, 80, (value) => this.#commitEdit(value));
     }
-    const expanded = Boolean(this.#query) || this.#expandedProjects.has(project.id);
+    const expanded = this.#expandedProjects.has(project.id);
     const group = document.createElement("div");
     group.className = "project-group";
     group.classList.toggle("expanded", expanded);
@@ -329,19 +314,8 @@ export class ProjectSidebarController {
     return item;
   }
 
-  #matches(value: string): boolean {
-    return !this.#query || value.toLocaleLowerCase().includes(this.#query);
-  }
-
-  #projectMatches(project: ProjectSidebarProject): boolean {
-    return this.#matches(project.name)
-      || (this.#state.sessionsByProject.get(project.id) ?? []).some((session) => this.#matches(session.title));
-  }
-
   #visibleProjectSessions(project: ProjectSidebarProject): readonly ProjectSidebarSession[] {
-    const sessions = this.#state.sessionsByProject.get(project.id) ?? [];
-    if (!this.#query || this.#matches(project.name)) return sessions;
-    return sessions.filter((session) => this.#matches(session.title));
+    return this.#state.sessionsByProject.get(project.id) ?? [];
   }
 
   #renderArchived(): void {
@@ -351,18 +325,17 @@ export class ProjectSidebarController {
     }
     for (const session of this.#state.archivedChats) entries.push({ session });
     this.#elements.archivedCount.textContent = String(entries.length);
-    const expanded = this.#archivedOpen || Boolean(this.#query);
+    const expanded = this.#archivedOpen;
     this.#elements.archivedToggle.setAttribute("aria-expanded", String(expanded));
     this.#elements.archivedTree.hidden = !expanded;
     this.#elements.archivedTree.replaceChildren();
     if (!expanded) return;
 
-    const visible = entries.filter(({ session, project }) => this.#matches(session.title) || Boolean(project && this.#matches(project.name)));
-    if (visible.length === 0) {
-      this.#elements.archivedTree.append(this.#empty(this.#query ? "No matching archived chats" : "No archived chats"));
+    if (entries.length === 0) {
+      this.#elements.archivedTree.append(this.#empty("No archived chats"));
       return;
     }
-    for (const { session, project } of visible) {
+    for (const { session, project } of entries) {
       const item = document.createElement("div"); item.className = "archived-chat-row";
       const detail = document.createElement("div"); detail.className = "archived-chat-detail";
       const title = document.createElement("strong"); title.textContent = session.title;
