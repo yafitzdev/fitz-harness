@@ -19,7 +19,7 @@ import { createWorkspaceSnapshot, restoreWorkspaceSnapshot } from "./snapshot.js
 import { TrashService } from "./trash.js";
 import { evaluateToolCall, type ActionLog, type PolicyContext } from "./policy.js";
 import { redactToolResultContent } from "./redaction.js";
-import { bwrapAvailable, runSandboxed, type SandboxSpawn } from "./sandbox.js";
+import { runSandboxed, toSandboxPath, type SandboxSpawn } from "./sandbox.js";
 
 export interface AgentSafetyOptions {
   store: SqliteStore;
@@ -61,7 +61,6 @@ export class AgentSafetyService {
   readonly #maxSnapshotFiles: number;
   readonly #sandboxSpawn: SandboxSpawn | undefined;
   readonly #contexts = new Map<string, RunSafetyContext>();
-  #containmentWarned = false;
 
   constructor(options: AgentSafetyOptions) {
     this.#store = options.store;
@@ -182,6 +181,7 @@ export class AgentSafetyService {
         runtimeDirs: this.#runtimeDirs,
         tempDirs: this.#tempDirs,
         trashDir: ctx.trashDir,
+        shellPath: toSandboxPath,
         trash: {
           move: (input) => ctx.trash.move(input),
           // The policy records trash entries at rewrite time (the shell executes the
@@ -225,14 +225,6 @@ export class AgentSafetyService {
       homeDir: this.#homeDir,
     };
     return async ({ command, timeout, signal }) => {
-      if (!bwrapAvailable() && !this.#containmentWarned) {
-        this.#containmentWarned = true;
-        console.warn(
-          "[fitz-safety] bubblewrap (bwrap) is not available: bash commands run WITHOUT OS-level containment. " +
-            "The deterministic policy still rewrites deletes to the trash and blocks destructive commands, " +
-            "but there is no kernel-level write barrier. Install bubblewrap for full sandboxing.",
-        );
-      }
       return runSandboxed(
         { command, ...containment, ...(timeout !== undefined ? { timeout } : {}), ...(signal ? { signal } : {}) },
         this.#sandboxSpawn,

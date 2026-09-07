@@ -33,6 +33,8 @@ export interface PolicyContext {
   tempDirs: readonly string[];
   /** Absolute trash destination for the current run (already created). */
   trashDir: string;
+  /** Convert host-generated paths for the actual shell; audit records keep host paths. */
+  shellPath?: (path: string) => string;
   trash: {
     move(input: { runId: string; workspaceRoot: string; path: string; sequence: number }): Promise<string>;
     /**
@@ -272,7 +274,7 @@ async function evaluateDelete(intent: BashIntent, command: string, ctx: PolicyCo
       if (info.zone !== "workspace" && info.zone !== "runtime") {
         return { action: "block", reason: `find under ${first?.raw ?? "."} ${zoneExplanation(info, "delete")}` };
       }
-      const trash = shellQuote(ctx.trashDir);
+      const trash = shellQuote(ctx.shellPath?.(ctx.trashDir) ?? ctx.trashDir);
       return { action: "rewrite", edit: { start: intent.segmentStart, end: intent.segmentEnd, replacement: `-exec mv -t ${trash} {} +` } };
     }
     case "delete":
@@ -372,7 +374,9 @@ async function evaluatePlainDelete(intent: BashIntent, command: string, ctx: Pol
         trashPath: dest,
       });
     }
-    return `mv ${target.raw} ${shellQuote(dest)}`;
+    const source = ctx.shellPath && !target.wildcard && /^[A-Za-z]:[\\/]/.test(target.unquoted)
+      ? shellQuote(ctx.shellPath(target.unquoted)) : target.raw;
+    return `mv ${source} ${shellQuote(ctx.shellPath?.(dest) ?? dest)}`;
   });
   const replacement = moves.join("; ");
   // Replace the whole delete segment (`rm -rf a b`) with the trash moves.

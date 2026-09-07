@@ -2,7 +2,7 @@
  * The sandboxed `bash` tool.
  *
  * Replaces the SDK's built-in shell tool with one that runs every command through the
- * host's OS-level containment wrapper (bubblewrap on Linux/WSL2, direct spawn elsewhere).
+ * host's OS-level containment wrapper (bubblewrap on Linux and managed WSL on Windows).
  * The host supplies the executor; this module owns the tool contract and the output
  * formatting so agent-visible behavior matches the built-in bash tool.
  *
@@ -94,10 +94,11 @@ export function createSandboxedBashTool(executor: SandboxedBashExecutor): ToolDe
     name: "bash",
     label: "bash",
     description:
-      `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to the last 2000 lines or 50KB (whichever is hit first). Commands default to a ${DEFAULT_AGENT_BASH_TIMEOUT_SECONDS}-second deadline; set timeout explicitly for known long-running work. Commands run inside the Fitz safety sandbox: the project workspace, the Fitz runtime dirs, and the temp dirs are writable; everything else is read-only, so destructive commands outside those areas cannot succeed.`,
+      `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to the last 2000 lines or 50KB (whichever is hit first). Commands default to a ${DEFAULT_AGENT_BASH_TIMEOUT_SECONDS}-second deadline; set timeout explicitly for known long-running work. Commands run inside the Fitz Linux safety sandbox (the existing Fitz-Inference WSL runtime on Windows): the project workspace, the Fitz runtime dirs, and the temp dirs are writable; other filesystem locations are read-only. If containment is unavailable the command fails without executing.`,
     promptSnippet: "Execute bash commands (ls, grep, find, etc.)",
     promptGuidelines: [
       "Prefer relative paths and commands that operate inside the project workspace.",
+      "The shell uses Linux tools, including on Windows. Map Windows drive paths such as C:/work/project to /mnt/c/work/project inside shell commands. Native Windows executables cannot run inside this sandbox; other file tools continue to use host paths.",
       "Everything outside the workspace, the Fitz runtime dirs, and the temp dirs is read-only inside the sandbox: do not attempt to delete or modify files there, and prefer fitz_trash for anything inside the workspace the user might want back.",
       "Do not attempt to bypass the sandbox or the safety policy.",
     ],

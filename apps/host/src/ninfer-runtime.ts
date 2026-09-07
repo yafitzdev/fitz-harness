@@ -205,7 +205,7 @@ export class NInferRuntimeManager {
       "set -eu",
       "export DEBIAN_FRONTEND=noninteractive",
       "apt-get update",
-      "apt-get install -y --no-install-recommends ca-certificates curl ffmpeg libcurl4 ocl-icd-libopencl1",
+      "apt-get install -y --no-install-recommends bubblewrap ca-certificates curl ffmpeg libcurl4 ocl-icd-libopencl1",
       "cuda_keyring=$(mktemp)",
       "trap 'rm -f \"$cuda_keyring\"' EXIT",
       `curl -fsSL ${shellQuote(CUDA_KEYRING_URL)} -o "$cuda_keyring"`,

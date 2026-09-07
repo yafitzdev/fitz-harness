@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,8 @@ import { SqliteStore } from "@fitz/storage";
 import { AgentSafetyService, type AgentSafetyOptions } from "./index.js";
 import type { ToolEvaluation } from "@fitz/agent-pi";
 import type { SandboxSpawn } from "./sandbox.js";
+import * as sandbox from "./sandbox.js";
+import { resolveAbsolutePath } from "./paths.js";
 
 const tempRoots: string[] = [];
 afterEach(async () => {
@@ -54,8 +56,8 @@ async function executeRewrite(outcome: ToolEvaluation): Promise<void> {
   const command = outcome.input.command as string;
   const match = /^mv (.+) (.+)$/.exec(command);
   if (!match) throw new Error(`unexpected rewrite: ${command}`);
-  const source = match[1]!;
-  const dest = match[2]!;
+  const source = process.platform === "win32" ? resolveAbsolutePath(match[1]!, process.cwd())! : match[1]!;
+  const dest = process.platform === "win32" ? resolveAbsolutePath(match[2]!, process.cwd())! : match[2]!;
   const destStat = await stat(dest).catch(() => undefined);
   if (destStat?.isDirectory()) {
     // Shell `mv file dir` moves the file inside the directory.
@@ -87,8 +89,12 @@ describe("AgentSafetyService", () => {
     const evaluate = safety.createToolEvaluator();
     const outcome = await evaluate({ toolName: "bash", input: { command: `rm ${file}` }, cwd: workspace, runId: "run-1" });
     const dest = join(workspace, ".fitz-trash", "run-1", "1-important.txt").replace(/\\/g, "/");
-    expect(outcome).toEqual({ action: "rewrite", input: { command: `mv ${file} ${dest}` } });
-    await executeRewrite(outcome);
+    expect(outcome).toEqual({ action: "rewrite", input: { command: `mv ${sandbox.toSandboxPath(file)} ${sandbox.toSandboxPath(dest)}` } });
+    if (sandbox.bwrapAvailable() && outcome.action === "rewrite") {
+      const bashTool = safety.createCustomTools()({ cwd: workspace, runId: "run-1" })[1]!;
+      const executed = await bashTool.execute("trash-rewrite", outcome.input);
+      expect(executed.details).toMatchObject({ contained: true, exitCode: 0 });
+    } else await executeRewrite(outcome);
     await waitFor(() => store.getSnapshot("run-1") !== undefined);
     await expect(stat(join(workspace, "important.txt"))).rejects.toThrow();
     expect(await readFile(dest, "utf8")).toBe("precious");
@@ -113,6 +119,8 @@ describe("AgentSafetyService", () => {
   });
 
   it("runs the sandboxed bash tool through the containment wrapper", async () => {
+    const execute = sandbox.runSandboxed;
+    vi.spyOn(sandbox, "runSandboxed").mockImplementationOnce((options, spawn) => execute({ ...options, available: true }, spawn));
     const { workspace, safety } = await makeService({
       sandboxSpawn: (() => {
         // Fake child that echoes back a canned stdout, then closes with code 0.
@@ -121,7 +129,7 @@ describe("AgentSafetyService", () => {
         const stderr = new PassThrough();
         Object.defineProperty(child, "stdout", { value: stdout });
         Object.defineProperty(child, "stderr", { value: stderr });
-        Object.defineProperty(child, "pid", { value: 1 });
+        Object.defineProperty(child, "pid", { value: undefined });
         (child as unknown as { kill: () => boolean }).kill = () => true;
         setImmediate(() => {
           stdout.write("fake shell output");
@@ -180,8 +188,8 @@ describe("AgentSafetyService", () => {
     const evaluate = safety.createToolEvaluator();
     const first = await evaluate({ toolName: "bash", input: { command: `rm ${arg}` }, cwd: workspace, runId: "run-1" });
     const second = await evaluate({ toolName: "bash", input: { command: `rm ${arg}` }, cwd: workspace, runId: "run-2" });
-    expect(first).toEqual({ action: "rewrite", input: { command: `mv ${arg} ${trash1}` } });
-    expect(second).toEqual({ action: "rewrite", input: { command: `mv ${arg} ${trash2}` } });
+    expect(first).toEqual({ action: "rewrite", input: { command: `mv ${sandbox.toSandboxPath(arg)} ${sandbox.toSandboxPath(trash1)}` } });
+    expect(second).toEqual({ action: "rewrite", input: { command: `mv ${sandbox.toSandboxPath(arg)} ${sandbox.toSandboxPath(trash2)}` } });
     // Let both background snapshots finish so afterEach cleanup is not racing a copy.
     await waitFor(() => store.getSnapshot("run-1") !== undefined);
     await waitFor(() => store.getSnapshot("run-2") !== undefined);

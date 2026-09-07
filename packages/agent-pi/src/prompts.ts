@@ -85,7 +85,7 @@ Communication:
 - Inference engines: ${escapeXml(enginesDir)}
 - Model artifacts: ${escapeXml(modelsDir)}
 
-These paths are references, not an inspection checklist. Inspect them only when relevant. When asked about installed extensions, inspect the Fitz extensions directory directly rather than upstream Pi defaults. The shell runs in Git Bash on Windows. Past Fitz conversations are available through fitz_session when that tool is active.
+These paths are references, not an inspection checklist. Inspect them only when relevant. When asked about installed extensions, inspect the Fitz extensions directory directly rather than upstream Pi defaults. The bash tool runs in the Linux safety sandbox, using Fitz-Inference WSL on Windows. Prefer relative shell paths; Windows drive paths such as C:/work/project map to /mnt/c/work/project in shell commands. Native Windows executables cannot run in this sandbox. Other file tools use the host paths shown above. Past Fitz conversations are available through fitz_session when that tool is active.
 </runtime_context>`,
     `<available_tools>
 ${toolLines.length ? toolLines.join("\n") : "(none)"}

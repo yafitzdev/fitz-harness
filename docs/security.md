@@ -23,3 +23,10 @@ headers.
 Users retain isolated projects, sessions, cloud connections, route bindings, quotas, and usage.
 Removing a user is a soft removal: the account is disabled and every active key is revoked, while
 usage/audit history remains available to the administrator.
+
+Agent shell commands require bubblewrap. Windows uses the existing `Fitz-Inference` WSL runtime;
+Linux runs bubblewrap directly. The workspace, configured runtime directories and temporary
+directories are writable, while the remaining host filesystem is mounted read-only. The sandbox
+hides SSH directories and host IPC, and disables Windows executable interoperability. A missing or
+failed sandbox never falls back to an unrestricted shell. Windows shell commands use Linux tools
+and `/mnt/<drive>/...` paths; native file tools continue to use Windows paths.
