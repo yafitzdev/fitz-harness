@@ -72,7 +72,7 @@ describe("desktop renderer shell", () => {
   it("provides the static mount points owned by renderer controllers", () => {
     const mounts = [
       "projects", "pinned", "chats", "messages", "playbook-list", "management-editor",
-      "plugins-installed-section", "plugins-skills-section", "plugins-discover-section",
+      "plugins-installed-section", "plugins-skills-section", "plugins-discover-section", "plugins-custom-section",
       "models-downloaded-section", "models-discover-section", "administration-sections",
       "request-queue", "artifacts", "artifact-file", "select-popover", "sidebar-context-menu",
     ];

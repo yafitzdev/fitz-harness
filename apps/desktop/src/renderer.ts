@@ -109,6 +109,7 @@ const pluginsLayout = new ManagementPageLayout(pluginsPage, {
     { id: "extension-tab", label: "Extensions", dataset: { type: "extension" }, active: true },
     { id: "skill-tab", label: "Skills", dataset: { type: "skill" } },
     { id: "prompt-tab", label: "Prompts", dataset: { type: "prompt" } },
+    { id: "custom-tab", label: "Custom", dataset: { type: "custom" } },
   ],
   actions: [{ id: "refresh-plugins", icon: managementRefreshIcon, label: "Refresh packages" }],
 });
@@ -118,7 +119,7 @@ pluginsLayout.addContent({
   titleId: "plugins-title",
   description: "Extend Pi with packages from the community catalog.",
   search: { id: "plugin-search", placeholder: "Search plugins" },
-  body: [element("plugins-installed-section"), element("plugins-skills-section"), element("plugins-discover-section")],
+  body: [element("plugins-installed-section"), element("plugins-skills-section"), element("plugins-discover-section"), element("plugins-custom-section")],
 });
 const modelsLayout = new ManagementPageLayout(modelsPage, {
   tabs: [

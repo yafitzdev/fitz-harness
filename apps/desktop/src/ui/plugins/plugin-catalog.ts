@@ -34,6 +34,13 @@ export interface PiSkillSummary {
   filePath: string;
 }
 
+/** One host-built agent tool shown on the Plugins page's Custom tab. */
+export interface CustomToolSummary {
+  name: string;
+  label: string;
+  description: string;
+}
+
 export interface PluginCatalogPage {
   total: number;
   packages: PiCatalogPackage[];
@@ -43,6 +50,7 @@ export interface PluginCatalogPage {
 export interface PluginCatalogClient {
   listInstalledPackages(): Promise<InstalledPiPackage[]>;
   listSkills(): Promise<PiSkillSummary[]>;
+  listCustomTools(): Promise<CustomToolSummary[]>;
   searchCatalog(path: string): Promise<PluginCatalogPage>;
   install(source: string): Promise<void>;
   update(source: string): Promise<void>;
@@ -58,6 +66,7 @@ export function createPluginCatalogClient(request: PluginCatalogApi): PluginCata
   return {
     listInstalledPackages: async () => parseEnvelope(await request("/api/v1/management/pi/packages"), parseInstalledPackages),
     listSkills: async () => parseEnvelope(await request("/api/v1/management/pi/skills"), parseSkills),
+    listCustomTools: async () => parseEnvelope(await request("/api/v1/management/pi/custom-tools"), parseCustomTools),
     searchCatalog: async (path) => parseEnvelope(await request(path), parseCatalogPage),
     install: async (source) => { parseEnvelope(await request("/api/v1/management/pi/packages/install", "POST", { source }), parseSourceMutation); },
     update: async (source) => { parseEnvelope(await request("/api/v1/management/pi/packages/update", "POST", { source }), parseSourceMutation); },
@@ -75,6 +84,12 @@ export interface PluginCatalogElements {
   installedSection: HTMLElement;
   /** The Installed skills section; visible only on the Skills tab. */
   skillsSection: HTMLElement;
+  /** The Discover (npm catalog) section; hidden on the Custom tab. */
+  discoverSection: HTMLElement;
+  /** The Custom tools section; visible only on the Custom tab. */
+  customSection: HTMLElement;
+  /** Grid that lists the host's built-in custom tools. */
+  customTools: HTMLElement;
   pluginSearch: HTMLInputElement;
   installedPlugins: HTMLElement;
   pluginCatalog: HTMLElement;
@@ -115,6 +130,7 @@ export class PluginCatalogController {
   private installedPackages: InstalledPiPackage[] = [];
   private catalogPackages: PiCatalogPackage[] = [];
   private installedSkills: PiSkillSummary[] = [];
+  private customTools: CustomToolSummary[] = [];
   private catalogTotal = 0;
   private catalogType: string;
   private searchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -137,12 +153,21 @@ export class PluginCatalogController {
   }
 
   showLoading(): void {
-    this.elements.installedPlugins.replaceChildren(emptyState("Loading plugins…"));
+    const target = this.catalogType === "custom" ? this.elements.customTools : this.elements.installedPlugins;
+    target.replaceChildren(emptyState(this.catalogType === "custom" ? "Loading custom tools…" : "Loading plugins…"));
   }
 
   async load(appendCatalog = false): Promise<void> {
     const generation = ++this.loadGeneration;
     try {
+      if (!appendCatalog && this.catalogType === "custom") {
+        this.applyTabView();
+        const tools = await this.options.api.listCustomTools();
+        if (generation !== this.loadGeneration) return;
+        this.customTools = tools;
+        this.renderCustomTools();
+        return;
+      }
       if (!appendCatalog) {
         const [packages, skills] = await Promise.all([
           this.options.api.listInstalledPackages(),
@@ -151,6 +176,7 @@ export class PluginCatalogController {
         if (generation !== this.loadGeneration) return;
         this.installedPackages = packages;
         this.installedSkills = skills;
+        this.applyTabView();
         this.renderInstalledPackages();
         this.renderSkills();
       }
@@ -159,7 +185,8 @@ export class PluginCatalogController {
       if (generation !== this.loadGeneration) return;
       const message = this.options.errorMessage(error);
       if (!appendCatalog) {
-        this.elements.installedPlugins.replaceChildren(emptyState(message));
+        const emptyTarget = this.catalogType === "custom" ? this.elements.customTools : this.elements.installedPlugins;
+        emptyTarget.replaceChildren(emptyState(message));
         this.elements.pluginCatalog.replaceChildren();
       }
       this.options.showStatus(message, "error");
@@ -251,6 +278,52 @@ export class PluginCatalogController {
       mark.textContent = skill.enabled ? "✓" : "Disabled";
       actions.append(mark);
       this.elements.installedSkills.append(card);
+    }
+  }
+
+  /** Shows only the sections that belong to the active header tab. */
+  private applyTabView(): void {
+    const isCustom = this.catalogType === "custom";
+    this.elements.customSection.hidden = !isCustom;
+    this.elements.discoverSection.hidden = isCustom;
+    if (isCustom) {
+      this.elements.installedSection.hidden = true;
+      this.elements.skillsSection.hidden = true;
+    }
+    // The catalog search pill and sort control are meaningless for built-in tools.
+    const searchPill = this.elements.pluginSearch.closest<HTMLElement>(".management-search");
+    if (searchPill) searchPill.hidden = isCustom;
+    this.filterBar.element.hidden = isCustom;
+  }
+
+  private renderCustomTools(): void {
+    this.elements.customTools.replaceChildren();
+    if (!this.customTools.length) {
+      this.elements.customTools.append(emptyState("No custom tools registered"));
+      return;
+    }
+    for (const tool of this.customTools) {
+      const card = document.createElement("article");
+      card.className = "plugin-card";
+      const icon = document.createElement("span");
+      icon.className = "plugin-icon";
+      icon.append(svgIcon('<path d="M10 2.8c.5 3.7 2.4 5.8 6.2 7.2-3.8 1.4-5.7 3.5-6.2 7.2-.5-3.7-2.4-5.8-6.2-7.2C7.6 8.6 9.5 6.5 10 2.8Z"></path>'));
+      const copy = document.createElement("div");
+      copy.className = "plugin-copy";
+      const heading = document.createElement("strong");
+      heading.textContent = tool.name;
+      const meta = document.createElement("span");
+      meta.className = "plugin-meta";
+      meta.textContent = tool.label === tool.name ? tool.description : tool.label + " \u00b7 " + tool.description;
+      copy.append(heading, meta);
+      const actions = document.createElement("div");
+      actions.className = "plugin-actions";
+      const mark = document.createElement("span");
+      mark.className = "plugin-installed-mark";
+      mark.textContent = "Built-in";
+      actions.append(mark);
+      card.append(icon, copy, actions);
+      this.elements.customTools.append(card);
     }
   }
 
@@ -393,6 +466,16 @@ function parseSkills(value: unknown): PiSkillSummary[] {
       throw invalidResponse("skill is invalid");
     }
     return { name: entry.name, description: entry.description, source: entry.source, enabled: entry.enabled, filePath: entry.filePath };
+  });
+}
+
+function parseCustomTools(value: unknown): CustomToolSummary[] {
+  if (!Array.isArray(value)) throw invalidResponse("custom tools are invalid");
+  return value.map((entry) => {
+    if (!isRecord(entry) || typeof entry.name !== "string" || typeof entry.label !== "string" || typeof entry.description !== "string") {
+      throw invalidResponse("custom tool is invalid");
+    }
+    return { name: entry.name, label: entry.label, description: entry.description };
   });
 }
 

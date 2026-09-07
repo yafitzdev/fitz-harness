@@ -45,27 +45,34 @@ function setup(api: PluginCatalogApi, searchDelayMs = 250) {
   const installed = section("installed", "installed-plugins-toggle", "installed-plugins-body");
   const skills = section("skills", "installed-skills-toggle", "installed-skills-body");
   const catalog = section("discover", "plugin-catalog-toggle", "plugin-catalog-body");
+  const custom = section("custom", "custom-tools-toggle", "custom-tools-body");
   const pluginsView = node("section");
   const title = document.createElement("h1");
   title.textContent = "Extensions";
-  pluginsView.prepend(title, installed.section, skills.section, catalog.section);
+  pluginsView.prepend(title, installed.section, skills.section, catalog.section, custom.section);
   const installedPlugins = document.createElement("div"); installedPlugins.id = "installed-plugins"; installedPlugins.className = "plugin-grid";
   const pluginCatalog = document.createElement("div"); pluginCatalog.id = "plugin-catalog"; pluginCatalog.className = "plugin-grid";
   const installedSkills = document.createElement("div"); installedSkills.id = "installed-skills"; installedSkills.className = "plugin-grid";
+  const customTools = document.createElement("div"); customTools.id = "custom-tools"; customTools.className = "plugin-grid";
   const loadMorePlugins = document.createElement("button"); loadMorePlugins.id = "load-more-plugins"; loadMorePlugins.hidden = true;
   installed.region.append(installedPlugins);
   skills.region.append(installedSkills);
   catalog.region.append(pluginCatalog, loadMorePlugins);
+  custom.region.append(customTools);
   const typeTabs = [
     typeTab("extension-tab", "Extensions", "extension", true),
     typeTab("skill-tab", "Skills", "skill"),
     typeTab("prompt-tab", "Prompts", "prompt"),
+    typeTab("custom-tab", "Custom", "custom"),
   ];
   const elements: PluginCatalogElements = {
     pluginsView,
     title,
     installedSection: installed.section,
     skillsSection: skills.section,
+    discoverSection: catalog.section,
+    customSection: custom.section,
+    customTools,
     pluginSearch: node("input"),
     installedPlugins, pluginCatalog, installedSkills, loadMorePlugins, refresh: node("button"),
     typeTabs,
@@ -344,5 +351,55 @@ describe("PluginCatalogController", () => {
     expect(elements.title.textContent).toBe("Skills");
     // The render shows exactly what the server returned for the active type.
     expect(elements.pluginCatalog.querySelectorAll(".plugin-card")).toHaveLength(2);
+  });
+
+  it("shows the read-only Custom tab with the host's built-in tools", async () => {
+    const api = vi.fn(async (path: string) => {
+      if (path === "/api/v1/management/pi/packages" || path === "/api/v1/management/pi/skills") return { data: [] };
+      if (path === "/api/v1/management/pi/custom-tools") return { data: [
+        { name: "fitz_trash", label: "Move to trash", description: "Recoverable deletes" },
+        { name: "lsp", label: "Language server", description: "Read-only editor queries" },
+      ] };
+      return { data: { total: 0, packages: [] } };
+    });
+    const { controller, elements, calls } = setup(api);
+    await controller.load();
+
+    // Package views are the default; the Custom section starts hidden.
+    expect(elements.customSection.hidden).toBe(true);
+    expect(elements.discoverSection.hidden).toBe(false);
+
+    click(elements.typeTabs.find((tab) => tab.dataset.type === "custom")!);
+    await vi.waitFor(() => expect(elements.customTools.textContent).toContain("fitz_trash"));
+    expect(api).toHaveBeenCalledWith("/api/v1/management/pi/custom-tools");
+    expect(elements.title.textContent).toBe("Custom");
+    expect(elements.customSection.hidden).toBe(false);
+    expect(elements.installedSection.hidden).toBe(true);
+    expect(elements.skillsSection.hidden).toBe(true);
+    expect(elements.discoverSection.hidden).toBe(true);
+    expect(elements.customTools.querySelectorAll(".plugin-card")).toHaveLength(2);
+    expect(elements.customTools.textContent).toContain("fitz_trash");
+    expect(elements.customTools.textContent).toContain("lsp");
+    expect(elements.customTools.textContent).toContain("Move to trash");
+    // Built-in tools are read-only: no install/remove actions, no status toast.
+    expect(elements.customTools.querySelector(".plugin-action")).toBeNull();
+    expect(calls.showStatus).not.toHaveBeenCalled();
+
+    // Returning to a package tab hides the Custom section again.
+    click(elements.typeTabs.find((tab) => tab.dataset.type === "extension")!);
+    await vi.waitFor(() => expect(elements.customSection.hidden).toBe(true));
+    expect(elements.discoverSection.hidden).toBe(false);
+    expect(elements.installedSection.hidden).toBe(false);
+  });
+
+  it("shows an empty state on the Custom tab when no tools are registered", async () => {
+    const api = vi.fn(async (path: string) => {
+      if (path === "/api/v1/management/pi/custom-tools") return { data: [] };
+      return { data: { total: 0, packages: [] } };
+    });
+    const { controller, elements } = setup(api);
+    await controller.load();
+    click(elements.typeTabs.find((tab) => tab.dataset.type === "custom")!);
+    await vi.waitFor(() => expect(elements.customTools.textContent).toContain("No custom tools registered"));
   });
 });

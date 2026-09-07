@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerHookHandl
 import type { PiPackageService } from "@fitz/agent-pi";
 import type { AuthenticatedPrincipal, SecurityService } from "@fitz/security";
 import { DownloadNotFoundError, normalizeModelCatalogCategory, type ModelCatalogService } from "./model-catalog.js";
+import type { CustomToolSummary } from "./custom-tools.js";
 
 export interface CatalogRouteOptions {
   app: FastifyInstance;
@@ -11,6 +12,8 @@ export interface CatalogRouteOptions {
   principals: WeakMap<object, AuthenticatedPrincipal>;
   administratorGuard: preHandlerHookHandler;
   reconcileLocalModels?: () => void;
+  /** Projects the host's in-process custom agent tools for the management UI. */
+  listCustomTools?: () => CustomToolSummary[];
 }
 
 /** Owns installable Pi packages/skills and downloadable model catalogs. */
@@ -30,6 +33,10 @@ export function registerCatalogRoutes(options: CatalogRouteOptions): void {
   });
   app.get("/api/v1/management/pi/skills", { preHandler }, async (_request, reply) => {
     try { return { data: await requiredPi(piPackages).skills() }; }
+    catch (error) { return reply.code(503).send({ error: errorMessage(error) }); }
+  });
+  app.get("/api/v1/management/pi/custom-tools", { preHandler }, async (_request, reply) => {
+    try { return { data: options.listCustomTools?.() ?? [] }; }
     catch (error) { return reply.code(503).send({ error: errorMessage(error) }); }
   });
   app.post("/api/v1/management/pi/packages/install", { preHandler }, async (request, reply) => mutatePackage(request, reply, "install"));

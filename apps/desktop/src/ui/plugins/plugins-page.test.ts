@@ -13,6 +13,7 @@ function buildPage(): HTMLElement {
       { id: "extension-tab", label: "Extensions", dataset: { type: "extension" }, active: true },
       { id: "skill-tab", label: "Skills", dataset: { type: "skill" } },
       { id: "prompt-tab", label: "Prompts", dataset: { type: "prompt" } },
+      { id: "custom-tab", label: "Custom", dataset: { type: "custom" } },
     ],
     actions: [{ id: "refresh-plugins", icon: managementRefreshIcon, label: "Refresh packages" }],
   });
@@ -28,13 +29,18 @@ function buildPage(): HTMLElement {
   discover.id = "plugins-discover-section";
   discover.className = "collapsible-section";
   discover.innerHTML = '<div class="collapsible-heading"><button class="collapsible-toggle" id="plugin-catalog-toggle" type="button" data-collapsible-key="discover" aria-expanded="true" aria-controls="plugin-catalog-body"><h2>Discover</h2></button></div><div id="plugin-catalog-body" class="collapsible-body"><div id="plugin-catalog" class="plugin-grid"></div><button id="load-more-plugins" type="button" hidden>Load more</button></div>';
+  const custom = document.createElement("section");
+  custom.id = "plugins-custom-section";
+  custom.className = "collapsible-section";
+  custom.hidden = true;
+  custom.innerHTML = '<div class="collapsible-heading"><button class="collapsible-toggle" id="custom-tools-toggle" type="button" data-collapsible-key="custom" aria-expanded="true" aria-controls="custom-tools-body"><h2>Custom tools</h2></button></div><div id="custom-tools-body" class="collapsible-body"><div id="custom-tools" class="plugin-grid"></div></div>';
   layout.addContent({
     id: "plugins-view",
     title: "Extensions",
     titleId: "plugins-title",
     description: "Extend Pi with packages from the community catalog.",
     search: { id: "plugin-search", placeholder: "Search plugins" },
-    body: [installed, skills, discover],
+    body: [installed, skills, discover, custom],
   });
   document.body.append(page);
   return page;
@@ -167,5 +173,31 @@ describe("PluginsPageController", () => {
     page.id = "plugins-page";
     expect(() => new PluginsPageController({ page, api: vi.fn(), openExternal: vi.fn(), showStatus: vi.fn(), errorMessage: vi.fn() } satisfies PluginsPageOptions))
       .toThrow("Plugins page is missing type tabs");
+  });
+
+  it("switches to the Custom tab and lists the host's built-in tools", async () => {
+    const api = vi.fn(async (path: string) => {
+      if (path === "/api/v1/management/pi/custom-tools") return { data: [
+        { name: "fitz_trash", label: "Move to trash", description: "Recoverable deletes" },
+      ] };
+      if (path === "/api/v1/management/pi/packages" || path === "/api/v1/management/pi/skills") return { data: [] };
+      return { data: { total: 0, packages: [] } };
+    });
+    const { controller, page } = setup(api);
+    await controller.load();
+
+    expect(page.querySelector("#plugins-custom-section")?.hasAttribute("hidden")).toBe(true);
+    click(page.querySelector("#custom-tab")!);
+    await vi.waitFor(() => expect(page.querySelector("#custom-tools")?.textContent).toContain("fitz_trash"));
+    expect(api).toHaveBeenCalledWith("/api/v1/management/pi/custom-tools");
+    expect(page.querySelector("#custom-tab")?.classList.contains("active")).toBe(true);
+    expect(page.querySelector("#extension-tab")?.classList.contains("active")).toBe(false);
+    expect(page.querySelector("#plugins-title")?.textContent).toBe("Custom");
+    expect(page.querySelector("#plugins-custom-section")?.hasAttribute("hidden")).toBe(false);
+    expect(page.querySelector("#plugins-installed-section")?.hasAttribute("hidden")).toBe(true);
+    expect(page.querySelector("#plugins-skills-section")?.hasAttribute("hidden")).toBe(true);
+    expect(page.querySelector("#plugins-discover-section")?.hasAttribute("hidden")).toBe(true);
+    expect(page.querySelector("#custom-tools")?.textContent).toContain("fitz_trash");
+    expect(page.querySelector("#custom-tools")?.textContent).toContain("Built-in");
   });
 });

@@ -10,16 +10,15 @@ import { ComfyUIEngineAdapter } from "@fitz/engine-comfyui";
 import { applyPendingStorageRestore, ArtifactRepository, LocalBlobStore, SqliteSessionQueryService, SqliteStore, StorageDurabilityService } from "@fitz/storage";
 import { SecurityService } from "@fitz/security";
 import { createHost } from "./create-app.js";
-import { createMediaTools } from "./media-tools.js";
 import type { MediaJobCoordinator } from "./media-jobs.js";
 import { ModelCatalogService } from "./model-catalog.js";
-import { createLspTool, PiAgentRuntime, PiPackageService, WorkspaceMutationLeaseManager, requiredInitialSubagentRoutes } from "@fitz/agent-pi";
+import { PiAgentRuntime, PiPackageService, WorkspaceMutationLeaseManager } from "@fitz/agent-pi";
 import { LspRegistry, StdioLspProvider } from "@fitz/lsp";
 import { createNInferPlaybook } from "./ninfer-playbook.js";
 import { createComfyUIPlaybook } from "./comfyui-playbook.js";
 import { reconcileNInferConfiguration } from "./ninfer-reconcile.js";
 import { createToolApprovalRequester } from "./tool-approval-gate.js";
-import { contextTokensForAgentRequest, contextTokensForRoute, executionClassForRoute, thinkingFormatForAgentRequest } from "./route-context.js";
+import { contextTokensForAgentRequest, contextTokensForRoute, thinkingFormatForAgentRequest } from "./route-context.js";
 import { WindowsStartupManager } from "@fitz/connectivity";
 import { SharedHostGateway, TailscaleFunnelManager } from "@fitz/connectivity";
 import { FitzConfigService } from "@fitz/config";
@@ -34,11 +33,12 @@ import { HostInstanceLock } from "./host-instance-lock.js";
 import { installGracefulShutdown } from "./graceful-shutdown.js";
 import { LlamaCppModelReconciler } from "./llama-cpp-reconcile.js";
 import { VllmModelReconciler } from "./vllm-reconcile.js";
-import { createSubagentTool, isDelegatedToolContext, subagentRouteBudget } from "./subagent-tools.js";
+import { subagentRouteBudget } from "./subagent-tools.js";
 import type { AgentRunCoordinator } from "./agent-runs.js";
 import { LOCAL_OWNER_ID } from "./user-route-resolver.js";
 import { HostingService } from "./hosting-service.js";
-import { createAgentPlanTool, createAgentRunPlanPolicy } from "./agent-plan-tools.js";
+import { createAgentRunPlanPolicy } from "./agent-plan-tools.js";
+import { buildCustomToolDefinitions, listCustomToolSummaries } from "./custom-tools.js";
 import { rootAgentToolCallBudget } from "./agent-effort-policy.js";
 import type { Recipe, ResolvedAgentTopology } from "@fitz/protocol";
 
@@ -198,34 +198,34 @@ const runtime = createHost({
       redactToolResult: safety.createResultRedactor(),
       subagentBudget: (request, context) => subagentRouteBudget(store, context?.ownerUserId ?? LOCAL_OWNER_ID, request.model, request.effort ?? "normal", loadedLocalTopology),
       runPlan: (_request, context) => context?.runId ? createAgentRunPlanPolicy(store, context.runId) : undefined,
-      customTools: (context) => {
-        const delegated = isDelegatedToolContext(store, context);
-        const ownerUserId = (context.runId ? store.getAgentRun(context.runId)?.ownerUserId : undefined) ?? LOCAL_OWNER_ID;
-        const parentRequest = context.request ?? (context.runId ? store.getAgentRunRequest(context.runId) : undefined);
-        const parentRoute = parentRequest?.model ?? "default";
-        const subagentBudget = subagentRouteBudget(store, ownerUserId, parentRoute, parentRequest?.effort ?? "normal", loadedLocalTopology);
-        return [
-          ...safety.createCustomTools()(context),
-          ...(lspEnabled ? [createLspTool(lsp, context)] : []),
-          ...(!delegated ? [createAgentPlanTool({
-            store,
-            ...(parentRequest && subagentBudget ? { requiredWorkerRoutes: [...requiredInitialSubagentRoutes(parentRequest, subagentBudget)] } : {}),
-          }, context)] : []),
-          // Authenticated runs enforce the owner's media quota and route grants.
-          // Explicit local auth-disabled mode has no user and follows the existing
-          // administrator-diagnostic path used by the management media test.
-          ...(!delegated && mediaJobs ? createMediaTools({ mediaJobs, store, ...(security ? { security } : {}) })(context) : []),
-          ...(!delegated && subagentBudget && agentRuns ? [createSubagentTool({
-            agentRuns,
-            store,
-            executionClass: executionClassForRoute(store, parentRoute, ownerUserId),
-          }, context, subagentBudget)] : []),
-        ];
-      },
+      customTools: (context) => buildCustomToolDefinitions({
+        store,
+        safety,
+        lsp,
+        lspEnabled,
+        ...(security ? { security } : {}),
+        // Late-bound members are assigned after createHost() returns; reading them
+        // on each invocation keeps the tool set current for every run.
+        ...(mediaJobs ? { mediaJobs } : {}),
+        ...(agentRuns ? { agentRuns } : {}),
+        ...(loadedLocalTopology ? { loadedLocalTopology } : {}),
+      }, context),
       agentDir: runtimePaths.piAgentDir,
       llmRoot: runtimePaths.llmRoot,
     }),
   } : {}),
+  // The Plugins page's Custom tab lists the host's in-process custom tools.
+  // Late-bound members are read per request so the list matches what runs get.
+  listCustomTools: () => listCustomToolSummaries({
+    store,
+    safety,
+    lsp,
+    lspEnabled,
+    ...(security ? { security } : {}),
+    ...(mediaJobs ? { mediaJobs } : {}),
+    ...(agentRuns ? { agentRuns } : {}),
+    ...(loadedLocalTopology ? { loadedLocalTopology } : {}),
+  }),
 });
 loadedLocalTopology = (recipe) => runtime.lifecycle.localAgentTopology(recipe);
 mediaJobs = runtime.mediaJobs;

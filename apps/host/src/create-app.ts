@@ -60,6 +60,7 @@ import { registerWorkspaceRoutes } from "./workspace-routes.js";
 import { classifyHostError } from "./host-error.js";
 import { registerOpenAIRoutes } from "./openai-routes.js";
 import { registerCatalogRoutes } from "./catalog-routes.js";
+import type { CustomToolSummary } from "./custom-tools.js";
 import { registerRuntimeAdministrationRoutes } from "./runtime-administration-routes.js";
 import { registerStorageRoutes } from "./storage-routes.js";
 import { registerSecurityAdministrationRoutes } from "./security-administration-routes.js";
@@ -122,6 +123,8 @@ export interface CreateHostOptions {
   /** Lists auxiliary drafter artifacts for the recipe editor without turning
    * them into standalone recipes or routes. */
   listSpeculativeDrafters?: () => SpeculativeDrafter[];
+  /** Projects the host's in-process custom agent tools for the Plugins page. */
+  listCustomTools?: () => CustomToolSummary[];
   ninferRuntime?: NInferRuntimeManager;
   /** The host safety layer (policy engine, snapshots, trash, redaction). Optional so tests can run without it. */
   safety?: AgentSafetyService;
@@ -675,7 +678,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
 
   registerRuntimeAdministrationRoutes({ app, principals, administratorGuard, ...(ninferRuntime ? { ninferRuntime } : {}), ...(security ? { security } : {}) });
   if (options.hostingService) registerHostingRoutes({ app, hosting: options.hostingService, principals, administratorGuard, ...(security ? { security } : {}) });
-  registerCatalogRoutes({ app, principals, administratorGuard, reconcileLocalModels, ...(piPackages ? { piPackages } : {}), ...(modelCatalog ? { modelCatalog } : {}), ...(security ? { security } : {}) });
+  registerCatalogRoutes({ app, principals, administratorGuard, reconcileLocalModels, ...(piPackages ? { piPackages } : {}), ...(modelCatalog ? { modelCatalog } : {}), ...(security ? { security } : {}), ...(options.listCustomTools ? { listCustomTools: options.listCustomTools } : {}) });
   registerSecurityAdministrationRoutes({ app, store, principals, administratorGuard, ...(options.hostingService ? { hosting: options.hostingService } : {}), ...(security ? { security } : {}) });
   registerStorageRoutes({ app, store, artifacts, principals, administratorGuard, ...(storageDurability ? { storageDurability } : {}), ...(security ? { security } : {}) });
   registerSafetyAdministrationRoutes({ app, principals, administratorGuard, ...(safety ? { safety } : {}), ...(security ? { security } : {}) });

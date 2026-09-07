@@ -894,6 +894,30 @@ describe("Fitz host", () => {
     await runtime.app.close();
   });
 
+  it("lists the host's built-in custom tools for the Plugins page", async () => {
+    const runtime = createHost({
+      adminToken: "plugins-token",
+      listCustomTools: () => [
+        { name: "fitz_trash", label: "Move to trash", description: "Recoverable deletes" },
+        { name: "lsp", label: "Language server", description: "Read-only editor queries" },
+      ],
+    });
+    try {
+      const response = await runtime.app.inject({
+        method: "GET",
+        url: "/api/v1/management/pi/custom-tools",
+        headers: { "x-fitz-admin-token": "plugins-token" },
+      });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json().data).toEqual([
+        { name: "fitz_trash", label: "Move to trash", description: "Recoverable deletes" },
+        { name: "lsp", label: "Language server", description: "Read-only editor queries" },
+      ]);
+    } finally {
+      await runtime.app.close();
+    }
+  });
+
   it("streams SSE chunks and terminates with DONE", async () => {
     const runtime = createHost();
     const response = await runtime.app.inject({
