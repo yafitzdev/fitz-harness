@@ -75,10 +75,11 @@ export function createSubagentTool(options: SubagentToolsOptions, context: { run
   if (!roles.length) throw new Error("No enabled subagent roles are registered");
   const roleDescription = roles.map((role) => `${role.id}: ${role.dispatchDescription}`).join(" ");
   const availableRoutes = (["default", "fast", "smart"] as const).filter((route) => budget[route] > 0);
+  const routeParameter = Type.String({ enum: availableRoutes, description: availableRoutes.length === 1
+    ? `Defaults to the only available route: ${availableRoutes[0]}.`
+    : "Route for this child; constrained by the selected parent mode's budget" });
   const parameters = Type.Object({
-    route: Type.String({ enum: availableRoutes, description: availableRoutes.length === 1
-      ? `This worker always uses the ${availableRoutes[0]} model route.`
-      : "Route for this child; constrained by the selected parent mode's budget" }),
+    route: availableRoutes.length === 1 ? Type.Optional(routeParameter) : routeParameter,
     role: Type.String({ enum: roles.map((role) => role.id), description: `Deterministic registered role for this dispatch. ${roleDescription}` }),
     plan_item_id: Type.String({ minLength: 1, maxLength: 80, description: "Worker-eligible item from the durable agent plan" }),
     concurrent_parent_task: Type.Optional(Type.String({ minLength: 1, maxLength: 4_000, description: "Required for a Smart child: the substantive work the Smart parent will perform concurrently" })),
@@ -113,7 +114,8 @@ export function createSubagentTool(options: SubagentToolsOptions, context: { run
       if (!parent) throw new Error(`Parent agent run ${parentRunId} was not found`);
       const parentRequest = options.store.getAgentRunRequest(parentRunId);
       const role = options.store.getSubagentRole(params.role);
-      const route = params.route as SubagentRoute;
+      const route = (params.route ?? (availableRoutes.length === 1 ? availableRoutes[0] : undefined)) as SubagentRoute | undefined;
+      if (!route || typeof used[route] !== "number") throw new TypeError(`Choose a worker route: ${availableRoutes.join(", ")}`);
       const plan = reconcileAgentPlan(options.store, parentRunId);
       const planItem = plan?.items.find((item) => item.id === params.plan_item_id);
       if (!planItem) {

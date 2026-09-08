@@ -356,7 +356,11 @@ function assertAcyclic(items: Array<{ id: string; dependencies: string[] }>): vo
 
 function formatPlan(plan: AgentRunPlan): string {
   const lines = plan.items.map((item) => `- ${item.id}: ${item.status} · ${item.owner}${item.workerEligible ? " · worker-eligible" : ""}${item.dependencies.length ? ` · after ${item.dependencies.join(", ")}` : ""} — ${item.task}${item.error ? ` (${item.error})` : ""}`);
-  return `Plan ${plan.status} (revision ${plan.revision})\n${lines.join("\n")}`;
+  // Pi sends content to the model; details.plan is only structured UI data.
+  // A completed flag without the report forces the parent to repeat the work.
+  const reports = plan.items.filter((item) => item.workerRunId && item.status === "completed" && item.result)
+    .map((item) => `Worker report for ${item.id}:\n${item.result}`);
+  return [`Plan ${plan.status} (revision ${plan.revision})\n${lines.join("\n")}`, ...reports].join("\n\n");
 }
 
 function isImplicitFinalizationItem(item: { id: string; task: string }): boolean {

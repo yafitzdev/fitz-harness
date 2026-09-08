@@ -5,6 +5,22 @@ import { assignPlanItemToWorker, completePlanAfterAnswer, createAgentPlanTool, c
 const NOW = new Date(0).toISOString();
 
 describe("durable agent plans", () => {
+  it("delivers the completed worker report in model-visible plan text", async () => {
+    const store = harness();
+    try {
+      const tool = createAgentPlanTool({ store }, { runId: "parent" });
+      await execute(tool, { action: "set", items: [{ id: "research", task: "Inspect the core", worker_eligible: true }, { id: "main", task: "Inspect the interface" }] });
+      store.createAgentRun({ id: "child", routeId: "default", status: "running", createdAt: NOW, updatedAt: NOW, lastSequence: 0 }, { model: "default", messages: [] });
+      assignPlanItemToWorker(store, "parent", "research", "child");
+      store.appendAgentEvent({ protocolVersion: "1", runId: "child", sequence: 1, timestamp: NOW, type: "assistant.delta", data: { text: "Core finding: the compiler drops empty groups." } });
+      store.updateAgentRun("child", "completed");
+      const status = await execute(tool, { action: "status" });
+      expect(status.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: "text", text: expect.stringContaining("Core finding: the compiler drops empty groups.") })]));
+      const ready = await execute(tool, { action: "update", item_id: "main", status: "completed" });
+      expect(ready.content[0]).toEqual(expect.objectContaining({ text: expect.stringContaining("Core finding: the compiler drops empty groups.") }));
+    } finally { store.close(); }
+  });
+
   it("allows direct answers and activates planning only when tool work is attempted", () => {
     const store = harness();
     const direct = createAgentRunPlanPolicy(store, "parent");

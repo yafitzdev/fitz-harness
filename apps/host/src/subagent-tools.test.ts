@@ -6,6 +6,21 @@ import { createSubagentTool, isDelegatedToolContext, SUBAGENT_EFFORT_BUDGETS, su
 const NOW = new Date(0).toISOString();
 
 describe("subagent tool", () => {
+  it("defaults the only available route when the model omits it", async () => {
+    const store = SqliteStore.memory();
+    try {
+      createParent(store, "default");
+      createPlan(store, ["research"]);
+      const launchSubagent = successfulLauncher();
+      const tool = createSubagentTool({ agentRuns: { launchSubagent, cancel: vi.fn() } as never, store }, { runId: "parent" }, { default: 1, fast: 0, smart: 0 });
+      expect(tool.parameters.required).not.toContain("route");
+      await tool.execute("call-1", { role: "researcher", plan_item_id: "research" }, undefined, undefined, {} as never);
+      expect(launchSubagent).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ model: "default" }) }));
+      const multiRoute = createSubagentTool({ agentRuns: { launchSubagent } as never, store }, { runId: "parent" }, { default: 0, fast: 1, smart: 1 });
+      expect(multiRoute.parameters.required).toContain("route");
+    } finally { store.close(); }
+  });
+
   it("defines effort-specific Fast and Smart parent budgets", () => {
     expect(SUBAGENT_EFFORT_BUDGETS).toEqual({
       light: {
