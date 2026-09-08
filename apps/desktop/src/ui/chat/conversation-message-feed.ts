@@ -2,6 +2,7 @@ import { setMarkdown } from "../../markdown.js";
 import type { ActionableMessageRole } from "./message-actions.js";
 import { projectRelativePath } from "./tool-activity.js";
 import { scrollToLatestIfFollowing } from "./conversation-scroll.js";
+import type { ChatContentDocument } from "@fitz/protocol";
 
 export interface ConversationMessageActivity {
   finishWork(createdAt?: string, boundary?: "completed" | "next-message"): void;
@@ -34,6 +35,7 @@ export interface MessageAttachment {
 export interface TranscriptMessageMetadata {
   id?: string;
   sequence?: number;
+  document?: ChatContentDocument;
 }
 
 /** Owns durable user/assistant/commentary messages and file-change summaries. */
@@ -68,7 +70,7 @@ export class ConversationMessageFeed {
     }
     const content = document.createElement("div");
     content.className = "message-body";
-    if (role === "assistant" || role === "commentary") setMarkdown(content, text);
+    if (role === "assistant" || role === "commentary") setMarkdown(content, text, metadata?.document);
     else content.textContent = text;
     if (role === "user" && attachments.length) article.append(this.#attachmentStrip(attachments));
     if (!text) content.hidden = true;

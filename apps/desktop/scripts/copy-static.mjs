@@ -31,6 +31,7 @@ cpSync(new URL("../src/ui/chat/media-creation-form.css", import.meta.url), new U
 cpSync(new URL("../src/ui/chat/reasoning-view.css", import.meta.url), new URL("../dist/ui/chat/reasoning-view.css", import.meta.url));
 cpSync(new URL("../src/ui/chat/composer-controls.css", import.meta.url), new URL("../dist/ui/chat/composer-controls.css", import.meta.url));
 cpSync(new URL("../src/ui/chat/composer.css", import.meta.url), new URL("../dist/ui/chat/composer.css", import.meta.url));
+cpSync(new URL("../src/ui/chat/chat-content.css", import.meta.url), new URL("../dist/ui/chat/chat-content.css", import.meta.url));
 cpSync(new URL("../src/ui/connections/connection-workspace.css", import.meta.url), new URL("../dist/ui/connections/connection-workspace.css", import.meta.url));
 cpSync(new URL("../src/ui/plugins/plugin-catalog.css", import.meta.url), new URL("../dist/ui/plugins/plugin-catalog.css", import.meta.url));
 cpSync(new URL("../src/ui/models/model-catalog.css", import.meta.url), new URL("../dist/ui/models/model-catalog.css", import.meta.url));

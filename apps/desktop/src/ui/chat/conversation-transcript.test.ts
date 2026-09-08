@@ -5,6 +5,14 @@ import { ConversationTranscript } from "./conversation-transcript.js";
 beforeEach(() => document.body.replaceChildren());
 
 describe("ConversationTranscript", () => {
+  it("passes a persisted typed document through when replaying an assistant message", () => {
+    const appendMessage = vi.fn(() => globalThis.document.createElement("div"));
+    const contentDocument = { version: 1 as const, blocks: [{ id: "markdown:0", type: "markdown" as const, start: 0, end: 5 }] };
+    const view = new ConversationTranscript({ messages: documentNode(), activity: emptyActivity(), appendMessage, appendCommentary: vi.fn(), rebuildHistory: vi.fn() });
+    view.restore([{ id: "answer", sequence: 2, kind: "message", role: "assistant", content: { text: "hello", document: contentDocument } }]);
+    expect(appendMessage).toHaveBeenCalledWith("assistant", "hello", undefined, undefined, undefined, { id: "answer", sequence: 2, document: contentDocument });
+  });
+
   it("restores messages, commentary, tools, reasoning, compaction, and history", () => {
     const messages = document.createElement("main");
     const toolRow = document.createElement("div");
@@ -176,3 +184,8 @@ describe("ConversationTranscript", () => {
     expect(rebuildHistory).toHaveBeenLastCalledWith(["before"]);
   });
 });
+
+function documentNode(): HTMLElement { return globalThis.document.createElement("main"); }
+function emptyActivity() {
+  return { clear: vi.fn(), appendTool: vi.fn(), completeTool: vi.fn(), appendReasoning: vi.fn(), appendReasoningDelta: vi.fn(), completeReasoning: vi.fn(), appendContext: vi.fn() };
+}

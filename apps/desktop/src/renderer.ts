@@ -1,4 +1,4 @@
-import { appendMarkdown, setMarkdown } from "./markdown.js";
+import { appendMarkdown, configureChatContentRuntime, setMarkdown } from "./markdown.js";
 import { estimateTokens } from "./context-estimate.js";
 import { MessageActions } from "./ui/chat/message-actions.js";
 import { AssistantPerformance } from "./ui/chat/assistant-performance.js";
@@ -48,7 +48,7 @@ import { ArtifactController } from "./ui/artifacts/artifact-controller.js";
 import { assertHostContract, HostRequestError } from "./client-error.js";
 import { HostApiClient } from "./host-api-client.js";
 import { parseManagementConfiguration, parseManagementRoute, type ChatDefaults, type ManagementConfiguration } from "./management-configuration.js";
-import type { EditedUserTurn, EditUserTurnRequest, RegenerateAssistantTurnRequest, RegeneratedAssistantTurn } from "@fitz/protocol";
+import type { ChatContentDocument, EditedUserTurn, EditUserTurnRequest, RegenerateAssistantTurnRequest, RegeneratedAssistantTurn } from "@fitz/protocol";
 
 type Json = Record<string, any>;
 type ApiData<T> = { data: T };
@@ -161,8 +161,8 @@ const sidebarPane = new ResizablePane({
 const inspectorPanel = new InspectorPanel({
   mount: workspace,
   tabMount: workspaceHeader,
-  getProjectRoot: () => String(projects?.activeProject()?.rootPath ?? ""),
-  getSearchRoots: () => activityTimeline.searchRoots(),
+  getProjectRoot: () => String(projects?.activeWorkspaceRoot() ?? ""),
+  getSearchRoots: () => chatFileSearchRoots(),
   showStatus,
   renderToggle: inspectorRenderToggle,
   onLayoutChange: () => { adaptiveWorkspace?.sync(); conversationLayout?.sync(); syncBrowserPreview(); },
@@ -292,7 +292,7 @@ const projects = new ProjectsController({
 });
 const activityTimeline = new ActivityTimeline({
   messages,
-  projectRoot: () => projects.activeProject()?.rootPath ?? "",
+  projectRoot: () => projects.activeWorkspaceRoot() ?? "",
   inspectResource: (reference) => inspectorPanel.inspect(reference),
   decideApproval: async (approvalId, decision, request) => {
     const response = await api(`/api/v1/tool-approvals/${approvalId}/decision`, "POST", { decision, ...(request ? { request } : {}) });
@@ -354,6 +354,11 @@ const artifactController = new ArtifactController({
   stageFile: (file) => composer.attachFile(file),
   showStatus,
   errorMessage,
+});
+configureChatContentRuntime({
+  openReference: (reference) => window.dispatchEvent(new CustomEvent("fitz:open-resource", { detail: { reference } })),
+  openArtifact: (artifactId) => { void openChatArtifact(artifactId); },
+  resolveMedia: (reference, kind) => resolveChatMedia(reference, kind),
 });
 const mediaJobFeed = new MediaJobFeed({
   messages,
@@ -614,7 +619,7 @@ const conversationMessages = new ConversationMessageFeed({
   activity: activityTimeline,
   actions: messageActions,
   runActive: () => agentRuns.active,
-  projectRoot: () => projects.activeProject()?.rootPath ?? "",
+  projectRoot: () => projects.activeWorkspaceRoot() ?? "",
   openAttachment: (attachment) => { void inspectorPanel.previewArtifact(attachment); },
   loadAttachmentPreview: async (attachment) => {
     if (!attachment.mimeType.startsWith("image/")) return undefined;
@@ -1072,7 +1077,7 @@ function showLanding(hasTask = false): void {
   conversationLanding.showHome(hasTask);
 }
 
-function appendMessage(role: string, text: string, createdAt?: string, runId?: string, attachments: readonly MessageAttachment[] = [], metadata?: { id?: string; sequence?: number }): HTMLElement {
+function appendMessage(role: string, text: string, createdAt?: string, runId?: string, attachments: readonly MessageAttachment[] = [], metadata?: { id?: string; sequence?: number; document?: ChatContentDocument }): HTMLElement {
   const content = conversationMessages.append(role, text, createdAt, attachments, metadata);
   if (role === "assistant" && runId) {
     const article = content.closest<HTMLElement>("article.message");
@@ -1080,6 +1085,46 @@ function appendMessage(role: string, text: string, createdAt?: string, runId?: s
     assistantPerformance.track(content, runId, createdAt);
   }
   return content;
+}
+
+async function openChatArtifact(artifactId: string): Promise<void> {
+  const artifact = await findChatArtifact(artifactId);
+  if (!artifact) { showStatus("This artifact is no longer available.", "error"); return; }
+  await inspectorPanel.previewArtifact(artifact);
+}
+
+async function resolveChatMedia(reference: string, kind: "image" | "audio" | "video"): Promise<string | undefined> {
+  const artifactId = reference.match(/^artifact:\/\/([^/?#]+)/i)?.[1];
+  if (artifactId) {
+    const artifact = await findChatArtifact(artifactId);
+    if (!artifact || String(artifact.kind ?? "") !== kind) return undefined;
+    const response = await window.fitz.request({ path: `/api/v1/artifacts/${encodeURIComponent(artifactId)}/content`, responseType: "base64" });
+    if (response.status < 200 || response.status >= 300) return undefined;
+    return `data:${String(artifact.mimeType ?? `${kind}/*`)};base64,${response.body}`;
+  }
+  const projectRoot = projects.activeWorkspaceRoot();
+  if (!projectRoot) return undefined;
+  const preview = await window.fitz.previewResource({ projectRoot, reference, searchRoots: chatFileSearchRoots() });
+  if (preview.kind !== kind || !preview.base64 || !preview.mimeType) return undefined;
+  return `data:${preview.mimeType};base64,${preview.base64}`;
+}
+
+async function findChatArtifact(artifactId: string): Promise<Json | undefined> {
+  const local = artifactController.artifact(artifactId);
+  if (local) return local;
+  const sessionId = projects.currentSessionId;
+  if (!sessionId) return undefined;
+  const response = await api(`/api/v1/sessions/${encodeURIComponent(sessionId)}/artifacts`);
+  return Array.isArray(response.data) ? response.data.find((candidate: Json) => String(candidate.id ?? "") === artifactId) : undefined;
+}
+
+function chatFileSearchRoots(): string[] {
+  const primary = projects.activeWorkspaceRoot();
+  const sessionRoot = projects.sessionWorkspaceRoot();
+  return [...new Set([
+    ...(sessionRoot && sessionRoot !== primary ? [sessionRoot] : []),
+    ...activityTimeline.searchRoots(),
+  ])];
 }
 
 async function regenerateAssistantResponse(article: HTMLElement): Promise<void> {

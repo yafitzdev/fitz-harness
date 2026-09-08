@@ -1,6 +1,11 @@
 // @vitest-environment happy-dom
-import { describe, expect, it, vi } from "vitest";
-import { appendMarkdown, normalizeResourceReference, setMarkdown } from "./markdown.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { appendMarkdown, configureChatContentRuntime, normalizeResourceReference, setMarkdown } from "./markdown.js";
+
+beforeEach(() => {
+  document.body.replaceChildren();
+  configureChatContentRuntime({ openReference: (reference) => window.dispatchEvent(new CustomEvent("fitz:open-resource", { detail: { reference } })) });
+});
 
 describe("Streaming Markdown visibility", () => {
   it("reveals an assistant body that was hidden while it was empty", () => {
@@ -11,6 +16,74 @@ describe("Streaming Markdown visibility", () => {
 
     expect(target.hidden).toBe(false);
     expect(target.textContent).toBe("Visible answer");
+  });
+
+  it("keeps completed block nodes stable while the final block streams", () => {
+    const target = document.createElement("div");
+    setMarkdown(target, "Intro\n\n```ts\nconst value = 1;\n```");
+    const intro = target.firstElementChild;
+    const code = target.children[1];
+
+    appendMarkdown(target, "\n\nMore prose");
+
+    expect(target.firstElementChild).toBe(intro);
+    expect(target.children[1]).toBe(code);
+    expect(target.textContent).toContain("More prose");
+  });
+});
+
+describe("Typed rich content", () => {
+  it("renders images, diffs, and standalone files as purpose-built blocks", () => {
+    const target = document.createElement("div");
+    setMarkdown(target, [
+      "![Architecture](https://example.com/architecture.png)",
+      "",
+      "```diff",
+      "+added",
+      "-removed",
+      "```",
+      "",
+      "[Open report](reports/result.pdf)",
+    ].join("\n"));
+
+    expect(target.querySelector<HTMLImageElement>(".chat-image img")?.src).toBe("https://example.com/architecture.png");
+    expect(target.querySelector(".chat-content-diff code.language-diff")?.textContent).toContain("+added");
+    expect(target.querySelector<HTMLButtonElement>(".chat-artifact-card.file")?.textContent).toContain("Open report");
+  });
+
+  it("falls back to an open-source action for unsafe or unresolved media", async () => {
+    const target = document.createElement("div");
+    const openReference = vi.fn();
+    configureChatContentRuntime({ openReference, resolveMedia: async () => undefined });
+    setMarkdown(target, "![Generated](javascript:unsafe)");
+    await vi.waitFor(() => expect(target.querySelector(".chat-content-unavailable")).not.toBeNull());
+    target.querySelector<HTMLButtonElement>(".chat-content-unavailable")?.click();
+    expect(target.querySelector("img")).toBeNull();
+    expect(openReference).toHaveBeenCalledWith("javascript:unsafe");
+  });
+
+  it("resolves local media and opens artifact cards through the configured runtime", async () => {
+    const target = document.createElement("div");
+    const openArtifact = vi.fn();
+    const resolveMedia = vi.fn(async () => "data:audio/wav;base64,UklGRg==");
+    configureChatContentRuntime({ openReference: vi.fn(), openArtifact, resolveMedia });
+    setMarkdown(target, "[Listen](audio/result.mp3)\n\n[Open result](artifact://artifact-42/result.pdf)");
+
+    await vi.waitFor(() => expect(target.querySelector<HTMLAudioElement>("audio")?.src).toContain("data:audio/wav"));
+    expect(target.querySelector("audio")?.controls).toBe(true);
+    expect(resolveMedia).toHaveBeenCalledWith("audio/result.mp3", "audio");
+    target.querySelector<HTMLButtonElement>(".chat-artifact-card")?.click();
+    expect(openArtifact).toHaveBeenCalledWith("artifact-42");
+  });
+
+  it("renders display math and gives diagrams a source fallback", async () => {
+    const target = document.createElement("div");
+    setMarkdown(target, "$$\nx^2 + y^2 = z^2\n$$\n\n```mermaid\ngraph TD\n  A --> B\n```");
+
+    await vi.waitFor(() => expect(target.querySelector(".chat-math math")).not.toBeNull());
+    await vi.waitFor(() => expect(target.querySelector(".chat-diagram .chat-content-placeholder")).toBeNull());
+    expect(target.querySelector(".chat-diagram-canvas, .chat-diagram .chat-content-failure")).not.toBeNull();
+    expect(target.querySelector(".chat-diagram details")?.textContent).toContain("source");
   });
 });
 

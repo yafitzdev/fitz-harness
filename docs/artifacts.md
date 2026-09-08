@@ -13,4 +13,5 @@ same-process blob URL inside an iframe sandboxed with `allow-same-origin` (the r
 base64 through the narrow main-process bridge rather than through direct renderer networking.
 
 The desktop artifact panel lists the current task's artifacts, supports bounded file upload, and
-previews only the server-assigned renderer kind.
+previews only the server-assigned renderer kind. Chat messages refer to these durable objects through
+typed content blocks; see [Chat content documents](chat-content.md).

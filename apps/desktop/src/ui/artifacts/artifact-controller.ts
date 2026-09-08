@@ -36,6 +36,10 @@ export class ArtifactController {
 
   setEnabled(enabled: boolean): void { this.#options.pickButton.disabled = !enabled; }
 
+  artifact(id: string): Json | undefined {
+    return this.#sessionArtifacts.find((candidate) => String(candidate.id ?? "") === id);
+  }
+
   choose(): void {
     if (!this.#options.getSessionId() && !this.#options.isNewChat()) {
       this.#options.showStatus("Create or select a task before attaching a file", "error");

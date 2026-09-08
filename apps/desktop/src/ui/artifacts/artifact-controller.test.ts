@@ -42,6 +42,8 @@ describe("ArtifactController", () => {
     expect(list.textContent).toContain("clip.mp44.0 KB");
     expect(calls.addChip).not.toHaveBeenCalled();
     expect(calls.setSessionArtifacts).toHaveBeenCalledWith([upload, generated]);
+    expect(controller.artifact("a2")).toBe(generated);
+    expect(controller.artifact("missing")).toBeUndefined();
   });
 
   it("does not let a stale task response replace the current artifact list", async () => {

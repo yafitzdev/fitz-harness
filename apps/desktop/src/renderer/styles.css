@@ -10,6 +10,7 @@
 @import "../ui/chat/reasoning-view.css";
 @import "../ui/chat/composer-controls.css";
 @import "../ui/chat/composer.css";
+@import "../ui/chat/chat-content.css";
 @import "../ui/connections/connection-workspace.css";
 @import "../ui/plugins/plugin-catalog.css";
 @import "../ui/models/model-catalog.css";

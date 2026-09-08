@@ -1,6 +1,7 @@
 import { estimateTranscriptContext } from "../../context-estimate.js";
 import { TranscriptWindow } from "./transcript-window.js";
 import type { MessageAttachment, TranscriptMessageMetadata } from "./conversation-message-feed.js";
+import { chatContentDocument } from "@fitz/protocol";
 
 type Json = Record<string, any>;
 
@@ -154,9 +155,11 @@ export class ConversationTranscript {
         this.#options.activity.finishWork?.(entry.createdAt, entry.role === "user" ? "next-message" : "completed");
         const runId = typeof entry.content?.runId === "string" ? entry.content.runId : undefined;
         const attachments = Array.isArray(entry.content?.attachments) ? entry.content.attachments as MessageAttachment[] : [];
+        const document = entry.role === "assistant" ? chatContentDocument(entry.content ?? {}) : undefined;
         const metadata: TranscriptMessageMetadata = {
           ...(typeof entry.id === "string" ? { id: entry.id } : {}),
           ...(Number.isFinite(Number(entry.sequence)) ? { sequence: Number(entry.sequence) } : {}),
+          ...(document ? { document } : {}),
         };
         const hasMetadata = Object.keys(metadata).length > 0;
         if (attachments.length) {

@@ -1,10 +1,26 @@
 import { applyPostGeneration } from "./post-generation.js";
 import { highlightSource } from "./syntax-highlighting.js";
 import { createCopyButton } from "./ui/primitives/copy-button.js";
+import { chatContentBlockSource, isChatContentDocument, parseChatContent, type ChatContentBlock, type ChatContentDocument } from "@fitz/protocol";
 
-const markdownSources = new WeakMap<HTMLElement, string>();
+interface ChatContentRuntime {
+  openReference(reference: string): void;
+  openArtifact?(artifactId: string): void;
+  resolveMedia?(reference: string, kind: "image" | "audio" | "video"): Promise<string | undefined>;
+}
 
-export function setMarkdown(target: HTMLElement, source: string): void {
+interface RenderedBlock { element: HTMLElement; signature: string }
+interface ChatContentState { source: string; display: string; rendered: Map<string, RenderedBlock> }
+
+const markdownStates = new WeakMap<HTMLElement, ChatContentState>();
+let contentRuntime: ChatContentRuntime = {
+  openReference: (reference) => window.dispatchEvent(new CustomEvent("fitz:open-resource", { detail: { reference } })),
+};
+let diagramSequence = 0;
+
+export function configureChatContentRuntime(runtime: ChatContentRuntime): void { contentRuntime = runtime; }
+
+export function setMarkdown(target: HTMLElement, source: string, persistedDocument?: unknown): void {
   // Post-generation rules edit the raw output before it reaches the user.
   // The stored transcript and the context sent back to the model stay raw.
   // Keep inline-code delimiters for this pass: appendInline consumes them and
@@ -12,15 +28,253 @@ export function setMarkdown(target: HTMLElement, source: string): void {
   // `engine/name.ext` phrase in ordinary prose. The delimiters themselves are
   // never rendered.
   const display = applyPostGeneration(source.replace(/\r\n?/g, "\n"), { preserveInlineCode: true });
-  markdownSources.set(target, display);
   target.hidden = display.length === 0;
   target.classList.add("markdown");
-  target.replaceChildren();
-  renderBlocks(target, display.split("\n"));
+  const prior = markdownStates.get(target);
+  const state: ChatContentState = prior ?? { source, display, rendered: new Map() };
+  state.source = source;
+  state.display = display;
+  markdownStates.set(target, state);
+  const document = display === source && isChatContentDocument(persistedDocument, display.length)
+    ? persistedDocument : parseChatContent(display);
+  reconcileContentBlocks(target, state, document);
 }
 
 export function appendMarkdown(target: HTMLElement, delta: string): void {
-  setMarkdown(target, `${markdownSources.get(target) ?? ""}${delta}`);
+  setMarkdown(target, `${markdownStates.get(target)?.source ?? ""}${delta}`);
+}
+
+function reconcileContentBlocks(target: HTMLElement, state: ChatContentState, document: ChatContentDocument): void {
+  const active = new Set<string>();
+  let position = 0;
+  for (const block of document.blocks) {
+    active.add(block.id);
+    const source = chatContentBlockSource(state.display, block);
+    // A completed special block gains its separating newline when the next
+    // block starts streaming. That delimiter must not invalidate the node.
+    const renderSource = block.type === "markdown" ? source : source.trimEnd();
+    const signature = `${block.type}\0${renderSource}\0${blockSignatureMetadata(block)}`;
+    let rendered = state.rendered.get(block.id);
+    if (!rendered || rendered.signature !== signature) {
+      const element = renderContentBlock(block, renderSource, signature);
+      if (rendered?.element.parentNode === target) {
+        delete rendered.element.dataset.renderSignature;
+        target.replaceChild(element, rendered.element);
+      }
+      rendered = { element, signature };
+      state.rendered.set(block.id, rendered);
+    }
+    const current = target.childNodes[position] ?? null;
+    if (rendered.element !== current) target.insertBefore(rendered.element, current);
+    position += 1;
+  }
+  for (const [id, rendered] of state.rendered) {
+    if (active.has(id)) continue;
+    delete rendered.element.dataset.renderSignature;
+    rendered.element.remove();
+    state.rendered.delete(id);
+  }
+}
+
+function blockSignatureMetadata(block: ChatContentBlock): string {
+  const metadata = { ...block } as Record<string, unknown>;
+  delete metadata.id; delete metadata.start; delete metadata.end;
+  return JSON.stringify(metadata);
+}
+
+function renderContentBlock(block: ChatContentBlock, source: string, signature: string): HTMLElement {
+  if (block.type === "image") return mediaFigure("image", block.reference, block.alt, block.title);
+  if (block.type === "media") return mediaFigure(block.mediaType, block.reference, block.label);
+  if (block.type === "file" || block.type === "interactive") return artifactCard(block);
+  if (block.type === "diagram") return fencedBlockClosed(source) ? diagramBlock(fencedBody(source), signature) : pendingRichBlock("Waiting for diagram…");
+  if (block.type === "math") return mathBlockClosed(source) ? mathBlock(mathBody(source), signature) : pendingRichBlock("Waiting for equation…");
+  const container = document.createElement("div");
+  container.className = `chat-content-block chat-content-${block.type}`;
+  renderBlocks(container, source.split("\n"));
+  return container;
+}
+
+function fencedBlockClosed(source: string): boolean {
+  const lines = source.replace(/\r\n?/g, "\n").split("\n");
+  return lines.length > 1 && /^\s*```\s*$/.test(lines.at(-1) ?? "");
+}
+
+function mathBlockClosed(source: string): boolean {
+  const lines = source.replace(/\r\n?/g, "\n").split("\n");
+  return lines.length > 1 && lines.at(-1)?.trim() === "$$";
+}
+
+function pendingRichBlock(label: string): HTMLElement {
+  const container = document.createElement("div");
+  container.className = "chat-content-block chat-rich-pending";
+  container.append(contentPlaceholder(label));
+  return container;
+}
+
+function artifactCard(block: Extract<ChatContentBlock, { type: "file" | "interactive" }>): HTMLElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `chat-artifact-card ${block.type}`;
+  const icon = document.createElement("span"); icon.className = "chat-artifact-icon"; icon.textContent = block.type === "interactive" ? "VIEW" : fileBadge(block.reference);
+  const copy = document.createElement("span"); copy.className = "chat-artifact-copy";
+  const title = document.createElement("strong"); title.textContent = block.label;
+  const detail = document.createElement("small"); detail.textContent = block.type === "interactive" ? "Interactive preview" : displayReference(block.reference);
+  copy.append(title, detail); button.append(icon, copy);
+  button.addEventListener("click", () => openContentReference(block.reference, block.artifactId));
+  return button;
+}
+
+function mediaFigure(kind: "image" | "audio" | "video", reference: string, label: string, title?: string): HTMLElement {
+  const figure = document.createElement("figure");
+  figure.className = `chat-content-block chat-media chat-${kind}`;
+  figure.dataset.reference = reference;
+  const resolved = directMediaUrl(reference, kind);
+  const mount = (url: string) => {
+    if (figure.dataset.reference !== reference) return;
+    const node = document.createElement(kind === "image" ? "img" : kind) as HTMLImageElement | HTMLMediaElement;
+    node.src = url;
+    node.addEventListener("error", () => figure.replaceChildren(unavailableReference(reference, label || kind)));
+    if (kind === "image") {
+      (node as HTMLImageElement).alt = label;
+      (node as HTMLImageElement).loading = "lazy";
+      node.addEventListener("click", () => openContentReference(reference));
+    }
+    else (node as HTMLMediaElement).controls = true;
+    if (title) node.title = title;
+    figure.replaceChildren(node);
+    if (label && kind !== "audio") { const caption = document.createElement("figcaption"); caption.textContent = label; figure.append(caption); }
+  };
+  if (resolved) mount(resolved);
+  else {
+    figure.append(contentPlaceholder(kind === "image" ? `Loading ${label || "image"}…` : `Loading ${kind}…`));
+    const resolution = contentRuntime.resolveMedia?.(reference, kind);
+    if (!resolution) {
+      figure.replaceChildren(unavailableReference(reference, label || kind));
+      return figure;
+    }
+    void resolution.then((url) => {
+      if (url) mount(url); else figure.replaceChildren(unavailableReference(reference, label || kind));
+    }).catch(() => figure.replaceChildren(unavailableReference(reference, label || kind)));
+  }
+  return figure;
+}
+
+function diagramBlock(source: string, signature: string): HTMLElement {
+  const container = document.createElement("figure");
+  container.className = "chat-content-block chat-diagram";
+  container.dataset.renderSignature = signature;
+  container.append(contentPlaceholder("Rendering diagram…"));
+  void import("mermaid").then(async ({ default: mermaid }) => {
+    mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral", suppressErrorRendering: true });
+    const rendered = await mermaid.render(`fitz-mermaid-${++diagramSequence}`, source);
+    if (container.dataset.renderSignature !== signature) return;
+    const body = document.createElement("div"); body.className = "chat-diagram-canvas"; body.innerHTML = sanitizeGeneratedSvg(rendered.svg);
+    const caption = document.createElement("figcaption"); caption.textContent = "Diagram";
+    container.replaceChildren(body, caption, sourceDisclosure("Mermaid source", source, "mermaid"));
+  }).catch((error) => {
+    if (container.dataset.renderSignature !== signature) return;
+    container.replaceChildren(renderFailure("Diagram could not be rendered", source, error));
+  });
+  return container;
+}
+
+function fencedBody(source: string): string {
+  const lines = source.replace(/\r\n?/g, "\n").split("\n");
+  if (/^\s*```/.test(lines[0] ?? "")) lines.shift();
+  while (lines.at(-1) === "") lines.pop();
+  if (/^\s*```\s*$/.test(lines.at(-1) ?? "")) lines.pop();
+  return lines.join("\n");
+}
+
+function mathBody(source: string): string {
+  const lines = source.replace(/\r\n?/g, "\n").split("\n");
+  if (lines[0]?.trim() === "$$") lines.shift();
+  while (lines.at(-1) === "") lines.pop();
+  if (lines.at(-1)?.trim() === "$$") lines.pop();
+  return lines.join("\n");
+}
+
+function fileBadge(reference: string): string {
+  const extension = reference.split(/[?#]/, 1)[0]?.match(/\.([a-z0-9]{1,5})$/i)?.[1];
+  return extension?.toUpperCase() ?? "FILE";
+}
+
+function displayReference(reference: string): string {
+  if (/^artifact:\/\//i.test(reference)) return "Stored artifact";
+  const cleaned = normalizeResourceReference(reference).replaceAll("\\", "/");
+  try { return decodeURIComponent(cleaned.split("/").at(-1) || cleaned); }
+  catch { return cleaned.split("/").at(-1) || cleaned; }
+}
+
+function openContentReference(reference: string, artifactId?: string): void {
+  if (artifactId && contentRuntime.openArtifact) contentRuntime.openArtifact(artifactId);
+  else contentRuntime.openReference(normalizeResourceReference(reference));
+}
+
+function directMediaUrl(reference: string, kind: "image" | "audio" | "video"): string | undefined {
+  const value = reference.trim();
+  if (/^https?:\/\//i.test(value) || /^blob:/i.test(value)) return value;
+  return new RegExp(`^data:${kind === "image" ? "image" : kind}/`, "i").test(value) ? value : undefined;
+}
+
+function contentPlaceholder(label: string): HTMLElement {
+  const value = document.createElement("span");
+  value.className = "chat-content-placeholder";
+  value.textContent = label;
+  return value;
+}
+
+function unavailableReference(reference: string, label: string): HTMLElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "chat-content-unavailable";
+  button.textContent = `${label} — open source`;
+  button.addEventListener("click", () => openContentReference(reference));
+  return button;
+}
+
+function sourceDisclosure(label: string, source: string, language: string): HTMLDetailsElement {
+  const details = document.createElement("details");
+  details.className = "chat-content-source";
+  const summary = document.createElement("summary");
+  summary.textContent = label;
+  details.append(summary, codeBlock(source, language));
+  return details;
+}
+
+function renderFailure(label: string, source: string, _error: unknown): HTMLElement {
+  const fallback = document.createElement("section");
+  fallback.className = "chat-content-failure";
+  const heading = document.createElement("strong");
+  heading.textContent = label;
+  fallback.append(heading, sourceDisclosure("Show source", source, ""));
+  return fallback;
+}
+
+function sanitizeGeneratedSvg(svg: string): string {
+  const template = document.createElement("template");
+  template.innerHTML = svg;
+  template.content.querySelectorAll("script").forEach((node) => node.remove());
+  template.content.querySelectorAll("*").forEach((node) => {
+    for (const attribute of [...node.attributes]) {
+      if (/^on/i.test(attribute.name) || ((attribute.name === "href" || attribute.name === "xlink:href") && /^\s*javascript:/i.test(attribute.value))) {
+        node.removeAttribute(attribute.name);
+      }
+    }
+  });
+  return template.innerHTML;
+}
+
+function mathBlock(source: string, signature: string): HTMLElement {
+  const container = document.createElement("div");
+  container.className = "chat-content-block chat-math";
+  container.dataset.renderSignature = signature;
+  container.append(contentPlaceholder("Rendering equation…"));
+  void import("katex").then(({ default: katex }) => {
+    if (container.dataset.renderSignature !== signature) return;
+    container.innerHTML = katex.renderToString(source, { displayMode: true, throwOnError: false, strict: "ignore", trust: false, output: "mathml" });
+  }).catch((error) => container.replaceChildren(renderFailure("Equation could not be rendered", source, error)));
+  return container;
 }
 
 function renderBlocks(target: HTMLElement, lines: string[]): void {
