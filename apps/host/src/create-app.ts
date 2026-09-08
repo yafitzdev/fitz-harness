@@ -133,6 +133,10 @@ export interface CreateHostOptions {
   /** Shared read-only session query service used by routes and the agent runtime. */
   sessionQuery?: SessionQueryService;
   artifacts?: ArtifactRepository;
+  /** Creates the durable scratch directory owned by a new chat. */
+  sessionWorkspaceRoot?: (sessionId: string) => string;
+  /** Working directory used by standalone chats created before scratch roots were persisted. */
+  legacyStandaloneWorkspaceRoot?: string;
   /** Coordinated database/artifact backup, restore, and storage maintenance. */
   storageDurability?: StorageDurabilityService;
   /** Releases the dedicated local inference appliance after all engine
@@ -486,6 +490,8 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     conversationTurns,
     ...(security ? { security } : {}),
     principals,
+    ...(options.sessionWorkspaceRoot ? { sessionWorkspaceRoot: options.sessionWorkspaceRoot } : {}),
+    ...(options.legacyStandaloneWorkspaceRoot ? { legacyStandaloneWorkspaceRoot: options.legacyStandaloneWorkspaceRoot } : {}),
   });
 
   registerConsumerConnectionRoutes({

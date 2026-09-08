@@ -56,11 +56,17 @@ const agentBaseUrl = process.env.FITZ_AGENT_BASE_URL ?? `http://127.0.0.1:${port
 const internalAgentToken = agentRuntimeMode === "pi" && !process.env.FITZ_AGENT_BASE_URL ? randomBytes(32).toString("base64url") : undefined;
 
 mkdirSync(runtimePaths.dataRoot, { recursive: true });
+const chatWorkspacesDir = join(runtimePaths.dataRoot, "chat-workspaces");
+const sessionWorkspaceRoot = (sessionId: string): string => {
+  const root = join(chatWorkspacesDir, sessionId);
+  mkdirSync(root, { recursive: true });
+  return root;
+};
 const hostInstanceLock = HostInstanceLock.acquire(join(runtimePaths.dataRoot, "host.lock"));
 const restoredStorage = await applyPendingStorageRestore(runtimePaths);
 if (restoredStorage) console.info("Scheduled storage restore applied", restoredStorage);
 mkdirSync(dirname(databasePath), { recursive: true });
-for (const directory of [runtimePaths.piAgentDir, runtimePaths.logsDir, runtimePaths.cacheDir, runtimePaths.engineRoot, runtimePaths.modelRoot, runtimePaths.ggufModelRoot, runtimePaths.environmentRoot, runtimePaths.runtimeRoot, runtimePaths.snapshotsDir, runtimePaths.artifactsDir, runtimePaths.backupsDir]) mkdirSync(directory, { recursive: true });
+for (const directory of [runtimePaths.piAgentDir, runtimePaths.logsDir, runtimePaths.cacheDir, runtimePaths.engineRoot, runtimePaths.modelRoot, runtimePaths.ggufModelRoot, runtimePaths.environmentRoot, runtimePaths.runtimeRoot, runtimePaths.snapshotsDir, runtimePaths.artifactsDir, runtimePaths.backupsDir, chatWorkspacesDir]) mkdirSync(directory, { recursive: true });
 ensureComfyUISafeModeExtension(localComfyUIPaths(runtimePaths).hostBaseDir);
 const linuxRuntimeLayout = managedLinuxRuntimeLayout(runtimePaths);
 const linuxRuntimes = managedLinuxRuntimeMap(linuxRuntimeLayout);
@@ -69,6 +75,14 @@ const ninferRuntime = engineMode === "ninfer" && process.platform === "win32"
   : undefined;
 const engineOptions = engineModeOptions(engineMode);
 const store = new SqliteStore(databasePath);
+// Project chats historically relied entirely on their project root. Attach a
+// chat-owned output directory during migration; old standalone chats retain
+// their original host CWD so existing relative file links keep working.
+for (const project of store.listProjects()) {
+  for (const session of store.listSessions(project.id)) {
+    if (!session.workspaceRoot) store.updateSession({ ...session, workspaceRoot: sessionWorkspaceRoot(session.id) });
+  }
+}
 const configuration = new FitzConfigService({
   path: join(runtimePaths.dataRoot, "fitz.config.json"),
   defaults: {
@@ -136,6 +150,8 @@ const workspaceMutationLeases = new WorkspaceMutationLeaseManager();
 const runtime = createHost({
   store,
   artifacts,
+  sessionWorkspaceRoot,
+  legacyStandaloneWorkspaceRoot: process.cwd(),
   storageDurability,
   releaseLocalRuntime: () => terminateManagedLinuxRuntime(linuxRuntimeLayout),
   logger: true,
@@ -189,7 +205,7 @@ const runtime = createHost({
         const sessionId = request.sessionId ?? inheritedSessionId;
         const session = sessionId ? store.getSession(sessionId) : undefined;
         const project = session?.projectId ? store.getProject(session.projectId) : undefined;
-        return project?.rootPath ?? process.cwd();
+        return project?.rootPath ?? session?.workspaceRoot ?? process.cwd();
       },
       requestToolApproval: createToolApprovalRequester(store),
       sessionQuery,

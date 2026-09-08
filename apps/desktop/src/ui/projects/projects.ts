@@ -74,6 +74,15 @@ export class ProjectsController {
     return (this.sessions.get(this.currentProjectIdValue) ?? []).find((session) => session.id === this.currentSessionIdValue);
   }
 
+  /** Root used for chat-local files without turning standalone chats into projects. */
+  activeWorkspaceRoot(): string | undefined {
+    return this.activeProject()?.rootPath ?? this.currentSessionRecord()?.workspaceRoot;
+  }
+
+  sessionWorkspaceRoot(): string | undefined {
+    return this.currentSessionRecord()?.workspaceRoot;
+  }
+
   setCurrentProject(projectId: string | undefined): void { this.currentProjectIdValue = projectId; }
   setCurrentSession(sessionId: string | undefined): void { this.currentSessionIdValue = sessionId; }
   beginNewChat(): void { this.currentSessionIdValue = undefined; }

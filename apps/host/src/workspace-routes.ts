@@ -22,12 +22,17 @@ export interface WorkspaceRouteOptions {
   conversationTurns: ConversationTurnService;
   security?: SecurityService;
   principals: WeakMap<object, AuthenticatedPrincipal>;
+  sessionWorkspaceRoot?: (sessionId: string) => string;
+  legacyStandaloneWorkspaceRoot?: string;
 }
 
 export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
   const { app, store, artifacts, sessionQuery, routes, context, conversationTurns, security, principals } = options;
   const principalFor = (request: object) => principals.get(request);
   const sessionFor = (sessionId: string) => store.getSession(sessionId);
+  const presentSession = (session: SessionRecord): SessionRecord => session.projectId || session.workspaceRoot || !options.legacyStandaloneWorkspaceRoot
+    ? session
+    : { ...session, workspaceRoot: options.legacyStandaloneWorkspaceRoot };
   const canAccess = (ownerUserId: string | undefined, request: object) => canAccessOwner(principalFor(request), ownerUserId);
   const persistArtifact = async (input: {
     sessionId: string;
@@ -123,7 +128,7 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
     if (!project) return reply.code(404).send({ error: "Project not found" });
     const principal = principalFor(request);
     if (!canAccessOwner(principal, project.ownerUserId)) return reply.code(403).send({ error: "Project access denied" });
-    return { data: store.listSessions(project.id, principal?.user.role === "administrator" ? undefined : principal?.user.id) };
+    return { data: store.listSessions(project.id, principal?.user.role === "administrator" ? undefined : principal?.user.id).map(presentSession) };
   });
 
   app.post("/api/v1/projects/:projectId/sessions", async (request, reply) => {
@@ -148,7 +153,7 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
 
   app.get("/api/v1/chats", async (request) => {
     const principal = principalFor(request);
-    return { data: store.listStandaloneSessions(principal?.user.role === "administrator" ? undefined : principal?.user.id) };
+    return { data: store.listStandaloneSessions(principal?.user.role === "administrator" ? undefined : principal?.user.id).map(presentSession) };
   });
 
   app.post("/api/v1/chats", async (request, reply) => {
@@ -160,7 +165,7 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
         connectionId: session.connectionId,
         routeId: session.routeId,
       });
-      return reply.code(201).send({ data: session });
+      return reply.code(201).send({ data: presentSession(session) });
     } catch (error) {
       return reply.code(400).send({ error: errorMessage(error) });
     }
@@ -170,7 +175,7 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
     const session = sessionFor((request.params as { sessionId: string }).sessionId);
     if (!session) return reply.code(404).send({ error: "Session not found" });
     if (!canAccess(session.ownerUserId, request)) return reply.code(403).send({ error: "Session access denied" });
-    return { data: session };
+    return { data: presentSession(session) };
   });
 
   /** One session ID -> one versioned diagnostic artifact. The default is a
@@ -532,12 +537,16 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
 
   function createSession(body: Record<string, unknown>, principal: AuthenticatedPrincipal | undefined, projectId?: string): SessionRecord {
     const now = new Date().toISOString();
+    const title = requireString(body.title, "title");
     const routeId = requirePublicRouteId(body.routeId);
     const connectionId = typeof body.connectionId === "string" && body.connectionId.trim() ? body.connectionId.trim() : LOCAL_CONNECTION_ID;
+    const id = randomUUID();
+    const workspaceRoot = options.sessionWorkspaceRoot?.(id);
     return {
-      id: randomUUID(),
+      id,
       ...(projectId ? { projectId } : {}),
-      title: requireString(body.title, "title"),
+      ...(workspaceRoot ? { workspaceRoot } : {}),
+      title,
       status: "active",
       connectionId,
       routeId,

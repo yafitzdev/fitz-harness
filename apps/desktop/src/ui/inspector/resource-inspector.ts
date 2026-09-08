@@ -179,7 +179,7 @@ export class ResourceInspector {
     }
     const projectRoot = this.#options.getProjectRoot();
     if (!projectRoot) {
-      this.#options.preview.replaceChildren(this.#error("Select a project before opening a local file."));
+      this.#options.preview.replaceChildren(this.#error("This chat has no local file workspace."));
       return;
     }
     this.#setOpenButton(true);

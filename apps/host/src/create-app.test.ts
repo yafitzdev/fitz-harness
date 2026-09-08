@@ -1629,17 +1629,33 @@ describe("Fitz host", () => {
   });
 
   it("creates and lists standalone chats with no project attached", async () => {
-    const runtime = createHost();
+    const rootFor = (sessionId: string) => `C:\\fitz\\chat-workspaces\\${sessionId}`;
+    const runtime = createHost({ sessionWorkspaceRoot: rootFor });
     const project = await runtime.app.inject({ method: "POST", url: "/api/v1/projects", payload: { name: "Wrapped" } }); const projectId = project.json().data.id;
-    await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${projectId}/sessions`, payload: { title: "Wrapped chat" } });
+    const projectSession = await runtime.app.inject({ method: "POST", url: `/api/v1/projects/${projectId}/sessions`, payload: { title: "Wrapped chat" } });
     const created = await runtime.app.inject({ method: "POST", url: "/api/v1/chats", payload: { title: "Standalone" } });
     expect(created.statusCode).toBe(201);
-    expect(created.json().data).toEqual(expect.objectContaining({ title: "Standalone", status: "active", routeId: "default" }));
+    expect(created.json().data).toEqual(expect.objectContaining({ title: "Standalone", status: "active", routeId: "default", workspaceRoot: rootFor(created.json().data.id) }));
     expect(created.json().data.projectId).toBeUndefined();
     const listed = await runtime.app.inject({ method: "GET", url: "/api/v1/chats" });
-    expect(listed.json().data).toEqual([expect.objectContaining({ id: created.json().data.id, title: "Standalone" })]);
+    expect(listed.json().data).toEqual([expect.objectContaining({ id: created.json().data.id, title: "Standalone", workspaceRoot: rootFor(created.json().data.id) })]);
+    expect(runtime.store.getSession(created.json().data.id)?.workspaceRoot).toBe(rootFor(created.json().data.id));
     const projectSessions = await runtime.app.inject({ method: "GET", url: `/api/v1/projects/${projectId}/sessions` });
-    expect(projectSessions.json().data).toEqual([expect.objectContaining({ title: "Wrapped chat" })]);
+    expect(projectSessions.json().data).toEqual([expect.objectContaining({ title: "Wrapped chat", workspaceRoot: rootFor(projectSession.json().data.id) })]);
+    await runtime.app.close();
+  });
+
+  it("exposes the historical host directory for standalone chats created before workspace roots", async () => {
+    const runtime = createHost({ legacyStandaloneWorkspaceRoot: "C:\\legacy-host-cwd" });
+    const now = new Date(0).toISOString();
+    runtime.store.createSession({ id: "legacy-chat", title: "Legacy", status: "active", createdAt: now, updatedAt: now });
+
+    const listed = await runtime.app.inject({ method: "GET", url: "/api/v1/chats" });
+    const fetched = await runtime.app.inject({ method: "GET", url: "/api/v1/sessions/legacy-chat" });
+
+    expect(listed.json().data[0]).toEqual(expect.objectContaining({ id: "legacy-chat", workspaceRoot: "C:\\legacy-host-cwd" }));
+    expect(fetched.json().data).toEqual(expect.objectContaining({ id: "legacy-chat", workspaceRoot: "C:\\legacy-host-cwd" }));
+    expect(runtime.store.getSession("legacy-chat")?.workspaceRoot).toBeUndefined();
     await runtime.app.close();
   });
 

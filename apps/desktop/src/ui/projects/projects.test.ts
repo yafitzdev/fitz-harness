@@ -370,6 +370,32 @@ describe("ProjectsController", () => {
     expect(calls.onSessionSelected).toHaveBeenCalledWith("chat-1");
   });
 
+  it("uses a standalone chat workspace for local file content", async () => {
+    const { controller } = setup({
+      projects: [],
+      sessions: {},
+      chats: [{ id: "chat-1", title: "Standalone", workspaceRoot: "C:\\fitz\\chat-workspaces\\chat-1" }],
+    });
+
+    await controller.load();
+
+    expect(controller.activeProject()).toBeUndefined();
+    expect(controller.activeWorkspaceRoot()).toBe("C:\\fitz\\chat-workspaces\\chat-1");
+    expect(controller.sessionWorkspaceRoot()).toBe("C:\\fitz\\chat-workspaces\\chat-1");
+  });
+
+  it("keeps a project root primary while exposing the chat-owned workspace", async () => {
+    const { controller } = setup({
+      projects: [{ id: "project-a", name: "Alpha", rootPath: "C:\\work\\alpha" }],
+      sessions: { "project-a": [{ id: "session-a", title: "Build", workspaceRoot: "C:\\fitz\\chat-workspaces\\session-a" }] },
+    });
+
+    await controller.load();
+
+    expect(controller.activeWorkspaceRoot()).toBe("C:\\work\\alpha");
+    expect(controller.sessionWorkspaceRoot()).toBe("C:\\fitz\\chat-workspaces\\session-a");
+  });
+
   it("selecting a standalone chat clears the current project", async () => {
     const { controller, calls } = setup({
       projects: [{ id: "project-a", name: "Alpha" }],
