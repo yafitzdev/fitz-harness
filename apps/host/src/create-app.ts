@@ -53,7 +53,7 @@ import {
 } from "@fitz/media-providers";
 import { MediaProviderEngineAdapter } from "./media-provider-adapter.js";
 import type { AgentSafetyService } from "./agent-safety/index.js";
-import { registerAgentRoutes } from "./agent-routes.js";
+import { createTranscriptMessageHydrator, registerAgentRoutes } from "./agent-routes.js";
 import { registerMediaRoutes } from "./media-routes.js";
 import { registerJobRoutes } from "./job-routes.js";
 import { registerWorkspaceRoutes } from "./workspace-routes.js";
@@ -296,7 +296,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   );
   const mediaJobs = new MediaJobCoordinator({ store, artifacts, scheduler, routes, ...(security ? { security } : {}) });
   const mediaImageTimeoutMs = options.mediaImageTimeoutMs ?? 120_000;
-  const context = options.contextManager ?? new ContextManager(store);
+  const context = options.contextManager ?? new ContextManager(store, undefined, {}, createTranscriptMessageHydrator(store, artifacts));
   const conversationTurns = new ConversationTurnService(store, context);
   const piPackages = options.piPackages;
   const modelCatalog = options.modelCatalog;

@@ -12,11 +12,14 @@ export function estimateTokens(value: string): number { return value ? Math.max(
  * whether it was manual or automatic, matching the host ContextManager.
  */
 export function estimateTranscriptContext(entries: Json[]): number {
-  const checkpoint = [...entries].reverse().find((entry) => entry.kind === "compaction" && typeof entry.content?.summary === "string" && Number.isFinite(Number(entry.content?.throughSequence)));
+  const checkpoint = [...entries].reverse().find((entry) => entry.kind === "compaction" && typeof entry.content?.summary === "string" && Number.isFinite(Number(entry.content?.throughSequence))
+    && !(entry.content.manual === false && entry.content.compactedMessageCount === 0 && entry.content.activityThroughSequence === undefined));
   const throughSequence = checkpoint ? Number(checkpoint.content.throughSequence) : -1;
-  let total = checkpoint ? estimateTokens(`Conversation summary:\n${checkpoint.content.summary}`) : 0;
+  const activityThroughSequence = checkpoint ? Number(checkpoint.content.activityThroughSequence ?? throughSequence) : -1;
+  let total = checkpoint?.content.summary ? estimateTokens(`Conversation summary:\n${checkpoint.content.summary}`) : 0;
   for (const entry of entries) {
     if (Number(entry.sequence) <= throughSequence) continue;
+    if (entry.kind !== "message" && Number(entry.sequence) <= activityThroughSequence) continue;
     if (entry.kind === "message" || entry.kind === "reasoning" || entry.kind === "system") {
       if (typeof entry.content?.text === "string") total += estimateTokens(entry.content.text);
     } else if (entry.kind === "tool-call") {

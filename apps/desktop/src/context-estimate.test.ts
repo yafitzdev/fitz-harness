@@ -58,4 +58,14 @@ describe("estimateTranscriptContext", () => {
   it("returns zero for an empty transcript", () => {
     expect(estimateTranscriptContext([])).toBe(0);
   });
+
+  it("retires tool activity while counting retained conversation messages", () => {
+    const entries = [entry(1, "message", { text: "preserve this" }), entry(2, "tool-result", { result: "x".repeat(5000) }), entry(3, "compaction", { summary: "", manual: false, compactedMessageCount: 0, throughSequence: 0, activityThroughSequence: 2 })];
+    expect(estimateTranscriptContext(entries)).toBe(estimateTokens("preserve this"));
+  });
+
+  it("ignores empty legacy checkpoints that incorrectly hid messages", () => {
+    const entries = [entry(1, "message", { text: "preserve this" }), entry(2, "compaction", { summary: "empty", manual: false, compactedMessageCount: 0, throughSequence: 1 })];
+    expect(estimateTranscriptContext(entries)).toBe(estimateTokens("preserve this"));
+  });
 });

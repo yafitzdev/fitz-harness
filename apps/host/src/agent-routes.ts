@@ -3,7 +3,7 @@ import { RouteNotFoundError, type InferenceScheduler } from "@fitz/inference-cor
 import { parseChatCompletionRequest, PROTOCOL_VERSION, type AgentRunCheckpoint, type AgentRunRequest, type TranscriptEntryRecord } from "@fitz/protocol";
 import { SecurityPolicyError, type AuthenticatedPrincipal, type SecurityService } from "@fitz/security";
 import type { ArtifactRepository, SqliteStore } from "@fitz/storage";
-import type { ContextManager } from "@fitz/context";
+import type { ContextManager, TranscriptMessageHydrator } from "@fitz/context";
 import { AgentCoordinatorClosedError, AgentQueueCapacityError, type AgentRunCoordinator } from "./agent-runs.js";
 import { prepareAttachment } from "./attachment-content.js";
 
@@ -338,7 +338,28 @@ function parseAttachmentReferences(value: unknown): Array<{ artifactId: string }
   });
 }
 
-async function hydrateAttachments(request: AgentRunRequest, store: SqliteStore, artifacts: ArtifactRepository): Promise<AgentRunRequest["messages"]> {
+/** Rebuild historical uploads from their canonical references, including for
+ * edit/regenerate, resumed runs and manual compaction. The transcript stays small
+ * and deleting an old upload does not prevent the rest of the chat from continuing. */
+export function createTranscriptMessageHydrator(store: SqliteStore, artifacts: ArtifactRepository): TranscriptMessageHydrator {
+  return async (entry, message) => {
+    if (entry.kind !== "message" || !Array.isArray(entry.content.attachments)) return message;
+    const references: Array<{ artifactId: string }> = [];
+    const unavailable: string[] = [];
+    for (const attachment of entry.content.attachments) {
+      if (!attachment || typeof attachment !== "object" || typeof attachment.id !== "string") continue;
+      const artifact = store.getArtifact(attachment.id);
+      if (artifact?.sessionId === entry.sessionId) references.push({ artifactId: artifact.id });
+      else unavailable.push(`[Attachment unavailable: ${typeof attachment.name === "string" ? attachment.name : attachment.id}]`);
+    }
+    const [hydrated] = await hydrateAttachments({ sessionId: entry.sessionId, messages: [message], attachments: references }, store, artifacts);
+    if (!unavailable.length) return hydrated!;
+    const content = hydrated!.content;
+    return { ...hydrated!, content: [...(typeof content === "string" ? [{ type: "text" as const, text: content }] : content), { type: "text" as const, text: unavailable.join("\n") }] };
+  };
+}
+
+async function hydrateAttachments(request: Pick<AgentRunRequest, "sessionId" | "messages" | "attachments">, store: SqliteStore, artifacts: ArtifactRepository): Promise<AgentRunRequest["messages"]> {
   if (!request.attachments?.length) return request.messages;
   if (!request.sessionId) throw new TypeError("Attachments require a chat session");
   const textBlocks: string[] = [];

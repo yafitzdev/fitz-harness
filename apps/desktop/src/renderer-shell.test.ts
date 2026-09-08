@@ -84,6 +84,8 @@ describe("desktop renderer shell", () => {
     expect(policy).toContain("default-src 'self'");
     expect(policy).toContain("connect-src 'none'");
     expect(policy).toContain("object-src 'none'");
+    expect(policy).toContain("img-src 'self' data: blob:");
+    expect(policy).toContain("media-src data: blob:");
     expect(shell.querySelector<HTMLLinkElement>('link[rel="stylesheet"]')?.dataset.shellHref).toBe("styles.css");
     const scripts = [...shell.querySelectorAll<HTMLScriptElement>("script")];
     expect(scripts).toHaveLength(1);

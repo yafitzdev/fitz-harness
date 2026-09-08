@@ -14,6 +14,18 @@ Every compaction is retained as a canonical `compaction` transcript entry with i
 message count, compacted count, estimated input tokens, and effective budget. The original incoming
 turn remains canonical even though the runtime receives the compacted prompt.
 
+The checkpoint's `throughSequence` covers only messages represented by its summary. Tool and
+reasoning activity has a separate `activityThroughSequence`, so retiring large tool outputs does
+not discard recent conversation messages or repeatedly trigger compaction. Empty checkpoints
+written by the older implementation are ignored when reconstructing history.
+Repeated automatic compactions merge the previous checkpoint's recorded conversation instead of
+nesting its JSON as a new user request. This preserves the original goal across compactions.
+An oversized turn is rejected before saving a checkpoint if its message and summary cannot fit.
+
+Saved attachment references are resolved again when preparing historical messages, including
+follow-ups, regenerated responses, restart recovery and manual compaction. Original transcript
+text remains concise. Removed uploads are represented as unavailable instead of blocking the chat.
+
 ## Cross-session lookup
 
 The context manager injects only the current session's history. When the user refers to an earlier

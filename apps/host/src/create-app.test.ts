@@ -1271,7 +1271,7 @@ describe("Fitz host", () => {
   it("hydrates attached text, HTML, and opaque files for the model while keeping the transcript concise", async () => {
     const seen: unknown[] = [];
     const runtime = createHost({ agentRuntime: { id: "attachment-agent", run: (request) => {
-      seen.push(request.messages.at(-1)?.content);
+      seen.push(request.messages);
       const events = (async function* () { yield { type: "assistant.delta" as const, text: "I can read both files." }; })();
       return Object.assign(events, { cancel: () => undefined });
     } } });
@@ -1298,7 +1298,80 @@ describe("Fitz host", () => {
         expect.objectContaining({ id: page.json().data.id, name: "page.html", mimeType: "text/html" }),
         expect.objectContaining({ id: archive.json().data.id, name: "bundle.zip", mimeType: "application/zip" }),
       ]);
+      const followup = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", sessionId, messages: [{ role: "user", content: "What is the answer in the note?" }] } });
+      expect(followup.statusCode, followup.body).toBe(202);
+      await vi.waitFor(() => expect(runtime.agentRuns.get(followup.json().data.id)?.status).toBe("completed"));
+      expect(JSON.stringify(seen[1])).toContain("the answer is 42");
+      expect(JSON.stringify(seen[1])).toContain("important markup");
+      const compacted = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/compact`, payload: { model: "default" } });
+      expect(compacted.statusCode, compacted.body).toBe(200);
+      expect(compacted.json().data.entry.content.summary).toContain("the answer is 42");
+      const afterCompaction = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", sessionId, messages: [{ role: "user", content: "Remind me of the answer." }] } });
+      expect(afterCompaction.statusCode, afterCompaction.body).toBe(202);
+      await vi.waitFor(() => expect(runtime.agentRuns.get(afterCompaction.json().data.id)?.status).toBe("completed"));
+      expect(JSON.stringify(seen[2])).toContain("the answer is 42");
     } finally { await runtime.app.close(); }
+  });
+
+  it("restores image attachments for regenerated and follow-up turns and tolerates removal", async () => {
+    const seen: unknown[] = [];
+    const runtime = createHost({ agentRuntime: { id: "image-continuity", run(request) {
+      seen.push(request.messages);
+      return Object.assign((async function* () { yield { type: "assistant.delta" as const, text: "Received." }; })(), { cancel() {} });
+    } } });
+    try {
+      const sessionId = (await runtime.app.inject({ method: "POST", url: "/api/v1/chats", payload: { title: "Image continuity" } })).json().data.id;
+      const base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6KJAAAAAASUVORK5CYII=";
+      const upload = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/artifacts`, payload: { name: "diagram.png", mimeType: "image/png", contentBase64: base64 } });
+      expect(upload.statusCode, upload.body).toBe(201);
+      const artifactId = upload.json().data.id;
+      const send = async (extra: Record<string, unknown> = {}) => {
+        const response = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", sessionId, messages: [{ role: "user", content: "Inspect the diagram." }], ...extra } });
+        expect(response.statusCode, response.body).toBe(202);
+        await vi.waitFor(() => expect(runtime.agentRuns.get(response.json().data.id)?.status).toBe("completed"));
+        return response.json().data.id as string;
+      };
+      const runId = await send({ attachments: [{ artifactId }] });
+      const regenerated = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/regenerate`, payload: { runId } });
+      expect(regenerated.statusCode, regenerated.body).toBe(200);
+      await send({ persistedMessageId: regenerated.json().data.messageId });
+      await send();
+      for (const request of seen) expect(JSON.stringify(request)).toContain(`data:image/png;base64,${base64}`);
+      await runtime.app.inject({ method: "DELETE", url: `/api/v1/artifacts/${artifactId}` });
+      await send();
+      expect(JSON.stringify(seen.at(-1))).toContain("Attachment unavailable: diagram.png");
+      expect(JSON.stringify(seen.at(-1))).not.toContain(base64);
+    } finally { await runtime.app.close(); }
+  });
+
+  it("rehydrates uploaded content after the host and database are reopened", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "fitz-attachment-restart-"));
+    const seen: unknown[] = [];
+    const open = () => {
+      const store = new SqliteStore(join(directory, "fitz.db"));
+      return createHost({ store, artifacts: new ArtifactRepository(store, new LocalBlobStore(join(directory, "artifacts"))), agentRuntime: { id: "restart-attachments", run(request) {
+        seen.push(request.messages);
+        return Object.assign((async function* () { yield { type: "assistant.delta" as const, text: "Received." }; })(), { cancel() {} });
+      } } });
+    };
+    let runtime = open();
+    try {
+      const sessionId = (await runtime.app.inject({ method: "POST", url: "/api/v1/chats", payload: { title: "Persistent attachment" } })).json().data.id;
+      const upload = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/artifacts`, payload: { name: "requirements.txt", mimeType: "text/plain", contentBase64: Buffer.from("The release code is ORCHID-729.").toString("base64") } });
+      expect(upload.statusCode, upload.body).toBe(201);
+      const first = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", sessionId, messages: [{ role: "user", content: "Read this for later." }], attachments: [{ artifactId: upload.json().data.id }] } });
+      expect(first.statusCode, first.body).toBe(202);
+      await vi.waitFor(() => expect(runtime.agentRuns.get(first.json().data.id)?.status).toBe("completed"));
+      await runtime.app.close();
+      runtime = open();
+      const next = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", sessionId, messages: [{ role: "user", content: "What is the release code?" }] } });
+      expect(next.statusCode, next.body).toBe(202);
+      await vi.waitFor(() => expect(runtime.agentRuns.get(next.json().data.id)?.status).toBe("completed"));
+      expect(JSON.stringify(seen.at(-1))).toContain("ORCHID-729");
+    } finally {
+      await runtime.app.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("streams reasoning as its own event stream and persists it under its own transcript kind", async () => {
@@ -1656,7 +1729,7 @@ describe("Fitz host", () => {
         name: "reference clip.mp4", mimeType: "video/mp4", kind: "video", byteSize: payload.byteLength,
       }));
       const content = await runtime.app.inject({ method: "GET", url: `/api/v1/artifacts/${uploaded.json().data.id}/content` });
-      expect(content.rawPayload).toEqual(payload);
+      expect(content.rawPayload.equals(payload)).toBe(true);
     } finally {
       await runtime.app.close();
     }
