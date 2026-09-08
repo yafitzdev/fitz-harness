@@ -56,6 +56,8 @@ export interface AgentRunControllerOptions {
   /** Refresh runtime-derived capabilities after a run may have loaded a model. */
   onRunSettled?: () => void | Promise<void>;
   refreshAssistantPerformance?: (runId: string) => void | Promise<void>;
+  /** Show the same durable continuation boundary used when reopening a chat. */
+  showRecovery?: (run: Json) => void;
   /** Start following an asynchronous image/audio/video job submitted by an agent tool. */
   onMediaJobSubmitted?: (jobId: string, toolName: string) => void;
 }
@@ -123,6 +125,7 @@ export class AgentRunController {
     this.#starting = true;
     this.#sessionId = undefined;
     this.#lastSequence = 0;
+    this.#cancelPending = false;
     this.#options.setStatus("Resuming", "loading");
     this.#options.refreshControls();
     try {
@@ -131,6 +134,7 @@ export class AgentRunController {
       const runId = String(response.data.id);
       this.#runId = runId; this.#sessionId = typeof response.data?.sessionId === "string" ? response.data.sessionId : undefined; this.#starting = false;
       onAccepted?.();
+      if (this.#cancelPending) await this.cancel();
       await this.#follow(runId, activity, Date.now(), generation);
     } catch (error) {
       if (this.#generation !== generation) return;
@@ -209,7 +213,7 @@ export class AgentRunController {
       // into the next run through accumulated renderer-only estimates.
       if (Number.isFinite(preparedEstimate) && preparedEstimate >= 0) this.#options.recalibrateEstimate(preparedEstimate);
       if (response.context?.compacted) this.#options.activity.appendContext();
-      if (this.#cancelPending) await this.#options.api(`/api/v1/agent/runs/${acceptedRunId}`, "DELETE");
+      if (this.#cancelPending) await this.cancel();
       await this.#follow(acceptedRunId, activity, startedAt, generation);
     } catch (error) {
       if (this.#generation !== generation) return;
@@ -260,6 +264,7 @@ export class AgentRunController {
 
   async #follow(runId: string, activity: HTMLElement, startedAt: number, generation: number): Promise<void> {
     let reconnectAttempt = 0;
+    let recoverableTermination = false;
     let nextEnginePoll = 0;
     let eventStream: AgentEventInbox | undefined;
     let unsubscribeEventStream: (() => void) | undefined;
@@ -340,6 +345,7 @@ export class AgentRunController {
           if (this.#runId !== runId || this.#generation !== generation) break;
           this.#lastSequence = Number(event.sequence ?? this.#lastSequence);
           await projector.apply(event);
+          if (event.type === "run.interrupted" || event.type === "run.failed") recoverableTermination = true;
           if (this.#runId !== runId || this.#generation !== generation) break;
           if (event.type === "run.queue.updated" && this.#options.queueVisible()) void this.#options.refreshQueue();
         }
@@ -369,9 +375,21 @@ export class AgentRunController {
       unsubscribeEventStream?.();
     }
     if (projector.done && this.#runId === runId && this.#generation === generation) {
-      await this.#options.onRunSettled?.();
+      if (recoverableTermination && this.#options.showRecovery) {
+        try {
+          const response = await this.#options.api(`/api/v1/agent/runs/${runId}`);
+          if (this.#runId !== runId || this.#generation !== generation) return;
+          if (response.data?.resumable && response.data?.checkpoint) this.#options.showRecovery(response.data);
+        } catch {
+          // The interruption remains visible; reopening the chat reloads recovery.
+        }
+      }
       if (this.#runId !== runId || this.#generation !== generation) return;
-      await this.#options.refreshAssistantPerformance?.(runId);
+      // Capability and telemetry refreshes are auxiliary reads. Their failure
+      // must never overwrite a durable completed/interrupted run with "Failed".
+      try { await this.#options.onRunSettled?.(); } catch { /* Refreshed on the next management update. */ }
+      if (this.#runId !== runId || this.#generation !== generation) return;
+      try { await this.#options.refreshAssistantPerformance?.(runId); } catch { /* Keep the streamed answer. */ }
     }
   }
 

@@ -65,6 +65,7 @@ export class ConversationSessionController {
   #newChat = false;
   #inspectorChatId: string | undefined;
   #newChatGeneration = 0;
+  #selectionGeneration = 0;
   #pendingSession: { generation: number; promise: Promise<string | undefined> } | undefined;
 
   constructor(options: ConversationSessionOptions) { this.#options = options; }
@@ -84,6 +85,7 @@ export class ConversationSessionController {
       return;
     }
     this.#options.showConversation();
+    this.#selectionGeneration += 1;
     this.#newChatGeneration += 1;
     this.#scopeInspector(undefined, true);
     const { projects, sidebar } = this.#options;
@@ -157,7 +159,8 @@ export class ConversationSessionController {
   }
 
   async selectSession(sessionId: string): Promise<void> {
-    const isCurrent = () => this.#options.projects.currentSessionId === sessionId;
+    const generation = ++this.#selectionGeneration;
+    const isCurrent = () => this.#selectionGeneration === generation && this.#options.projects.currentSessionId === sessionId;
     const { runs, assistantPerformance, recovery, mediaJobs, mediaFeed, composer, context, messages } = this.#options;
     runs.detach();
     assistantPerformance.reset();
@@ -223,6 +226,7 @@ export class ConversationSessionController {
       } catch {
         // A newly queued run may not have created its first durable plan yet.
       }
+      if (!isCurrent()) return;
       this.#options.runs.attach(runState.data, this.#options.transcript.eventSequenceForRun(String(runState.data.id)));
     } else {
       this.#options.plan?.reset();
@@ -256,6 +260,7 @@ export class ConversationSessionController {
   }
 
   async showNoSession(): Promise<void> {
+    this.#selectionGeneration += 1;
     this.#options.plan?.reset();
     this.#options.mediaJobs.reset();
     this.#options.mediaFeed.reset();

@@ -153,12 +153,15 @@ export class AgentEventProjector {
       this.#assistantText = "";
     }
     this.#completeReasoning();
-    this.#approvals.set(approvalId, this.#options.activity.appendApproval({
+    // Pending approvals are also restored separately before event replay.
+    // Keep one actionable card and resolve that same card when work continues.
+    const approval = this.#approvals.get(approvalId) ?? this.#options.findApproval(approvalId) ?? this.#options.activity.appendApproval({
       id: approvalId,
       toolName: String(data?.toolName ?? "tool"),
       request: data?.input ?? {},
       status: "pending",
-    }));
+    });
+    this.#approvals.set(approvalId, approval);
     this.#options.setStatus("Waiting for approval", "active");
     this.#options.setEngineState("WAITING");
   }
@@ -238,7 +241,12 @@ export class AgentEventProjector {
     this.#options.setStatus(success ? "Ready" : event.type.slice(4), success ? "idle" : "error");
     this.#options.setEngineState(success || event.type === "run.cancelled" ? "READY" : event.type.slice(4).toUpperCase());
     this.#options.activityRoot.remove();
-    if (!success && data?.error && event.type !== "run.cancelled") this.#options.appendSystem(String(data.error));
+    if (!success && data?.error && event.type !== "run.cancelled") {
+      const error = String(data.error);
+      this.#options.appendSystem(error === "host_restarted"
+        ? "The host restarted before this reply finished."
+        : error === "host_shutdown" ? "The host shut down before this reply finished." : error);
+    }
     if (success && !this.#mediaHandedOff && this.#options.loadFinalAssistant) await this.#reconcileFinalAssistant();
     if (this.#options.isCurrent?.() === false) return;
     // A media tool ends Pi's turn after durable submission; its tracker owns

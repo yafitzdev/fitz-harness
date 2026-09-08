@@ -55,6 +55,53 @@ function harness() {
 }
 
 describe("ConversationSessionController", () => {
+  it("ignores an older transcript load after switching away and back to the same chat", async () => {
+    const { controller, options, setSessionId } = harness();
+    let resolveOld!: (value: Record<string, unknown>) => void;
+    const old = new Promise<Record<string, unknown>>((resolve) => { resolveOld = resolve; });
+    let first = true;
+    vi.mocked(options.api).mockImplementation(async (path) => {
+      if (path.includes("/query?")) {
+        if (first) { first = false; return old; }
+        return { data: { transcript: [{ id: path.includes("session-a") ? "new-a" : "b" }], page: {} } };
+      }
+      return { data: [] };
+    });
+    setSessionId("session-a");
+    const oldSelection = controller.selectSession("session-a");
+    setSessionId("session-b");
+    await controller.selectSession("session-b");
+    setSessionId("session-a");
+    await controller.selectSession("session-a");
+    resolveOld({ data: { transcript: [{ id: "stale-a" }], page: {} } });
+    await oldSelection;
+
+    expect(options.transcript.restore).toHaveBeenCalledTimes(2);
+    expect(options.transcript.restore).toHaveBeenLastCalledWith([{ id: "new-a" }], { hasEarlier: false });
+  });
+
+  it("does not attach an old chat's run when its plan request fails after navigation", async () => {
+    const { controller, options, setSessionId } = harness();
+    let rejectPlan!: (error: Error) => void;
+    const plan = new Promise<Record<string, unknown>>((_resolve, reject) => { rejectPlan = reject; });
+    vi.mocked(options.api).mockImplementation(async (path) => {
+      if (path.includes("/query?")) return { data: { transcript: [], page: {} } };
+      if (path === "/api/v1/sessions/session-a/agent-run-state") return { data: { id: "run-a", status: "running" } };
+      if (path === "/api/v1/agent/runs/run-a/plan") return plan;
+      return { data: [] };
+    });
+    setSessionId("session-a");
+    const oldSelection = controller.selectSession("session-a");
+    await vi.waitFor(() => expect(options.api).toHaveBeenCalledWith("/api/v1/agent/runs/run-a/plan"));
+    setSessionId("session-b");
+    await controller.selectSession("session-b");
+    rejectPlan(new Error("plan request disconnected"));
+    await oldSelection;
+
+    expect(options.runs.attach).not.toHaveBeenCalled();
+    expect(options.remember).toHaveBeenLastCalledWith(expect.objectContaining({ path: ["session", "session-b"] }));
+  });
+
   it("owns new-chat entry and first-session materialization", async () => {
     const { controller, options, projects } = harness();
     controller.beginNewChat(false);

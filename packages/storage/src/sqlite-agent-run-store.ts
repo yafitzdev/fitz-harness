@@ -157,10 +157,17 @@ export class SqliteAgentRunStore {
   }
 
   latestSessionRun(sessionId: string): AgentRunRecord | undefined {
+    // Select the latest attempt before checking recovery eligibility, so an
+    // older interruption cannot outlive a successful retry or explicit stop.
+    // Live runs still take priority for attachment and mutation guards.
     const row = this.database
-      .prepare(`SELECT ${RUN_COLUMNS.split(", ").map((column) => `r.${column}`).join(", ")} FROM agent_runs r LEFT JOIN agent_run_state s ON s.run_id = r.id WHERE r.session_id = ? AND (r.status IN ('queued', 'running') OR s.resumable = 1) ORDER BY CASE WHEN r.status IN ('queued', 'running') THEN 0 ELSE 1 END, r.updated_at DESC LIMIT 1`)
+      .prepare(`SELECT ${RUN_COLUMNS.split(", ").map((column) => `r.${column}`).join(", ")} FROM agent_runs r WHERE r.session_id = ? ORDER BY CASE WHEN r.status IN ('queued', 'running') THEN 0 ELSE 1 END, r.created_at DESC, r.rowid DESC LIMIT 1`)
       .get(sessionId) as AgentRunRow | undefined;
-    return row ? this.withRunState(mapAgentRun(row)) : undefined;
+    if (!row) return undefined;
+    const run = this.withRunState(mapAgentRun(row));
+    return run.status === "queued" || run.status === "running"
+      || ((run.status === "failed" || run.status === "interrupted") && run.resumable)
+      ? run : undefined;
   }
 
   runResumedFrom(sourceRunId: string): AgentRunRecord | undefined {

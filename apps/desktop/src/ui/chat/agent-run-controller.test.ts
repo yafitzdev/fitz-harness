@@ -31,7 +31,7 @@ function request(): AgentRunRequest {
 
 function setup(
   api: AgentRunControllerOptions["api"],
-  options: Pick<AgentRunControllerOptions, "subscribeAgentEvents" | "yieldToPaint" | "loadFinalAssistant"> = {},
+  options: Pick<AgentRunControllerOptions, "subscribeAgentEvents" | "yieldToPaint" | "loadFinalAssistant" | "onRunSettled" | "refreshAssistantPerformance" | "showRecovery"> = {},
 ) {
   const messages = document.createElement("main");
   document.body.append(messages);
@@ -72,6 +72,58 @@ afterEach(() => {
 });
 
 describe("AgentRunController", () => {
+  it("offers the durable Continue action when a live stream reconnects after a host restart", async () => {
+    vi.useFakeTimers();
+    const run = { id: "run-interrupted", resumable: true, error: "host_restarted", checkpoint: { resumeSafety: "review-required" } };
+    const api = vi.fn(async (path: string) => ({ data: path === "/api/v1/agent/runs" ? { id: run.id } : run }));
+    let connections = 0;
+    const showRecovery = vi.fn();
+    const subscribeAgentEvents = vi.fn((_input, listener) => {
+      connections += 1;
+      if (connections === 1) listener({ type: "error", error: "fetch failed" });
+      else listener({ type: "event", event: { sequence: 83, type: "run.interrupted", data: { error: "host_restarted", resumable: true } } });
+      return vi.fn();
+    });
+    const { controller, calls } = setup(api, { subscribeAgentEvents, showRecovery });
+    const pending = controller.start(request());
+    await vi.runAllTimersAsync();
+    await pending;
+    expect(showRecovery).toHaveBeenCalledWith(run);
+    expect(calls.appendSystem).not.toHaveBeenCalledWith("host_restarted");
+    expect(controller.active).toBe(false);
+  });
+
+  it("keeps a completed answer successful when auxiliary refreshes fail", async () => {
+    const api = vi.fn(async (path: string) => path === "/api/v1/agent/runs"
+      ? { data: { id: "run-done" } }
+      : { events: [{ sequence: 1, type: "assistant.delta", data: { text: "Done" } }, { sequence: 2, type: "run.completed", data: {} }] });
+    const refreshAssistantPerformance = vi.fn(async () => { throw new Error("telemetry offline"); });
+    const { controller, calls } = setup(api, {
+      onRunSettled: async () => { throw new Error("management offline"); },
+      refreshAssistantPerformance,
+    });
+    await controller.start(request());
+    expect(calls.setStatus).toHaveBeenLastCalledWith("Ready", "idle");
+    expect(calls.appendSystem).not.toHaveBeenCalled();
+    expect(refreshAssistantPerformance).toHaveBeenCalledWith("run-done");
+  });
+
+  it("does not show recovery in another chat when its lookup finishes after detach", async () => {
+    let resolveRun!: (response: Record<string, unknown>) => void;
+    const runState = new Promise<Record<string, unknown>>((resolve) => { resolveRun = resolve; });
+    const api = vi.fn(async (path: string) => path.endsWith("/events?after=0")
+      ? { events: [{ sequence: 1, type: "run.interrupted", data: { error: "host_restarted" } }] }
+      : path === "/api/v1/agent/runs" ? { data: { id: "run-old" } } : runState);
+    const showRecovery = vi.fn();
+    const { controller } = setup(api, { showRecovery });
+    const pending = controller.start(request());
+    await vi.waitFor(() => expect(api).toHaveBeenCalledWith("/api/v1/agent/runs/run-old"));
+    controller.detach();
+    resolveRun({ data: { id: "run-old", resumable: true, checkpoint: { resumeSafety: "safe" } } });
+    await pending;
+    expect(showRecovery).not.toHaveBeenCalled();
+  });
+
   it("commits an accepted user turn before appending its run activity", async () => {
     const order: string[] = [];
     const api = vi.fn(async (path: string) => path === "/api/v1/agent/runs"
@@ -384,6 +436,50 @@ describe("AgentRunController", () => {
 
     expect(api).toHaveBeenCalledWith("/api/v1/agent/runs/run-late", "DELETE");
     expect(calls.setStatus).toHaveBeenCalledWith("Stopping", "loading");
+    expect(controller.active).toBe(false);
+  });
+
+  it("honors Stop while a Continue request is still in flight", async () => {
+    let resolveResume!: (value: Record<string, unknown>) => void;
+    const response = new Promise<Record<string, unknown>>((resolve) => { resolveResume = resolve; });
+    const api = vi.fn(async (path: string, method?: string) => {
+      if (path.endsWith("/resume")) return response;
+      if (method === "DELETE") return { data: {} };
+      return { events: [{ sequence: 1, type: "run.cancelled", data: {} }] };
+    });
+    const { controller } = setup(api);
+    const accepted = vi.fn();
+    const pending = controller.resume("old-run", false, accepted);
+    await controller.cancel();
+    resolveResume({ data: { id: "resumed-run", sessionId: "session-1" } });
+    await pending;
+
+    expect(api).toHaveBeenCalledWith("/api/v1/agent/runs/resumed-run", "DELETE");
+    expect(accepted).toHaveBeenCalledOnce();
+    expect(controller.active).toBe(false);
+  });
+
+  it.each(["start", "resume"] as const)("keeps following a %s when a pending Stop request fails", async (action) => {
+    let resolveAdmission!: (value: Record<string, unknown>) => void;
+    const response = new Promise<Record<string, unknown>>((resolve) => { resolveAdmission = resolve; });
+    const api = vi.fn(async (_path: string, method?: string) => {
+      if (method === "POST") return response;
+      if (method === "DELETE") throw new Error("Stop could not reach the host");
+      return { events: [
+        { sequence: 1, type: "assistant.delta", data: { text: "The run finished." } },
+        { sequence: 2, type: "run.completed", data: {} },
+      ] };
+    });
+    const { controller, calls } = setup(api);
+    const pending = action === "start" ? controller.start(request()) : controller.resume("old-run");
+    await controller.cancel();
+    resolveAdmission({ data: { id: "still-running", sessionId: "session-1" } });
+    await pending;
+
+    expect(api).toHaveBeenCalledWith("/api/v1/agent/runs/still-running", "DELETE");
+    expect(calls.showStatus).toHaveBeenCalledWith("Stop could not reach the host", "error");
+    expect(calls.appendSystem).not.toHaveBeenCalled();
+    expect(calls.setStatus).toHaveBeenLastCalledWith("Ready", "idle");
     expect(controller.active).toBe(false);
   });
 

@@ -2,6 +2,48 @@ import { describe, expect, it } from "vitest";
 import { SqliteStore } from "./sqlite-store.js";
 
 describe("SqliteStore agent-run persistence", () => {
+  it.each(["completed", "cancelled"] as const)("does not revive an older interruption after a newer %s run", (status) => {
+    const store = SqliteStore.memory();
+    const now = new Date(0).toISOString();
+    try {
+      store.createSession({ id: "s", title: "Recovered chat", status: "active", createdAt: now, updatedAt: now });
+      const request = { model: "default", sessionId: "s", messages: [{ role: "user" as const, content: "hello" }] };
+      store.createAgentRun({ id: "old", routeId: "default", sessionId: "s", status: "running", createdAt: now, updatedAt: now, lastSequence: 0 }, request);
+      store.recoverInterruptedAgentRuns();
+      expect(store.latestSessionAgentRun("s")?.id).toBe("old");
+      // Equal creation timestamps must follow durable admission order, not UUID
+      // order or the later timestamp stamped onto the old run during recovery.
+      store.createAgentRun({ id: "new", routeId: "default", sessionId: "s", status, createdAt: now, updatedAt: now, lastSequence: 0 });
+      store.recoverInterruptedAgentRuns();
+      expect(store.latestSessionAgentRun("s")).toBeUndefined();
+      expect(store.getAgentRun("old")).toMatchObject({ status: "interrupted", resumable: true });
+    } finally { store.close(); }
+  });
+
+  it("recovers the newest failed attempt even when an older failure was updated later", () => {
+    const store = SqliteStore.memory();
+    const now = new Date(0).toISOString();
+    try {
+      store.createSession({ id: "s", title: "Retry", status: "active", createdAt: now, updatedAt: now });
+      const request = { model: "default", sessionId: "s", messages: [{ role: "user" as const, content: "hello" }] };
+      store.createAgentRun({ id: "old", routeId: "default", sessionId: "s", status: "failed", createdAt: now, updatedAt: new Date(2000).toISOString(), lastSequence: 0 }, request);
+      store.createAgentRun({ id: "new", routeId: "default", sessionId: "s", status: "failed", createdAt: new Date(1000).toISOString(), updatedAt: new Date(1000).toISOString(), lastSequence: 0 }, request);
+      store.recoverInterruptedAgentRuns();
+      expect(store.latestSessionAgentRun("s")?.id).toBe("new");
+    } finally { store.close(); }
+  });
+
+  it("keeps live work discoverable even when a newer run has finished", () => {
+    const store = SqliteStore.memory();
+    const now = new Date(0).toISOString();
+    try {
+      store.createSession({ id: "s", title: "Live chat", status: "active", createdAt: now, updatedAt: now });
+      store.createAgentRun({ id: "live", routeId: "default", sessionId: "s", status: "running", createdAt: now, updatedAt: now, lastSequence: 0 });
+      store.createAgentRun({ id: "finished", routeId: "default", sessionId: "s", status: "completed", createdAt: new Date(1000).toISOString(), updatedAt: new Date(1000).toISOString(), lastSequence: 0 });
+      expect(store.latestSessionAgentRun("s")?.id).toBe("live");
+    } finally { store.close(); }
+  });
+
   it("persists resumable runs and marks active runs interrupted on recovery", () => {
     const store = SqliteStore.memory();
     const now = new Date(0).toISOString();

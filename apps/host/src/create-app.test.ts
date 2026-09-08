@@ -1202,6 +1202,50 @@ describe("Fitz host", () => {
     await runtime.app.close();
   });
 
+  it("does not restore an older interruption after a successful reply and host restart", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "fitz-session-recovery-"));
+    const open = () => createHost({
+      store: new SqliteStore(join(directory, "fitz.db")),
+      agentRuntime: {
+        id: "recovery-display-agent",
+        run: () => Object.assign((async function* () {
+          yield { type: "assistant.delta" as const, text: "Task completed successfully." };
+        })(), { cancel: () => undefined }),
+      },
+    });
+    let runtime = open();
+    try {
+      const now = new Date(0).toISOString();
+      runtime.store.createSession({ id: "recovered-session", title: "Recovered", status: "active", createdAt: now, updatedAt: now });
+      const request = { model: "default", sessionId: "recovered-session", messages: [{ role: "user" as const, content: "finish the task" }] };
+      runtime.store.createAgentRun({ id: "old-interruption", routeId: "default", sessionId: "recovered-session", status: "running", createdAt: now, updatedAt: now, lastSequence: 0 }, request);
+      await runtime.app.close();
+      runtime = open();
+
+      const interrupted = await runtime.app.inject({ method: "GET", url: "/api/v1/sessions/recovered-session/agent-run-state" });
+      expect(interrupted.json().data).toMatchObject({ id: "old-interruption", status: "interrupted", resumable: true });
+      // A normal retry/follow-up is a new run, without a resume-of relationship.
+      const created = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: request });
+      expect(created.statusCode, created.body).toBe(202);
+      const runId = created.json().data.id;
+      await vi.waitFor(() => expect(runtime.agentRuns.get(runId)?.status).toBe("completed"));
+
+      await runtime.app.close();
+      runtime = open();
+      const state = await runtime.app.inject({ method: "GET", url: "/api/v1/sessions/recovered-session/agent-run-state" });
+      expect(state.statusCode).toBe(200);
+      expect(state.json().data).toBeNull();
+      expect(runtime.store.getAgentRun(runId)?.status).toBe("completed");
+      expect(runtime.store.getAgentRun("old-interruption")).toMatchObject({ status: "interrupted", resumable: true });
+      expect(runtime.store.transcriptAfter("recovered-session", 0)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: "assistant", kind: "message", content: expect.objectContaining({ text: "Task completed successfully." }) }),
+      ]));
+    } finally {
+      await runtime.app.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("continues a failed run exactly once from its durable checkpoint", async () => {
     const store = SqliteStore.memory(); const now = new Date(0).toISOString();
     store.createProject({ id: "resume-project", name: "Resume", createdAt: now, updatedAt: now });

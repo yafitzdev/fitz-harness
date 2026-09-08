@@ -425,6 +425,7 @@ const agentRuns = new AgentRunController({
   clearPlan: () => agentPlanPanel.reset(),
   onRunSettled: async () => { await loadManagementConfiguration(false); },
   refreshAssistantPerformance: (runId) => assistantPerformance.refresh(runId),
+  showRecovery: (run) => { runRecovery.show(run); },
   onMediaJobSubmitted: (jobId, toolName) => {
     const modality = toolName === "generate_image" ? "image" : toolName === "generate_audio" ? "audio" : "video";
     mediaJobFeed.render({ id: jobId, modality, status: "queued" });
@@ -502,7 +503,7 @@ const promptSubmission = new PromptSubmissionController({
   showMediaCreation: ({ modality, prompt, refs, submit }) => {
     mediaCreationForm.show({ modality, prompt, refs, onCreate: submit });
   },
-  startRun: (request, onAccepted) => agentRuns.start(request, onAccepted),
+  startRun: (request, onAccepted) => agentRuns.start(request, () => { if (projects.currentSessionId === request.sessionId) runRecovery.clear(); onAccepted(); }),
   steerRun: (content) => agentRuns.steer(content),
   showError: (message) => { appendMessage("system", message); },
   errorMessage,

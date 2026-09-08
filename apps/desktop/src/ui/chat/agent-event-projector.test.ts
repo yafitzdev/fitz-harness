@@ -56,6 +56,20 @@ function setup(overrides: Partial<AgentEventProjectorOptions> = {}) {
 }
 
 describe("AgentEventProjector", () => {
+  it("reuses a restored pending approval when its request is replayed", async () => {
+    const { projector, calls, activity, messages } = setup();
+    const restored = document.createElement("section");
+    restored.dataset.approvalId = "approval-restored";
+    messages.append(restored);
+    calls.findApproval.mockReturnValue(restored);
+
+    await projector.apply({ sequence: 10, type: "tool.approval.requested", data: { approvalId: "approval-restored", toolName: "write", input: { path: "file.txt" } } });
+    await projector.apply({ sequence: 11, type: "tool.approval.resolved", data: { approvalId: "approval-restored", decision: "approved" } });
+
+    expect(activity.appendApproval).not.toHaveBeenCalled();
+    expect(activity.resolveApproval).toHaveBeenCalledWith(restored, "approved");
+  });
+
   it("projects queue, native reasoning, steering, and assistant output as one state machine", async () => {
     const { projector, activity, assistant, reasoning, calls } = setup();
 
