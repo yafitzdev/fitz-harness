@@ -1,7 +1,7 @@
 export interface ProjectRecord { id: string; ownerUserId?: string; name: string; rootPath?: string; createdAt: string; updatedAt: string }
 export type SessionStatus = "active" | "archived";
 export type SessionRouteId = "default" | "fast" | "smart";
-export interface SessionRecord { id: string; projectId?: string; ownerUserId?: string; title: string; status: SessionStatus; connectionId?: string; routeId?: SessionRouteId; createdAt: string; updatedAt: string }
+export interface SessionRecord { id: string; projectId?: string; workspaceRoot?: string; ownerUserId?: string; title: string; status: SessionStatus; connectionId?: string; routeId?: SessionRouteId; createdAt: string; updatedAt: string }
 export type TranscriptEntryKind = "message" | "reasoning" | "tool-call" | "tool-result" | "compaction" | "system";
 export interface TranscriptEntryRecord { id: string; sessionId: string; sequence: number; kind: TranscriptEntryKind; role?: "system" | "user" | "assistant" | "tool"; content: Readonly<Record<string, unknown>>; createdAt: string }
 export interface RegenerateAssistantTurnRequest { runId: string }

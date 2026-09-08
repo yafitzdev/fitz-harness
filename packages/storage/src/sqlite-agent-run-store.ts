@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { withChatContentDocument } from "@fitz/protocol";
 import type {
   AgentEventEnvelope,
   AgentRunCheckpoint,
@@ -421,9 +422,10 @@ export class SqliteAgentRunStore {
       const row = this.database
         .prepare("SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM transcript_entries WHERE session_id = ?")
         .get(entry.sessionId) as { sequence: number };
+      const content = entry.kind === "message" ? withChatContentDocument(entry.content) : entry.content;
       this.database
         .prepare("INSERT INTO transcript_entries (id, session_id, sequence, kind, role, content_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(entry.id, entry.sessionId, row.sequence, entry.kind, entry.role ?? null, JSON.stringify(entry.content), entry.createdAt);
+        .run(entry.id, entry.sessionId, row.sequence, entry.kind, entry.role ?? null, JSON.stringify(content), entry.createdAt);
       this.database.prepare("UPDATE sessions SET updated_at = ?, transcript_revision = transcript_revision + 1 WHERE id = ?").run(entry.createdAt, entry.sessionId);
       if (ownsTransaction) this.database.exec("COMMIT");
     } catch (error) {

@@ -866,4 +866,9 @@ export const MIGRATIONS: readonly Migration[] = [
          OR NOT EXISTS (SELECT 1 FROM devices WHERE devices.id = request_usage.owner_device_id);
     `,
   },
+  {
+    version: 34,
+    // Every chat can own a durable scratch workspace for generated local files.
+    sql: `ALTER TABLE sessions ADD COLUMN workspace_root TEXT;`,
+  },
 ] as const;
