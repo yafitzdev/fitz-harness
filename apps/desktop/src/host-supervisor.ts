@@ -16,6 +16,8 @@ export interface HostSupervisorOptions {
   logPath?: string;
   fetch?: typeof globalThis.fetch;
   wait?: (milliseconds: number) => Promise<void>;
+  startupTimeoutMs?: number;
+  pollIntervalMs?: number;
 }
 
 interface BundledHostProcess {
@@ -48,26 +50,27 @@ export class HostSupervisor {
       this.#assertCompatible(initial);
       return;
     }
-    if (!this.#options.packaged) {
-      throw new HostStartupError("The Fitz host is not running", `Start the host at ${this.#options.origin.origin} and retry.`);
-    }
     if (!isLoopback(this.#options.origin.hostname)) {
       throw new HostStartupError("The remote Fitz host is unavailable", `Check your connection to ${this.#options.origin.origin} and retry. Fitz will never start a local host as a fallback for a remote connection.`);
     }
-    const hostProcess = this.#spawnBundledHost();
-    for (let attempt = 0; attempt < 120; attempt += 1) {
-      const failure = hostProcess.failure();
+    const hostProcess = this.#options.packaged ? this.#spawnBundledHost() : undefined;
+    const timeoutMs = Math.max(0, this.#options.startupTimeoutMs ?? 30_000);
+    const pollIntervalMs = Math.max(1, this.#options.pollIntervalMs ?? 250);
+    const attempts = Math.max(0, Math.ceil(timeoutMs / pollIntervalMs));
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const failure = hostProcess?.failure();
       if (failure) {
         throw new HostStartupError("The bundled Fitz host stopped during startup", this.#startupFailureDetail(failure));
       }
+      await this.#wait(pollIntervalMs);
       const health = await this.#probe();
       if (health) {
         this.#assertCompatible(health);
         return;
       }
-      await this.#wait(250);
     }
-    throw new HostStartupError("The Fitz host did not become ready", this.#startupFailureDetail(`The bundled host at ${this.#options.origin.origin} did not answer within 30 seconds.`));
+    const description = this.#options.packaged ? "The bundled host" : "The development host";
+    throw new HostStartupError("The Fitz host did not become ready", this.#startupFailureDetail(`${description} at ${this.#options.origin.origin} did not answer within ${timeoutMs} ms.`));
   }
 
   async #probe(): Promise<HostHealth | undefined> {

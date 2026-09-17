@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { FakeEngineAdapter } from "@fitz/engine-fake";
-import type { FakeInstanceHandle } from "@fitz/engine-fake";
+import { FakeEngineAdapter, type FakeInstanceHandle } from "./testing.js";
 import type {
   InferenceDelta,
   InferenceLifecycleEvent,

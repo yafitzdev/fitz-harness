@@ -17,6 +17,8 @@ import { ConversationContextController } from "./ui/chat/conversation-context.js
 import { ConversationSessionController } from "./ui/chat/conversation-session.js";
 import { querySessionTranscript } from "./ui/chat/session-query-client.js";
 import { PromptSubmissionController } from "./ui/chat/prompt-submission.js";
+import { SessionMessageQueue } from "./ui/chat/session-message-queue.js";
+import { serializeComposerReferences } from "./ui/chat/composer-references.js";
 import { MediaCreationForm } from "./ui/chat/media-creation-form.js";
 import { ConnectionWorkspaceController, type FixedRouteId } from "./ui/connections/connection-workspace.js";
 import { textRouteOptions, textRouteRecipe } from "./ui/routes/text-route-presentation.js";
@@ -43,6 +45,7 @@ import { ProjectsController } from "./ui/projects/projects.js";
 import { ProjectSidebarController } from "./ui/sidebar/project-sidebar.js";
 import { SidebarActivityController } from "./ui/sidebar/sidebar-activity.js";
 import { LocalHostBootstrapController, type LocalHostBootstrapSnapshot } from "./ui/startup/local-host-bootstrap.js";
+import { isTransientHostConnectionFailure } from "./ui/startup/host-connection-error.js";
 import { WorkQueueController } from "./ui/queue/work-queue.js";
 import { ArtifactController } from "./ui/artifacts/artifact-controller.js";
 import { assertHostContract, HostRequestError } from "./client-error.js";
@@ -98,7 +101,7 @@ playbookLayout.addContent({
   id: "management-browser",
   title: "Playbooks",
   titleId: "management-title",
-  description: "Configure recipes from your engine folders.",
+  description: "Configure adapters for engines installed in the inference registry.",
   descriptionId: "management-description",
   search: { id: "playbook-search", placeholder: "Search playbooks" },
   body: [element("playbook-list")],
@@ -153,6 +156,7 @@ let conversationLayout: ConversationLayout | undefined;
 let adaptiveWorkspace: AdaptiveWorkspace | undefined;
 let closeBrowserPreview = (): void => {};
 let syncBrowserPreview = (): void => {};
+let sessionMessageQueue: SessionMessageQueue | undefined;
 const sidebarPane = new ResizablePane({
   divider: sidebarResizer, storageKey: "fitz-sidebar-width", defaultValue: 254, minimum: 240, maximum: 520,
   pointerValue: (event) => event.clientX,
@@ -182,12 +186,11 @@ const composer = new Composer({
   onEffortChange: () => { refreshAgentTopology(); conversationContext.refresh(); },
   onCompact: () => conversationContext.compact(),
   onSubmit: (submission) => {
-    // Media commands submit straight to the media-job pipeline, which runs on
-    // its own queue, so they are allowed while the agent is busy. Everything
-    // else steers or cancels the active run; with an empty draft and a media
-    // job in flight the send button stops that job instead.
+    // Agent messages written during a run wait in the durable session inbox.
+    // Explicit "Send now" on an inbox row remains the steering action.
     if (agentRuns.active && !submission.mediaCommand) {
-      if (submission.content.trim().length > 0) void steerPrompt(submission.content);
+      const queuedText = [serializeComposerReferences(submission.references ?? []), submission.content].filter(Boolean).join("\n").trim();
+      if (queuedText) void sessionMessageQueue?.enqueue(queuedText).then(() => composer.clearDraft()).catch((error) => showStatus(errorMessage(error), "error"));
       else void agentRuns.cancel();
     } else if (mediaJobs.active && !submission.mediaCommand && submission.content.trim().length === 0) {
       void mediaJobs.cancelActive().catch((error) => showStatus(errorMessage(error), "error"));
@@ -213,6 +216,25 @@ const composer = new Composer({
   },
   onError: (message) => showStatus(message, "error"),
   isRunning: () => agentRuns.active,
+  referenceProviders: [
+    {
+      id: "workspace",
+      search: async (query) => {
+        const root = projects.activeWorkspaceRoot();
+        if (!root) return [];
+        return (await window.fitz.listWorkspaceReferences(root, query)).map((reference) => ({ ...reference, providerId: "workspace", detail: reference.value }));
+      },
+    },
+    {
+      id: "sessions",
+      search: async (query) => {
+        const needle = query.toLowerCase();
+        const sessions = [...projects.chats, ...[...projects.sessionsByProject.values()].flat()];
+        return sessions.filter((session) => session.id !== projects.currentSessionId && (!needle || session.title.toLowerCase().includes(needle)))
+          .slice(0, 12).map((session) => ({ providerId: "sessions", kind: "session" as const, label: session.title, value: session.id, detail: "Past chat" }));
+      },
+    },
+  ],
 });
 const agentPlanPanel = new AgentPlanPanel(composer.root);
 const conversationContext = new ConversationContextController({
@@ -400,7 +422,7 @@ const agentRuns = new AgentRunController({
   activity: activityTimeline,
   api,
   subscribeAgentEvents: (input, listener) => window.fitz.subscribeAgentEvents(input, listener),
-  appendAssistant: (runId, createdAt) => appendMessage("assistant", "", createdAt, runId),
+  appendAssistant: (runId, createdAt, requestId) => appendMessage("assistant", "", createdAt, runId, [], requestId ? { requestId } : undefined),
   appendAssistantDelta: (target, delta) => appendMarkdown(target, delta),
   replaceAssistant: (target, text) => setMarkdown(target, text),
   loadFinalAssistant: async (runId) => {
@@ -411,9 +433,9 @@ const agentRuns = new AgentRunController({
       candidate.kind === "message" && candidate.role === "assistant"
       && candidate.content?.runId === runId && candidate.content?.phase === "final");
     const text = typeof entry?.content?.text === "string" ? entry.content.text : "";
-    return text ? { text, ...(typeof entry?.createdAt === "string" ? { createdAt: entry.createdAt } : {}) } : undefined;
+    return text ? { text, ...(typeof entry?.createdAt === "string" ? { createdAt: entry.createdAt } : {}), ...(typeof entry?.content?.requestId === "string" ? { requestId: entry.content.requestId } : {}) } : undefined;
   },
-  appendSystem: (message) => { appendMessage("system", message); },
+  appendSystem: appendSystemOrReconnect,
   appendChangeSummary: (files) => appendChangeSummary(files),
   registerGeneratedFile: (path, action) => inspectorPanel.registerGeneratedFile(path, action),
   addTokenEstimate: (text) => { conversationContext.add(text); conversationContext.refresh(); },
@@ -425,10 +447,11 @@ const agentRuns = new AgentRunController({
   refreshQueue: () => agentQueue.refresh(),
   showStatus,
   errorMessage,
-  terminalReplayError: (error) => error instanceof HostRequestError,
+  terminalReplayError: (error) => error instanceof HostRequestError || isTransientHostConnectionFailure(error),
   updatePlan: (result) => { agentPlanPanel.updateFromToolResult(result); },
   clearPlan: () => agentPlanPanel.reset(),
   onRunSettled: async () => { await loadManagementConfiguration(false); },
+  onIdle: () => sessionMessageQueue?.dispatchNext(),
   refreshAssistantPerformance: (runId) => assistantPerformance.refresh(runId),
   showRecovery: (run) => { runRecovery.show(run); },
   onMediaJobSubmitted: (jobId, toolName) => {
@@ -510,8 +533,18 @@ const promptSubmission = new PromptSubmissionController({
   },
   startRun: (request, onAccepted) => agentRuns.start(request, () => { if (projects.currentSessionId === request.sessionId) runRecovery.clear(); onAccepted(); }),
   steerRun: (content) => agentRuns.steer(content),
-  showError: (message) => { appendMessage("system", message); },
+  showError: appendSystemOrReconnect,
   errorMessage,
+});
+sessionMessageQueue = new SessionMessageQueue({
+  mount: composer.root,
+  api,
+  sessionId: () => projects.currentSessionId,
+  settings: () => ({ routeId: composer.controls.routeId, effort: composer.controls.effort, maxTokens: composer.controls.maxTokens, temperature: composer.controls.temperature, accessMode: composer.controls.accessMode }),
+  submit: (message, onAccepted, onRejected) => { void promptSubmission.submitQueued(message.text, { routeId: message.model, effort: message.effort, maxTokens: message.maxTokens, temperature: message.temperature, accessMode: message.accessMode }, `queued:${message.id}`, onAccepted, onRejected); },
+  steer: (text) => promptSubmission.steer(text),
+  isRunning: () => agentRuns.active,
+  onError: (message) => showStatus(message, "error"),
 });
 const playbookWorkspace = new PlaybookWorkspaceController({
   page: playbookPage,
@@ -802,7 +835,8 @@ const conversationSessions = new ConversationSessionController({
   resetWarmup: () => agentRuns.resetWarmup(),
   remember: (location) => appNavigation.remember(location),
   loadingMessage,
-  appendSystem: (message) => { appendMessage("system", message); },
+  appendSystem: appendSystemOrReconnect,
+  messageQueue: { reset: () => sessionMessageQueue?.reset(), load: (sessionId) => sessionMessageQueue?.load(sessionId) ?? Promise.resolve(), dispatchNext: () => sessionMessageQueue?.dispatchNext() },
 });
 const appNavigation = new AppNavigationController({
   blocked: () => agentRuns.active,
@@ -924,14 +958,25 @@ function reflectLocalHostState(snapshot: LocalHostBootstrapSnapshot): void {
     const retrying = snapshot.state === "retrying";
     engineState.textContent = "STARTING";
     setStatus(retrying ? "Restarting local services" : "Starting local services", "loading");
-    conversationLanding.showConnectionPending(retrying);
+    if (!workspaceBootstrap.hasConnected) conversationLanding.showConnectionPending(retrying);
   } else if (snapshot.state === "offline") {
     console.warn("Local Fitz services are unavailable", snapshot.detail);
     engineState.textContent = "OFFLINE";
     setStatus("Host offline", "error");
-    conversationLanding.showConnectionFailure(snapshot.detail ?? "The local Fitz host did not respond.");
+    if (!workspaceBootstrap.hasConnected) conversationLanding.showConnectionFailure(snapshot.detail ?? "The local Fitz host did not respond.");
+    window.fitz.rendererReady();
+  } else if (snapshot.state === "ready") {
+    window.fitz.rendererReady();
   }
   refreshComposerState();
+}
+
+function appendSystemOrReconnect(message: string): void {
+  if (isTransientHostConnectionFailure(message)) {
+    void workspaceBootstrap.reconnect();
+    return;
+  }
+  appendMessage("system", message);
 }
 
 // Connections and chat resolve labels through one shared role formatter. Cloud
@@ -1058,15 +1103,6 @@ async function sendPrompt(submittedContent?: string | ComposerSubmission, existi
   await promptSubmission.submit(submittedContent, existingUserMessage, persistedMessageId);
 }
 
-// While the agent is reasoning the composer stays unlocked. Sending inserts the
-// message into the running conversation: the host forwards it to the active stream
-// (Pi queues it as a steering message) and emits a `user.steer` event when it is
-// delivered. We render the message here, inside the agent's work feed next to the
-// tool calls and reasoning, so the user gets immediate feedback.
-async function steerPrompt(content: string): Promise<void> {
-  await promptSubmission.steer(content);
-}
-
 function scheduleQueueRefresh(): void {
   if (queueRefreshTimer) clearTimeout(queueRefreshTimer); queueRefreshTimer = undefined;
   if (!inspectorPanel.isOpen) return;
@@ -1077,12 +1113,12 @@ function showLanding(hasTask = false): void {
   conversationLanding.showHome(hasTask);
 }
 
-function appendMessage(role: string, text: string, createdAt?: string, runId?: string, attachments: readonly MessageAttachment[] = [], metadata?: { id?: string; sequence?: number; document?: ChatContentDocument }): HTMLElement {
+function appendMessage(role: string, text: string, createdAt?: string, runId?: string, attachments: readonly MessageAttachment[] = [], metadata?: { id?: string; sequence?: number; requestId?: string; document?: ChatContentDocument }): HTMLElement {
   const content = conversationMessages.append(role, text, createdAt, attachments, metadata);
   if (role === "assistant" && runId) {
     const article = content.closest<HTMLElement>("article.message");
     if (article) article.dataset.runId = runId;
-    assistantPerformance.track(content, runId, createdAt);
+    assistantPerformance.track(content, runId, createdAt, metadata?.requestId);
   }
   return content;
 }
@@ -1206,6 +1242,7 @@ function appendChangeSummary(files: Array<{ path: string; action: "edited" | "cr
 }
 
 function refreshComposerState(): void {
+  sessionMessageQueue?.refresh();
   const ready = Boolean(workspaceBootstrap?.isReady && (projects.currentSessionId || conversationSessions.newChat) && composer.controls.routeId);
   artifactController.setEnabled(Boolean(projects.currentSessionId));
   // The attach button also unlocks in a new chat so files can be staged for the first message.
@@ -1221,7 +1258,7 @@ function refreshAgentRunState(): void {
 function updateTitles(): void {
   const project = projects.activeProject();
   const session = projects.currentSessionRecord();
-  projectTitle.textContent = project?.name ?? "Fitz Codex";
+  projectTitle.textContent = project?.name ?? "Fitz Harness";
   taskTitle.textContent = session?.title ?? "";
   taskTitle.hidden = !session;
 }

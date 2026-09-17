@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readNInferConfiguration, validateNInferConfiguration } from "@fitz/engine-ninfer";
+import { readNInferConfiguration, validateNInferConfiguration } from "@fitz/adapter-ninfer";
 import { createNInferPlaybook, NINFER_PLAYBOOK_ID } from "./ninfer-playbook.js";
 
 describe("production NiNfer playbook", () => {

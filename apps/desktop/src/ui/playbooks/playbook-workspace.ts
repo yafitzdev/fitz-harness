@@ -92,7 +92,7 @@ export class PlaybookWorkspaceController {
     const configuration = this.configuration;
     this.elements.list.replaceChildren();
     this.elements.title.textContent = "Playbooks";
-    this.elements.description.textContent = "Configure recipes from your engine folders.";
+    this.elements.description.textContent = "Configure adapters for engines installed in the inference registry.";
     this.elements.search.placeholder = "Search playbooks";
     if (!configuration) { this.elements.list.append(emptyState("Management data is unavailable")); return; }
     const recipes = configuration.recipes ?? [];
@@ -103,7 +103,7 @@ export class PlaybookWorkspaceController {
       const engineRecipes = recipes.filter((recipe) => samePlaybook(recipe.playbookId, folder.folderName));
       return matches(folder.folderName, folder.rootPath, folder.engine?.displayName, ...engineRecipes.flatMap((recipe) => [recipe.displayName, recipe.modelId]));
     });
-    if (!visibleFolders.length) { this.elements.list.append(emptyState(`No engine folders found in ${configuration.engineRoot ?? "the configured root"}`)); return; }
+    if (!visibleFolders.length) { this.elements.list.append(emptyState(`No installed engines found in ${configuration.engineRoot ?? "the inference registry"}`)); return; }
     for (const folder of visibleFolders) this.elements.list.append(this.renderFolderCard(folder, recipes));
   }
 

@@ -57,6 +57,7 @@ export interface PiSession {
   dispose(): void;
 }
 type PiWorkContext = AgentRuntimeRunOptions;
+const MAX_STALLED_PLAN_CONTINUATIONS = 3;
 export interface PiToolCall { toolCallId: string; toolName: string; input: unknown }
 export interface PiToolApprovalResult { allowed: boolean; reason?: string }
 export interface ToolApprovalHandle { approvalId: string; decision: Promise<"approved" | "denied"> }
@@ -129,6 +130,7 @@ export type PiSessionFactory = (options: {
   acquireToolLease?: (request: PiToolCall) => Promise<ToolLeaseRelease>;
   /** Post-execution redaction of tool results before the model sees them. */
   redactResult?: ToolResultRedactor;
+  spillResult?: (request: Omit<ToolResultSpillRequest, "runId" | "sessionId">) => Promise<{ path: string }>;
   /** Extra tools registered per run (e.g. `fitz_trash`). */
   customTools?: ToolDefinition[];
   /** Trusted localhost-only correlation propagated to the Fitz completion gateway. */
@@ -165,6 +167,9 @@ export interface PiAgentRuntimeOptions {
   toolLease?: ToolLeaseAcquirer;
   /** Redacts secrets from tool results before the model reads them. */
   redactToolResult?: ToolResultRedactor;
+  /** Persists an oversized, already-redacted tool result and returns the
+   * stable path the model can use to inspect narrower ranges. */
+  spillToolResult?: ToolResultSpiller;
   /** Extra tools to register for each run; called with the run's resolved working directory. */
   customTools?: (context: { cwd: string; runId?: string; request?: AgentRunRequest }) => ToolDefinition[];
   /** Route-specific child capacity for the selected parent route. Undefined
@@ -176,6 +181,15 @@ export interface PiAgentRuntimeOptions {
   /** Forward task correlation headers to the model endpoint. Enable only for Fitz's bundled localhost gateway. */
   forwardWorkContext?: boolean;
 }
+
+export interface ToolResultSpillRequest {
+  runId?: string;
+  sessionId?: string;
+  toolCallId: string;
+  toolName: string;
+  content: unknown[];
+}
+export type ToolResultSpiller = (request: ToolResultSpillRequest) => Promise<{ path: string }>;
 
 const CODING_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"] as const;
 /** Opaque user-turn activation for a trusted per-request runtime instruction.
@@ -222,6 +236,7 @@ export class PiAgentRuntime implements AgentRuntime {
   readonly #toolPolicy: ToolEvaluator | undefined;
   readonly #toolLease: ToolLeaseAcquirer | undefined;
   readonly #redactToolResult: ToolResultRedactor | undefined;
+  readonly #spillToolResult: ToolResultSpiller | undefined;
   readonly #customTools: ((context: { cwd: string; runId?: string; request?: AgentRunRequest }) => ToolDefinition[]) | undefined;
   readonly #subagentBudget: ((request: AgentRunRequest, context?: AgentRuntimeRunOptions) => SubagentRouteBudget | undefined) | undefined;
   readonly #runPlan: ((request: AgentRunRequest, context?: AgentRuntimeRunOptions) => PiRunPlanPolicy | undefined) | undefined;
@@ -243,6 +258,7 @@ export class PiAgentRuntime implements AgentRuntime {
     this.#toolPolicy = options.toolPolicy;
     this.#toolLease = options.toolLease;
     this.#redactToolResult = options.redactToolResult;
+    this.#spillToolResult = options.spillToolResult;
     this.#customTools = options.customTools;
     this.#subagentBudget = options.subagentBudget;
     this.#runPlan = options.runPlan;
@@ -287,6 +303,7 @@ export class PiAgentRuntime implements AgentRuntime {
         thinkingLevel,
         ...(thinkingFormat ? { thinkingFormat } : {}),
         maxToolResultChars: request.delegation ? 8_000 : 12_000,
+        ...(this.#spillToolResult ? { spillResult: (spill) => this.#spillToolResult!({ ...spill, ...(options?.runId ? { runId: options.runId } : {}), ...(request.sessionId ? { sessionId: request.sessionId } : {}) }) } : {}),
         ...(request.delegation ? { compaction: delegatedCompaction(contextWindow, request.maxTokens ?? 16_384) } : {}),
         approveTool: (toolCall) => {
           const admissionReason = runPlan?.admissionReason(toolCall) ?? delegation.admissionReason(toolCall) ?? workTools.admissionReason(toolCall);
@@ -339,6 +356,7 @@ export class PiAgentRuntime implements AgentRuntime {
       // message Pi has pulled off its steer queue, i.e. the point where the user's text is
       // inserted into the running conversation.
       let sawInitialUserMessage = false;
+      let completedToolCalls = 0;
       const unsubscribe = activeSession.subscribe((event) => {
         const failure = piFailure(event);
         if (failure) { failActiveSession(failure); return; }
@@ -357,6 +375,7 @@ export class PiAgentRuntime implements AgentRuntime {
             output.accept(translated);
           }
         }
+        if (event.type === "tool_execution_end") completedToolCalls += 1;
         if (event.type === "tool_execution_end" && output.afterToolEnd(event.toolCallId)) {
           // Pi would ordinarily perform another completion after a tool result.
           // The held plan-ready answer is already the final response.
@@ -405,11 +424,21 @@ export class PiAgentRuntime implements AgentRuntime {
           }
         }
         let planRetries = 0;
-        for (let issue = runPlan?.completionIssue(); issue; issue = runPlan?.completionIssue()) {
+        let stalledPlanContinuations = 0;
+        for (let issue = runPlan?.completionIssue(); issue;) {
           if (planRetries >= 24) throw new Error(`The main agent did not complete its execution plan after ${planRetries} continuation turns.`);
           planRetries += 1;
+          const completedToolsBefore = completedToolCalls;
           await internalPrompt("plan", issue);
           if (controller.signal.aborted) throw abortError();
+          const nextIssue = runPlan?.completionIssue();
+          stalledPlanContinuations = nextIssue === issue && completedToolCalls === completedToolsBefore
+            ? stalledPlanContinuations + 1
+            : 0;
+          if (stalledPlanContinuations >= MAX_STALLED_PLAN_CONTINUATIONS) {
+            throw new Error(`The main agent made no execution-plan progress after ${stalledPlanContinuations} continuation turns. Last issue: ${issue}`);
+          }
+          issue = nextIssue;
         }
         for (let attempt = 0; runPlan?.phase() === "ready_for_answer" && !output.sawFinalAssistant && attempt < 3; attempt += 1) {
           await internalPrompt("plan", "Prerequisite work is complete. Provide exactly one complete, standalone final answer now. Do not call tools and do not refer to any earlier draft.");
@@ -512,9 +541,9 @@ class WorkToolBudget {
   }
 }
 
-/** Bounds one tool result before it enters model history. This protects every
- * engine from tokenizer-estimation drift and oversized file/shell output. */
-export function limitToolResultContent(content: unknown[], maxChars = 12_000): unknown[] {
+/** Builds the bounded model-facing preview for a result whose complete,
+ * redacted content has already been persisted by the spill store. */
+export function previewToolResultContent(content: unknown[], path: string, maxChars = 12_000): unknown[] {
   if (!Number.isFinite(maxChars) || maxChars < 1) return content;
   const textParts = content.filter((part): part is { type: string; text: string } =>
     part !== null && typeof part === "object" && "type" in part && "text" in part
@@ -529,12 +558,18 @@ export function limitToolResultContent(content: unknown[], maxChars = 12_000): u
     if (remaining <= 0) return [];
     const value = part as { type: string; text: string };
     if (value.text.length <= remaining) { remaining -= value.text.length; return [part]; }
-    const marker = `\n\n[Fitz truncated this tool result at ${maxChars} of ${total} characters. Request a narrower file range, path, or command if more is required.]`;
+    const marker = `\n\n[Full tool result (${total} characters) saved to ${path}. Read that file with a narrower range when more detail is required.]`;
     const kept = value.text.slice(0, Math.max(0, remaining - marker.length));
     remaining = 0;
     markerWritten = true;
     return [{ ...value, text: kept + marker }];
-  }).concat(markerWritten ? [] : [{ type: "text", text: `[Fitz truncated this tool result at ${maxChars} of ${total} characters.]` }]);
+  }).concat(markerWritten ? [] : [{ type: "text", text: `[Full tool result (${total} characters) saved to ${path}.]` }]);
+}
+
+function toolResultTextLength(content: unknown[]): number {
+  return content.reduce<number>((total, part) => total + (part !== null && typeof part === "object" && "type" in part && "text" in part
+    && (part as { type?: unknown }).type === "text" && typeof (part as { text?: unknown }).text === "string"
+    ? (part as { text: string }).text.length : 0), 0);
 }
 
 async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promise<PiSession> {
@@ -627,13 +662,16 @@ async function createSdkSession(options: Parameters<PiSessionFactory>[0]): Promi
           const decision = await options.approveTool({ toolCallId: event.toolCallId, toolName: event.toolName, input: event.input });
           return decision.allowed ? acquireLease(event) : { block: true, reason: decision.reason ?? "Tool execution denied" };
         });
-        pi.on("tool_result", (event) => {
+        pi.on("tool_result", async (event) => {
           activeToolLeases.get(event.toolCallId)?.();
           activeToolLeases.delete(event.toolCallId);
           const redacted = options.redactResult?.({ toolName: event.toolName, content: event.content });
           const content = redacted ?? event.content;
-          const limited = limitToolResultContent(content, options.maxToolResultChars);
-          return redacted || limited !== content ? { content: limited as typeof event.content } : undefined;
+          const maxChars = options.maxToolResultChars ?? 12_000;
+          if (toolResultTextLength(content) <= maxChars) return redacted ? { content: content as typeof event.content } : undefined;
+          if (!options.spillResult) throw new Error(`Oversized ${event.toolName} result cannot be persisted because no spill store is configured`);
+          const spill = await options.spillResult({ toolCallId: event.toolCallId, toolName: event.toolName, content });
+          return { content: previewToolResultContent(content, spill.path, maxChars) as typeof event.content };
         });
       },
     }],
@@ -837,7 +875,7 @@ export function createSessionLookupTool(source: SessionQueryService): ToolDefini
     name: SESSION_LOOKUP_TOOL,
     label: "Fitz session lookup",
     description:
-      "Read a past Fitz Codex conversation or its versioned forensic record by session id. The default transcript section is paginated. Use overview first when diagnosing a failure, then runs/evidence/audit/artifacts/media as needed; use all only when the complete bundle is small enough. The current session's history is injected automatically, so this tool is for looking up OTHER sessions. Returns a formatted section, or a message saying the session was not found.",
+      "Read a past Fitz Harness conversation or its versioned forensic record by session id. The default transcript section is paginated. Use overview first when diagnosing a failure, then runs/evidence/audit/artifacts/media as needed; use all only when the complete bundle is small enough. The current session's history is injected automatically, so this tool is for looking up OTHER sessions. Returns a formatted section, or a message saying the session was not found.",
     promptSnippet: "Read past Fitz conversations or forensic evidence by session id",
     promptGuidelines: [
       "When the user references a previous conversation, use this tool with the session id they provide (they can find it in the session header popover).",

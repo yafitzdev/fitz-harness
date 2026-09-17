@@ -29,12 +29,12 @@ export interface AgentRunControllerOptions {
   ) => () => void;
   /** Gives the browser a paint boundary between native reasoning deltas. */
   yieldToPaint?: () => Promise<void>;
-  appendAssistant: (runId: string, createdAt?: string) => HTMLElement;
+  appendAssistant: (runId: string, createdAt?: string, requestId?: string) => HTMLElement;
   appendAssistantDelta: (target: HTMLElement, delta: string) => void;
   replaceAssistant: (target: HTMLElement, text: string) => void;
   /** Reads the host's durable final transcript when the live relay reaches
    * completion so the rendered answer can be reconciled with durable state. */
-  loadFinalAssistant?: (runId: string) => Promise<{ text: string; createdAt?: string } | undefined>;
+  loadFinalAssistant?: (runId: string) => Promise<{ text: string; createdAt?: string; requestId?: string } | undefined>;
   appendSystem: (message: string) => void;
   appendChangeSummary: (files: Array<{ path: string; action: "edited" | "created" }>) => void;
   registerGeneratedFile?: (path: string, action: "edited" | "created") => void;
@@ -55,6 +55,7 @@ export interface AgentRunControllerOptions {
   clearPlan: () => void;
   /** Refresh runtime-derived capabilities after a run may have loaded a model. */
   onRunSettled?: () => void | Promise<void>;
+  onIdle?: () => void;
   refreshAssistantPerformance?: (runId: string) => void | Promise<void>;
   /** Show the same durable continuation boundary used when reopening a chat. */
   showRecovery?: (run: Json) => void;
@@ -115,7 +116,7 @@ export class AgentRunController {
       if (this.#generation !== generation) return;
       activity.remove(); this.#options.appendSystem(this.#options.errorMessage(error)); this.#options.setStatus("Disconnected", "error");
     }
-    finally { if (this.#generation === generation) { this.#runId = undefined; this.#sessionId = undefined; this.#cancelPending = false; this.#options.refreshControls(); } }
+    finally { if (this.#generation === generation) { this.#runId = undefined; this.#sessionId = undefined; this.#cancelPending = false; this.#options.refreshControls(); this.#options.onIdle?.(); } }
   }
 
   async resume(sourceRunId: string, confirmUnsafe = false, onAccepted?: () => void): Promise<void> {
@@ -143,7 +144,7 @@ export class AgentRunController {
       this.#options.setStatus("Resume failed", "error");
       throw error;
     }
-    finally { if (this.#generation === generation) { this.#runId = undefined; this.#sessionId = undefined; this.#starting = false; this.#cancelPending = false; this.#options.refreshControls(); } }
+    finally { if (this.#generation === generation) { this.#runId = undefined; this.#sessionId = undefined; this.#starting = false; this.#cancelPending = false; this.#options.refreshControls(); this.#options.onIdle?.(); } }
   }
 
   resetWarmup(): void {
@@ -184,7 +185,7 @@ export class AgentRunController {
       let response: Json | undefined;
       for (let attempt = 0; attempt < 4; attempt += 1) {
         if (this.#generation !== generation) return;
-        try { response = await this.#options.api("/api/v1/agent/runs", "POST", durableRequest); break; }
+        try { response = await this.#options.api("/api/v1/agent/runs", "POST", { ...durableRequest, ...(attempt ? { clientRetryCount: attempt } : {}) }); break; }
         catch (error) {
           if (this.#generation !== generation) return;
           if (this.#options.terminalReplayError(error) || attempt === 3) throw error;
@@ -228,6 +229,7 @@ export class AgentRunController {
         this.#starting = false;
         this.#cancelPending = false;
         this.#options.refreshControls();
+        this.#options.onIdle?.();
       }
     }
   }

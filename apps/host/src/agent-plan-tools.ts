@@ -39,7 +39,7 @@ export function createAgentPlanTool(options: AgentPlanToolsOptions, context: { r
       "Your first tool call must set a concrete task plan. This is the execution gameplan, not optional narration.",
       "Keep blockers and critical-path tasks owned by the main agent. Mark only independent, bounded speed-up tasks as worker_eligible.",
       "Update main-owned items as you start and complete them. Worker-owned items are updated automatically.",
-      "Do not add a synthesis, final-answer, or respond-to-user item; final synthesis is an implicit runtime-owned phase.",
+      "Do not add a summary, orientation, synthesis, final-answer, or respond-to-user item; final synthesis is an implicit runtime-owned phase.",
       "When the last required item completes, write the final answer in the next assistant response. A failed worker is reassigned to the main agent and must be completed there.",
     ],
     parameters,
@@ -87,7 +87,7 @@ export function createAgentPlanTool(options: AgentPlanToolsOptions, context: { r
 export function planPromptInstruction(): string {
   return [
     "If the request can be answered directly without tools, answer normally. Before other tool work, create the durable prerequisite plan with agent_plan action=set.",
-    "Keep critical-path work with the main agent and mark only independent, bounded tasks as worker_eligible. Do not add final synthesis as a plan item.",
+    "Keep critical-path work with the main agent and mark only independent, bounded tasks as worker_eligible. Do not add a summary, orientation, or final synthesis as a plan item.",
     "Update main-owned items as work advances, continue independent parent work after delegation, and use status only after ready parent work is exhausted.",
     "Completing the last required item automatically opens the final-answer phase; then provide the standalone final answer. Failed worker items return to the main agent.",
   ].join(" ");
@@ -364,7 +364,7 @@ function formatPlan(plan: AgentRunPlan): string {
 }
 
 function isImplicitFinalizationItem(item: { id: string; task: string }): boolean {
-  if (/^(?:final|final[-_]?answer|answer|response|synthesis|synthesize)$/i.test(item.id.trim())) return true;
+  if (/^(?:final|final[-_]?answer|answer|response|summary|summari[sz]e|orientation|synthesis|synthesize)$/i.test(item.id.trim())) return true;
   return /\b(?:synthesi[sz]e findings into (?:a |the )?(?:final )?(?:answer|response)|write (?:a |the )?final answer|deliver (?:a |the )?(?:answer|response)|respond to the user)\b/i.test(item.task);
 }
 

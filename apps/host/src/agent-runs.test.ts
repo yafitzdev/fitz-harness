@@ -30,6 +30,46 @@ class ControlledRuntime implements AgentRuntime {
 }
 
 describe("AgentRunCoordinator", () => {
+  it("correlates assistant output and its transcript with the exact model request", async () => {
+    const store = SqliteStore.memory(); const now = new Date(0).toISOString();
+    store.createSession({ id: "correlated", title: "Correlated", status: "active", createdAt: now, updatedAt: now });
+    const runtime = new ControlledRuntime();
+    const coordinator = new AgentRunCoordinator(store, {} as InferenceScheduler, runtime);
+    const run = coordinator.start({ model: "default", sessionId: "correlated", messages: [{ role: "user", content: "trace" }] });
+    await waitFor(() => runtime.starts.includes("trace"));
+
+    coordinator.recordModelRequest({
+      sequence: 42,
+      protocolVersion: "1",
+      timestamp: new Date(1).toISOString(),
+      type: "queue.updated",
+      data: { requestId: "request-42", routeId: "default", kind: "chat", lane: "gpu", runId: run.id, sessionId: "correlated", position: 0, depth: 1, status: "started" },
+    });
+    runtime.release("trace");
+    await waitFor(() => coordinator.get(run.id)?.status === "completed");
+
+    const events = coordinator.eventsAfter(run.id, 0);
+    expect(events).toContainEqual(expect.objectContaining({ type: "model.request.updated", data: expect.objectContaining({ requestId: "request-42", lifecycleSequence: 42 }) }));
+    expect(events).toContainEqual(expect.objectContaining({ type: "assistant.delta", data: expect.objectContaining({ text: "done:trace", requestId: "request-42" }) }));
+    expect(store.transcriptAfter("correlated", 0)).toContainEqual(expect.objectContaining({
+      kind: "message",
+      role: "assistant",
+      content: expect.objectContaining({ text: "done:trace", requestId: "request-42" }),
+    }));
+    store.close();
+  });
+
+  it("persists retry and terminal failure notices in the session transcript", async () => {
+    const store = SqliteStore.memory(); const now = new Date(0).toISOString();
+    store.createSession({ id: "notices", title: "Notices", status: "active", createdAt: now, updatedAt: now });
+    const runtime: AgentRuntime = { id: "failure", run: () => ({ cancel: () => undefined, async *[Symbol.asyncIterator]() { throw new Error("provider unavailable"); } }) };
+    const coordinator = new AgentRunCoordinator(store, {} as InferenceScheduler, runtime);
+    const run = coordinator.start({ model: "default", sessionId: "notices", clientRetryCount: 1, messages: [{ role: "user", content: "hello" }] });
+    await waitFor(() => coordinator.get(run.id)?.status === "failed");
+    expect(store.transcriptAfter("notices", 0).filter((entry) => entry.kind === "run-notice").map((entry) => entry.content.type)).toEqual(["retry", "failure"]);
+    store.close();
+  });
+
   it("round-robins complete agent turns across owners", async () => {
     const store = SqliteStore.memory();
     const runtime = new ControlledRuntime();
@@ -93,6 +133,36 @@ describe("AgentRunCoordinator", () => {
     expect(coordinator.get(active.id)?.status).toBe("interrupted");
     expect(coordinator.get(queued.id)?.status).toBe("interrupted");
     expect(() => coordinator.start({ model: "default", messages: [{ role: "user", content: "late" }] })).toThrow("shutting down");
+    store.close();
+  });
+
+  it("does not misclassify a runtime abort as a user cancellation", async () => {
+    const store = SqliteStore.memory();
+    const abort = Object.assign(new Error("runtime stream disappeared"), { name: "AbortError" });
+    const runtime: AgentRuntime = { id: "aborted", run: () => ({ cancel: () => undefined, async *[Symbol.asyncIterator]() { throw abort; } }) };
+    const coordinator = new AgentRunCoordinator(store, {} as InferenceScheduler, runtime);
+    const run = coordinator.start({ model: "default", messages: [{ role: "user", content: "hello" }] });
+
+    await waitFor(() => coordinator.get(run.id)?.status === "interrupted");
+
+    expect(coordinator.eventsAfter(run.id, 0)).toContainEqual(expect.objectContaining({
+      type: "run.interrupted",
+      data: expect.objectContaining({ error: "runtime_interrupted", detail: "runtime stream disappeared", resumable: true }),
+    }));
+    store.close();
+  });
+
+  it("still records an explicit user stop as cancelled", async () => {
+    const store = SqliteStore.memory();
+    const runtime = new ControlledRuntime();
+    const coordinator = new AgentRunCoordinator(store, {} as InferenceScheduler, runtime);
+    const run = coordinator.start({ model: "default", messages: [{ role: "user", content: "stop-me" }] });
+    await waitFor(() => runtime.starts.includes("stop-me"));
+
+    expect(coordinator.cancel(run.id)).toBe(true);
+    await waitFor(() => coordinator.get(run.id)?.status === "cancelled");
+
+    expect(coordinator.eventsAfter(run.id, 0).at(-1)?.type).toBe("run.cancelled");
     store.close();
   });
 

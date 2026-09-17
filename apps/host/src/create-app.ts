@@ -3,7 +3,7 @@ import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
-import { FakeEngineAdapter } from "@fitz/engine-fake";
+import { FakeEngineAdapter } from "@fitz/inference-core/testing";
 import {
   type EngineAdapter,
   type MediaEngineAdapter,
@@ -44,7 +44,7 @@ import { MediaJobCoordinator } from "./media-jobs.js";
 import type { AgentRuntime } from "@fitz/agent-core";
 import type { PiPackageService } from "@fitz/agent-pi";
 import { ContextManager } from "@fitz/context";
-import { OpenAICompatibleEngineAdapter } from "@fitz/engine-openai-compatible";
+import { OpenAICompatibleEngineAdapter } from "@fitz/adapter-openai-compatible";
 import {
   FalProvider,
   MediaProviderRegistry,
@@ -213,8 +213,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   for (const retiredRouteId of ["fast", "smart", "subagent"]) store.deleteRoute(retiredRouteId);
   discardLegacyConsumerConnections(store);
   discardLegacyRecipeAgentTopologies(store);
-  const configuredEngineRoot = options.engineRoot ?? store.getSetting<string>("engineRoot") ?? join(homedir(), ".llm", "engines");
-  store.setSetting("engineRoot", configuredEngineRoot);
+  const configuredEngineRoot = options.engineRoot ?? join(homedir(), ".llm", "engines");
   const routes = new RouteResolver(
     store.listRoutes(),
     store.listRecipes(),
@@ -269,6 +268,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     resources,
     ...(options.thermalGuard ? { thermalGuard: options.thermalGuard } : {}),
   });
+  const metrics = new MetricsRegistry();
   const scheduler = new InferenceScheduler(routes, lifecycle, events, {
     ...options.schedulerOptions,
     // One local model remains resident. Recipes opt into small batched
@@ -278,6 +278,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     cloudConcurrency: options.schedulerOptions?.cloudConcurrency ?? 8,
     recordUsage: async (record) => {
       store.recordRequestUsage(record);
+      metrics.observeRequestUsage(record);
       await options.schedulerOptions?.recordUsage?.(record);
     },
     recordEvidence: (record) => {
@@ -298,6 +299,11 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     options.agentConcurrency,
     options.agentConcurrencyPerOwner,
   );
+  const unsubscribeAgentModelRequests = events.subscribe((event) => {
+    if (event.type !== "queue.updated" || event.data.kind !== "chat" || !event.data.runId) return;
+    try { agentRuns.recordModelRequest(event); }
+    catch { /* Correlation is supplementary; it must never interrupt inference or later lifecycle subscribers. */ }
+  });
   const mediaJobs = new MediaJobCoordinator({ store, artifacts, scheduler, routes, ...(security ? { security } : {}) });
   const mediaImageTimeoutMs = options.mediaImageTimeoutMs ?? 120_000;
   const context = options.contextManager ?? new ContextManager(store, undefined, {}, createTranscriptMessageHydrator(store, artifacts));
@@ -306,7 +312,6 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
   const modelCatalog = options.modelCatalog;
   const ninferRuntime = options.ninferRuntime;
   const safety = options.safety;
-  const metrics = new MetricsRegistry();
   const unsubscribePersistence = events.subscribe((event) => {
     store.appendLifecycleEvent(event);
     if (event.type === "queue.updated" && event.data.lane === "gpu") store.recordGpuQueueEvent(event);
@@ -541,8 +546,8 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
         agentTopologies: agentTopologyPresentations(userRoutes, lifecycle, ownerUserId(request)),
         isAdministrator: true,
         hostName: hostname(),
-        engineRoot: store.getSetting<string>("engineRoot") ?? configuredEngineRoot,
-        engineFolders: scanEngineFolders(store.getSetting<string>("engineRoot") ?? configuredEngineRoot, store.listEngines()),
+        engineRoot: configuredEngineRoot,
+        engineFolders: scanEngineFolders(configuredEngineRoot, store.listEngines()),
         ...(ninferRuntime ? { ninferRuntime: await ninferRuntime.status() } : {}),
         recoveredInterruptedRequests,
         recoveredAgentRuns,
@@ -696,6 +701,7 @@ export function createHost(options: CreateHostOptions = {}): HostRuntime {
     await lifecycle.cancelPreparations();
     await scheduler.shutdown();
     await options.releaseLocalRuntime?.("host-close");
+    unsubscribeAgentModelRequests();
     unsubscribeMetrics();
     unsubscribePersistence();
     store.close();

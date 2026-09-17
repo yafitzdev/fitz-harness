@@ -3,13 +3,13 @@ import { once } from "node:events";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { FakeEngineAdapter } from "@fitz/engine-fake";
-import { ComfyUIEngineAdapter, substituteWorkflow } from "@fitz/engine-comfyui";
+import { FakeEngineAdapter } from "@fitz/inference-core/testing";
+import { ComfyUIEngineAdapter, substituteWorkflow } from "@fitz/adapter-comfyui";
 import { createHost, type HostRuntime } from "./create-app.js";
 import { createComfyUIPlaybook } from "./comfyui-playbook.js";
 import { testThermalGuard } from "./test-thermal.js";
 
-const FIXTURE = fileURLToPath(new URL("../../../packages/engine-comfyui/src/fixtures/comfyui-server.mjs", import.meta.url));
+const FIXTURE = fileURLToPath(new URL("../../../packages/adapter-comfyui/src/fixtures/comfyui-server.mjs", import.meta.url));
 /** Matches the fixture's canonical video output bytes. */
 const FIXTURE_VIDEO_BYTES = [0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f, 0x66, 0x69, 0x74, 0x7a];
 

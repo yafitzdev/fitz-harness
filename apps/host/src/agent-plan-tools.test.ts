@@ -207,6 +207,19 @@ describe("durable agent plans", () => {
     expect(store.getAgentRunPlan("parent")).toBeUndefined();
     store.close();
   });
+
+  it("rejects the summary plan shape that previously trapped the model in final-answer retries", async () => {
+    const store = harness();
+    const tool = createAgentPlanTool({ store }, { runId: "parent" });
+    const rejected = await execute(tool, { action: "set", items: [
+      { id: "explore", task: "Inspect the project structure" },
+      { id: "summarize", task: "Synthesize a concise orientation of the project" },
+    ] });
+    expect(rejected.details).toEqual(expect.objectContaining({ status: "rejected" }));
+    expect(rejected.content[0]).toEqual(expect.objectContaining({ text: expect.stringContaining("implicit final-answer phase") }));
+    expect(store.getAgentRunPlan("parent")).toBeUndefined();
+    store.close();
+  });
 });
 
 function harness(): SqliteStore {

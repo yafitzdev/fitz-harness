@@ -286,7 +286,7 @@ export function isMediaEngineAdapter(adapter: EngineAdapter | MediaEngineAdapter
 ```
 
 - `EngineAdapterRegistry` keeps one id-keyed map; `get(id)` stays the chat path, a new `getMedia(id)` narrows with `isMediaEngineAdapter` and throws `Unknown media adapter` otherwise. `LifecycleManager` gains a `#mediaAdapter` accessor used only by `runMedia`.
-- **Implementors**: `engine-media-fake` (deterministic image/video/audio bytes), `engine-comfyui` (H3; launches/stops the ComfyUI server — managed or external, exactly like llama.cpp — and drives `/prompt` → `/history/{id}` with progress from the websocket or `/progress`), and the cloud provider adapters (which implement `start`/`waitUntilReady` as no-ops over an external endpoint — the same pattern as `OpenAICompatibleEngineAdapter`, whose `start()` validates credentials and returns a handle without launching a process).
+- **Implementors**: the host's deterministic media test double, `adapter-comfyui` (H3; launches/stops the ComfyUI server — managed or external, exactly like llama.cpp — and drives `/prompt` → `/history/{id}` with progress from the websocket or `/progress`), and the cloud provider adapters (which implement `start`/`waitUntilReady` as no-ops over an external endpoint — the same pattern as `OpenAICompatibleEngineAdapter`, whose `start()` validates credentials and returns a handle without launching a process).
 - This is why a single `MediaEngineAdapter` interface covers **both** local engines and cloud providers: route resolution, the scheduler, the coordinator, the job DTOs, and cancellation are identical; only the HTTP payloads differ.
 
 ### 5.5 Scheduler + lifecycle integration
@@ -565,8 +565,8 @@ flowchart LR
     end
     subgraph Registry: EngineAdapterRegistry
         direction TB
-        FAKE[engine-media-fake]
-        CF[engine-comfyui / H3]
+        FAKE[host media test double]
+        CF[adapter-comfyui / H3]
         OMA[media-provider:openai-media]
         FALA[media-provider:fal]
         REPA[media-provider:replicate]
@@ -722,7 +722,7 @@ Notes:
 | **H3 VRAM at 2K unverified** (could exceed 32 GB) | High | Recipe VRAM estimate + `ResourceGovernor.assertCanLoad` refusal (usable = free − 2048 MiB reserve); 2K remains a cloud path for v1. |
 | **ComfyUI node/workflow drift** breaks H3 recipes | High | Pin workflow JSON versions in the recipe; surface workflow errors readably (`comfyui_workflow_error`); mirror the ninfer "validated handoff" pattern; `validateRecipe` checks workflow file presence. |
 | **Agent media tool deadlock** (blocking on a queued job behind the agent's own chat job) | High | KD-12: tools return a `mediaJobId` immediately; never await job completion inside `execute`. |
-| **Provider API drift** (fal/Replicate shapes change) | Medium | `MediaProvider` templates are the containment boundary; fixture-server tests per template (mirroring `fixtures/openai/chat-completion.json`); `defaultPollIntervalMs` + status normalization isolate drift. |
+| **Provider API drift** (fal/Replicate shapes change) | Medium | `MediaProvider` templates are the containment boundary; fixture-server tests exercise each provider contract; `defaultPollIntervalMs` + status normalization isolate drift. |
 | **Large video through base64 IPC** (memory + latency) | Medium | Kind-aware caps; raised video/audio preview caps; Range support on the content endpoint; blob-URL playback of whole files is acceptable for v1. |
 | **Artifact object growth** | Medium | Kind-aware size caps, SHA-256 deduplication, reference-aware deletion, and startup orphan collection keep the managed content directory bounded and repairable. |
 | **Orphaned cloud jobs after host restart** (job keeps running on fal/Replicate, still bills) | Medium | `providerJobId` persisted; follow-up issues provider cancels on startup; v1 marks jobs `interrupted` and documents the residual cost risk. |
@@ -781,8 +781,8 @@ Each PR is independently reviewable and mergeable; the sequence reflects the mil
 - **Dependencies**: PR 1, PR 2a; PR 2b's `MediaJobCoordinator` **public API** (submit/status signatures). The gateway never reaches into 2b internals (no direct store/scheduler access), so it is independently reviewable and can be reviewed in parallel with 2b once that API surface is agreed.
 - **Description**: the OpenAI-shaped `/v1/.../generations` surface (§5.8): images synchronous with a bounded await (504 envelope carries the job id), videos returning a job reference with a documented Fitz-native poll path. Consumed by Fitz's own clients only.
 
-### PR 3 — `engine-media-fake` adapter + fixtures + end-to-end tests
-- **Files/components**: new `packages/engine-media-fake/` (adapter implementing `MediaEngineAdapter`, deterministic image/audio/video bytes, `failWhenPromptIncludes`-style failure injection mirroring `packages/engine-fake`), `fixtures/` media fixture server, host integration tests (`POST /v1/images/generations` end-to-end through scheduler → lifecycle → artifact store).
+### PR 3 — media test double + fixtures + end-to-end tests
+- **Files/components**: a host-local test double implementing `MediaEngineAdapter`, deterministic image/audio/video bytes, failure injection, owned fixture servers, and host integration tests (`POST /v1/images/generations` end-to-end through scheduler → lifecycle → artifact store).
 - **Dependencies**: PR 2a, PR 2b.
 - **Description**: the GPU-free deterministic loop proves the whole pipeline (route → queue → lease → submit/poll → artifact → Inspector-capable bytes) before any real engine or provider exists.
 
@@ -801,8 +801,8 @@ Each PR is independently reviewable and mergeable; the sequence reflects the mil
 - **Dependencies**: PR 1 (MediaQuota, `principalForUser`), PR 2b (media service).
 - **Description**: `generate_image` / `generate_video` / `generate_audio` resolve configured media routes and submit non-blocking jobs (KD-12 — no agent-turn deadlock); gating and per-user job-count/credit quotas enforce cost control.
 
-### PR 7 — `engine-comfyui` for H3 (local media engine)
-- **Files/components**: `packages/engine-comfyui/` (`comfyui-adapter.ts` for managed/external lifecycle and transport; `comfyui-workflow.ts` for recipe validation, defaults, and pinned graph compilation), the official H3 video/audio recipe (768p/1K, VRAM estimate), startup reconciliation, and external weight placement per KD-13.
+### PR 7 — `adapter-comfyui` for H3 (local media engine)
+- **Files/components**: `packages/adapter-comfyui/` (`comfyui-adapter.ts` for managed/external lifecycle and transport; `comfyui-workflow.ts` for recipe validation, defaults, and pinned graph compilation), the official H3 video/audio recipe (768p/1K, VRAM estimate), startup reconciliation, and external weight placement per KD-13.
 - **Dependencies**: PR 2a (interface), PR 2b (service), PR 3 (test pattern).
 - **Description**: first real local media engine — on-demand load, leases across multi-minute generations, governor refusal on VRAM shortfall, and no fabricated H3 image capability.
 

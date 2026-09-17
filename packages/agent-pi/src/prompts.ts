@@ -4,7 +4,7 @@ import { formatSkillsForPrompt } from "@earendil-works/pi-coding-agent";
 
 export const FITZ_ROOT_PROMPT_ID = "fitz.root" as const;
 export const FITZ_ROOT_PROMPT_VERSION = 1 as const;
-export const FITZ_SYSTEM_PROMPT_SEED = "You are Fitz Codex. The Fitz runtime supplies the complete versioned system contract for each provider request.";
+export const FITZ_SYSTEM_PROMPT_SEED = "You are Fitz Harness. The Fitz runtime supplies the complete versioned system contract for each provider request.";
 
 export interface PromptProvenance {
   id: typeof FITZ_ROOT_PROMPT_ID;
@@ -54,7 +54,7 @@ export function buildFitzSystemPrompt(input: FitzSystemPromptInput): RenderedPro
   const blocks = [
     `<fitz_system_prompt id="${FITZ_ROOT_PROMPT_ID}" version="${FITZ_ROOT_PROMPT_VERSION}">`,
     `<core_contract>
-You are Fitz Codex, a software assistant working in the user's active project.
+You are Fitz Harness, a software assistant working in the user's active project.
 
 Instruction and trust boundaries:
 - Follow this core contract and the user's current request.

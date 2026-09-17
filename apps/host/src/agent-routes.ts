@@ -35,6 +35,7 @@ export function registerAgentRoutes(options: RegisterAgentRoutesOptions): void {
       const existing = body.clientRequestId ? store.agentRunForClientRequest(body.clientRequestId) : undefined;
       if (existing) {
         if (!canAccessOwner(principal, existing.ownerUserId)) return reply.code(409).send({ error: "Request identity is already in use" });
+        if (body.clientRetryCount) agentRuns.recordClientRetry(existing.id, body.clientRetryCount);
         return reply.code(200).send({ protocolVersion: PROTOCOL_VERSION, data: existing, idempotentReplay: true });
       }
       const session = body.sessionId ? store.getSession(body.sessionId) : undefined;
@@ -289,6 +290,7 @@ function parseAgentRunRequest(value: unknown): AgentRunRequest {
     ...(source.attachments !== undefined ? { attachments: parseAttachmentReferences(source.attachments) } : {}),
     accessMode,
     ...(typeof source.clientRequestId === "string" && source.clientRequestId.trim() ? { clientRequestId: validateClientRequestId(source.clientRequestId) } : {}),
+    ...(Number.isSafeInteger(source.clientRetryCount) && Number(source.clientRetryCount) > 0 ? { clientRetryCount: Number(source.clientRetryCount) } : {}),
   };
 }
 

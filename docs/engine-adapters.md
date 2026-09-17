@@ -1,6 +1,12 @@
-# Engine adapters and registry
+# Adapters and the inference registry
 
 Fitz can host different inference engines without giving each engine its own product-level routing policy. Engines provide launch and transport mechanics; the host applies one common local residency contract.
+
+The distinction is deliberate:
+
+- `packages/adapter-*` contains small, Fitz-owned TypeScript integration code and belongs in Git.
+- `/opt/fitz/llm/engines/*` contains third-party engine checkouts or builds and never belongs in the Fitz repository.
+- models, environments, logs, and generated output are runtime state and never belong in either source checkout.
 
 ## Canonical inference registry
 
@@ -18,11 +24,15 @@ All local engines, environments, registrations, and model payloads live in the m
 
 Windows accesses the same tree at `\\wsl.localhost\Fitz-Inference\opt\fitz\llm`. There is no second Windows model or engine registry.
 
+`FITZ_LLM_ROOT` is the only supported registry-location override. Fitz derives `engines/`, `environments/`, and `models/` from it as one unit and refuses to start when the registry is inside the Fitz Harness application tree. Engine placement is infrastructure configuration, not a mutable application setting.
+
 Engine repositories under `engines/` are treated as read-only by Fitz. Installation and upstream Git updates remain independent of the app. Generated environments, model payloads, configuration, and mutable runtime output do not live inside an engine checkout.
 
 ## Engine registration
 
-The Playbooks workspace discovers immediate children beneath `engines/`. A generic managed engine registration records its launch command, arguments, working directory, health endpoint, and runtime id in SQLite. Launch arguments can use `{host}`, `{port}`, `{model}`, and `{context}` placeholders.
+The Playbooks workspace discovers immediate children beneath `engines/`. Discovery never copies or installs an engine. A generic managed engine registration records its launch command, arguments, working directory, health endpoint, and runtime id in SQLite. Launch arguments can use `{host}`, `{port}`, `{model}`, and `{context}` placeholders.
+
+Onboarding has four explicit phases: provision an engine into the external registry, verify its executable and payloads, register its launch metadata, and reconcile runnable recipes. Specialized provisioners may automate the first phase, but adapters never own engine source or model payloads.
 
 Specialized reconcilers may materialize recipes from registration JSON—for example vLLM registrations under `models/vllm/` and GGUF registrations beneath `models/gguf/`. A registration describes a runnable recipe; it does not assign a route. Missing payloads dematerialize the recipe instead of leaving an unusable route behind.
 
@@ -53,13 +63,13 @@ Smart and Fast execute in the bounded cloud lane and may overlap. Cloud delegati
 
 Credentials are stored by the desktop using Electron safe storage and are registered on the host under owner-and-connection-scoped environment variable names. One user cannot bind another user's discovered recipe.
 
-## Built-in adapters
+## Runtime adapters and test support
 
 - **NInfer**: managed local text engine optimized for its supported model set.
 - **llama.cpp**: managed local GGUF text/VLM server.
 - **vLLM**: managed local Linux text server materialized from strict registration JSON.
 - **OpenAI-compatible**: remote text endpoints used for consumer-owned Smart/Fast roles.
 - **ComfyUI and media providers**: local or remote media engines using the shared job pipeline.
-- **Fake**: deterministic development and test adapter.
+- **Fake test support**: deterministic in-process text and media doubles used by tests and `dev:fake`; these are not installable engine packages.
 
 The exact residency and displacement algorithm is documented in [model-residency.md](./model-residency.md).

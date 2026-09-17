@@ -193,36 +193,36 @@ describe("ActivityTimeline", () => {
     const messages = document.createElement("main");
     const timeline = new ActivityTimeline({
       messages,
-      projectRoot: () => "C:\\work\\fitz-codex",
+      projectRoot: () => "C:\\work\\fitz-harness",
       inspectResource: vi.fn(),
       decideApproval: vi.fn(async () => "approved" as const),
       showStatus: vi.fn(),
     });
     const row = timeline.appendTool("ls", { path: "." }, "list-1", true);
     timeline.completeTool(row, "ls", { path: "." }, [], false);
-    expect(row.querySelector(".agent-activity-label")?.textContent).toBe("Listed fitz-codex");
+    expect(row.querySelector(".agent-activity-label")?.textContent).toBe("Listed fitz-harness");
   });
 
   it("uses project-relative paths in tool labels and expanded details", () => {
     const messages = document.createElement("main");
     const timeline = new ActivityTimeline({
       messages,
-      projectRoot: () => "C:\\work\\fitz-codex",
+      projectRoot: () => "C:\\work\\fitz-harness",
       inspectResource: vi.fn(),
       decideApproval: vi.fn(async () => "approved" as const),
       showStatus: vi.fn(),
     });
-    const list = timeline.appendTool("ls", { path: "C:/work/fitz-codex/docs" }, "list-absolute", true);
-    timeline.completeTool(list, "ls", { path: "C:/work/fitz-codex/docs" }, [], false);
-    const shell = timeline.appendTool("bash", { command: "cd C:/work/fitz-codex && pnpm test" }, "shell-absolute", true);
+    const list = timeline.appendTool("ls", { path: "C:/work/fitz-harness/docs" }, "list-absolute", true);
+    timeline.completeTool(list, "ls", { path: "C:/work/fitz-harness/docs" }, [], false);
+    const shell = timeline.appendTool("bash", { command: "cd C:/work/fitz-harness && pnpm test" }, "shell-absolute", true);
 
     expect(list.querySelector(".agent-activity-label")?.textContent).toBe("Listed docs");
     expect(list.querySelector(".tool-activity-input")?.textContent).toContain("./docs");
-    expect(list.textContent).not.toContain("C:/work/fitz-codex");
+    expect(list.textContent).not.toContain("C:/work/fitz-harness");
     expect(shell.querySelector(".shell-command")?.textContent).toBe("cd . && pnpm test");
-    timeline.completeTool(shell, "bash", { command: "cd C:/work/fitz-codex && pnpm test" }, { content: [{ type: "text", text: "C:/work/fitz-codex/apps" }] }, false);
+    timeline.completeTool(shell, "bash", { command: "cd C:/work/fitz-harness && pnpm test" }, { content: [{ type: "text", text: "C:/work/fitz-harness/apps" }] }, false);
     expect(shell.querySelector(".shell-output")?.textContent).toBe("./apps");
-    expect(shell.textContent).not.toContain("C:/work/fitz-codex");
+    expect(shell.textContent).not.toContain("C:/work/fitz-harness");
   });
 
   it("uses running labels until every tool in a burst completes and one durable work summary", () => {
@@ -253,6 +253,17 @@ describe("ActivityTimeline", () => {
     timeline.appendTool("bash", { command: "pnpm test" }, "tool-1", true, "2026-08-03T08:00:00.000Z");
     timeline.finishWork("2026-08-03T09:53:42.000Z");
     expect(messages.querySelector(".work-summary-label")?.textContent).toBe("Worked for 1h 53m");
+  });
+
+  it("shows each tool's duration from its durable event timestamps", () => {
+    const { timeline } = setup();
+    const quick = timeline.appendTool("read", { path: "README.md" }, "quick", true, "2026-08-03T08:00:00.000Z");
+    timeline.completeTool(quick, "read", { path: "README.md" }, "ok", false, "2026-08-03T08:00:00.184Z");
+    const slow = timeline.appendTool("bash", { command: "pnpm test" }, "slow", true, "2026-08-03T08:00:01.000Z");
+    timeline.completeTool(slow, "bash", { command: "pnpm test" }, "ok", false, "2026-08-03T08:00:03.450Z");
+
+    expect(quick.querySelector(".agent-activity-duration")?.textContent).toBe("184ms");
+    expect(slow.querySelector(".agent-activity-duration")?.textContent).toBe("2.5s");
   });
 
   it("closes restored work at its last activity instead of a later user-message boundary", () => {

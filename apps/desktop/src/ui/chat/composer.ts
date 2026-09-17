@@ -4,6 +4,7 @@ import { svgIcon as svg, textBlock } from "../primitives/dom.js";
 import type { OverlayHost } from "../primitives/overlay-host.js";
 import type { DesktopBridge } from "../../preload.js";
 import { MEDIA_REFERENCE_MAX_BYTES, type MediaModality } from "@fitz/protocol";
+import { ComposerReferenceRegistry, type ComposerReference, type ComposerReferenceProvider } from "./composer-references.js";
 
 export type AttachmentKind = "image" | "video" | "audio" | "pdf" | "file";
 export type PastedAttachment = {
@@ -14,7 +15,7 @@ export type PastedAttachment = {
   name: string;
   kind: AttachmentKind;
 };
-export interface ComposerSubmission { content: string; mediaCommand?: MediaModality }
+export interface ComposerSubmission { content: string; mediaCommand?: MediaModality; references?: ComposerReference[] }
 
 export interface ComposerOptions {
   mount: HTMLElement;
@@ -34,6 +35,7 @@ export interface ComposerOptions {
   onWorktreeCreated: (path: string, branch: string) => void | Promise<void>;
   onError: (message: string) => void;
   isRunning: () => boolean;
+  referenceProviders?: readonly ComposerReferenceProvider[];
 }
 
 type PastedFile = PastedAttachment & { chip: HTMLElement };
@@ -180,6 +182,12 @@ export class Composer {
   private currentBranch = "main";
   private availableBranches: string[] = [];
   private mediaCommand: MediaModality | undefined;
+  private readonly referenceRegistry: ComposerReferenceRegistry;
+  private readonly referenceMenu = document.createElement("div");
+  private readonly references: ComposerReference[] = [];
+  private referenceResults: ComposerReference[] = [];
+  private referenceIndex = 0;
+  private referenceSearchGeneration = 0;
 
   constructor(options: ComposerOptions) {
     this.options = options;
@@ -211,6 +219,10 @@ export class Composer {
     this.addMenu = this.el<HTMLElement>("#composer-add-menu");
     this.prompt = this.el<HTMLTextAreaElement>("#prompt");
     this.mediaCommandTag = this.el<HTMLButtonElement>("#media-command-tag");
+    this.referenceRegistry = new ComposerReferenceRegistry(options.referenceProviders ?? []);
+    this.referenceMenu.className = "composer-reference-menu";
+    this.referenceMenu.hidden = true;
+    this.form.append(this.referenceMenu);
     const controlsElements = this.controlsElements();
     this.controls = new ComposerControls(controlsElements, {
       closeAllPopovers: options.closeAllPopovers,
@@ -228,17 +240,19 @@ export class Composer {
   get value(): string { return this.prompt.value; }
   get submission(): ComposerSubmission {
     const value = this.prompt.value;
-    if (this.mediaCommand) return { content: value, mediaCommand: this.mediaCommand };
+    const withReferences = this.references.length ? { references: [...this.references] } : {};
+    if (this.mediaCommand) return { content: value, mediaCommand: this.mediaCommand, ...withReferences };
     // A bare slash command with no trailing space never shows the tag bubble, but
     // submitting it still routes to the media flow (e.g. `/video` + Enter).
     const bare = /^\/(video|audio|image)$/i.exec(value);
     if (bare) return { content: "", mediaCommand: bare[1]!.toLowerCase() as MediaModality };
-    return { content: value };
+    return { content: value, ...withReferences };
   }
 
   focus(): void { this.prompt.focus(); }
 
   setDraft(text: string): void {
+    this.clearReferences();
     this.applyDraft(text);
     this.resize();
     this.options.onInput(this.value);
@@ -246,6 +260,7 @@ export class Composer {
 
   clearDraft(): void {
     this.prompt.value = "";
+    this.clearReferences();
     this.setMediaCommand(undefined);
     this.resize();
   }
@@ -257,11 +272,10 @@ export class Composer {
 
   setState(state: { ready: boolean; running: boolean; generating?: boolean; hasSession: boolean }): void {
     const { ready, running, generating = false, hasSession } = state;
-    const hasText = this.value.trim().length > 0;
+    const hasText = this.value.trim().length > 0 || this.references.length > 0;
     const busy = running || generating;
-    // The composer stays unlocked while the agent is reasoning so the user can write
-    // a steering message; sending routes it into the running conversation instead of
-    // canceling. With an empty draft the send button becomes the stop control. A
+    // The composer stays unlocked while the agent is reasoning so the user can queue
+    // the next turn. With an empty draft the send button becomes the stop control. A
     // media job in flight behaves the same way: empty draft stops the job, typed
     // text sends a regular message (steering only applies to agent runs).
     this.prompt.disabled = !ready;
@@ -270,7 +284,7 @@ export class Composer {
     const stopVisible = busy && !hasText;
     this.sendButton.classList.toggle("running", stopVisible);
     this.sendButton.title = running
-      ? (hasText ? "Send to the running agent" : "Stop task")
+      ? (hasText ? "Queue message" : "Stop task")
       : generating && !hasText ? "Stop task"
       : "Send message";
     this.sendButton.setAttribute("aria-label", this.sendButton.title);
@@ -301,6 +315,7 @@ export class Composer {
     this.newChatProject.textContent = projectName ?? "";
     this.newChatProjectControl.hidden = projectName === undefined;
     this.prompt.value = "";
+    this.clearReferences();
     this.setMediaCommand(undefined);
     this.resize();
     this.resetHistory();
@@ -360,6 +375,7 @@ export class Composer {
     const pastedChips = this.pastedFiles.map((pasted) => pasted.chip);
     this.composerAttachments.replaceChildren();
     pastedChips.forEach((chip) => this.composerAttachments.append(chip));
+    this.renderReferenceChips();
     this.refreshAttachments();
   }
 
@@ -393,6 +409,7 @@ export class Composer {
   }
 
   closePopovers(): void {
+    this.closeReferenceMenu();
     this.controls.closePopovers();
     this.options.overlayHost.close(this.addMenu);
     this.attachButton.setAttribute("aria-expanded", "false");
@@ -401,6 +418,46 @@ export class Composer {
     this.newChatEnvironmentControl.setAttribute("aria-expanded", "false");
     this.newChatBranchControl.setAttribute("aria-expanded", "false");
   }
+
+  private async searchReferences(): Promise<void> {
+    const match = /(?:^|\s)@([^\s@]*)$/.exec(this.prompt.value.slice(0, this.prompt.selectionStart));
+    if (!match || !this.options.referenceProviders?.length) { this.closeReferenceMenu(); return; }
+    const generation = ++this.referenceSearchGeneration;
+    const results = await this.referenceRegistry.search(match[1] ?? "");
+    if (generation !== this.referenceSearchGeneration) return;
+    this.referenceResults = results; this.referenceIndex = 0; this.renderReferenceMenu();
+  }
+
+  private renderReferenceMenu(): void {
+    this.referenceMenu.replaceChildren(); this.referenceMenu.hidden = this.referenceResults.length === 0;
+    this.referenceResults.forEach((reference, index) => {
+      const button = document.createElement("button"); button.type = "button"; button.className = "composer-reference-option"; button.classList.toggle("selected", index === this.referenceIndex);
+      const label = document.createElement("span"); label.textContent = reference.label;
+      const detail = document.createElement("small"); detail.textContent = reference.detail ?? reference.kind;
+      button.append(label, detail); button.addEventListener("mousedown", (event) => event.preventDefault()); button.addEventListener("click", () => this.selectReference(reference)); this.referenceMenu.append(button);
+    });
+  }
+
+  private selectReference(reference: ComposerReference): void {
+    const before = this.prompt.value.slice(0, this.prompt.selectionStart).replace(/@[^\s@]*$/, "");
+    const after = this.prompt.value.slice(this.prompt.selectionEnd);
+    this.prompt.value = `${before}${after}`; this.prompt.setSelectionRange(before.length, before.length);
+    if (!this.references.some((item) => item.providerId === reference.providerId && item.value === reference.value)) this.references.push(reference);
+    this.renderReferenceChips(); this.closeReferenceMenu(); this.resize(); this.options.onInput(this.value);
+  }
+
+  private renderReferenceChips(): void {
+    this.composerAttachments.querySelectorAll(".composer-reference-chip").forEach((chip) => chip.remove());
+    for (const reference of this.references) {
+      const chip = document.createElement("button"); chip.type = "button"; chip.className = "attachment-chip composer-reference-chip"; chip.textContent = `@${reference.label}`; chip.title = `Remove ${reference.kind} reference`;
+      chip.addEventListener("click", () => { const index = this.references.indexOf(reference); if (index >= 0) this.references.splice(index, 1); this.renderReferenceChips(); this.options.onValueChange(this.value); });
+      this.composerAttachments.append(chip);
+    }
+    this.refreshAttachments();
+  }
+
+  private clearReferences(): void { this.references.splice(0); this.renderReferenceChips(); this.closeReferenceMenu(); }
+  private closeReferenceMenu(): void { this.referenceSearchGeneration += 1; this.referenceResults = []; this.referenceMenu.hidden = true; this.referenceMenu.replaceChildren(); }
 
   private el<T extends HTMLElement>(selector: string): T {
     const node = this.root.querySelector<T>(selector);
@@ -455,9 +512,15 @@ export class Composer {
       this.captureMediaCommand();
       this.resize();
       this.options.onInput(this.value);
+      void this.searchReferences();
     });
     this.prompt.addEventListener("paste", (event) => this.handlePaste(event));
     this.prompt.addEventListener("keydown", (event) => {
+      if (!this.referenceMenu.hidden && this.referenceResults.length) {
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); this.referenceIndex = (this.referenceIndex + (event.key === "ArrowDown" ? 1 : -1) + this.referenceResults.length) % this.referenceResults.length; this.renderReferenceMenu(); return; }
+        if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); this.selectReference(this.referenceResults[this.referenceIndex]!); return; }
+        if (event.key === "Escape") { event.preventDefault(); this.closeReferenceMenu(); return; }
+      }
       if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
         event.preventDefault();
         this.form.requestSubmit();

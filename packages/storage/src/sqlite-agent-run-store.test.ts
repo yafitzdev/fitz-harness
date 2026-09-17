@@ -52,8 +52,8 @@ describe("SqliteStore agent-run persistence", () => {
     const request = { model: "fast", sessionId: "s", accessMode: "full" as const, messages: [{ role: "user" as const, content: "continue me" }] };
     store.createAgentRun({ id: "run-1", routeId: "fast", sessionId: "s", status: "running", createdAt: now, updatedAt: now, lastSequence: 0 }, request);
     store.appendAgentEvent({ protocolVersion: "1", runId: "run-1", sequence: 1, timestamp: now, type: "run.created", data: {} });
-    store.appendAgentEvent({ protocolVersion: "1", runId: "run-1", sequence: 2, timestamp: now, type: "reasoning.delta", data: { text: "durable thought" } });
-    store.appendAgentEvent({ protocolVersion: "1", runId: "run-1", sequence: 3, timestamp: now, type: "tool.started", data: { toolCallId: "call-1", toolName: "write", input: { path: "a.txt" } } });
+    store.appendAgentEvent({ protocolVersion: "1", runId: "run-1", sequence: 2, timestamp: now, type: "reasoning.delta", data: { text: "durable thought", requestId: "request-1" } });
+    store.appendAgentEvent({ protocolVersion: "1", runId: "run-1", sequence: 3, timestamp: now, type: "tool.started", data: { toolCallId: "call-1", toolName: "write", input: { path: "a.txt" }, requestId: "request-1" } });
 
     expect(store.recoverInterruptedAgentRuns()).toBe(1);
     expect(store.getAgentRun("run-1")).toEqual(expect.objectContaining({
@@ -65,8 +65,8 @@ describe("SqliteStore agent-run persistence", () => {
     expect(store.latestSessionAgentRun("s")?.id).toBe("run-1");
     expect(store.agentEventsAfter("run-1", 0).at(-1)?.type).toBe("run.interrupted");
     expect(store.transcriptAfter("s", 0)).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: "reasoning", content: expect.objectContaining({ text: "durable thought", eventSequence: 2 }) }),
-      expect.objectContaining({ kind: "tool-call", content: expect.objectContaining({ toolCallId: "call-1", eventSequence: 3 }) }),
+      expect.objectContaining({ kind: "reasoning", content: expect.objectContaining({ text: "durable thought", eventSequence: 2, requestId: "request-1" }) }),
+      expect.objectContaining({ kind: "tool-call", content: expect.objectContaining({ toolCallId: "call-1", eventSequence: 3, requestId: "request-1" }) }),
     ]));
     expect(store.getSessionProjection("s")).toMatchObject({ sourceRevision: 2, transcriptEntryCount: 2, reasoningCount: 1, toolCallCount: 1 });
     expect(store.claimAgentRunResume("run-1")).toBe(true);
@@ -74,6 +74,29 @@ describe("SqliteStore agent-run persistence", () => {
     store.createAgentRun({ id: "run-2", routeId: "fast", sessionId: "s", status: "queued", createdAt: now, updatedAt: now, lastSequence: 0 }, request, "run-1");
     expect(store.agentRunResumedFrom("run-1")?.id).toBe("run-2");
     store.close();
+  });
+
+  it("repairs a run that crashed after the durable assistant completion boundary", () => {
+    const store = SqliteStore.memory();
+    const startedAt = new Date(0).toISOString();
+    const completedAt = new Date(1000).toISOString();
+    try {
+      store.createSession({ id: "completed-session", title: "Completed reply", status: "active", createdAt: startedAt, updatedAt: startedAt });
+      store.createAgentRun({ id: "completed-run", routeId: "fast", sessionId: "completed-session", status: "running", createdAt: startedAt, updatedAt: startedAt, lastSequence: 0 });
+      store.appendAgentEvent({ protocolVersion: "1", runId: "completed-run", sequence: 1, timestamp: startedAt, type: "run.started", data: {} });
+      store.appendAgentEvent({ protocolVersion: "1", runId: "completed-run", sequence: 2, timestamp: completedAt, type: "assistant.delta", data: { text: "Finished answer", requestId: "request-finished" } });
+      store.appendAgentEvent({ protocolVersion: "1", runId: "completed-run", sequence: 3, timestamp: completedAt, type: "assistant.completed", data: { requestId: "request-finished" } });
+
+      expect(store.recoverInterruptedAgentRuns()).toBe(0);
+      expect(store.getAgentRun("completed-run")).toMatchObject({ status: "completed" });
+      expect(store.latestSessionAgentRun("completed-session")).toBeUndefined();
+      expect(store.agentEventsAfter("completed-run", 0).at(-1)).toMatchObject({ type: "run.completed", data: { recovered: true } });
+      expect(store.transcriptAfter("completed-session", 0)).toContainEqual(expect.objectContaining({
+        kind: "message",
+        role: "assistant",
+        content: expect.objectContaining({ text: "Finished answer", phase: "final", requestId: "request-finished", eventSequence: 2 }),
+      }));
+    } finally { store.close(); }
   });
 
   it("reopens an orphaned continuation claim without reopening consumed sources", () => {

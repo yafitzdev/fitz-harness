@@ -35,6 +35,7 @@ export interface MessageAttachment {
 export interface TranscriptMessageMetadata {
   id?: string;
   sequence?: number;
+  requestId?: string;
   document?: ChatContentDocument;
 }
 

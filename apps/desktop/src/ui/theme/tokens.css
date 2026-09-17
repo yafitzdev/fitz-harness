@@ -1,10 +1,22 @@
 :root {
   color-scheme: dark;
-  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: "Cascadia Mono", Consolas, monospace;
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
   font: 14px/1.5 var(--font-ui);
 
-  /* ---- JEON lab brand palette ---------------------------------------------
+  /* ---- Conversation typography -------------------------------------------
+     Chat uses its own reading scale so dense application chrome can stay at
+     14px without making long answers feel like interface copy. */
+  --chat-font-size: 15px;
+  --chat-line-height: 26px;
+  --chat-compact-size: 13px;
+  --chat-compact-line-height: 22px;
+  --chat-code-size: 12px;
+  --chat-code-line-height: 21px;
+  --chat-measure: 748px;
+  --chat-turn-gap: 16px;
+
+  /* ---- Fitz Harness brand palette -----------------------------------------
      These are the only brand-color inputs. Components consume the semantic
      roles below, so future palette changes stay inside this file. */
   --brand-black: #0d0d0d;

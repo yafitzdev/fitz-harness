@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const unpackedRoot = resolve("apps/desktop/release/win-unpacked");
-const executable = join(unpackedRoot, "Fitz Codex.exe");
+const executable = join(unpackedRoot, "Fitz Harness.exe");
 
 await smokeDesktopBootstrap();
 await smokeDesktopWithoutHost();

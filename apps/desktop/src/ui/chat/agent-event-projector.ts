@@ -8,12 +8,12 @@ export interface AgentRunActivity {
   setRun(activity: HTMLElement, label: string, startedAt: number): void;
   appendContext(label?: string): HTMLElement;
   markAssistantAsCommentary(content: HTMLElement): void;
-  appendReasoning(running: boolean): HTMLElement;
+  appendReasoning(running: boolean, createdAt?: string): HTMLElement;
   appendReasoningDelta(row: HTMLElement, text: string): void;
   completeReasoning(row: HTMLElement): void;
   appendApproval(approval: Json): HTMLElement;
   resolveApproval(row: HTMLElement, decision: "approved" | "denied"): void;
-  appendTool(toolName: string, input: unknown, toolCallId: string, running: boolean): HTMLElement;
+  appendTool(toolName: string, input: unknown, toolCallId: string, running: boolean, createdAt?: string): HTMLElement;
   completeTool(row: HTMLElement, toolName: string, input: unknown, result: unknown, isError: boolean, completedAt?: string): void;
   finishWork(completedAt?: string): void;
 }
@@ -24,10 +24,10 @@ export interface AgentEventProjectorOptions {
   activityRoot: HTMLElement;
   messages: HTMLElement;
   activity: AgentRunActivity;
-  appendAssistant: (runId: string, createdAt?: string) => HTMLElement;
+  appendAssistant: (runId: string, createdAt?: string, requestId?: string) => HTMLElement;
   appendAssistantDelta: (target: HTMLElement, delta: string) => void;
   replaceAssistant: (target: HTMLElement, text: string) => void;
-  loadFinalAssistant?: (runId: string) => Promise<{ text: string; createdAt?: string } | undefined>;
+  loadFinalAssistant?: (runId: string) => Promise<{ text: string; createdAt?: string; requestId?: string } | undefined>;
   appendSystem: (message: string) => void;
   appendChangeSummary: (files: Array<{ path: string; action: "edited" | "created" }>) => void;
   registerGeneratedFile?: (path: string, action: "edited" | "created") => void;
@@ -77,6 +77,7 @@ export class AgentEventProjector {
     if (this.#done || this.#options.isCurrent?.() === false) return;
     const data = event.data as Json | undefined;
     if (event.type === "run.queue.updated") this.#queueUpdated(data);
+    if (event.type === "run.retry") this.#options.appendSystem(`Retry ${Number(data?.attempt ?? 2)}: ${String(data?.reason ?? "The request is being submitted again.")}`);
     if (event.type === "run.started") this.#runStarted();
     if (event.type === "assistant.delta") this.#assistantDelta(event);
     if (event.type === "reasoning.delta") await this.#reasoningDelta(event);
@@ -108,7 +109,11 @@ export class AgentEventProjector {
   #assistantDelta(event: Json): void {
     if (!this.#assistant) {
       this.#options.activityRoot.remove();
-      this.#assistant = this.#options.appendAssistant(this.#options.runId, typeof event.timestamp === "string" ? event.timestamp : undefined);
+      this.#assistant = this.#options.appendAssistant(
+        this.#options.runId,
+        typeof event.timestamp === "string" ? event.timestamp : undefined,
+        typeof event.data?.requestId === "string" ? event.data.requestId : undefined,
+      );
     }
     const delta = String(event.data?.text ?? "");
     this.#options.appendAssistantDelta(this.#assistant, delta);
@@ -124,7 +129,7 @@ export class AgentEventProjector {
     if (!delta) return;
     if (!this.#reasoning) {
       this.#options.activityRoot.remove();
-      this.#reasoning = this.#options.activity.appendReasoning(true);
+      this.#reasoning = this.#options.activity.appendReasoning(true, typeof event.timestamp === "string" ? event.timestamp : undefined);
     }
     this.#options.activity.appendReasoningDelta(this.#reasoning, delta);
     this.#options.addTokenEstimate(delta);
@@ -194,7 +199,7 @@ export class AgentEventProjector {
       return;
     }
     this.#tools.set(toolCallId, {
-      row: this.#options.activity.appendTool(toolName, input, toolCallId, true),
+      row: this.#options.activity.appendTool(toolName, input, toolCallId, true, typeof event.timestamp === "string" ? event.timestamp : undefined),
       toolName,
       input,
     });
@@ -215,7 +220,7 @@ export class AgentEventProjector {
       return;
     }
     if (!existing) existing = this.#options.findTool(toolCallId);
-    if (existing) this.#options.activity.completeTool(existing.row, existing.toolName, existing.input, data?.result, Boolean(data?.isError));
+    if (existing) this.#options.activity.completeTool(existing.row, existing.toolName, existing.input, data?.result, Boolean(data?.isError), typeof event.timestamp === "string" ? event.timestamp : undefined);
     this.#options.addTokenEstimate(stringifyForEstimate(data?.result));
     const mediaJobId = mediaJobIdFromToolResult(data?.result);
     if (mediaJobId) {
@@ -255,7 +260,7 @@ export class AgentEventProjector {
     if (success && this.#changedFiles.size > 0) {
       this.#options.appendChangeSummary([...this.#changedFiles.entries()].map(([path, action]) => ({ path, action })));
     }
-    if (!this.#mediaHandedOff) this.#options.activity.finishWork();
+    if (!this.#mediaHandedOff) this.#options.activity.finishWork(typeof event.timestamp === "string" ? event.timestamp : undefined);
     this.#options.clearPlan();
   }
 
@@ -265,7 +270,7 @@ export class AgentEventProjector {
       if (this.#options.isCurrent?.() === false) return;
       if (!recovered?.text) return;
       if (!this.#assistant) {
-        this.#assistant = this.#options.appendAssistant(this.#options.runId, recovered.createdAt);
+        this.#assistant = this.#options.appendAssistant(this.#options.runId, recovered.createdAt, recovered.requestId);
         this.#options.appendAssistantDelta(this.#assistant, recovered.text);
         this.#options.addTokenEstimate(recovered.text);
       } else if (this.#assistantText !== recovered.text) {

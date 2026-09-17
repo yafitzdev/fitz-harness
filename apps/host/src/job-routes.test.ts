@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentRunRecord } from "@fitz/protocol";
-import { FakeEngineAdapter } from "@fitz/engine-fake";
+import { FakeEngineAdapter } from "@fitz/inference-core/testing";
 import { createHost } from "./create-app.js";
 
 describe("unified job routes", () => {

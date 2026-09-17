@@ -37,7 +37,7 @@ jobs:
         run: pnpm --filter @fitz/desktop dist:win:publish
       - uses: actions/upload-artifact@v4
         with:
-          name: fitz-codex-windows
+          name: fitz-harness-windows
           path: |
             apps/desktop/release/*.exe
             apps/desktop/release/*.yml

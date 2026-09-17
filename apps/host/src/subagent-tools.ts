@@ -215,7 +215,7 @@ function formatBudget(budget: SubagentRouteBudget, meteredCloud: boolean): strin
 
 function subagentSystemPrompt(role: SubagentRoleDefinition, cwd?: string): string {
   return [
-    `You are an isolated Fitz Codex worker assigned the registered ${role.displayName} role (${role.id}@${role.version}).`,
+    `You are an isolated Fitz Harness worker assigned the registered ${role.displayName} role (${role.id}@${role.version}).`,
     `Workspace root: ${cwd ?? "the working directory resolved by the Fitz runtime"}.`,
     role.systemInstructions,
     "Do not attempt to delegate to another agent.",

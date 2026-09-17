@@ -1,14 +1,14 @@
-# Fitz Codex — Product and Technical Design
+# Fitz Harness — Product and Technical Design
 
 Status: initial architecture specification  
 Target platform: Windows 11 host and desktop clients, with iOS/Android clients to follow  
-Working repository name: `fitz-codex`  
+Canonical repository name: `fitz-harness`
 
-> **Naming note:** “Fitz Codex” is a working project name. The product is inspired by the interaction quality of the Codex desktop application, but it is not affiliated with or endorsed by OpenAI. Before public distribution, use original branding and avoid confusing use of third-party trademarks or assets.
+> **Naming note:** “Fitz Harness” is the canonical product name. The product is inspired by the interaction quality of the Codex desktop application, but it is not affiliated with or endorsed by OpenAI.
 
 ## 1. Executive summary
 
-Fitz Codex is a local-first, Codex-style agent application and a general-purpose inference control plane.
+Fitz Harness is a local-first, Codex-style agent application and a general-purpose inference control plane.
 
 It has two equally important responsibilities:
 
@@ -17,7 +17,7 @@ It has two equally important responsibilities:
 
 The first inference engine is NInfer because it is highly optimized for the validated Qwen checkpoints and this PC. NInfer is not hard-wired into the product. Future engines—llama.cpp, vLLM, and other checkpoint- or hardware-specific runtimes—must fit behind the same adapter contract.
 
-The first agent engine is based on Pi’s embeddable SDK. Pi is used to avoid reimplementing the basic agent loop, streaming, tool execution, cancellation, extensions, and model communication. Fitz Codex owns the product policy around Pi: context construction, Codex-derived compaction, session persistence, permissions, model routing, and the entire user interface.
+The first agent engine is based on Pi’s embeddable SDK. Pi is used to avoid reimplementing the basic agent loop, streaming, tool execution, cancellation, extensions, and model communication. Fitz Harness owns the product policy around Pi: context construction, Codex-derived compaction, session persistence, permissions, model routing, and the entire user interface.
 
 The host application exposes a stable OpenAI-compatible API as well as a richer application-native agent protocol. Individual inference engines remain bound to loopback and may start on temporary ports. Remote access is off by default and uses a protected API-key consumer gateway published through Tailscale Funnel. NInfer and host administration are never exposed directly to the public Internet.
 
@@ -252,7 +252,7 @@ Clients must never persist or depend on unstable/internal endpoints.
 The initial implementation should use a TypeScript monorepo. Exact tooling can be selected during scaffolding, but the intended boundaries are:
 
 ```text
-fitz-codex/
+fitz-harness/
 ├── apps/
 │   ├── desktop/                 Electron shell and React renderer
 │   ├── host/                    Long-running host service
@@ -1456,7 +1456,7 @@ Do not repeat the historical NInfer performance evaluation. Use smoke tests only
 
 ## 31. Product vision
 
-Fitz Codex should feel like a polished personal agent appliance rather than a collection of local-model scripts.
+Fitz Harness should feel like a polished personal agent appliance rather than a collection of local-model scripts.
 
 For the administrator, it is a cockpit for optimized local inference: engines, playbooks, recipes, routing, lifecycle, users, and diagnostics.
 

@@ -1,4 +1,4 @@
-param([string]$TaskName = "Fitz Codex Host")
+param([string]$TaskName = "Fitz Harness Host")
 $ErrorActionPreference = "Stop"
 $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($null -eq $task) { Write-Output "Scheduled task is not installed: $TaskName"; exit 0 }

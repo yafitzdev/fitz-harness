@@ -5,5 +5,6 @@ export * from "./artifact-repository.js";
 export * from "./storage-durability.js";
 export * from "./sqlite-forensics-store.js";
 export * from "./sqlite-session-query.js";
+export * from "./sqlite-session-message-queue.js";
 export * from "./sqlite-job-store.js";
 export * from "./sqlite-session-projection.js";

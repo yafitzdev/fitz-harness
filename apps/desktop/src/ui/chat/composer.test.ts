@@ -65,6 +65,16 @@ function pasteFiles(composer: Composer, files: Array<{ bytes: BlobPart[]; name: 
 beforeEach(() => document.body.replaceChildren());
 
 describe("Composer", () => {
+  it("selects typed references through a provider and submits the structured identity", async () => {
+    const { composer } = setup({ referenceProviders: [{ id: "workspace", search: async () => [{ providerId: "workspace", kind: "file", label: "app.ts", value: "src/app.ts" }] }] });
+    const prompt = promptOf(composer); type(prompt, "inspect @app");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const option = composer.root.querySelector<HTMLButtonElement>(".composer-reference-option")!;
+    expect(option.textContent).toContain("app.ts"); click(option);
+    expect(composer.submission.references).toEqual([{ providerId: "workspace", kind: "file", label: "app.ts", value: "src/app.ts" }]);
+    expect(composer.root.querySelector(".composer-reference-chip")?.textContent).toBe("@app.ts");
+  });
+
   it("renders the composer template into its mount and owns its controls", () => {
     const { composer, mount, overlayHost } = setup();
     expect(composer.root.className).toBe("composer-dock");
@@ -243,7 +253,7 @@ describe("Composer", () => {
 
     composer.setState({ ready: true, running: true, hasSession: true });
     expect(send.disabled).toBe(false);
-    expect(send.title).toBe("Send to the running agent");
+    expect(send.title).toBe("Queue message");
     expect(attach.disabled).toBe(true);
     expect(modelToggle.disabled).toBe(true);
     expect(prompt.disabled).toBe(false); // stays unlocked so the user can steer

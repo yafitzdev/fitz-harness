@@ -80,8 +80,21 @@ export interface AgentRunCheckpoint {
 }
 
 export interface AgentAttachmentReference { artifactId: string }
-export interface AgentRunRequest { model: string; messages: ChatMessage[]; attachments?: AgentAttachmentReference[]; effort?: AgentEffort; maxTokens?: number; temperature?: number; sessionId?: string; accessMode?: ToolAccessMode; clientRequestId?: string; delegation?: AgentDelegation }
+export interface AgentRunRequest { model: string; messages: ChatMessage[]; attachments?: AgentAttachmentReference[]; effort?: AgentEffort; maxTokens?: number; temperature?: number; sessionId?: string; accessMode?: ToolAccessMode; clientRequestId?: string; clientRetryCount?: number; delegation?: AgentDelegation }
 export interface AgentRunRecord { id: string; routeId: string; status: AgentRunStatus; createdAt: string; updatedAt: string; lastSequence: number; ownerUserId?: string; ownerDeviceId?: string; sessionId?: string; error?: string; resumeOfRunId?: string; resumable?: boolean; checkpoint?: AgentRunCheckpoint }
 export interface AgentQueueItem { runId: string; routeId: string; status: "running" | "queued"; position: number; depth: number; createdAt: string; ownerUserId?: string; sessionId?: string; sessionTitle?: string; projectName?: string }
-export type AgentEventType = "run.created" | "run.queue.updated" | "run.started" | "prompt.provenance" | "assistant.delta" | "reasoning.delta" | "reasoning.completed" | "user.steer" | "tool.approval.requested" | "tool.approval.resolved" | "tool.started" | "tool.completed" | "run.completed" | "run.failed" | "run.cancelled" | "run.interrupted";
+export type AgentEventType = "run.created" | "run.queue.updated" | "run.retry" | "run.started" | "model.request.updated" | "prompt.provenance" | "assistant.delta" | "assistant.completed" | "reasoning.delta" | "reasoning.completed" | "user.steer" | "tool.approval.requested" | "tool.approval.resolved" | "tool.started" | "tool.completed" | "run.completed" | "run.failed" | "run.cancelled" | "run.interrupted";
 export interface AgentEventEnvelope { protocolVersion: typeof AGENT_PROTOCOL_VERSION; runId: string; sequence: number; timestamp: string; type: AgentEventType; data: Readonly<Record<string, unknown>> }
+
+export interface SessionQueuedMessage {
+  id: string;
+  sessionId: string;
+  text: string;
+  model: string;
+  effort: AgentEffort;
+  maxTokens: number;
+  temperature: number;
+  accessMode: ToolAccessMode;
+  createdAt: string;
+  updatedAt: string;
+}

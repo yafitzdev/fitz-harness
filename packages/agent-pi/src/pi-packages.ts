@@ -114,7 +114,7 @@ export class PiPackageService {
       url.searchParams.set("quality", "0");
       url.searchParams.set("maintenance", "0");
     }
-    const response = await this.#fetch(url, { headers: { accept: "application/json", "user-agent": "Fitz-Codex" }, signal: AbortSignal.timeout(10_000) });
+    const response = await this.#fetch(url, { headers: { accept: "application/json", "user-agent": "Fitz-Harness" }, signal: AbortSignal.timeout(10_000) });
     if (!response.ok) throw new Error(`Pi catalog request failed (${response.status})`);
     const payload = await response.json() as { total?: number; objects?: Array<Record<string, unknown>> };
     const packages = (payload.objects ?? []).map(catalogPackage).filter((value): value is PiCatalogPackage => Boolean(value));

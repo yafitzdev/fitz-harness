@@ -59,4 +59,24 @@ describe("LocalHostBootstrapController", () => {
     expect(connect).not.toHaveBeenCalled();
     expect(states.at(-1)).toEqual({ state: "offline", detail: "The local Fitz host could not be started." });
   });
+
+  it("can reconnect after becoming ready and coalesces concurrent failures", async () => {
+    const states: LocalHostBootstrapSnapshot[] = [];
+    const connect = vi.fn().mockResolvedValue(undefined);
+    const controller = new LocalHostBootstrapController({
+      connect,
+      restartHost: vi.fn().mockResolvedValue(true),
+      onStateChange: (state) => states.push(state),
+    });
+    await controller.start();
+
+    const first = controller.reconnect();
+    const second = controller.reconnect();
+    expect(first).toBe(second);
+    await first;
+
+    expect(controller.hasConnected).toBe(true);
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(states.slice(-2)).toEqual([{ state: "retrying" }, { state: "ready" }]);
+  });
 });

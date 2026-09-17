@@ -159,6 +159,7 @@ export class ConversationTranscript {
         const metadata: TranscriptMessageMetadata = {
           ...(typeof entry.id === "string" ? { id: entry.id } : {}),
           ...(Number.isFinite(Number(entry.sequence)) ? { sequence: Number(entry.sequence) } : {}),
+          ...(typeof entry.content?.requestId === "string" && entry.content.requestId ? { requestId: entry.content.requestId } : {}),
           ...(document ? { document } : {}),
         };
         const hasMetadata = Object.keys(metadata).length > 0;
@@ -202,6 +203,13 @@ export class ConversationTranscript {
       const row = this.#options.activity.appendReasoning(false, entry.createdAt);
       this.#options.activity.appendReasoningDelta(row, String(entry.content?.text ?? ""));
       this.#options.activity.completeReasoning(row);
+      return;
+    }
+    if (entry.kind === "run-notice") {
+      const message = entry.content?.type === "retry"
+        ? `Retry ${Number(entry.content?.attempt ?? 2)}: ${String(entry.content?.reason ?? "The request was submitted again.")}`
+        : String(entry.content?.error ?? "The task failed.");
+      this.#options.appendMessage("system", message, entry.createdAt);
       return;
     }
     if (entry.kind === "compaction") this.#options.activity.appendContext(entry.content?.manual === true ? "Context compacted" : "Context automatically compacted", entry.createdAt);

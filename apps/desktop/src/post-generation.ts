@@ -24,6 +24,9 @@ export interface PostGenerationOptions {
    * distinguish explicit file references from ordinary prose. The renderer
    * consumes the delimiters; they are never shown to the user. */
   preserveInlineCode?: boolean;
+  /** Preserve visible Markdown hierarchy for renderers that consume the
+   * syntax structurally instead of displaying its delimiters. */
+  preserveMarkdownStructure?: boolean;
 }
 
 /** Applies `transform` only to lines that are outside fenced ``` code blocks. */
@@ -73,6 +76,7 @@ export function applyPostGeneration(text: string, options: PostGenerationOptions
   return postGenerationRules.reduce((value, rule) => {
     if (!rule.enabled) return value;
     if (options.preserveInlineCode && rule.id === "strip-inline-backticks") return value;
+    if (options.preserveMarkdownStructure && (rule.id === "strip-bold-markers" || rule.id === "flatten-headings")) return value;
     return rule.apply(value);
   }, text);
 }

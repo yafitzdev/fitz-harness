@@ -1,4 +1,4 @@
-import { buildCurrentNInferRecipe } from "@fitz/engine-ninfer";
+import { buildCurrentNInferRecipe } from "@fitz/adapter-ninfer";
 import type { Recipe, Route } from "@fitz/protocol";
 import { NINFER_MODEL_PROFILES, type NInferModelProfile } from "./ninfer-model-profiles.js";
 import type { NInferRuntimeLayout } from "./ninfer-runtime.js";

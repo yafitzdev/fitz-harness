@@ -38,7 +38,7 @@ export class ConversationLayout {
     // Scrollbars are viewport chrome, not conversation geometry. Keeping them
     // out of these calculations prevents the composer and transcript axis from
     // moving when content starts or stops overflowing.
-    const conversationWidth = Math.max(240, Math.min(768, viewportWidth - inset));
+    const conversationWidth = Math.max(240, Math.min(748, viewportWidth - inset));
     const gutter = Math.max(minimumGutter, (viewportWidth - conversationWidth) / 2);
     workspace.style.setProperty("--conversation-viewport", `${viewportWidth}px`);
     workspace.style.setProperty("--conversation-width", `${conversationWidth}px`);

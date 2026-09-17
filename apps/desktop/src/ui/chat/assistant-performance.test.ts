@@ -3,6 +3,24 @@ import { describe, expect, it, vi } from "vitest";
 import { AssistantPerformance } from "./assistant-performance.js";
 
 describe("AssistantPerformance", () => {
+  it("reserves explicit request correlations before matching legacy messages by time", async () => {
+    const legacy = document.createElement("div"); const target = document.createElement("div");
+    document.body.append(legacy, target);
+    const apply = vi.fn();
+    const api = vi.fn(async () => ({ data: [
+      { id: "tool-request", kind: "chat", status: "completed", routeId: "local", executionLane: "gpu", enqueuedAt: "2026-08-03T09:59:00.000Z", completedAt: "2026-08-03T09:59:10.000Z" },
+      { id: "answer-request", kind: "chat", status: "completed", routeId: "local", executionLane: "gpu", enqueuedAt: "2026-08-03T10:00:04.000Z", completedAt: "2026-08-03T10:00:05.000Z" },
+    ] }));
+    const performance = new AssistantPerformance({ api, apply });
+    performance.track(legacy, "run-1", "2026-08-03T10:00:05.000Z");
+    performance.track(target, "run-1", "2026-08-03T10:00:05.000Z", "answer-request");
+    await performance.refresh("run-1");
+
+    expect(legacy.dataset.usageId).toBe("tool-request");
+    expect(target.dataset.usageId).toBe("answer-request");
+    expect(apply).toHaveBeenLastCalledWith(target, expect.objectContaining({ id: "answer-request" }));
+  });
+
   it("matches live and restored message timestamps to the nearest model request", async () => {
     const first = document.createElement("div"); const second = document.createElement("div");
     document.body.append(first, second);

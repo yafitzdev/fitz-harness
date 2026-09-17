@@ -236,9 +236,29 @@ export class SqliteAgentRunStore {
     const rows = this.database
       .prepare("SELECT id FROM agent_runs WHERE status IN ('queued', 'running')")
       .all() as unknown as Array<{ id: string }>;
+    let interrupted = 0;
     for (const row of rows) {
       const timestamp = new Date().toISOString();
       this.materializeUncommittedEvents(row.id);
+      const runBeforeRecovery = this.getRun(row.id);
+      const lastEvent = runBeforeRecovery && runBeforeRecovery.lastSequence > 0
+        ? this.eventsAfter(row.id, runBeforeRecovery.lastSequence - 1, 1)[0]
+        : undefined;
+      // A clean model-stream boundary is written before run.completed. Repair
+      // the tiny crash window between those writes without showing a false
+      // interruption card when the answer had already finished.
+      if (lastEvent?.type === "assistant.completed" && runBeforeRecovery) {
+        this.appendEvent({
+          protocolVersion: "1",
+          runId: row.id,
+          sequence: runBeforeRecovery.lastSequence + 1,
+          timestamp,
+          type: "run.completed",
+          data: { recovered: true },
+        });
+        continue;
+      }
+      interrupted += 1;
       this.database
         .prepare("UPDATE agent_runs SET status = 'interrupted', updated_at = ?, error = 'host_restarted' WHERE id = ?")
         .run(timestamp, row.id);
@@ -255,7 +275,7 @@ export class SqliteAgentRunStore {
         });
       }
     }
-    return rows.length;
+    return interrupted;
   }
 
   private withRunState(run: AgentRunRecord): AgentRunRecord {
@@ -361,12 +381,14 @@ export class SqliteAgentRunStore {
     }
     let textType: "assistant.delta" | "reasoning.delta" | undefined;
     let text = "";
+    let requestId: string | undefined;
     let from = 0;
     let through = 0;
-    const flush = () => {
+    const flush = (assistantPhase: "commentary" | "final" = "commentary") => {
       if (!textType || !text || represented.has(through)) {
         textType = undefined;
         text = "";
+        requestId = undefined;
         return;
       }
       const kind = textType === "assistant.delta" ? "message" : "reasoning";
@@ -375,11 +397,12 @@ export class SqliteAgentRunStore {
         sessionId: run.sessionId!,
         kind,
         role: "assistant",
-        content: { text, runId, eventSequence: through, ...(kind === "message" ? { phase: "commentary" } : {}) },
+        content: { text, runId, eventSequence: through, ...(requestId ? { requestId } : {}), ...(kind === "message" ? { phase: assistantPhase } : {}) },
         createdAt: events.find((event) => event.sequence === through)?.timestamp ?? new Date().toISOString(),
       });
       textType = undefined;
       text = "";
+      requestId = undefined;
     };
     for (const event of events) {
       if (event.type === "assistant.delta" || event.type === "reasoning.delta") {
@@ -387,9 +410,14 @@ export class SqliteAgentRunStore {
         if (!textType) {
           textType = event.type;
           from = event.sequence;
+          requestId = typeof event.data.requestId === "string" && event.data.requestId ? event.data.requestId : undefined;
         }
         text += String(event.data.text ?? "");
         through = event.sequence;
+        continue;
+      }
+      if (event.type === "assistant.completed") {
+        flush("final");
         continue;
       }
       flush();

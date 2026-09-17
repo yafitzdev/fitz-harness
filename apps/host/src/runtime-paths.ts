@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { existsSync, renameSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 const MANAGED_INFERENCE_DISTRIBUTION = "Fitz-Inference";
 const MANAGED_INFERENCE_GUEST_ROOT = "/opt/fitz/llm";
@@ -37,15 +38,38 @@ export function resolveRuntimePaths(environment: NodeJS.ProcessEnv = process.env
     logsDir: resolve(environment.FITZ_LOGS_DIR ?? join(dataRoot, "logs")),
     cacheDir: resolve(environment.FITZ_CACHE_DIR ?? join(dataRoot, "cache")),
     llmRoot,
-    engineRoot: resolve(environment.FITZ_ENGINE_ROOT ?? join(llmRoot, "engines")),
-    modelRoot: resolve(environment.FITZ_MODEL_ROOT ?? join(llmRoot, "models")),
-    ggufModelRoot: resolve(environment.FITZ_GGUF_MODEL_ROOT ?? join(environment.FITZ_MODEL_ROOT ?? join(llmRoot, "models"), "gguf")),
-    environmentRoot: resolve(environment.FITZ_ENVIRONMENT_ROOT ?? join(llmRoot, "environments")),
+    engineRoot: resolve(join(llmRoot, "engines")),
+    modelRoot: resolve(join(llmRoot, "models")),
+    ggufModelRoot: resolve(join(llmRoot, "models", "gguf")),
+    environmentRoot: resolve(join(llmRoot, "environments")),
     runtimeRoot: resolve(environment.FITZ_RUNTIME_ROOT ?? join(dataRoot, "runtimes")),
     snapshotsDir: resolve(environment.FITZ_SNAPSHOTS_DIR ?? join(dataRoot, "snapshots")),
     artifactsDir: resolve(environment.FITZ_ARTIFACTS_DIR ?? join(dataRoot, "artifacts")),
     backupsDir: resolve(environment.FITZ_BACKUPS_DIR ?? join(dataRoot, "backups")),
   };
+}
+
+/** Enforces the repository/runtime boundary before any registry directories are created. */
+export function assertExternalInferenceRegistry(llmRoot: string, applicationRoot: string): void {
+  const registry = resolve(llmRoot);
+  const application = resolve(applicationRoot);
+  const child = relative(application, registry);
+  if (child === "" || (!child.startsWith("..") && !isAbsolute(child))) {
+    throw new Error(`FITZ_LLM_ROOT must live outside the Fitz Harness application tree: ${registry}`);
+  }
+}
+
+/** Moves the pre-rename default data directory into the canonical location.
+ * Explicit FITZ_DATA_ROOT deployments own their migration and are untouched. */
+export function migrateLegacyDataRoot(environment: NodeJS.ProcessEnv = process.env): boolean {
+  if (environment.FITZ_DATA_ROOT) return false;
+  return adoptLegacyDataRoot(legacyDataRoot(environment), defaultDataRoot(environment));
+}
+
+export function adoptLegacyDataRoot(legacyRoot: string, canonicalRoot: string): boolean {
+  if (resolve(legacyRoot) === resolve(canonicalRoot) || existsSync(canonicalRoot) || !existsSync(legacyRoot)) return false;
+  renameSync(legacyRoot, canonicalRoot);
+  return true;
 }
 
 function defaultLlmRoot(): string {
@@ -56,6 +80,12 @@ function defaultLlmRoot(): string {
 }
 
 function defaultDataRoot(environment: NodeJS.ProcessEnv): string {
+  if (process.platform === "win32") return join(environment.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "Fitz Harness");
+  if (process.platform === "darwin") return join(homedir(), "Library", "Application Support", "Fitz Harness");
+  return join(environment.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "fitz-harness");
+}
+
+function legacyDataRoot(environment: NodeJS.ProcessEnv): string {
   if (process.platform === "win32") return join(environment.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "Fitz Codex");
   if (process.platform === "darwin") return join(homedir(), "Library", "Application Support", "Fitz Codex");
   return join(environment.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "fitz-codex");

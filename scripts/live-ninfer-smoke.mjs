@@ -2,7 +2,7 @@ import { createServer } from "node:net";
 import {
   NInferEngineAdapter,
   buildCurrentNInferRecipe,
-} from "../packages/engine-ninfer/dist/index.js";
+} from "../packages/adapter-ninfer/dist/index.js";
 
 if (process.env.FITZ_ALLOW_LIVE_NINFER !== "1") {
   throw new Error("Set FITZ_ALLOW_LIVE_NINFER=1 to run the live NInfer smoke test");

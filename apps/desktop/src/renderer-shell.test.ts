@@ -22,7 +22,7 @@ function required(id: string): HTMLElement {
 
 describe("desktop renderer shell", () => {
   it("provides one accessible application frame", () => {
-    expect(shell.title).toBe("Fitz Codex");
+    expect(shell.title).toBe("Fitz Harness");
     expect(shell.querySelectorAll(":scope > body > .app-titlebar")).toHaveLength(1);
     expect(shell.querySelectorAll(":scope > body > .app-shell")).toHaveLength(1);
     expect(shell.querySelectorAll(".app-shell > aside.sidebar")).toHaveLength(1);
@@ -31,6 +31,9 @@ describe("desktop renderer shell", () => {
     expect(required("hosting-enabled").closest(".sidebar-footer")).not.toBeNull();
     expect(shell.querySelectorAll(".app-shell > main.workspace")).toHaveLength(1);
     expect(shell.querySelector("aside.sidebar")?.getAttribute("aria-label")).toBe("Workspace navigation");
+    expect(shell.querySelector(".sidebar-brand")?.getAttribute("aria-label")).toBe("Fitz Harness, Preview");
+    expect(shell.querySelector(".sidebar-brand-name")?.textContent).toBe("Fitz Harness");
+    expect(shell.querySelector(".sidebar-brand-badge")?.textContent).toBe("Preview");
     expect(required("messages").getAttribute("aria-live")).toBe("polite");
 
     const windowActions = [...shell.querySelectorAll<HTMLElement>("[data-window-action]")]

@@ -46,8 +46,8 @@ describe("ConversationLayout", () => {
   it("projects the conversation and composer onto one measured axis", () => {
     const { workspace } = setup();
     expect(workspace.style.getPropertyValue("--conversation-viewport")).toBe("1200px");
-    expect(workspace.style.getPropertyValue("--conversation-width")).toBe("768px");
-    expect(workspace.style.getPropertyValue("--conversation-gutter")).toBe("216px");
+    expect(workspace.style.getPropertyValue("--conversation-width")).toBe("748px");
+    expect(workspace.style.getPropertyValue("--conversation-gutter")).toBe("226px");
     expect(workspace.style.getPropertyValue("--composer-height")).toBe("180px");
     expect(workspace.style.getPropertyValue("--composer-card-height")).toBe("140px");
   });
@@ -55,8 +55,8 @@ describe("ConversationLayout", () => {
   it("subtracts the inspector before calculating compact conversation geometry", () => {
     const { workspace } = setup(true);
     expect(workspace.style.getPropertyValue("--conversation-viewport")).toBe("880px");
-    expect(workspace.style.getPropertyValue("--conversation-width")).toBe("768px");
-    expect(workspace.style.getPropertyValue("--conversation-gutter")).toBe("56px");
+    expect(workspace.style.getPropertyValue("--conversation-width")).toBe("748px");
+    expect(workspace.style.getPropertyValue("--conversation-gutter")).toBe("66px");
   });
 
   it("shows the latest-message control only when the transcript is away from the bottom", () => {

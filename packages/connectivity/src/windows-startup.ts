@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 
 const execute = promisify(execFile);
 const RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-const VALUE_NAME = "FitzCodexHost";
+const VALUE_NAME = "FitzHarnessHost";
 
 export interface WindowsStartupStatus {
   available: boolean;

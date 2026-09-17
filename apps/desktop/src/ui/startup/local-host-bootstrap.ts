@@ -19,6 +19,7 @@ export class LocalHostBootstrapController {
   readonly #options: LocalHostBootstrapOptions;
   #attempt: Promise<void> | undefined;
   #state: LocalHostBootstrapState = "idle";
+  #hasConnected = false;
 
   constructor(options: LocalHostBootstrapOptions) {
     this.#options = options;
@@ -26,6 +27,7 @@ export class LocalHostBootstrapController {
 
   get state(): LocalHostBootstrapState { return this.#state; }
   get isReady(): boolean { return this.#state === "ready"; }
+  get hasConnected(): boolean { return this.#hasConnected; }
 
   start(): Promise<void> {
     if (this.isReady) return Promise.resolve();
@@ -37,13 +39,18 @@ export class LocalHostBootstrapController {
     return this.#run(true);
   }
 
-  #run(restart: boolean): Promise<void> {
+  reconnect(): Promise<void> {
+    return this.#run(false, true);
+  }
+
+  #run(restart: boolean, reconnect = false): Promise<void> {
     if (this.#attempt) return this.#attempt;
     const attempt = (async () => {
-      this.#transition(restart ? "retrying" : "connecting");
+      this.#transition(restart || reconnect ? "retrying" : "connecting");
       try {
         if (restart && !await this.#options.restartHost()) throw new Error("The local Fitz host could not be started.");
         await this.#options.connect();
+        this.#hasConnected = true;
         this.#transition("ready");
       } catch (error) {
         const detail = this.#options.errorMessage?.(error)

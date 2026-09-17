@@ -41,4 +41,8 @@ describe("post-generation rules", () => {
   it("can preserve inline-code delimiters for structural renderers", () => {
     expect(applyPostGeneration("Open `src/app.ts`.", { preserveInlineCode: true })).toBe("Open `src/app.ts`.");
   });
+
+  it("can preserve renderable hierarchy while keeping the rule layer active", () => {
+    expect(applyPostGeneration("# Summary\n\nUse **care**.", { preserveMarkdownStructure: true })).toBe("# Summary\n\nUse **care**.");
+  });
 });

@@ -1,2 +1,2 @@
 .message.reasoning-activity { margin: 0 0 12px; color: var(--text); }
-.reasoning-content { margin: 0; padding: 0; color: var(--text); background: transparent; font: inherit; line-height: 1.62; white-space: pre-wrap; overflow-wrap: anywhere; }
+.reasoning-content { max-width: 680px; margin: 0; padding: 0; color: var(--text); background: transparent; font: var(--chat-compact-size)/var(--chat-compact-line-height) var(--font-ui); white-space: pre-wrap; overflow-wrap: anywhere; }

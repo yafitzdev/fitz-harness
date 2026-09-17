@@ -3,9 +3,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { once } from "node:events";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { SessionForensicsBundle, SessionQueryService } from "@fitz/protocol";
-import { broadFilesystemScanReason, buildFitzSystemInstructions, createSessionLookupTool, createTrashTool, FITZ_RUNTIME_CONTROL_ACTIVATION, formatSessionSnapshot, limitToolResultContent, PiAgentRuntime, readEnabledExtensionDirs, SESSION_LOOKUP_TOOL, TRASH_TOOL, withoutAssistantTextForTools, type PiSession, type PiSessionFactory, type PiSessionSnapshot } from "./pi-agent-runtime.js";
+import { broadFilesystemScanReason, buildFitzSystemInstructions, createSessionLookupTool, createTrashTool, FITZ_RUNTIME_CONTROL_ACTIVATION, formatSessionSnapshot, previewToolResultContent, PiAgentRuntime, readEnabledExtensionDirs, SESSION_LOOKUP_TOOL, TRASH_TOOL, withoutAssistantTextForTools, type PiSession, type PiSessionFactory, type PiSessionSnapshot } from "./pi-agent-runtime.js";
 
 describe("PiAgentRuntime", () => {
   it("passes Fitz runtime locations to the session factory", async () => {
@@ -104,6 +104,41 @@ describe("PiAgentRuntime", () => {
     expect(prompts[1]).toBe("CONTINUE UNTIL PLAN READY");
     expect(events).toEqual([{ type: "assistant.delta", text: "done" }]);
     expect(ready).toBe(true);
+  });
+
+  it("stops repeated answer-only continuations when the execution plan makes no progress", async () => {
+    let prompts = 0;
+    const discardLastAssistantDraft = vi.fn(() => true);
+    const runtime = new PiAgentRuntime({
+      runPlan: () => ({
+        initialInstruction: "PLAN FIRST",
+        admissionReason: () => undefined,
+        completionIssue: () => "The execution plan is not complete. Required items still open: summarize.",
+        phase: () => "active",
+      }),
+      createSession: async () => {
+        let listener: Parameters<PiSession["subscribe"]>[0] = () => undefined;
+        const answer = async () => {
+          prompts += 1;
+          listener({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Repeated final answer." } });
+        };
+        return {
+          subscribe: (next) => { listener = next; return () => undefined; },
+          prompt: answer,
+          promptControl: async () => answer(),
+          discardLastAssistantDraft,
+          steer: async () => undefined,
+          abort: async () => undefined,
+          dispose: () => undefined,
+        };
+      },
+    });
+
+    await expect((async () => {
+      for await (const _event of runtime.run({ model: "default", messages: [{ role: "user", content: "inspect" }] })) { /* consume */ }
+    })()).rejects.toThrow("made no execution-plan progress after 3 continuation turns");
+    expect(prompts).toBe(4);
+    expect(discardLastAssistantDraft).toHaveBeenCalledTimes(4);
   });
 
   it("accepts the final answer produced after the last plan update in the same SDK prompt", async () => {
@@ -469,7 +504,7 @@ describe("PiAgentRuntime", () => {
     expect(prompt).toContain("rather than upstream Pi defaults");
     expect(prompt).toContain("Never recursively scan an entire drive");
     expect(prompt).toContain("Do not read or reveal authentication files");
-    expect(prompt).toContain("You are Fitz Codex");
+    expect(prompt).toContain("You are Fitz Harness");
     expect(prompt).not.toContain("operating inside pi");
     expect(prompt).toContain("Inspect executable source and package manifests");
     expect(prompt).toContain("distinguish observed evidence from inference or intended design");
@@ -804,6 +839,7 @@ describe("PiAgentRuntime", () => {
         apiKey: "private-pi-token",
         sessionQuery: { query: async () => undefined } as unknown as SessionQueryService,
         customTools: () => [createTrashTool(async () => ({ moved: 0, entries: [] }))],
+        spillToolResult: async ({ content }) => { const path = join(cwd, ".fitz", "tool-results", "probe.txt"); await mkdir(dirname(path), { recursive: true }); await writeFile(path, JSON.stringify(content), "utf8"); return { path }; },
       });
       const events = [];
       for await (const event of runtime.run({ model: "smart", messages: [{ role: "user", content: "Read probe.txt" }], maxTokens: 256 })) events.push(event);
@@ -820,7 +856,8 @@ describe("PiAgentRuntime", () => {
       const replayedTool = requests[1].messages.find((message: any) => message.role === "tool");
       const replayedToolText = JSON.stringify(replayedTool?.content);
       expect(replayedToolText).toContain("PI_TOOL_OK");
-      expect(replayedToolText).toContain("Fitz truncated this tool result at 12000");
+      expect(replayedToolText).toContain("Full tool result");
+      expect(replayedToolText).toContain("probe.txt");
       expect(replayedToolText.length).toBeLessThan(13_000);
       expect(events).toEqual(expect.arrayContaining([
         expect.objectContaining({ type: "tool.started", toolName: "read", input: { path: "probe.txt" } }),
@@ -1095,13 +1132,13 @@ describe("PiAgentRuntime", () => {
     expect(events).toContainEqual({ type: "assistant.delta", text: "bounded" });
   });
 
-  it("caps oversized text tool results with a deterministic continuation marker", () => {
+  it("previews a spilled tool result with its durable locator", () => {
     const original = [{ type: "text", text: "a".repeat(20_000) }, { type: "image", data: "kept" }];
-    const limited = limitToolResultContent(original, 1_000) as Array<Record<string, unknown>>;
-    expect(String(limited[0]?.text)).toContain("Fitz truncated this tool result at 1000 of 20000 characters");
+    const limited = previewToolResultContent(original, "C:/chat/.fitz/tool-results/run/read.txt", 1_000) as Array<Record<string, unknown>>;
+    expect(String(limited[0]?.text)).toContain("Full tool result (20000 characters) saved to C:/chat/.fitz/tool-results/run/read.txt");
     expect(String(limited[0]?.text).length).toBeLessThanOrEqual(1_000);
     expect(limited[1]).toEqual({ type: "image", data: "kept" });
-    expect(limitToolResultContent([{ type: "text", text: "short" }], 1_000)).toEqual([{ type: "text", text: "short" }]);
+    expect(previewToolResultContent([{ type: "text", text: "short" }], "unused", 1_000)).toEqual([{ type: "text", text: "short" }]);
   });
 
   it("retries a delegated worker in mechanically enforced report-only mode when its tool loop returns no answer", async () => {

@@ -21,7 +21,28 @@ describe("HostSupervisor", () => {
 
   it("reports an unavailable development host with an actionable error", async () => {
     const fetch = vi.fn(async () => { throw new Error("connection refused"); });
-    await expect(new HostSupervisor({ origin, packaged: false, resourcesPath: "unused", fetch }).ensureReady()).rejects.toBeInstanceOf(HostStartupError);
+    await expect(new HostSupervisor({ origin, packaged: false, resourcesPath: "unused", fetch, startupTimeoutMs: 0 }).ensureReady()).rejects.toBeInstanceOf(HostStartupError);
+  });
+
+  it("waits through a development host restart without spawning a process", async () => {
+    const fetch = vi.fn()
+      .mockRejectedValueOnce(new Error("connection refused"))
+      .mockRejectedValueOnce(new Error("connection refused"))
+      .mockResolvedValueOnce(Response.json({ status: "ok", protocolVersion: PROTOCOL_VERSION, hostContractVersion: HOST_CONTRACT_VERSION }));
+    const wait = vi.fn().mockResolvedValue(undefined);
+
+    await expect(new HostSupervisor({
+      origin,
+      packaged: false,
+      resourcesPath: "unused",
+      fetch,
+      wait,
+      startupTimeoutMs: 500,
+      pollIntervalMs: 250,
+    }).ensureReady()).resolves.toBeUndefined();
+
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(wait).toHaveBeenCalledTimes(2);
   });
 
   it("never starts a bundled local host as fallback for an unavailable remote host", async () => {

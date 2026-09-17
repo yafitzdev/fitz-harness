@@ -2,7 +2,7 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } fr
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { isAllowedExternalUrl, validateHostUrl } from "./security.js";
@@ -30,6 +30,7 @@ let localHostStartup: Promise<boolean> | undefined;
 let localHostReady = false;
 let localDeviceStartup: Promise<boolean> | undefined;
 let localDeviceReady = false;
+let localServicesStartup: Promise<boolean> | undefined;
 interface DesktopUpdateStatus { state: "idle" | "checking" | "available" | "downloading" | "current" | "downloaded" | "error" | "development"; percent?: number; version?: string }
 let latestUpdateStatus: DesktopUpdateStatus = { state: app.isPackaged ? "idle" : "development" };
 type InferenceExecutionClass = "self_hosted" | "metered_cloud";
@@ -40,27 +41,33 @@ const agentEventStreams = new Map<string, AbortController>();
 
 ipcMain.handle("fitz:request", async (event, input: unknown) => {
   if (!isRecord(input)) throw new TypeError("Request must be an object");
-  if (!await ensureLocalHost()) throw new Error("The local Fitz service is still starting");
+  if (!await ensureLocalHost()) throw new Error("The local Fitz service is unavailable");
   if (!await ensureLocalDevice()) throw new Error("The desktop could not initialize its local Fitz service");
   const path = String(input.path ?? "");
   const responseType = input.responseType === "base64" ? "base64" : "text";
   const controller = new AbortController();
   const cancel = () => controller.abort();
   event.sender.once("destroyed", cancel);
+  const requestOptions = {
+    ...(typeof input.method === "string" ? { method: input.method } : {}),
+    ...(input.body !== undefined ? { body: input.body } : {}),
+    responseType,
+    timeoutMs: hostRequestDeadline(path, responseType),
+    signal: controller.signal,
+  } as const;
   try {
-    const result = await hostClient.request(path, {
-      ...(typeof input.method === "string" ? { method: input.method } : {}),
-      ...(input.body !== undefined ? { body: input.body } : {}),
-      responseType,
-      timeoutMs: hostRequestDeadline(path, responseType),
-      signal: controller.signal,
-    });
+    const result = await hostClient.request(path, requestOptions);
     if (result.status === 401) localDeviceReady = false;
     return result;
   } catch (error) {
     if (error instanceof HostRequestError && error.code === "network") {
-      localHostReady = false;
-      localDeviceReady = false;
+      recoverLocalServices();
+      const method = typeof input.method === "string" ? input.method.toUpperCase() : "GET";
+      if (method === "GET" && await ensureLocalServicesReady() && !controller.signal.aborted) {
+        const result = await hostClient.request(path, requestOptions);
+        if (result.status === 401) localDeviceReady = false;
+        return result;
+      }
     }
     throw error;
   } finally {
@@ -69,7 +76,7 @@ ipcMain.handle("fitz:request", async (event, input: unknown) => {
 });
 ipcMain.handle("fitz:upload-artifact", async (event, input: unknown) => {
   if (!isRecord(input)) throw new TypeError("Artifact upload must be an object");
-  if (!await ensureLocalHost()) throw new Error("The local Fitz service is still starting");
+  if (!await ensureLocalHost()) throw new Error("The local Fitz service is unavailable");
   if (!await ensureLocalDevice()) throw new Error("The desktop could not initialize its local Fitz service");
   const sessionId = requireBoundedText(input.sessionId, "Session ID", 200);
   const path = requireLocalPath(input.path);
@@ -97,8 +104,7 @@ ipcMain.handle("fitz:upload-artifact", async (event, input: unknown) => {
     return result;
   } catch (error) {
     if (error instanceof HostRequestError && error.code === "network") {
-      localHostReady = false;
-      localDeviceReady = false;
+      recoverLocalServices();
     }
     throw error;
   } finally {
@@ -134,7 +140,11 @@ ipcMain.on("fitz:agent-events-unsubscribe", (event, subscriptionId: unknown) => 
 ipcMain.handle("fitz:retry-local-host", () => {
   localHostReady = false;
   localDeviceReady = false;
-  return ensureLocalHost();
+  return ensureLocalServicesReady();
+});
+ipcMain.on("fitz:renderer-ready", (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (window && !window.isDestroyed()) window.show();
 });
 ipcMain.handle("fitz:consumer-connections-list", () => loadConsumerConnections().map(publicConsumerConnection));
 ipcMain.handle("fitz:consumer-connection-save", async (_event, input: unknown) => {
@@ -208,6 +218,24 @@ ipcMain.handle("fitz:preview-resource", async (_event, input: unknown) => {
   const searchRoots = Array.isArray(input.searchRoots) ? input.searchRoots.slice(0, 32).map(requireLocalPath) : [];
   return readProjectResource(requireLocalPath(input.projectRoot), requireBoundedText(input.reference, "File reference", 4_096), searchRoots);
 });
+ipcMain.handle("fitz:list-workspace-references", async (_event, input: unknown) => {
+  if (!isRecord(input)) throw new Error("Reference search input is invalid");
+  const root = requireLocalPath(input.root);
+  const query = requireBoundedText(input.query, "Reference query", 512).toLowerCase();
+  const results: Array<{ kind: "file" | "folder"; label: string; value: string }> = [];
+  const pending = [root];
+  while (pending.length && results.length < 200) {
+    const directory = pending.shift()!;
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isSymbolicLink() || (entry.isDirectory() && [".git", "node_modules", ".fitz-trash"].includes(entry.name))) continue;
+      const absolute = join(directory, entry.name); const value = relative(root, absolute).replaceAll("\\", "/");
+      if (!query || value.toLowerCase().includes(query)) results.push({ kind: entry.isDirectory() ? "folder" : "file", label: entry.name, value });
+      if (entry.isDirectory() && pending.length < 500) pending.push(absolute);
+      if (results.length >= 200) break;
+    }
+  }
+  return results;
+});
 ipcMain.handle("fitz:copy-text", (_event, value: unknown) => { if (typeof value !== "string") throw new Error("Clipboard text must be a string"); clipboard.writeText(value); });
 ipcMain.handle("fitz:save-diagnostics", async (event, content: unknown) => { if (typeof content !== "string" || content.length > 10_000_000) throw new Error("Diagnostic export must be a bounded JSON string"); const window = BrowserWindow.fromWebContents(event.sender); const stamp = new Date().toISOString().replaceAll(":", "-").replace(".000Z", "Z"); const options = { title: "Export Fitz diagnostics", defaultPath: `fitz-diagnostics-${stamp}.json`, filters: [{ name: "JSON", extensions: ["json"] }] }; const result = window ? await dialog.showSaveDialog(window, options) : await dialog.showSaveDialog(options); if (result.canceled || !result.filePath) return undefined; writeFileSync(result.filePath, content, { encoding: "utf8", flag: "w" }); return result.filePath; });
 ipcMain.handle("fitz:git-branches", async (_event, path: unknown) => gitBranchState(requireLocalPath(path)));
@@ -230,8 +258,8 @@ function createWindow(): void {
     const direction = command === "browser-backward" ? "back" : command === "browser-forward" ? "forward" : undefined;
     if (direction && !browser.handleMouseNavigation(direction)) window.webContents.send("fitz:navigation-command", direction);
   });
-  window.on("closed", () => browser.close());
-  window.once("ready-to-show", () => window.show());
+  const revealFallback = setTimeout(() => { if (!window.isDestroyed() && !window.isVisible()) window.show(); }, 12_000);
+  window.on("closed", () => { clearTimeout(revealFallback); browser.close(); });
   void window.loadFile(join(directory, "renderer", "index.html"));
 }
 function inAppBrowserFor(contents: Electron.WebContents): InAppBrowserController | undefined { const window = BrowserWindow.fromWebContents(contents); return window ? inAppBrowsers.get(window) : undefined; }
@@ -271,12 +299,7 @@ if (!primaryInstance) {
     app.quit();
   } else {
     createWindow();
-    void ensureLocalHost().then(async (ready) => {
-      if (!ready) return;
-      await ensureLocalDevice().catch(() => false);
-      for (const window of BrowserWindow.getAllWindows()) window.webContents.send("fitz:host-ready");
-      void warmLocalDefault();
-    });
+    void ensureLocalServicesReady();
     if (app.isPackaged) void autoUpdater.checkForUpdates().catch(() => undefined);
     app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
     app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
@@ -317,6 +340,27 @@ function ensureLocalHost(): Promise<boolean> {
   localHostStartup = attempt;
   void attempt.finally(() => { if (localHostStartup === attempt) localHostStartup = undefined; });
   return attempt;
+}
+
+function ensureLocalServicesReady(): Promise<boolean> {
+  if (localHostReady && localDeviceReady) return Promise.resolve(true);
+  if (localServicesStartup) return localServicesStartup;
+  const attempt = (async () => {
+    if (!await ensureLocalHost()) return false;
+    if (!await ensureLocalDevice().catch(() => false)) return false;
+    for (const window of BrowserWindow.getAllWindows()) window.webContents.send("fitz:host-ready");
+    void warmLocalDefault();
+    return true;
+  })();
+  localServicesStartup = attempt;
+  void attempt.finally(() => { if (localServicesStartup === attempt) localServicesStartup = undefined; });
+  return attempt;
+}
+
+function recoverLocalServices(): void {
+  localHostReady = false;
+  localDeviceReady = false;
+  void ensureLocalServicesReady();
 }
 async function ensureLocalDevice(): Promise<boolean> {
   if (localDeviceReady) return true;
@@ -359,6 +403,7 @@ async function relayAgentEvents(
   publish: (message: AgentEventRelayMessage) => void,
 ): Promise<void> {
   try {
+    if (!await ensureLocalServicesReady()) throw new Error("The local Fitz service is unavailable");
     const response = await hostClient.fetch(`/api/v1/agent/runs/${encodeURIComponent(runId)}/events?after=${after}&stream=true`, {
       timeoutMs: 24 * 60 * 60_000,
       signal,
@@ -368,6 +413,7 @@ async function relayAgentEvents(
     for await (const event of parseAgentEventStream(response.body, signal)) publish({ type: "event", event });
     if (!signal.aborted) publish({ type: "end" });
   } catch (error) {
+    if (error instanceof HostRequestError && error.code === "network") recoverLocalServices();
     if (!signal.aborted) publish({ type: "error", error: desktopErrorMessage(error) });
   }
 }

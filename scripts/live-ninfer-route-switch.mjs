@@ -1,4 +1,4 @@
-import { NInferEngineAdapter } from "../packages/engine-ninfer/dist/index.js";
+import { NInferEngineAdapter } from "../packages/adapter-ninfer/dist/index.js";
 import { createHost, createNInferPlaybook } from "../apps/host/dist/index.js";
 
 if (process.env.FITZ_ALLOW_LIVE_NINFER !== "1") {

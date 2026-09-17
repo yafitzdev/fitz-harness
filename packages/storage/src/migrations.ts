@@ -871,4 +871,22 @@ export const MIGRATIONS: readonly Migration[] = [
     // Every chat can own a durable scratch workspace for generated local files.
     sql: `ALTER TABLE sessions ADD COLUMN workspace_root TEXT;`,
   },
+  {
+    version: 35,
+    // Messages composed while a turn is running wait here until current
+    // transcript output has settled and fresh context can be prepared.
+    sql: `
+      CREATE TABLE session_message_queue (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL CHECK (position > 0),
+        text TEXT NOT NULL,
+        request_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(session_id, position)
+      );
+      CREATE INDEX idx_session_message_queue_session ON session_message_queue(session_id, position);
+    `,
+  },
 ] as const;

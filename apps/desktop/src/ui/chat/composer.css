@@ -12,6 +12,19 @@
 .scroll-to-bottom svg { width: 22px; height: 22px; stroke-width: 1.6; }
 .composer-shell { position: relative; z-index: 30; isolation: isolate; overflow: visible; border: 1px solid var(--new-chat-outline); border-radius: var(--radius-lg); background: var(--new-chat-base); container-type: inline-size; container-name: composer; }
 .composer-shell:focus-within { background: var(--new-chat-base); }
+.session-message-queue { display: grid; gap: 6px; padding: 10px 12px 8px; border-bottom: 1px solid var(--border-soft); }
+.session-message-queue-heading { color: var(--subtle); font-size: 11px; font-weight: 600; }
+.session-message-queue-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.session-message-queue-text { flex: 1; min-width: 0; overflow: hidden; color: var(--text); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.session-message-queue-row button { border: 0; background: transparent; color: var(--muted); cursor: pointer; font: inherit; font-size: 11px; }
+.session-message-queue-row button:hover { color: var(--text); }
+.session-message-queue-editor { flex: 1; min-width: 0; padding: 5px 7px; border: 1px solid var(--border); border-radius: var(--radius-sm); outline: 0; background: var(--surface); color: var(--text); font: inherit; font-size: 12px; }
+.session-message-queue-editor:focus { border-color: var(--focus); }
+.composer-reference-menu { position: absolute; z-index: 60; left: 10px; right: 10px; bottom: calc(100% + 6px); max-height: 280px; overflow: auto; padding: 6px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--floating-surface); box-shadow: var(--shadow-float); }
+.composer-reference-option { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 9px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); cursor: pointer; text-align: left; }
+.composer-reference-option small { color: var(--subtle); }
+.composer-reference-option:hover, .composer-reference-option.selected { background: var(--tint-5); }
+.composer-reference-chip { padding: 7px 10px; border: 1px solid var(--border-soft); background: var(--tint-3); color: var(--text); cursor: pointer; font-size: 12px; }
 .workspace.new-chat-open .composer-shell, .workspace.new-chat-open .composer-shell:focus-within { background: var(--new-chat-base); }
 .composer-card { position: relative; z-index: 1; overflow: visible; border: 0; border-radius: inherit; background: transparent; }
 .composer-outline-shine { position: absolute; z-index: 2; inset: -1px; display: none; padding: 1px; border-radius: inherit; background: conic-gradient(from var(--new-chat-shine-angle, 0deg), transparent 0deg, transparent 285deg, var(--shine-medium) 315deg, var(--brand-white) 336deg, var(--shine-medium) 354deg, transparent 360deg); -webkit-mask: linear-gradient(var(--mask-solid) 0 0) content-box, linear-gradient(var(--mask-solid) 0 0); -webkit-mask-composite: xor; mask-composite: exclude; animation: new-chat-outline-shine 4.2s linear infinite; pointer-events: none; }

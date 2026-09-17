@@ -19,7 +19,7 @@ describe("Fitz prompt ownership", () => {
       contextFiles: [{ path: "C:/workspace/AGENTS.md", content: "Use pnpm." }],
     });
 
-    expect(rendered.text.match(/You are Fitz Codex/g)).toHaveLength(1);
+    expect(rendered.text.match(/You are Fitz Harness/g)).toHaveLength(1);
     expect(rendered.text).not.toContain("coding assistant operating inside pi");
     expect(rendered.text).toContain("- read: Read a file");
     expect(rendered.text).toContain("Inspect narrow ranges first.");

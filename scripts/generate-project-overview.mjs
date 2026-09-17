@@ -189,10 +189,9 @@ if (existsSync(statusPath)) {
 const ROLES = {
   "@fitz/protocol": "Versioned DTOs, events, and API contracts shared by every layer",
   "@fitz/inference-core": "Adapter contract, lifecycle state machine, FIFO scheduler, route resolver, resource governor",
-  "@fitz/engine-ninfer": "NInfer (WSL) adapter — validated launch specs, generated credentials, auth streaming",
-  "@fitz/engine-llama-cpp": "Managed llama.cpp adapter over the shared OpenAI-compatible transport",
-  "@fitz/engine-openai-compatible": "Generic external OpenAI-compatible engine adapter",
-  "@fitz/engine-fake": "Deterministic fake engine for tests and offline development",
+  "@fitz/adapter-ninfer": "NInfer (WSL) adapter — validated launch specs, generated credentials, auth streaming",
+  "@fitz/adapter-llama-cpp": "Managed llama.cpp adapter over the shared OpenAI-compatible transport",
+  "@fitz/adapter-openai-compatible": "Generic external OpenAI-compatible engine adapter",
   "@fitz/agent-core": "Fitz-owned agent runtime boundary: runs, approvals, event translation",
   "@fitz/agent-pi": "Opt-in Pi SDK 0.83.0 adapter behind the agent boundary",
   "@fitz/context": "Codex-style token budgeting, canonical reconstruction, transcript compaction",
@@ -290,7 +289,7 @@ const html = `
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Fitz Codex — Project Overview</title>
+<title>Fitz Harness — Project Overview</title>
 <style>
   :root {
     --bg:#17100a; --bg-elev:#211708; --bg-elev-2:#2c1f10;
@@ -376,7 +375,7 @@ const html = `
 <body>
 <header>
   <div class="logo">F</div>
-  <h1>Fitz Codex</h1>
+  <h1>Fitz Harness</h1>
   <span class="tag">local-first</span>
   <span class="tag">pnpm monorepo</span>
   <span class="tag gen">generated</span>
@@ -395,7 +394,7 @@ const html = `
 <div class="wrap">
 
   <div class="hero" id="overview">
-    <h2>Fitz Codex</h2>
+    <h2>Fitz Harness</h2>
     <p class="lead">A local-first, Codex-style agent desktop application with an inference control plane — an LLM engine manager that owns model loading, routing, queueing, security, and durable agent sessions, all on your own hardware.</p>
     <div class="stat-grid">
 ${statGrid}

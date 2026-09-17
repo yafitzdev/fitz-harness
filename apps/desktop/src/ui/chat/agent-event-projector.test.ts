@@ -80,31 +80,33 @@ describe("AgentEventProjector", () => {
     await projector.apply({ sequence: 3, type: "reasoning.delta", data: { text: "Plan " } });
     await projector.apply({ sequence: 4, type: "reasoning.delta", data: { text: "first." } });
     await projector.apply({ sequence: 5, type: "reasoning.completed", data: {} });
-    await projector.apply({ sequence: 6, type: "assistant.delta", data: { text: "Done" } });
+    await projector.apply({ sequence: 6, type: "assistant.delta", timestamp: "now", data: { text: "Done", requestId: "request-6" } });
 
     expect(activity.setRun).toHaveBeenCalledWith(expect.any(HTMLElement), "Queued · 1 ahead", 100);
     expect(activity.appendReasoningDelta).toHaveBeenNthCalledWith(1, reasoning, "Plan ");
     expect(activity.appendReasoningDelta).toHaveBeenNthCalledWith(2, reasoning, "first.");
     expect(activity.completeReasoning).toHaveBeenCalledWith(reasoning);
     expect(calls.appendAssistantDelta).toHaveBeenCalledWith(assistant, "Done");
+    expect(calls.appendAssistant).toHaveBeenCalledWith("run-1", "now", "request-6");
     expect(projector.hasOpenOutput).toBe(true);
   });
 
   it("keeps plan calls out of the tool feed and tracks changed files for completion", async () => {
-    const { projector, activity, calls } = setup();
+    const { projector, activity, calls, tool } = setup();
     const plan = { details: { plan: { revision: 3, items: [] } } };
 
     await projector.apply({ sequence: 1, type: "tool.started", data: { toolName: "agent_plan", toolCallId: "plan-1", input: { action: "update" } } });
     await projector.apply({ sequence: 2, type: "tool.completed", data: { toolCallId: "plan-1", result: plan } });
-    await projector.apply({ sequence: 3, type: "tool.started", data: { toolName: "write", toolCallId: "write-1", input: { path: "src/new.ts" } } });
-    await projector.apply({ sequence: 4, type: "tool.completed", data: { toolCallId: "write-1", result: "ok", isError: false } });
-    await projector.apply({ sequence: 5, type: "run.completed", data: {} });
+    await projector.apply({ sequence: 3, timestamp: "tool-start", type: "tool.started", data: { toolName: "write", toolCallId: "write-1", input: { path: "src/new.ts" } } });
+    await projector.apply({ sequence: 4, timestamp: "tool-end", type: "tool.completed", data: { toolCallId: "write-1", result: "ok", isError: false } });
+    await projector.apply({ sequence: 5, timestamp: "run-end", type: "run.completed", data: {} });
 
-    expect(activity.appendTool).toHaveBeenCalledWith("write", { path: "src/new.ts" }, "write-1", true);
+    expect(activity.appendTool).toHaveBeenCalledWith("write", { path: "src/new.ts" }, "write-1", true, "tool-start");
+    expect(activity.completeTool).toHaveBeenCalledWith(tool, "write", { path: "src/new.ts" }, "ok", false, "tool-end");
     expect(calls.updatePlan).toHaveBeenCalledWith(plan);
     expect(calls.registerGeneratedFile).toHaveBeenCalledWith("src/new.ts", "created");
     expect(calls.appendChangeSummary).toHaveBeenCalledWith([{ path: "src/new.ts", action: "created" }]);
-    expect(activity.finishWork).toHaveBeenCalledOnce();
+    expect(activity.finishWork).toHaveBeenCalledWith("run-end");
     expect(projector.done).toBe(true);
   });
 
@@ -116,7 +118,7 @@ describe("AgentEventProjector", () => {
     await projector.apply({ sequence: 2, type: "assistant.delta", data: { text: "late event" } });
 
     expect(loadFinalAssistant).toHaveBeenCalledWith("run-1");
-    expect(calls.appendAssistant).toHaveBeenCalledWith("run-1", "now");
+    expect(calls.appendAssistant).toHaveBeenCalledWith("run-1", "now", undefined);
     expect(calls.appendAssistantDelta).toHaveBeenCalledWith(assistant, "Durable answer");
     expect(calls.clearPlan).toHaveBeenCalledOnce();
     expect(calls.appendAssistantDelta).toHaveBeenCalledTimes(1);
@@ -136,7 +138,7 @@ describe("AgentEventProjector", () => {
     await projector.apply({ sequence: 3, type: "tool.completed", data: { toolCallId: "media-1", toolName: "generate_image", result: { details: { mediaJobId: "job-1" } } } });
 
     expect(activity.resolveApproval).toHaveBeenCalledWith(restoredApproval, "approved");
-    expect(activity.completeTool).toHaveBeenCalledWith(tool, "read", { path: "README.md" }, "contents", false);
+    expect(activity.completeTool).toHaveBeenCalledWith(tool, "read", { path: "README.md" }, "contents", false, undefined);
     expect(calls.onMediaJobSubmitted).toHaveBeenCalledWith("job-1", "generate_image");
     expect(projector.mediaHandedOff).toBe(true);
   });

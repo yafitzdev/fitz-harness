@@ -5,6 +5,7 @@ type Json = Record<string, any>;
 interface TrackedAssistant {
   target: HTMLElement;
   observedAt: string;
+  requestId?: string;
 }
 
 export interface AssistantPerformanceOptions {
@@ -28,11 +29,14 @@ export class AssistantPerformance {
     this.#scheduled.clear();
   }
 
-  track(target: HTMLElement, runId: string, observedAt?: string): void {
+  track(target: HTMLElement, runId: string, observedAt?: string, requestId?: string): void {
     const time = target.closest("article.message")?.querySelector<HTMLTimeElement>("time.message-time");
     const timestamp = observedAt ?? time?.dateTime ?? new Date().toISOString();
     const tracked = this.#tracked.get(runId) ?? [];
-    if (!tracked.some((item) => item.target === target)) tracked.push({ target, observedAt: timestamp });
+    const existing = tracked.find((item) => item.target === target);
+    if (existing) {
+      if (requestId) existing.requestId = requestId;
+    } else tracked.push({ target, observedAt: timestamp, ...(requestId ? { requestId } : {}) });
     this.#tracked.set(runId, tracked);
     if (this.#scheduled.has(runId)) return;
     this.#scheduled.add(runId);
@@ -60,10 +64,13 @@ export class AssistantPerformance {
     // record has been persisted. Re-evaluate every assignment on refresh so a
     // provisional match to the preceding tool-call request cannot stick.
     const used = new Set<string>();
+    const reserved = new Set(messages.flatMap((message) => message.requestId ? [message.requestId] : []));
     for (const message of messages) {
+      const exact = message.requestId && !used.has(message.requestId) ? usage.find((record) => record.id === message.requestId) : undefined;
+      if (message.requestId && !exact) continue;
       const timestamp = Date.parse(message.observedAt);
-      const candidate = usage
-        .filter((record) => !used.has(record.id))
+      const candidate = exact ?? usage
+        .filter((record) => !used.has(record.id) && !reserved.has(record.id))
         .map((record) => ({ record, distance: usageDistance(timestamp, record) }))
         .sort((left, right) => left.distance - right.distance)[0]?.record;
       if (!candidate) continue;

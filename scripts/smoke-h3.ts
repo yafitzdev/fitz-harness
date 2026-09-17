@@ -1,12 +1,12 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { ComfyUIEngineAdapter } from "../packages/engine-comfyui/src/index.js";
+import { ComfyUIEngineAdapter } from "../packages/adapter-comfyui/src/index.js";
 import { createHost } from "../apps/host/src/create-app.js";
 import { createComfyUIPlaybook } from "../apps/host/src/comfyui-playbook.js";
 import { localComfyUIPaths } from "../apps/host/src/comfyui-reconcile.js";
 import { resolveRuntimePaths } from "../apps/host/src/runtime-paths.js";
 
-const outputPath = resolve(process.argv[2] ?? "C:/Users/yanfi/AppData/Local/Fitz Codex/cache/h3-smoke.mp4");
+const outputPath = resolve(process.argv[2] ?? "C:/Users/yanfi/AppData/Local/Fitz Harness/cache/h3-smoke.mp4");
 const paths = resolveRuntimePaths();
 const local = localComfyUIPaths(paths);
 const playbook = createComfyUIPlaybook({

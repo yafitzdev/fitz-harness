@@ -1,5 +1,0 @@
-_upstream/
-node_modules/
-*.tgz
-*.tsbuildinfo
-.jspace/

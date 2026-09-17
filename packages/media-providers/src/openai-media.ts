@@ -5,7 +5,7 @@ import {
   openAIEndpoint,
   OpenAICompatibleClient,
   type OpenAICompatibleModel,
-} from "@fitz/engine-openai-compatible";
+} from "@fitz/adapter-openai-compatible";
 import {
   type MediaProvider,
   type MediaProviderOptions,

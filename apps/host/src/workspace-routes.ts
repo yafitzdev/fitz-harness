@@ -510,6 +510,50 @@ export function registerWorkspaceRoutes(options: WorkspaceRouteOptions): void {
     return { data: store.listToolApprovals(session.id, parseApprovalStatus(query.status)) };
   });
 
+  app.get("/api/v1/sessions/:sessionId/message-queue", async (request, reply) => {
+    const session = sessionFor((request.params as { sessionId: string }).sessionId);
+    if (!session) return reply.code(404).send({ error: "Session not found" });
+    if (!canAccess(session.ownerUserId, request)) return reply.code(403).send({ error: "Session access denied" });
+    return { data: store.listSessionMessages(session.id) };
+  });
+
+  app.post("/api/v1/sessions/:sessionId/message-queue", async (request, reply) => {
+    try {
+      const session = sessionFor((request.params as { sessionId: string }).sessionId);
+      if (!session) return reply.code(404).send({ error: "Session not found" });
+      if (!canAccess(session.ownerUserId, request)) return reply.code(403).send({ error: "Session access denied" });
+      const body = requireRecord(request.body);
+      const effort = body.effort === "light" || body.effort === "high" ? body.effort : "normal";
+      const accessMode = body.accessMode === "ask" || body.accessMode === "read-only" ? body.accessMode : "full";
+      const queued = store.enqueueSessionMessage({
+        id: randomUUID(), sessionId: session.id, text: requireString(body.text, "text"),
+        model: requirePublicRouteId(body.model), effort, accessMode,
+        maxTokens: requirePositiveInteger(body.maxTokens, "maxTokens"),
+        temperature: requireFiniteNumber(body.temperature, "temperature"),
+      });
+      return reply.code(201).send({ data: queued });
+    } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
+  });
+
+  app.patch("/api/v1/sessions/:sessionId/message-queue/:messageId", async (request, reply) => {
+    try {
+      const { sessionId, messageId } = request.params as { sessionId: string; messageId: string };
+      const session = sessionFor(sessionId); const queued = store.getSessionMessage(messageId);
+      if (!session || !queued || queued.sessionId !== sessionId) return reply.code(404).send({ error: "Queued message not found" });
+      if (!canAccess(session.ownerUserId, request)) return reply.code(403).send({ error: "Session access denied" });
+      return { data: store.updateSessionMessage(messageId, requireString(requireRecord(request.body).text, "text")) };
+    } catch (error) { return reply.code(400).send({ error: errorMessage(error) }); }
+  });
+
+  app.delete("/api/v1/sessions/:sessionId/message-queue/:messageId", async (request, reply) => {
+    const { sessionId, messageId } = request.params as { sessionId: string; messageId: string };
+    const session = sessionFor(sessionId); const queued = store.getSessionMessage(messageId);
+    if (!session || !queued || queued.sessionId !== sessionId) return reply.code(404).send({ error: "Queued message not found" });
+    if (!canAccess(session.ownerUserId, request)) return reply.code(403).send({ error: "Session access denied" });
+    store.removeSessionMessage(messageId);
+    return reply.code(204).send();
+  });
+
   app.post("/api/v1/tool-approvals/:approvalId/decision", async (request, reply) => {
     try {
       const approval = store.getToolApproval((request.params as { approvalId: string }).approvalId);
@@ -584,6 +628,18 @@ function requireString(value: unknown, name: string): string {
 function requireNonNegativeInteger(value: unknown, name: string): number {
   const parsed = typeof value === "number" ? value : Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 0) throw new TypeError(`${name} must be a non-negative integer`);
+  return parsed;
+}
+
+function requirePositiveInteger(value: unknown, name: string): number {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) throw new TypeError(`${name} must be a positive integer`);
+  return parsed;
+}
+
+function requireFiniteNumber(value: unknown, name: string): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) throw new TypeError(`${name} must be a finite number`);
   return parsed;
 }
 

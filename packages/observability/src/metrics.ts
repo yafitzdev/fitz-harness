@@ -1,4 +1,4 @@
-import type { InferenceLifecycleEvent } from "@fitz/protocol";
+import type { InferenceLifecycleEvent, RequestUsageRecord } from "@fitz/protocol";
 
 export interface MetricsSnapshot {
   capturedAt: string;
@@ -49,6 +49,20 @@ export class MetricsRegistry {
     if (event.data.state === "UNLOADED" && event.data.previousState === "EVICTING") {
       this.increment("model_evictions_total");
     }
+  }
+
+  /** Fold the terminal accounting fact into process diagnostics. Request
+   * timing already has one authoritative calculation in the scheduler; the
+   * metrics layer aggregates those values instead of reconstructing spans
+   * from loosely related lifecycle timestamps. */
+  observeRequestUsage(record: RequestUsageRecord): void {
+    this.increment("inference_usage_records_total");
+    if (record.promptTokens !== undefined) this.increment("inference_prompt_tokens_total", record.promptTokens);
+    if (record.completionTokens !== undefined) this.increment("inference_completion_tokens_total", record.completionTokens);
+    if (record.queueWaitMs !== undefined) this.observe("inference_queue_wait_ms", record.queueWaitMs);
+    if (record.ttftMs !== undefined) this.observe("inference_ttft_ms", record.ttftMs);
+    if (record.generationMs !== undefined) this.observe("inference_generation_ms", record.generationMs);
+    if (record.durationMs !== undefined) this.observe("inference_request_duration_ms", record.durationMs);
   }
 
   snapshot(): MetricsSnapshot {

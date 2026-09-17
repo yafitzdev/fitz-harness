@@ -57,6 +57,7 @@ export interface ConversationSessionOptions {
   remember(location: AppLocation): void;
   loadingMessage(text: string): HTMLElement;
   appendSystem(message: string): void;
+  messageQueue?: { reset(): void; load(sessionId: string): Promise<void>; dispatchNext(): void };
 }
 
 /** Owns new-chat state, session materialization, and durable conversation replay. */
@@ -99,6 +100,7 @@ export class ConversationSessionController {
     this.#newChat = true;
     this.#options.context.reset();
     this.#options.plan?.reset();
+    this.#options.messageQueue?.reset();
     this.#options.composer.resetContextStatus();
     this.#options.composer.resetForNewChat();
     this.#options.workspace.classList.add("new-chat-open");
@@ -187,9 +189,12 @@ export class ConversationSessionController {
     }
 
     await this.#restorePendingApprovals(sessionId, isCurrent);
+    try { await this.#options.messageQueue?.load(sessionId); }
+    catch (error) { this.#reportAuxiliaryFailure("Could not load queued messages", error, isCurrent); }
     if (!isCurrent()) return;
     await this.#restoreRunState(sessionId, isCurrent);
     if (!isCurrent()) return;
+    this.#options.messageQueue?.dispatchNext();
     context.refresh();
     if (!messages.childElementCount) this.#options.showLanding(true);
     messages.scrollTop = messages.scrollHeight;

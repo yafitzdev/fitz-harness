@@ -39,6 +39,7 @@ import type {
   JobRecord,
   ListJobsOptions,
   SessionProjection,
+  SessionQueuedMessage,
 } from "@fitz/protocol";
 import { MIGRATIONS } from "./migrations.js";
 import { SqliteAgentRunStore } from "./sqlite-agent-run-store.js";
@@ -53,6 +54,7 @@ import { SqliteSessionProjectionStore } from "./sqlite-session-projection.js";
 import { ForensicsPersistenceTracker } from "./forensics-persistence-tracker.js";
 import { SqliteSafetyStore } from "./sqlite-safety-store.js";
 import { SqliteSettingsStore } from "./sqlite-settings-store.js";
+import { SqliteSessionMessageQueue } from "./sqlite-session-message-queue.js";
 import {
   SqliteWorkspaceStore,
   type ArtifactStorageEntry,
@@ -84,6 +86,7 @@ export class SqliteStore {
   readonly #safety: SqliteSafetyStore;
   readonly #settings: SqliteSettingsStore;
   readonly #workspace: SqliteWorkspaceStore;
+  readonly #sessionMessages: SqliteSessionMessageQueue;
   #settingsBackend: SettingsBackend | undefined;
 
   constructor(path: string) {
@@ -102,6 +105,7 @@ export class SqliteStore {
     this.#safety = new SqliteSafetyStore(this.#database);
     this.#settings = new SqliteSettingsStore(this.#database);
     this.#workspace = new SqliteWorkspaceStore(this.#database);
+    this.#sessionMessages = new SqliteSessionMessageQueue(this.#database);
     this.#agentRuns = new SqliteAgentRunStore(this.#database, this.#jobs);
   }
 
@@ -326,6 +330,11 @@ export class SqliteStore {
   deleteTranscriptFrom(sessionId: string, sequence: number): number { return this.#workspace.deleteTranscriptFrom(sessionId, sequence); }
   hasTranscriptBefore(sessionId: string, sequence: number): boolean { return this.#workspace.hasTranscriptBefore(sessionId, sequence); }
   latestTranscriptCompaction(sessionId: string): TranscriptEntryRecord | undefined { return this.#workspace.latestTranscriptCompaction(sessionId); }
+  enqueueSessionMessage(message: Omit<SessionQueuedMessage, "createdAt" | "updatedAt">, timestamp = new Date().toISOString()): SessionQueuedMessage { return this.#sessionMessages.enqueue(message, timestamp); }
+  listSessionMessages(sessionId: string): SessionQueuedMessage[] { return this.#sessionMessages.list(sessionId); }
+  getSessionMessage(id: string): SessionQueuedMessage | undefined { return this.#sessionMessages.get(id); }
+  updateSessionMessage(id: string, text: string, timestamp = new Date().toISOString()): SessionQueuedMessage | undefined { return this.#sessionMessages.update(id, text, timestamp); }
+  removeSessionMessage(id: string): boolean { return this.#sessionMessages.remove(id); }
 
   upsertToolPolicy(policy: ToolPolicyRecord): void { this.#identity.upsertToolPolicy(policy); }
   listToolPolicies(subjectType?: ToolPolicyRecord["subjectType"], subjectId?: string): ToolPolicyRecord[] { return this.#identity.listToolPolicies(subjectType, subjectId); }

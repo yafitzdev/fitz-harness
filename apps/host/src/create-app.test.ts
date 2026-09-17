@@ -9,7 +9,7 @@ import { createHost as createHostRuntime, type CreateHostOptions } from "./creat
 import { ModelCatalogService } from "./model-catalog.js";
 import { SecurityService } from "@fitz/security";
 import { ArtifactRepository, LocalBlobStore, SqliteStore, StorageDurabilityService } from "@fitz/storage";
-import { FakeEngineAdapter } from "@fitz/engine-fake";
+import { FakeEngineAdapter } from "@fitz/inference-core/testing";
 
 // Unit/integration tests must not depend on whatever model the developer is
 // currently running on the physical GPU. Individual resource-policy tests
@@ -1301,7 +1301,7 @@ describe("Fitz host", () => {
     const created = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", sessionId: session.json().data.id, messages: [{ role: "user", content: "use agent" }] } }); const runId = created.json().data.id;
     for (let attempt = 0; attempt < 50 && runtime.agentRuns.get(runId)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
     const replay = await runtime.app.inject({ method: "GET", url: `/api/v1/agent/runs/${runId}/events` });
-    expect(replay.json().events.map((event: { type: string }) => event.type)).toEqual(["run.created", "run.queue.updated", "run.queue.updated", "run.started", "assistant.delta", "tool.started", "tool.completed", "assistant.delta", "run.completed"]);
+    expect(replay.json().events.map((event: { type: string }) => event.type)).toEqual(["run.created", "run.queue.updated", "run.queue.updated", "run.started", "assistant.delta", "tool.started", "tool.completed", "assistant.delta", "assistant.completed", "run.completed"]);
     expect(replay.json().events.find((event: { type: string }) => event.type === "tool.started").data.input).toEqual({ path: "README.md" });
     const transcript = runtime.store.transcriptAfter(session.json().data.id, 0);
     expect(transcript.map((entry) => [entry.kind, entry.content.phase ?? entry.content.toolName])).toEqual([
@@ -1433,7 +1433,7 @@ describe("Fitz host", () => {
     const created = await runtime.app.inject({ method: "POST", url: "/api/v1/agent/runs", payload: { model: "default", sessionId: session.json().data.id, messages: [{ role: "user", content: "think then act" }] } }); const runId = created.json().data.id;
     for (let attempt = 0; attempt < 50 && runtime.agentRuns.get(runId)?.status !== "completed"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
     const replay = await runtime.app.inject({ method: "GET", url: `/api/v1/agent/runs/${runId}/events` });
-    expect(replay.json().events.map((event: { type: string }) => event.type)).toEqual(["run.created", "run.queue.updated", "run.queue.updated", "run.started", "reasoning.delta", "reasoning.delta", "reasoning.completed", "assistant.delta", "tool.started", "tool.completed", "assistant.delta", "run.completed"]);
+    expect(replay.json().events.map((event: { type: string }) => event.type)).toEqual(["run.created", "run.queue.updated", "run.queue.updated", "run.started", "reasoning.delta", "reasoning.delta", "reasoning.completed", "assistant.delta", "tool.started", "tool.completed", "assistant.delta", "assistant.completed", "run.completed"]);
     const transcript = runtime.store.transcriptAfter(session.json().data.id, 0);
     expect(transcript.map((entry) => [entry.kind, entry.role])).toEqual([
       ["message", "user"], ["reasoning", "assistant"], ["message", "assistant"], ["tool-call", "tool"], ["tool-result", "tool"], ["message", "assistant"],
@@ -1642,6 +1642,20 @@ describe("Fitz host", () => {
     expect(runtime.store.getSession(created.json().data.id)?.workspaceRoot).toBe(rootFor(created.json().data.id));
     const projectSessions = await runtime.app.inject({ method: "GET", url: `/api/v1/projects/${projectId}/sessions` });
     expect(projectSessions.json().data).toEqual([expect.objectContaining({ title: "Wrapped chat", workspaceRoot: rootFor(projectSession.json().data.id) })]);
+    await runtime.app.close();
+  });
+
+  it("persists, edits, and removes messages waiting behind an active turn", async () => {
+    const runtime = createHost();
+    const session = await runtime.app.inject({ method: "POST", url: "/api/v1/chats", payload: { title: "Queued chat" } });
+    const sessionId = session.json().data.id as string;
+    const created = await runtime.app.inject({ method: "POST", url: `/api/v1/sessions/${sessionId}/message-queue`, payload: { text: "first draft", model: "default", effort: "normal", maxTokens: 4096, temperature: 0.4, accessMode: "full" } });
+    expect(created.statusCode).toBe(201); const messageId = created.json().data.id as string;
+    const edited = await runtime.app.inject({ method: "PATCH", url: `/api/v1/sessions/${sessionId}/message-queue/${messageId}`, payload: { text: "final draft" } });
+    expect(edited.json().data.text).toBe("final draft");
+    expect((await runtime.app.inject({ method: "GET", url: `/api/v1/sessions/${sessionId}/message-queue` })).json().data).toEqual([expect.objectContaining({ id: messageId, text: "final draft" })]);
+    expect((await runtime.app.inject({ method: "DELETE", url: `/api/v1/sessions/${sessionId}/message-queue/${messageId}` })).statusCode).toBe(204);
+    expect(runtime.store.listSessionMessages(sessionId)).toEqual([]);
     await runtime.app.close();
   });
 

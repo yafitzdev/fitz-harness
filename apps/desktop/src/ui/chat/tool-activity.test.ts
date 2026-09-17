@@ -51,16 +51,16 @@ describe("describeTool", () => {
   it("uses the built-in verb table and the input target for known tools", () => {
     expect(describeTool("bash", { command: "git status --short" }, true)).toBe("Running git status --short");
     expect(describeTool("bash", { command: "git status --short" }, false)).toBe("Ran git status --short");
-    expect(describeTool("bash", { command: "cd C:/work/fitz-codex && pnpm test" }, false, "C:\\work\\fitz-codex")).toBe("Ran cd . && pnpm test");
+    expect(describeTool("bash", { command: "cd C:/work/fitz-harness && pnpm test" }, false, "C:\\work\\fitz-harness")).toBe("Ran cd . && pnpm test");
     expect(describeTool("edit", { path: "src/app.ts" }, true)).toBe("Editing src/app.ts");
     expect(describeTool("write", { file_path: "README.md" }, false)).toBe("Wrote README.md");
     expect(describeTool("grep", { pattern: "TODO" }, false)).toBe("Searched TODO");
     expect(describeTool("read", { path: "src/app.ts" }, true)).toBe("Reading src/app.ts");
-    expect(describeTool("ls", { path: "." }, false, "C:\\work\\fitz-codex")).toBe("Listed fitz-codex");
+    expect(describeTool("ls", { path: "." }, false, "C:\\work\\fitz-harness")).toBe("Listed fitz-harness");
     expect(describeTool("ls", { path: "." }, false)).toBe("Listed current directory");
-    expect(describeTool("ls", { path: "src" }, false, "C:\\work\\fitz-codex")).toBe("Listed src");
-    expect(describeTool("ls", { path: "C:\\work\\fitz-codex\\docs" }, false, "C:\\work\\fitz-codex")).toBe("Listed docs");
-    expect(describeTool("read", { path: "C:/work/fitz-codex/src/app.ts" }, false, "C:\\work\\fitz-codex")).toBe("Read src/app.ts");
+    expect(describeTool("ls", { path: "src" }, false, "C:\\work\\fitz-harness")).toBe("Listed src");
+    expect(describeTool("ls", { path: "C:\\work\\fitz-harness\\docs" }, false, "C:\\work\\fitz-harness")).toBe("Listed docs");
+    expect(describeTool("read", { path: "C:/work/fitz-harness/src/app.ts" }, false, "C:\\work\\fitz-harness")).toBe("Read src/app.ts");
     expect(describeTool("subagent", { role: "researcher", task: "Inspect routing" }, true)).toBe("Delegating to researcher");
     expect(describeTool("subagent", { role: "researcher", task: "Inspect routing" }, false)).toBe("Delegated to researcher");
     expect(describeTool("subagent", { role: "researcher", plan_item_id: "inspect-routing" }, false)).toBe("Delegated inspect-routing to researcher");
@@ -80,8 +80,8 @@ describe("describeTool", () => {
   });
 
   it("keeps the input target for unknown tools when one is present", () => {
-    expect(describeTool("web_search", { query: "fitz codex" }, true)).toBe("Running fitz codex");
-    expect(describeTool("web_search", { query: "fitz codex" }, false)).toBe("Ran fitz codex");
+    expect(describeTool("web_search", { query: "fitz harness" }, true)).toBe("Running fitz harness");
+    expect(describeTool("web_search", { query: "fitz harness" }, false)).toBe("Ran fitz harness");
   });
 
   it("uses the prettified display name when an unknown tool has no recognizable target", () => {

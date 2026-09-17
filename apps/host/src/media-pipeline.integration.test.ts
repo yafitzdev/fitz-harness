@@ -1,19 +1,19 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { FakeEngineAdapter } from "@fitz/engine-fake";
-import { FakeMediaEngineAdapter, deterministicMediaBytes } from "@fitz/engine-media-fake";
+import { FakeEngineAdapter } from "@fitz/inference-core/testing";
+import { FakeMediaEngineAdapter, deterministicMediaBytes } from "./testing/fake-media-adapter.js";
 import type { InferenceLifecycleEvent, MediaModality, Recipe } from "@fitz/protocol";
 import { createHost, type HostRuntime } from "./create-app.js";
 
 const mediaFixturePath = fileURLToPath(
-  new URL("../../../fixtures/media/fake-media-server.mjs", import.meta.url),
+  new URL("./testing/fixtures/media/fake-media-server.mjs", import.meta.url),
 );
 
 /** PR 3 end-to-end: POST /v1/images/generations proves the whole media
  *  pipeline — route → queue → lease → submit/poll → artifact → durable events —
- *  on the GPU-free `engine-media-fake` adapter, plus the host-side download of
- *  provider-style URL results from the fixtures/ media server (§5.11). */
+ *  on the GPU-free fake media test double, plus the host-side download of
+ *  provider-style URL results from the owned media fixture server (§5.11). */
 describe("Fitz media generation pipeline", () => {
   it("runs an image generation through queue, lease, and artifact store", async () => {
     const runtime = createHost({ adapters: [new FakeEngineAdapter(), new FakeMediaEngineAdapter()] });

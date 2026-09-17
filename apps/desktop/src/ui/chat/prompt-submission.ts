@@ -2,6 +2,7 @@ import type { AgentEffort, MediaGenerationReference, MediaModality } from "@fitz
 import type { ComposerSubmission, PastedAttachment } from "./composer.js";
 import type { MediaCreationParams } from "./media-creation-form.js";
 import type { MessageAttachment } from "./conversation-message-feed.js";
+import { serializeComposerReferences } from "./composer-references.js";
 
 export type PromptMessageContent = string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
 
@@ -147,23 +148,35 @@ export class PromptSubmissionController {
     finally { releaseAdmission(); }
   }
 
+  async submitQueued(content: string, settings: PromptRunSettings, clientRequestId: string, onAccepted: () => void, onRejected: () => void): Promise<void> {
+    if (this.#pendingSubmission) { onRejected(); return; }
+    let release!: () => void;
+    const admission = new Promise<void>((resolve) => { release = resolve; });
+    this.#pendingSubmission = admission;
+    this.#pendingSubmissionKey = `queued:${content}`;
+    const releaseAdmission = () => { if (this.#pendingSubmission === admission) { this.#pendingSubmission = undefined; this.#pendingSubmissionKey = undefined; release(); } };
+    try { await this.#submitOnce({ content }, undefined, undefined, releaseAdmission, { settings, detached: true, clientRequestId, onAccepted, onRejected }); }
+    finally { releaseAdmission(); }
+  }
+
   async #submitOnce(
     submitted: string | ComposerSubmission | undefined,
     existingUserMessage: HTMLElement | undefined,
     persistedMessageId: string | undefined,
     releaseAdmission: () => void,
+    queued?: { settings: PromptRunSettings; detached: true; clientRequestId: string; onAccepted: () => void; onRejected: () => void },
   ): Promise<void> {
     const draft = typeof submitted === "string" ? { content: submitted } : (submitted ?? this.#options.draft());
-    const content = draft.content.trim();
+    const content = contentWithReferences(draft).trim();
     const mediaCommand = draft.mediaCommand;
     if (!mediaCommand) this.#retryableMediaMessage = undefined;
     // Inline edit/regenerate reuses the durable user turn and must not consume
     // unrelated attachments that are still sitting in the composer.
-    const attachments = existingUserMessage ? [] : this.#options.peekAttachments();
+    const attachments = existingUserMessage || queued?.detached ? [] : this.#options.peekAttachments();
     // A media command with no prompt text is still a valid submission: media
     // commands generate with a default prompt instead of being silently dropped.
     if (!content && attachments.length === 0 && !mediaCommand) return;
-    const settings = this.#options.settings();
+    const settings = queued?.settings ?? this.#options.settings();
     if (!settings.routeId && !mediaCommand) { this.#options.showError("No model route is available"); return; }
     let sessionId = this.#options.sessionId();
     if (!sessionId) {
@@ -289,9 +302,8 @@ export class PromptSubmissionController {
     // Keep attachment chips staged until the host confirms that it durably
     // created the run. The text is cleared while admission is pending so the
     // unlocked running composer cannot accidentally steer the same prompt.
-    this.#options.clearDraft();
-    this.#options.refreshContext();
-    const clientRequestId = retryable?.clientRequestId ?? crypto.randomUUID();
+    if (!queued?.detached) { this.#options.clearDraft(); this.#options.refreshContext(); }
+    const clientRequestId = queued?.clientRequestId ?? retryable?.clientRequestId ?? crypto.randomUUID();
     const retryState: RetryableRunSubmission = { sessionId, content, settings: { ...settings }, attachments: [...attachments], uploaded: [...uploaded], clientRequestId };
     let accepted = false;
     const accept = () => {
@@ -299,6 +311,7 @@ export class PromptSubmissionController {
       accepted = true;
       if (this.#retryableRun === retryState || this.#retryableRun?.clientRequestId === clientRequestId) this.#retryableRun = undefined;
       try {
+        queued?.onAccepted();
         if (attachments.length > 0) this.#options.consumeAttachments(attachments);
         // The run is durable even if its creation response arrived after the
         // user selected another chat. In that case transcript replay owns the
@@ -336,10 +349,11 @@ export class PromptSubmissionController {
     } catch (error) {
       this.#options.showError(this.#options.errorMessage(error));
     } finally {
-      if (!accepted && !existingUserMessage && this.#options.isSessionCurrent?.(sessionId) !== false) {
+      if (!accepted && !existingUserMessage && !queued?.detached && this.#options.isSessionCurrent?.(sessionId) !== false) {
         this.#retryableRun = retryState;
         this.#restoreSubmissionDraft({ content });
       }
+      if (!accepted) queued?.onRejected();
     }
   }
 
@@ -399,8 +413,13 @@ function titleFrom(content: string): string {
 }
 
 function submissionText(submission: ComposerSubmission): string {
-  if (!submission.mediaCommand) return submission.content;
+  if (!submission.mediaCommand) return contentWithReferences(submission);
   return `/${submission.mediaCommand}${submission.content ? ` ${submission.content}` : ""}`;
+}
+
+function contentWithReferences(submission: ComposerSubmission): string {
+  const references = serializeComposerReferences(submission.references ?? []);
+  return [references, submission.content].filter(Boolean).join("\n");
 }
 
 function pendingSubmissionKey(submission: ComposerSubmission, existingUserMessage: HTMLElement | undefined, persistedMessageId: string | undefined): string {

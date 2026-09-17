@@ -58,7 +58,7 @@ because it never mutates state.
 ## Data locations
 
 All mutable Fitz data derives from one data root (`FITZ_DATA_ROOT`, default
-`%LOCALAPPDATA%\Fitz Codex` on Windows): the database lives at `{root}/database/fitz.db`, Pi packages
+`%LOCALAPPDATA%\Fitz Harness` on Windows): the database lives at `{root}/database/fitz.db`, Pi packages
 at `{root}/pi`, logs at `{root}/logs`, and cache at `{root}/cache`. Narrow overrides
 (`FITZ_PI_AGENT_DIR`, `FITZ_LOGS_DIR`, `FITZ_CACHE_DIR`) remain available for packaging and tests.
 

@@ -23,11 +23,12 @@ export function configureChatContentRuntime(runtime: ChatContentRuntime): void {
 export function setMarkdown(target: HTMLElement, source: string, persistedDocument?: unknown): void {
   // Post-generation rules edit the raw output before it reaches the user.
   // The stored transcript and the context sent back to the model stay raw.
-  // Keep inline-code delimiters for this pass: appendInline consumes them and
-  // can therefore tell an explicit file reference from a coincidental
-  // `engine/name.ext` phrase in ordinary prose. The delimiters themselves are
-  // never rendered.
-  const display = applyPostGeneration(source.replace(/\r\n?/g, "\n"), { preserveInlineCode: true });
+  // Structural Markdown remains available to the renderer, which consumes
+  // delimiters without exposing them as transcript text.
+  const display = applyPostGeneration(source.replace(/\r\n?/g, "\n"), {
+    preserveInlineCode: true,
+    preserveMarkdownStructure: true,
+  });
   target.hidden = display.length === 0;
   target.classList.add("markdown");
   const prior = markdownStates.get(target);
@@ -299,11 +300,14 @@ function renderBlocks(target: HTMLElement, lines: string[]): void {
       continue;
     }
 
-    // Headings are flattened to plain text — we prefer readable prose over big headers.
+    // Finished answers keep their hierarchy. The restrained chat type scale in
+    // styles.css prevents headings from turning the transcript into a document
+    // editor, while reasoning continues through its separate plain-text view.
     const heading = line.match(/^(#{1,6})\s+(.+)$/);
     if (heading) {
-      const paragraph = document.createElement("p");
-      appendInline(paragraph, heading[2]!.trim()); target.append(paragraph); index += 1; continue;
+      const level = heading[1]!.length;
+      const title = document.createElement(`h${level}`);
+      appendInline(title, heading[2]!.trim()); target.append(title); index += 1; continue;
     }
 
     if (/^\s*(?:---+|___+|\*\*\*+)\s*$/.test(line)) { target.append(document.createElement("hr")); index += 1; continue; }
@@ -377,7 +381,11 @@ function appendInline(target: HTMLElement, source: string): void {
         target.append(link);
       } else target.append(code);
     }
-    else if (token.startsWith("**") || token.startsWith("__")) { appendPlainText(target, token.slice(2, -2)); }
+    else if (token.startsWith("**") || token.startsWith("__")) {
+      const strong = document.createElement("strong");
+      appendInline(strong, token.slice(2, -2));
+      target.append(strong);
+    }
     else if (token.startsWith("~~")) { const strike = document.createElement("del"); appendInline(strike, token.slice(2, -2)); target.append(strike); }
     else if (token.startsWith("[")) appendLink(target, token);
     else { const emphasis = document.createElement("em"); appendInline(emphasis, token.slice(1, -1)); target.append(emphasis); }

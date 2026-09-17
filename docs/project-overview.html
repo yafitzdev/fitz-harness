@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Fitz Codex — Project Overview</title>
+<title>Fitz Harness — Project Overview</title>
 <style>
   :root {
     --bg:#17100a; --bg-elev:#211708; --bg-elev-2:#2c1f10;
@@ -90,7 +90,7 @@
 <body>
 <header>
   <div class="logo">F</div>
-  <h1>Fitz Codex</h1>
+  <h1>Fitz Harness</h1>
   <span class="tag">local-first</span>
   <span class="tag">pnpm monorepo</span>
   <span class="tag gen">generated</span>
@@ -109,17 +109,17 @@
 <div class="wrap">
 
   <div class="hero" id="overview">
-    <h2>Fitz Codex</h2>
+    <h2>Fitz Harness</h2>
     <p class="lead">A local-first, Codex-style agent desktop application with an inference control plane — an LLM engine manager that owns model loading, routing, queueing, security, and durable agent sessions, all on your own hardware.</p>
     <div class="stat-grid">
-<div class="stat"><div class="num">18</div><div class="lbl">packages</div></div>
+<div class="stat"><div class="num">17</div><div class="lbl">packages</div></div>
 <div class="stat"><div class="num">2</div><div class="lbl">apps</div></div>
-<div class="stat"><div class="num">220</div><div class="lbl">source files</div></div>
-<div class="stat"><div class="num">140</div><div class="lbl">test files</div></div>
+<div class="stat"><div class="num">259</div><div class="lbl">source files</div></div>
+<div class="stat"><div class="num">184</div><div class="lbl">test files</div></div>
 <div class="stat"><div class="num">202</div><div class="lbl">passing tests</div></div>
 <div class="stat"><div class="num">0</div><div class="lbl">failing tests</div></div>
-<div class="stat"><div class="num">295</div><div class="lbl">commits on main</div></div>
-<div class="stat"><div class="num">110</div><div class="lbl">HTTP endpoints</div></div>
+<div class="stat"><div class="num">443</div><div class="lbl">commits on main</div></div>
+<div class="stat"><div class="num">124</div><div class="lbl">HTTP endpoints</div></div>
     </div>
   </div>
 
@@ -127,97 +127,92 @@
     <h3 class="section-title">Architecture</h3>
     <div class="section-sub">Dependency graph generated from the real <span class="chip">workspace:*</span> references — layers are computed, not drawn by hand.</div>
     <div class="arch">
-<svg viewBox="0 0 1398 420" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 1062 420" xmlns="http://www.w3.org/2000/svg">
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#8a6a45"/></marker></defs>
-<path d="M 111 236 C 111 173, 447 173, 447 110" class="edge"/>
-<path d="M 111 236 C 111 173, 783 173, 783 110" class="edge"/>
-<path d="M 111 236 C 111 136, 783 136, 783 36" class="edge"/>
-<path d="M 699 384 C 699 247, 279 247, 279 110" class="edge"/>
-<path d="M 699 384 C 699 284, 279 284, 279 184" class="edge"/>
-<path d="M 699 384 C 699 210, 615 210, 615 36" class="edge"/>
-<path d="M 699 384 C 699 247, 447 247, 447 110" class="edge"/>
-<path d="M 699 384 C 699 284, 447 284, 447 184" class="edge"/>
-<path d="M 699 384 C 699 284, 783 284, 783 184" class="edge"/>
-<path d="M 699 384 C 699 284, 615 284, 615 184" class="edge"/>
-<path d="M 699 384 C 699 321, 699 321, 699 258" class="edge"/>
-<path d="M 699 384 C 699 284, 951 284, 951 184" class="edge"/>
-<path d="M 699 384 C 699 284, 1119 284, 1119 184" class="edge"/>
-<path d="M 699 384 C 699 247, 615 247, 615 110" class="edge"/>
-<path d="M 699 384 C 699 247, 783 247, 783 110" class="edge"/>
-<path d="M 699 384 C 699 321, 867 321, 867 258" class="edge"/>
-<path d="M 699 384 C 699 247, 951 247, 951 110" class="edge"/>
-<path d="M 699 384 C 699 210, 783 210, 783 36" class="edge"/>
-<path d="M 699 384 C 699 284, 1287 284, 1287 184" class="edge"/>
-<path d="M 699 384 C 699 247, 1119 247, 1119 110" class="edge"/>
-<path d="M 279 162 C 279 99, 783 99, 783 36" class="edge"/>
-<path d="M 279 236 C 279 173, 279 173, 279 110" class="edge"/>
-<path d="M 279 236 C 279 136, 783 136, 783 36" class="edge"/>
-<path d="M 447 162 C 447 99, 783 99, 783 36" class="edge"/>
-<path d="M 447 236 C 447 136, 783 136, 783 36" class="edge"/>
-<path d="M 447 236 C 447 173, 1119 173, 1119 110" class="edge"/>
-<path d="M 615 236 C 615 173, 615 173, 615 110" class="edge"/>
-<path d="M 615 236 C 615 136, 783 136, 783 36" class="edge"/>
-<path d="M 783 236 C 783 173, 615 173, 615 110" class="edge"/>
-<path d="M 783 236 C 783 136, 783 136, 783 36" class="edge"/>
-<path d="M 531 310 C 531 247, 1119 247, 1119 184" class="edge"/>
-<path d="M 531 310 C 531 210, 615 210, 615 110" class="edge"/>
-<path d="M 531 310 C 531 173, 783 173, 783 36" class="edge"/>
-<path d="M 699 310 C 699 247, 783 247, 783 184" class="edge"/>
-<path d="M 699 310 C 699 210, 615 210, 615 110" class="edge"/>
-<path d="M 699 310 C 699 173, 783 173, 783 36" class="edge"/>
-<path d="M 951 236 C 951 173, 615 173, 615 110" class="edge"/>
-<path d="M 951 236 C 951 136, 783 136, 783 36" class="edge"/>
-<path d="M 1119 236 C 1119 173, 615 173, 615 110" class="edge"/>
-<path d="M 1119 236 C 1119 136, 783 136, 783 36" class="edge"/>
-<path d="M 615 162 C 615 99, 783 99, 783 36" class="edge"/>
-<path d="M 783 162 C 783 99, 783 99, 783 36" class="edge"/>
-<path d="M 867 310 C 867 247, 1119 247, 1119 184" class="edge"/>
-<path d="M 867 310 C 867 210, 615 210, 615 110" class="edge"/>
-<path d="M 867 310 C 867 173, 783 173, 783 36" class="edge"/>
-<path d="M 951 162 C 951 99, 783 99, 783 36" class="edge"/>
-<path d="M 1287 236 C 1287 136, 783 136, 783 36" class="edge"/>
-<path d="M 1287 236 C 1287 173, 1119 173, 1119 110" class="edge"/>
-<path d="M 1119 162 C 1119 99, 783 99, 783 36" class="edge"/>
+<path d="M 111 236 C 111 173, 279 173, 279 110" class="edge"/>
+<path d="M 111 236 C 111 173, 615 173, 615 110" class="edge"/>
+<path d="M 111 236 C 111 136, 699 136, 699 36" class="edge"/>
+<path d="M 531 384 C 531 247, 111 247, 111 110" class="edge"/>
+<path d="M 531 384 C 531 284, 615 284, 615 184" class="edge"/>
+<path d="M 531 384 C 531 210, 363 210, 363 36" class="edge"/>
+<path d="M 531 384 C 531 247, 279 247, 279 110" class="edge"/>
+<path d="M 531 384 C 531 284, 783 284, 783 184" class="edge"/>
+<path d="M 531 384 C 531 284, 279 284, 279 184" class="edge"/>
+<path d="M 531 384 C 531 321, 531 321, 531 258" class="edge"/>
+<path d="M 531 384 C 531 284, 447 284, 447 184" class="edge"/>
+<path d="M 531 384 C 531 247, 447 247, 447 110" class="edge"/>
+<path d="M 531 384 C 531 210, 531 210, 531 36" class="edge"/>
+<path d="M 531 384 C 531 247, 615 247, 615 110" class="edge"/>
+<path d="M 531 384 C 531 321, 699 321, 699 258" class="edge"/>
+<path d="M 531 384 C 531 247, 783 247, 783 110" class="edge"/>
+<path d="M 531 384 C 531 210, 699 210, 699 36" class="edge"/>
+<path d="M 531 384 C 531 284, 951 284, 951 184" class="edge"/>
+<path d="M 531 384 C 531 247, 951 247, 951 110" class="edge"/>
+<path d="M 279 236 C 279 173, 447 173, 447 110" class="edge"/>
+<path d="M 279 236 C 279 173, 615 173, 615 110" class="edge"/>
+<path d="M 279 236 C 279 136, 699 136, 699 36" class="edge"/>
+<path d="M 363 310 C 363 247, 447 247, 447 184" class="edge"/>
+<path d="M 363 310 C 363 210, 447 210, 447 110" class="edge"/>
+<path d="M 363 310 C 363 173, 699 173, 699 36" class="edge"/>
+<path d="M 531 310 C 531 247, 447 247, 447 184" class="edge"/>
+<path d="M 531 310 C 531 210, 447 210, 447 110" class="edge"/>
+<path d="M 531 310 C 531 173, 699 173, 699 36" class="edge"/>
+<path d="M 447 236 C 447 173, 447 173, 447 110" class="edge"/>
+<path d="M 447 236 C 447 136, 699 136, 699 36" class="edge"/>
+<path d="M 111 162 C 111 99, 699 99, 699 36" class="edge"/>
+<path d="M 615 236 C 615 173, 111 173, 111 110" class="edge"/>
+<path d="M 615 236 C 615 136, 531 136, 531 36" class="edge"/>
+<path d="M 615 236 C 615 136, 699 136, 699 36" class="edge"/>
+<path d="M 279 162 C 279 99, 699 99, 699 36" class="edge"/>
+<path d="M 783 236 C 783 136, 699 136, 699 36" class="edge"/>
+<path d="M 783 236 C 783 173, 951 173, 951 110" class="edge"/>
+<path d="M 447 162 C 447 99, 699 99, 699 36" class="edge"/>
+<path d="M 615 162 C 615 99, 699 99, 699 36" class="edge"/>
+<path d="M 699 310 C 699 247, 447 247, 447 184" class="edge"/>
+<path d="M 699 310 C 699 210, 447 210, 447 110" class="edge"/>
+<path d="M 699 310 C 699 173, 699 173, 699 36" class="edge"/>
+<path d="M 783 162 C 783 99, 699 99, 699 36" class="edge"/>
+<path d="M 951 236 C 951 136, 699 136, 699 36" class="edge"/>
+<path d="M 951 236 C 951 173, 951 173, 951 110" class="edge"/>
+<path d="M 951 162 C 951 99, 699 99, 699 36" class="edge"/>
 <g><rect x="36" y="184" width="150" height="52" rx="9" class="box hot"/>
 <text x="111" y="207" text-anchor="middle" class="t-name">desktop</text><text x="111" y="223" text-anchor="middle" class="t-kind">app</text></g>
-<g><rect x="624" y="332" width="150" height="52" rx="9" class="box hot"/>
-<text x="699" y="355" text-anchor="middle" class="t-name">host</text><text x="699" y="371" text-anchor="middle" class="t-kind">app</text></g>
-<g><rect x="204" y="110" width="150" height="52" rx="9" class="box"/>
-<text x="279" y="131" text-anchor="middle" class="t-name">agent-core</text><text x="279" y="147" text-anchor="middle" class="t-kind">package</text></g>
+<g><rect x="456" y="332" width="150" height="52" rx="9" class="box hot"/>
+<text x="531" y="355" text-anchor="middle" class="t-name">host</text><text x="531" y="371" text-anchor="middle" class="t-kind">app</text></g>
 <g><rect x="204" y="184" width="150" height="52" rx="9" class="box"/>
-<text x="279" y="205" text-anchor="middle" class="t-name">agent-pi</text><text x="279" y="221" text-anchor="middle" class="t-kind">package</text></g>
-<g><rect x="540" y="36" width="150" height="52" rx="9" class="box"/>
-<text x="615" y="57" text-anchor="middle" class="t-name">config</text><text x="615" y="73" text-anchor="middle" class="t-kind">package</text></g>
-<g><rect x="372" y="110" width="150" height="52" rx="9" class="box"/>
-<text x="447" y="131" text-anchor="middle" class="t-name">connectivity</text><text x="447" y="147" text-anchor="middle" class="t-kind">package</text></g>
-<g><rect x="372" y="184" width="150" height="52" rx="9" class="box"/>
-<text x="447" y="205" text-anchor="middle" class="t-name">context</text><text x="447" y="221" text-anchor="middle" class="t-kind">package</text></g>
-<g><rect x="540" y="184" width="150" height="52" rx="9" class="box"/>
-<text x="615" y="205" text-anchor="middle" class="t-name">engine-comfyui</text><text x="615" y="221" text-anchor="middle" class="t-kind">package</text></g>
-<g><rect x="708" y="184" width="150" height="52" rx="9" class="box"/>
-<text x="783" y="205" text-anchor="middle" class="t-name">engine-fake</text><text x="783" y="221" text-anchor="middle" class="t-kind">package</text></g>
+<text x="279" y="205" text-anchor="middle" class="t-name">adapter-comfyui</text><text x="279" y="221" text-anchor="middle" class="t-kind">package</text></g>
+<g><rect x="288" y="258" width="150" height="52" rx="9" class="box"/>
+<text x="363" y="279" text-anchor="middle" class="t-name">adapter-llama-cpp</text><text x="363" y="295" text-anchor="middle" class="t-kind">package</text></g>
 <g><rect x="456" y="258" width="150" height="52" rx="9" class="box"/>
-<text x="531" y="279" text-anchor="middle" class="t-name">engine-llama-cpp</text><text x="531" y="295" text-anchor="middle" class="t-kind">package</text></g>
-<g><rect x="624" y="258" width="150" height="52" rx="9" class="box"/>
-<text x="699" y="279" text-anchor="middle" class="t-name">engine-media-fake</text><text x="699" y="295" text-anchor="middle" class="t-kind">package</text></g>
-<g><rect x="876" y="184" width="150" height="52" rx="9" class="box"/>
-<text x="951" y="205" text-anchor="middle" class="t-name">engine-ninfer</text><text x="951" y="221" text-anchor="middle" class="t-kind">package</text></g>
-<g><rect x="1044" y="184" width="150" height="52" rx="9" class="box"/>
-<text x="1119" y="205" text-anchor="middle" class="t-name">engine-openai-compatible</text><text x="1119" y="221" text-anchor="middle" class="t-kind">package</text></g>
+<text x="531" y="279" text-anchor="middle" class="t-name">adapter-ninfer</text><text x="531" y="295" text-anchor="middle" class="t-kind">package</text></g>
+<g><rect x="372" y="184" width="150" height="52" rx="9" class="box"/>
+<text x="447" y="205" text-anchor="middle" class="t-name">adapter-openai-compatible</text><text x="447" y="221" text-anchor="middle" class="t-kind">package</text></g>
+<g><rect x="36" y="110" width="150" height="52" rx="9" class="box"/>
+<text x="111" y="131" text-anchor="middle" class="t-name">agent-core</text><text x="111" y="147" text-anchor="middle" class="t-kind">package</text></g>
+<g><rect x="540" y="184" width="150" height="52" rx="9" class="box"/>
+<text x="615" y="205" text-anchor="middle" class="t-name">agent-pi</text><text x="615" y="221" text-anchor="middle" class="t-kind">package</text></g>
+<g><rect x="288" y="36" width="150" height="52" rx="9" class="box"/>
+<text x="363" y="57" text-anchor="middle" class="t-name">config</text><text x="363" y="73" text-anchor="middle" class="t-kind">package</text></g>
+<g><rect x="204" y="110" width="150" height="52" rx="9" class="box"/>
+<text x="279" y="131" text-anchor="middle" class="t-name">connectivity</text><text x="279" y="147" text-anchor="middle" class="t-kind">package</text></g>
+<g><rect x="708" y="184" width="150" height="52" rx="9" class="box"/>
+<text x="783" y="205" text-anchor="middle" class="t-name">context</text><text x="783" y="221" text-anchor="middle" class="t-kind">package</text></g>
+<g><rect x="372" y="110" width="150" height="52" rx="9" class="box"/>
+<text x="447" y="131" text-anchor="middle" class="t-name">inference-core</text><text x="447" y="147" text-anchor="middle" class="t-kind">package</text></g>
+<g><rect x="456" y="36" width="150" height="52" rx="9" class="box"/>
+<text x="531" y="57" text-anchor="middle" class="t-name">lsp</text><text x="531" y="73" text-anchor="middle" class="t-kind">package</text></g>
 <g><rect x="540" y="110" width="150" height="52" rx="9" class="box"/>
-<text x="615" y="131" text-anchor="middle" class="t-name">inference-core</text><text x="615" y="147" text-anchor="middle" class="t-kind">package</text></g>
+<text x="615" y="131" text-anchor="middle" class="t-name">media</text><text x="615" y="147" text-anchor="middle" class="t-kind">package</text></g>
+<g><rect x="624" y="258" width="150" height="52" rx="9" class="box"/>
+<text x="699" y="279" text-anchor="middle" class="t-name">media-providers</text><text x="699" y="295" text-anchor="middle" class="t-kind">package</text></g>
 <g><rect x="708" y="110" width="150" height="52" rx="9" class="box"/>
-<text x="783" y="131" text-anchor="middle" class="t-name">media</text><text x="783" y="147" text-anchor="middle" class="t-kind">package</text></g>
-<g><rect x="792" y="258" width="150" height="52" rx="9" class="box"/>
-<text x="867" y="279" text-anchor="middle" class="t-name">media-providers</text><text x="867" y="295" text-anchor="middle" class="t-kind">package</text></g>
+<text x="783" y="131" text-anchor="middle" class="t-name">observability</text><text x="783" y="147" text-anchor="middle" class="t-kind">package</text></g>
+<g><rect x="624" y="36" width="150" height="52" rx="9" class="box"/>
+<text x="699" y="57" text-anchor="middle" class="t-name">protocol</text><text x="699" y="73" text-anchor="middle" class="t-kind">package</text></g>
+<g><rect x="876" y="184" width="150" height="52" rx="9" class="box"/>
+<text x="951" y="205" text-anchor="middle" class="t-name">security</text><text x="951" y="221" text-anchor="middle" class="t-kind">package</text></g>
 <g><rect x="876" y="110" width="150" height="52" rx="9" class="box"/>
-<text x="951" y="131" text-anchor="middle" class="t-name">observability</text><text x="951" y="147" text-anchor="middle" class="t-kind">package</text></g>
-<g><rect x="708" y="36" width="150" height="52" rx="9" class="box"/>
-<text x="783" y="57" text-anchor="middle" class="t-name">protocol</text><text x="783" y="73" text-anchor="middle" class="t-kind">package</text></g>
-<g><rect x="1212" y="184" width="150" height="52" rx="9" class="box"/>
-<text x="1287" y="205" text-anchor="middle" class="t-name">security</text><text x="1287" y="221" text-anchor="middle" class="t-kind">package</text></g>
-<g><rect x="1044" y="110" width="150" height="52" rx="9" class="box"/>
-<text x="1119" y="131" text-anchor="middle" class="t-name">storage</text><text x="1119" y="147" text-anchor="middle" class="t-kind">package</text></g>
+<text x="951" y="131" text-anchor="middle" class="t-name">storage</text><text x="951" y="147" text-anchor="middle" class="t-kind">package</text></g>
 </svg>
     </div>
     <div class="grid" style="margin-top:1.2rem">
@@ -229,26 +224,25 @@
 
   <section id="packages">
     <h3 class="section-title">Packages</h3>
-    <div class="section-sub">20 workspaces — dependencies listed are only the internal <span class="chip">@fitz/*</span> edges; count and graph are read from <span class="chip">package.json</span> at generation time.</div>
+    <div class="section-sub">19 workspaces — dependencies listed are only the internal <span class="chip">@fitz/*</span> edges; count and graph are read from <span class="chip">package.json</span> at generation time.</div>
     <table>
       <thead><tr><th>workspace</th><th>role</th><th>depends on</th><th>extra scripts</th></tr></thead>
       <tbody>
-<tr><td>@fitz/desktop <span class="badge b-orange">app</span></td><td>Electron 43 shell with a vanilla-TypeScript renderer UI</td><td class="deps-cell"><span class="chip">connectivity</span> <span class="chip">media</span> <span class="chip">protocol</span></td><td>start, pack:win, dist:win</td></tr>
-<tr><td>@fitz/host <span class="badge b-orange">app</span></td><td>Long-running Fastify control plane — engines, routing, queueing, security, agents, storage</td><td class="deps-cell"><span class="chip">agent-core</span> <span class="chip">agent-pi</span> <span class="chip">config</span> <span class="chip">connectivity</span> <span class="chip">context</span> <span class="chip">engine-fake</span> <span class="chip">engine-comfyui</span> <span class="chip">engine-media-fake</span> <span class="chip">engine-ninfer</span> <span class="chip">engine-openai-compatible</span> <span class="chip">inference-core</span> <span class="chip">media</span> <span class="chip">media-providers</span> <span class="chip">observability</span> <span class="chip">protocol</span> <span class="chip">security</span> <span class="chip">storage</span></td><td>dev, start</td></tr>
+<tr><td>@fitz/desktop <span class="badge b-orange">app</span></td><td>Electron 43 shell with a vanilla-TypeScript renderer UI</td><td class="deps-cell"><span class="chip">connectivity</span> <span class="chip">media</span> <span class="chip">protocol</span></td><td>start, pack:win, dist:win, dist:win:publish</td></tr>
+<tr><td>@fitz/host <span class="badge b-orange">app</span></td><td>Long-running Fastify control plane — engines, routing, queueing, security, agents, storage</td><td class="deps-cell"><span class="chip">agent-core</span> <span class="chip">agent-pi</span> <span class="chip">config</span> <span class="chip">connectivity</span> <span class="chip">context</span> <span class="chip">adapter-comfyui</span> <span class="chip">adapter-ninfer</span> <span class="chip">adapter-openai-compatible</span> <span class="chip">inference-core</span> <span class="chip">lsp</span> <span class="chip">media</span> <span class="chip">media-providers</span> <span class="chip">observability</span> <span class="chip">protocol</span> <span class="chip">security</span> <span class="chip">storage</span></td><td>dev, start</td></tr>
+<tr><td>@fitz/adapter-comfyui</td><td></td><td class="deps-cell"><span class="chip">inference-core</span> <span class="chip">media</span> <span class="chip">protocol</span></td><td><span class="faint">—</span></td></tr>
+<tr><td>@fitz/adapter-llama-cpp</td><td>Managed llama.cpp adapter over the shared OpenAI-compatible transport</td><td class="deps-cell"><span class="chip">adapter-openai-compatible</span> <span class="chip">inference-core</span> <span class="chip">protocol</span></td><td><span class="faint">—</span></td></tr>
+<tr><td>@fitz/adapter-ninfer</td><td>NInfer (WSL) adapter — validated launch specs, generated credentials, auth streaming</td><td class="deps-cell"><span class="chip">adapter-openai-compatible</span> <span class="chip">inference-core</span> <span class="chip">protocol</span></td><td><span class="faint">—</span></td></tr>
+<tr><td>@fitz/adapter-openai-compatible</td><td>Generic external OpenAI-compatible engine adapter</td><td class="deps-cell"><span class="chip">inference-core</span> <span class="chip">protocol</span></td><td><span class="faint">—</span></td></tr>
 <tr><td>@fitz/agent-core</td><td>Fitz-owned agent runtime boundary: runs, approvals, event translation</td><td class="deps-cell"><span class="chip">protocol</span></td><td><span class="faint">—</span></td></tr>
-<tr><td>@fitz/agent-pi</td><td>Opt-in Pi SDK 0.83.0 adapter behind the agent boundary</td><td class="deps-cell"><span class="chip">agent-core</span> <span class="chip">protocol</span></td><td><span class="faint">—</span></td></tr>
+<tr><td>@fitz/agent-pi</td><td>Opt-in Pi SDK 0.83.0 adapter behind the agent boundary</td><td class="deps-cell"><span class="chip">agent-core</span> <span class="chip">lsp</span> <span class="chip">protocol</span></td><td><span class="faint">—</span></td></tr>
 <tr><td>@fitz/config</td><td></td><td class="deps-cell"><span class="faint">—</span></td><td><span class="faint">—</span></td></tr>
 <tr><td>@fitz/connectivity</td><td>Protected loopback gateway plus Tailscale Funnel and startup management</td><td class="deps-cell"><span class="chip">protocol</span></td><td><span class="faint">—</span></td></tr>
 <tr><td>@fitz/context</td><td>Codex-style token budgeting, canonical reconstruction, transcript compaction</td><td class="deps-cell"><span class="chip">protocol</span> <span class="chip">storage</span></td><td><span class="faint">—</span></td></tr>
-<tr><td>@fitz/engine-comfyui</td><td></td><td class="deps-cell"><span class="chip">inference-core</span> <span class="chip">protocol</span></td><td><span class="faint">—</span></td></tr>
-<tr><td>@fitz/engine-fake</td><td>Deterministic fake engine for tests and offline development</td><td class="deps-cell"><span class="chip">inference-core</span> <span class="chip">protocol</span></td><td><span class="faint">—</span></td></tr>
-<tr><td>@fitz/engine-llama-cpp</td><td>Managed llama.cpp adapter over the shared OpenAI-compatible transport</td><td class="deps-cell"><span class="chip">engine-openai-compatible</span> <span class="chip">inference-core</span> <span class="chip">protocol</span></td><td><span class="faint">—</span></td></tr>
-<tr><td>@fitz/engine-media-fake</td><td></td><td class="deps-cell"><span class="chip">engine-fake</span> <span class="chip">inference-core</span> <span class="chip">protocol</span></td><td><span class="faint">—</span></td></tr>
-<tr><td>@fitz/engine-ninfer</td><td>NInfer (WSL) adapter — validated launch specs, generated credentials, auth streaming</td><td class="deps-cell"><span class="chip">inference-core</span> <span class="chip">protocol</span></td><td><span class="faint">—</span></td></tr>
-<tr><td>@fitz/engine-openai-compatible</td><td>Generic external OpenAI-compatible engine adapter</td><td class="deps-cell"><span class="chip">inference-core</span> <span class="chip">protocol</span></td><td><span class="faint">—</span></td></tr>
 <tr><td>@fitz/inference-core</td><td>Adapter contract, lifecycle state machine, FIFO scheduler, route resolver, resource governor</td><td class="deps-cell"><span class="chip">protocol</span></td><td><span class="faint">—</span></td></tr>
+<tr><td>@fitz/lsp</td><td></td><td class="deps-cell"><span class="faint">—</span></td><td><span class="faint">—</span></td></tr>
 <tr><td>@fitz/media</td><td>Artifact metadata, strict MIME classification, SHA-256 integrity</td><td class="deps-cell"><span class="chip">protocol</span></td><td><span class="faint">—</span></td></tr>
-<tr><td>@fitz/media-providers</td><td></td><td class="deps-cell"><span class="chip">engine-openai-compatible</span> <span class="chip">inference-core</span> <span class="chip">protocol</span></td><td><span class="faint">—</span></td></tr>
+<tr><td>@fitz/media-providers</td><td></td><td class="deps-cell"><span class="chip">adapter-openai-compatible</span> <span class="chip">inference-core</span> <span class="chip">protocol</span></td><td><span class="faint">—</span></td></tr>
 <tr><td>@fitz/observability</td><td>Structured logging, secret redaction, metrics, diagnostics</td><td class="deps-cell"><span class="chip">protocol</span></td><td><span class="faint">—</span></td></tr>
 <tr><td>@fitz/protocol</td><td>Versioned DTOs, events, and API contracts shared by every layer</td><td class="deps-cell"><span class="faint">—</span></td><td><span class="faint">—</span></td></tr>
 <tr><td>@fitz/security</td><td>HMAC API-key auth, roles, grants, quotas, revocation, and audit log</td><td class="deps-cell"><span class="chip">protocol</span> <span class="chip">storage</span></td><td><span class="faint">—</span></td></tr>
@@ -259,7 +253,7 @@
 
   <section id="api">
     <h3 class="section-title">API surface</h3>
-    <div class="section-sub">110 endpoints extracted from the modular host routes — Fastify on <span class="chip">127.0.0.1:8787</span>.</div>
+    <div class="section-sub">124 endpoints extracted from the modular host routes — Fastify on <span class="chip">127.0.0.1:8787</span>.</div>
     <table>
       <thead><tr><th>method</th><th>path</th></tr></thead>
       <tbody>
@@ -269,6 +263,7 @@
 <tr><td><span class="method delete">DELETE</span></td><td class="route">/api/v1/agent/runs/:runId</td></tr>
 <tr><td><span class="method get">GET</span></td><td class="route">/api/v1/agent/runs/:runId</td></tr>
 <tr><td><span class="method get">GET</span></td><td class="route">/api/v1/agent/runs/:runId/events</td></tr>
+<tr><td><span class="method get">GET</span></td><td class="route">/api/v1/agent/runs/:runId/plan</td></tr>
 <tr><td><span class="method post">POST</span></td><td class="route">/api/v1/agent/runs/:runId/resume</td></tr>
 <tr><td><span class="method post">POST</span></td><td class="route">/api/v1/agent/runs/:runId/steer</td></tr>
 <tr><td><span class="method get">GET</span></td><td class="route">/api/v1/agent/runs/:runId/usage</td></tr>
@@ -282,6 +277,9 @@
 <tr><td><span class="method get">GET</span></td><td class="route">/api/v1/configuration</td></tr>
 <tr><td><span class="method get">GET</span></td><td class="route">/api/v1/events</td></tr>
 <tr><td><span class="method post">POST</span></td><td class="route">/api/v1/inference/warm</td></tr>
+<tr><td><span class="method get">GET</span></td><td class="route">/api/v1/jobs</td></tr>
+<tr><td><span class="method get">GET</span></td><td class="route">/api/v1/jobs/:jobId</td></tr>
+<tr><td><span class="method get">GET</span></td><td class="route">/api/v1/jobs/:jobId/events</td></tr>
 <tr><td><span class="method get">GET</span></td><td class="route">/api/v1/management/audit-events</td></tr>
 <tr><td><span class="method get">GET</span></td><td class="route">/api/v1/management/backups</td></tr>
 <tr><td><span class="method post">POST</span></td><td class="route">/api/v1/management/backups</td></tr>
@@ -307,6 +305,7 @@
 <tr><td><span class="method get">GET</span></td><td class="route">/api/v1/management/ninfer-runtime</td></tr>
 <tr><td><span class="method post">POST</span></td><td class="route">/api/v1/management/ninfer-runtime/provision</td></tr>
 <tr><td><span class="method get">GET</span></td><td class="route">/api/v1/management/pi/catalog</td></tr>
+<tr><td><span class="method get">GET</span></td><td class="route">/api/v1/management/pi/custom-tools</td></tr>
 <tr><td><span class="method delete">DELETE</span></td><td class="route">/api/v1/management/pi/packages</td></tr>
 <tr><td><span class="method get">GET</span></td><td class="route">/api/v1/management/pi/packages</td></tr>
 <tr><td><span class="method put">PUT</span></td><td class="route">/api/v1/management/pi/packages/enabled</td></tr>
@@ -326,7 +325,7 @@
 <tr><td><span class="method get">GET</span></td><td class="route">/api/v1/management/trash</td></tr>
 <tr><td><span class="method post">POST</span></td><td class="route">/api/v1/management/trash/:id/restore</td></tr>
 <tr><td><span class="method post">POST</span></td><td class="route">/api/v1/management/trash/gc</td></tr>
-<tr><td><span class="method get">GET</span></td><td class="route">/api/v1/management/user-usage</td></tr>
+<tr><td><span class="method get">GET</span></td><td class="route">/api/v1/management/usage-subjects</td></tr>
 <tr><td><span class="method get">GET</span></td><td class="route">/api/v1/management/users</td></tr>
 <tr><td><span class="method post">POST</span></td><td class="route">/api/v1/management/users</td></tr>
 <tr><td><span class="method delete">DELETE</span></td><td class="route">/api/v1/management/users/:userId</td></tr>
@@ -359,8 +358,17 @@
 <tr><td><span class="method get">GET</span></td><td class="route">/api/v1/sessions/:sessionId/agent-run-state</td></tr>
 <tr><td><span class="method get">GET</span></td><td class="route">/api/v1/sessions/:sessionId/artifacts</td></tr>
 <tr><td><span class="method post">POST</span></td><td class="route">/api/v1/sessions/:sessionId/artifacts</td></tr>
+<tr><td><span class="method post">POST</span></td><td class="route">/api/v1/sessions/:sessionId/artifacts/content</td></tr>
 <tr><td><span class="method post">POST</span></td><td class="route">/api/v1/sessions/:sessionId/compact</td></tr>
+<tr><td><span class="method post">POST</span></td><td class="route">/api/v1/sessions/:sessionId/edit</td></tr>
+<tr><td><span class="method get">GET</span></td><td class="route">/api/v1/sessions/:sessionId/forensics</td></tr>
+<tr><td><span class="method get">GET</span></td><td class="route">/api/v1/sessions/:sessionId/message-queue</td></tr>
+<tr><td><span class="method post">POST</span></td><td class="route">/api/v1/sessions/:sessionId/message-queue</td></tr>
+<tr><td><span class="method delete">DELETE</span></td><td class="route">/api/v1/sessions/:sessionId/message-queue/:messageId</td></tr>
+<tr><td><span class="method patch">PATCH</span></td><td class="route">/api/v1/sessions/:sessionId/message-queue/:messageId</td></tr>
 <tr><td><span class="method post">POST</span></td><td class="route">/api/v1/sessions/:sessionId/messages</td></tr>
+<tr><td><span class="method get">GET</span></td><td class="route">/api/v1/sessions/:sessionId/query</td></tr>
+<tr><td><span class="method post">POST</span></td><td class="route">/api/v1/sessions/:sessionId/regenerate</td></tr>
 <tr><td><span class="method get">GET</span></td><td class="route">/api/v1/sessions/:sessionId/tool-approvals</td></tr>
 <tr><td><span class="method post">POST</span></td><td class="route">/api/v1/sessions/:sessionId/tool-approvals</td></tr>
 <tr><td><span class="method get">GET</span></td><td class="route">/api/v1/sessions/:sessionId/transcript</td></tr>
@@ -382,7 +390,7 @@
     <div class="section-sub">Stable routes extracted from engine playbooks; model families from <span class="chip">/opt/fitz/llm/models</span>.</div>
     <div class="grid">
       <div class="card"><span class="mono">routes</span><h5>Stable route ids</h5><p><span class="chip route-chip">h3-video</span> <span class="chip route-chip">minimax-music3-audio</span> <span class="chip route-chip">krea2-turbo-image</span> <span class="chip route-chip">krea2-nsfw-image</span> <span class="chip route-chip">qwen-image</span> <span class="chip route-chip">video</span> <span class="chip route-chip">audio</span> <span class="chip route-chip">image</span> <span class="chip route-chip">inference-linux</span> <span class="chip route-chip">default</span></p></div>
-      <div class="card"><span class="mono">models on disk</span><h5>Model families</h5><p><span class="chip">comfyui</span> <span class="chip">gguf</span> <span class="chip">vllm</span> <span class="chip">ninfer</span></p></div>
+      <div class="card"><span class="mono">models on disk</span><h5>Model families</h5><p><span class="faint">/opt/fitz/llm/models not present on this machine</span></p></div>
     </div>
     <h4>Lifecycle</h4>
     <pre><code><span class="tok-c">// packages/inference-core — the state machine that owns every engine</span>
@@ -410,7 +418,7 @@
 
   <section id="status">
     <h3 class="section-title">Status</h3>
-    <div class="section-sub">Feature bullets from <span class="chip">docs/implementation-status.md</span> — 42 implemented, 8 deferred.</div>
+    <div class="section-sub">Feature bullets from <span class="chip">docs/implementation-status.md</span> — 44 implemented, 8 deferred.</div>
     <div class="grid">
       <div class="card"><span class="mono">shipped</span><h5>Implemented</h5><ul><li>pnpm TypeScript monorepo with build, typecheck, and test commands.</li><li>Versioned protocol types for recipes, routes, lifecycle state, events, and initial Chat Completions requests.</li><li>Engine adapter contract and registry.</li><li>Route resolver.</li><li>Strict single-GPU owner-fair scheduler shared by chat generation, media generation,</li><li>Single-Default lifecycle policy with asynchronous host-start/desktop-open warm-up, pinned residency, safe recipe switching, local-media displacement/restoration, and force-unload plus dedicated-runtime termination when the hosting desktop closes.</li><li>Deterministic fake engine adapter.</li><li>Opt-in direct NInfer adapter with validated launch specs, generated per-instance credentials,</li><li>Spawned-process NInfer adapter integration coverage using an authenticated HTTP/SSE simulator.</li><li>SQLite migrations and repositories for recipes, routes, lifecycle events, settings, and inference-request groundwork.</li><li>Durable inference request status, administrator request history, and startup recovery that marks</li><li>Pre-launch RAM/VRAM resource policy with NVIDIA telemetry and a configurable 2,048 MiB default</li></ul></div>
       <div class="card"><span class="mono">next</span><h5>Deferred</h5><ul><li>Full JSON Schema/OpenAPI generation and exhaustive request compatibility.</li><li>Persistent/distributed rate windows.</li><li>Model-assisted summary quality (the summarizer is an injectable interface; the shipped default is deterministic).</li><li>Bundling/licensing Tailscale on the host PC. The current product controls an installed, signed-in</li><li>Live paid-provider media validation with a user-owned fal or Replicate credential, and a real local</li><li>Desktop UX refinement, richer event rendering, and accessibility polish.</li><li>OS-backed secret storage.</li><li>Retained stream replay for OpenAI-shaped active completions.</li></ul></div>
@@ -427,7 +435,7 @@
 </div>
 
 <footer>
-  <div>Generated from the repository at <span class="cmd">2026-08-14 09:10</span> · branch <span class="cmd">main</span> · last commit <span class="cmd">2026-08-14</span> · 202 tests passing</div>
+  <div>Generated from the repository at <span class="cmd">2026-09-16 21:43</span> · branch <span class="cmd">main</span> · last commit <span class="cmd">2026-09-09</span> · 202 tests passing</div>
   <div>Facts are read live at build time — regenerate with <span class="cmd">pnpm docs:overview</span> whenever the repo changes.</div>
 </footer>
 

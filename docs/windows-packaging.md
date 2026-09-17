@@ -8,7 +8,7 @@ supervisor. Production releases still need a Windows code-signing certificate co
 
 ## Publishing an update
 
-The desktop updater reads the latest published GitHub Release for `yafitzdev/fitz-codex`; it does
+The desktop updater reads the latest published GitHub Release for `yafitzdev/fitz-harness`; it does
 not read the repository branch or source files. A release consists of the NSIS installer,
 `latest.yml`, and its blockmap, all published by the tagged Windows workflow.
 
@@ -33,7 +33,8 @@ SmartScreen warnings for the installer. Signing should be added before broad dis
 The installed application uses Electron's Node runtime for both the desktop and embedded host. The
 host, Pi, npm, and their production dependencies live in `resources\host.asar`, keeping installation
 to a small number of large files instead of tens of thousands of package-manager files. Mutable state
-is stored outside the installation; engines and models remain under `%USERPROFILE%\llm`. Cloudflare
+is stored outside the installation; engines and models remain in the `Fitz-Inference` WSL registry at
+`/opt/fitz/llm` (`\\wsl.localhost\Fitz-Inference\opt\fitz\llm` from Windows). Cloudflare
 is not bundled. Hosting uses the owner PC's installed Tailscale daemon, while remote Fitz users need
 neither Tailscale nor a tailnet account.
 

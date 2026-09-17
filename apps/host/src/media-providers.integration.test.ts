@@ -1,15 +1,15 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { FakeEngineAdapter } from "@fitz/engine-fake";
-import { FakeMediaEngineAdapter, deterministicMediaBytes } from "@fitz/engine-media-fake";
+import { FakeEngineAdapter } from "@fitz/inference-core/testing";
+import { FakeMediaEngineAdapter, deterministicMediaBytes } from "./testing/fake-media-adapter.js";
 import { SqliteStore } from "@fitz/storage";
 import type { Recipe } from "@fitz/protocol";
 import { createHost, type HostRuntime } from "./create-app.js";
 import { testThermalGuard } from "./test-thermal.js";
 
 const fixturePath = (name: string): string =>
-  fileURLToPath(new URL(`../../../fixtures/media/${name}`, import.meta.url));
+  fileURLToPath(new URL(`./testing/fixtures/media/${name}`, import.meta.url));
 
 /** PR 4 end-to-end for provider templates (§5.7): connection save runs media
  *  discovery and writes per-model recipes + per-modality consumer routes;

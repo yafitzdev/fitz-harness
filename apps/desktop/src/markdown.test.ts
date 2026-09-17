@@ -105,18 +105,20 @@ describe("Markdown lists", () => {
 });
 
 describe("Post-generation rules at render time", () => {
-  it("hides backticks and bold markers from rendered assistant output", () => {
+  it("renders inline code and emphasis without exposing their delimiters", () => {
     const target = document.createElement("div");
     setMarkdown(target, "Done — created `docs/project-overview.html` with **no** backticks.");
     expect(target.textContent).toBe("Done — created docs/project-overview.html with no backticks.");
     expect(target.textContent).not.toContain("`");
+    expect(target.querySelector("code")?.textContent).toBe("docs/project-overview.html");
+    expect(target.querySelector("strong")?.textContent).toBe("no");
   });
 
-  it("flattens headings into plain prose", () => {
+  it("keeps heading hierarchy in completed answers", () => {
     const target = document.createElement("div");
     setMarkdown(target, "### Summary\n\nThe work is done.");
-    expect([...target.querySelectorAll("p")].map((p) => p.textContent)).toEqual(["Summary", "The work is done."]);
-    expect(target.querySelector("h1, h2, h3")).toBeNull();
+    expect(target.querySelector("h3")?.textContent).toBe("Summary");
+    expect([...target.querySelectorAll("p")].map((p) => p.textContent)).toEqual(["The work is done."]);
   });
 
   it("keeps fenced code blocks literal while cleaning the surrounding prose", () => {

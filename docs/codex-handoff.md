@@ -1,4 +1,4 @@
-# Handoff to Codex — fitz-codex media generation (PRs 1–8 complete)
+# Handoff to Codex — fitz-harness media generation (PRs 1–8 complete)
 
 > **Current architecture (2026-08-09):** this historical media handoff is retained for implementation
 > context, but its commit, deployment, test-count, monolithic-file, and shared-queue notes are obsolete.
@@ -13,7 +13,7 @@
 
 ## Project in one paragraph
 
-`fitz-codex` is a local-first, Codex-style agent app plus an inference control plane
+`fitz-harness` is a local-first, Codex-style agent app plus an inference control plane
 (Windows host machine, TypeScript/pnpm monorepo). The desktop (Electron) talks to a bundled
 Fastify host; the host owns the SQLite store, engine adapters (NInfer, llama.cpp,
 OpenAI-compatible, fake), the Pi coding-agent runtime, and — since PRs 1–8 — a **media
@@ -41,7 +41,7 @@ Layers, bottom-up, with the files that matter:
 | Media engine adapter interface | `packages/inference-core` | `MediaEngineAdapter`, `runMedia`, `LifecycleManager.runMedia`, media scheduler queue |
 | Durable job service | `apps/host` | `apps/host/src/media-jobs.ts` (`MediaJobCoordinator`, `DEFAULT_ARTIFACT_LIMITS`) |
 | HTTP surface | `apps/host` | `apps/host/src/create-app.ts` (~1830 lines; media routes, gateway, job endpoints, artifact content endpoint with Range support) |
-| Engines | `packages/engine-media-fake`, `packages/engine-comfyui`, `packages/media-providers` | fake adapter + fixture server; ComfyUI lifecycle adapter plus pure workflow compiler; fal/Replicate/openai-media templates |
+| Media adapters | `packages/adapter-comfyui`, `packages/media-providers` | ComfyUI lifecycle adapter plus pure workflow compiler; fal/Replicate/openai-media templates |
 | Recipes/routes seeding | `apps/host` | `apps/host/src/comfyui-playbook.ts` (`createComfyUIPlaybook`) |
 | Desktop UI | `apps/desktop` | Connections & Playbooks media sections (PR 5), `apps/desktop/src/resource-preview.ts` (MIME-aware preview caps) |
 | Storage | `packages/storage` | `migrations.ts` (media tables at **v9**), `sqlite-store.ts` facade, `sqlite-agent-run-store.ts`, `sqlite-media-store.ts` |
@@ -69,7 +69,7 @@ Key behaviors baked in (from the design doc §5):
 
 ## Machine/runtime state (the user's actual Windows box)
 
-- Host DB: `C:\Users\yanfi\AppData\Local\Fitz Codex\database\fitz.db` (via `resolveRuntimePaths`). **Currently at schema v7** — the host that last wrote it predates media. No `media_jobs` / `media_job_events` / `engines` tables; only ninfer Qwen recipes/routes.
+- Host DB: `C:\Users\yanfi\AppData\Local\Fitz Harness\database\fitz.db` (via `resolveRuntimePaths`). **Currently at schema v7** — the host that last wrote it predates media. No `media_jobs` / `media_job_events` / `engines` tables; only ninfer Qwen recipes/routes.
 - Bundled host binary: `release/host/dist/server.js` built **2026-08-06 01:05** — stale, pre-media. Source `apps/host/src/server.ts` was modified 2026-08-08 23:01. **The installed app does not have the media code yet.**
 - The host always supplies the canonical WSL engine root, so any historical `engineRoot` value in the DB is overwritten with `\\wsl.localhost\Fitz-Inference\opt\fitz\llm\engines` at startup.
 - Engine roots are **read-only engine repositories** (see `docs/engine-adapters.md`); the settings UI and catalog target GGUF models only.
@@ -106,7 +106,7 @@ Order matters; the code is done, the deployment is not.
 
 ## Suggested first prompt for Codex
 
-> Read `docs/codex-handoff.md` and `docs/media-generation.md`. I'm picking up fitz-codex
+> Read `docs/codex-handoff.md` and `docs/media-generation.md`. I'm picking up fitz-harness
 > after PRs 1–8 (all committed on `main`, ahead of origin by 19, working tree clean).
 > First task: rebuild and repack the host (`pnpm host:pack:win`), then walk me through
 > Path A (connect fal or Replicate in Connections and run one media job end-to-end) and

@@ -151,7 +151,7 @@ describe("PlaybookWorkspaceController", () => {
 
     elements.search.value = "no-such-engine";
     elements.search.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(elements.list.textContent).toContain("No engine folders found");
+    expect(elements.list.textContent).toContain("No installed engines found");
   });
 
   it("shows loading and unavailable states", () => {

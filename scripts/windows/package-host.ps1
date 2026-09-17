@@ -3,8 +3,8 @@ $ErrorActionPreference = "Stop"
 $resolvedRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 $releaseRoot = Join-Path $resolvedRoot "release"
 $stage = Join-Path $releaseRoot "host"
-$archive = Join-Path $releaseRoot "Fitz-Codex-Host-win-x64.zip"
-$desktopArchive = Join-Path $releaseRoot "Fitz-Codex-Host.asar"
+$archive = Join-Path $releaseRoot "Fitz-Harness-Host-win-x64.zip"
+$desktopArchive = Join-Path $releaseRoot "Fitz-Harness-Host.asar"
 $expectedParent = (Join-Path $resolvedRoot "release")
 if (-not $stage.StartsWith($expectedParent, [StringComparison]::OrdinalIgnoreCase)) { throw "Unsafe host package target" }
 if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }

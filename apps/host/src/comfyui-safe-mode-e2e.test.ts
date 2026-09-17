@@ -6,14 +6,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { FakeEngineAdapter } from "@fitz/engine-fake";
-import { ComfyUIEngineAdapter } from "@fitz/engine-comfyui";
+import { FakeEngineAdapter } from "@fitz/inference-core/testing";
+import { ComfyUIEngineAdapter } from "@fitz/adapter-comfyui";
 import { SqliteStore } from "@fitz/storage";
 import { createHost } from "./create-app.js";
 import { createComfyUIPlaybook } from "./comfyui-playbook.js";
 import { testThermalGuard } from "./test-thermal.js";
 
-const FIXTURE = fileURLToPath(new URL("../../../packages/engine-comfyui/src/fixtures/comfyui-server.mjs", import.meta.url));
+const FIXTURE = fileURLToPath(new URL("../../../packages/adapter-comfyui/src/fixtures/comfyui-server.mjs", import.meta.url));
 
 const children: Array<ChildProcessWithoutNullStreams> = [];
 const tempRoots: string[] = [];

@@ -82,21 +82,15 @@ importers:
       '@fitz/context':
         specifier: workspace:*
         version: link:../../packages/context
-      '@fitz/engine-comfyui':
+      '@fitz/adapter-comfyui':
         specifier: workspace:*
-        version: link:../../packages/engine-comfyui
-      '@fitz/engine-fake':
+        version: link:../../packages/adapter-comfyui
+      '@fitz/adapter-ninfer':
         specifier: workspace:*
-        version: link:../../packages/engine-fake
-      '@fitz/engine-media-fake':
+        version: link:../../packages/adapter-ninfer
+      '@fitz/adapter-openai-compatible':
         specifier: workspace:*
-        version: link:../../packages/engine-media-fake
-      '@fitz/engine-ninfer':
-        specifier: workspace:*
-        version: link:../../packages/engine-ninfer
-      '@fitz/engine-openai-compatible':
-        specifier: workspace:*
-        version: link:../../packages/engine-openai-compatible
+        version: link:../../packages/adapter-openai-compatible
       '@fitz/inference-core':
         specifier: workspace:*
         version: link:../../packages/inference-core
@@ -182,7 +176,7 @@ importers:
         specifier: workspace:*
         version: link:../storage
 
-  packages/engine-comfyui:
+  packages/adapter-comfyui:
     dependencies:
       '@fitz/inference-core':
         specifier: workspace:*
@@ -194,8 +188,11 @@ importers:
         specifier: workspace:*
         version: link:../protocol
 
-  packages/engine-fake:
+  packages/adapter-llama-cpp:
     dependencies:
+      '@fitz/adapter-openai-compatible':
+        specifier: workspace:*
+        version: link:../adapter-openai-compatible
       '@fitz/inference-core':
         specifier: workspace:*
         version: link:../inference-core
@@ -203,11 +200,11 @@ importers:
         specifier: workspace:*
         version: link:../protocol
 
-  packages/engine-llama-cpp:
+  packages/adapter-ninfer:
     dependencies:
-      '@fitz/engine-openai-compatible':
+      '@fitz/adapter-openai-compatible':
         specifier: workspace:*
-        version: link:../engine-openai-compatible
+        version: link:../adapter-openai-compatible
       '@fitz/inference-core':
         specifier: workspace:*
         version: link:../inference-core
@@ -215,31 +212,7 @@ importers:
         specifier: workspace:*
         version: link:../protocol
 
-  packages/engine-media-fake:
-    dependencies:
-      '@fitz/engine-fake':
-        specifier: workspace:*
-        version: link:../engine-fake
-      '@fitz/inference-core':
-        specifier: workspace:*
-        version: link:../inference-core
-      '@fitz/protocol':
-        specifier: workspace:*
-        version: link:../protocol
-
-  packages/engine-ninfer:
-    dependencies:
-      '@fitz/engine-openai-compatible':
-        specifier: workspace:*
-        version: link:../engine-openai-compatible
-      '@fitz/inference-core':
-        specifier: workspace:*
-        version: link:../inference-core
-      '@fitz/protocol':
-        specifier: workspace:*
-        version: link:../protocol
-
-  packages/engine-openai-compatible:
+  packages/adapter-openai-compatible:
     dependencies:
       '@fitz/inference-core':
         specifier: workspace:*
@@ -264,9 +237,9 @@ importers:
 
   packages/media-providers:
     dependencies:
-      '@fitz/engine-openai-compatible':
+      '@fitz/adapter-openai-compatible':
         specifier: workspace:*
-        version: link:../engine-openai-compatible
+        version: link:../adapter-openai-compatible
       '@fitz/inference-core':
         specifier: workspace:*
         version: link:../inference-core

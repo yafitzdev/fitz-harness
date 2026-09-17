@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { FakeEngineAdapter } from "@fitz/engine-fake";
-import { FakeMediaEngineAdapter } from "@fitz/engine-media-fake";
+import { FakeEngineAdapter } from "@fitz/inference-core/testing";
+import { FakeMediaEngineAdapter } from "./testing/fake-media-adapter.js";
 import type { MediaModality, Recipe, Route, UserRecord, UserQuota } from "@fitz/protocol";
 import { SqliteStore } from "@fitz/storage";
 import { SecurityService } from "@fitz/security";

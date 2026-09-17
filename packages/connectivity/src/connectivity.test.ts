@@ -31,7 +31,7 @@ describe("Windows startup", () => {
       if (args[0] === "add") configured = true;
       if (args[0] === "delete") configured = false;
       if (args[0] === "query" && !configured) throw new Error("not found");
-      return { stdout: configured ? "FitzCodexHost REG_SZ command" : "" };
+      return { stdout: configured ? "FitzHarnessHost REG_SZ command" : "" };
     }, "win32", () => true);
     expect(await manager.status()).toEqual(expect.objectContaining({ available: true, configured: false }));
     expect(await manager.install()).toEqual(expect.objectContaining({ configured: true }));

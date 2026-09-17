@@ -47,6 +47,7 @@ export class ActivityTimeline {
   readonly #options: ActivityTimelineOptions;
   readonly #searchRoots = new Set<string>();
   readonly #burstsByTool = new WeakMap<HTMLElement, ActivityBurst>();
+  readonly #toolStartedAt = new WeakMap<HTMLElement, number>();
   readonly #reasoningByRow = new WeakMap<HTMLElement, ReasoningView>();
   readonly #approvalRequests = new WeakMap<HTMLElement, Json>();
   #work: WorkSummary | undefined;
@@ -138,6 +139,7 @@ export class ActivityTimeline {
     row.className = `message agent-activity${running ? " running" : ""}`;
     row.dataset.toolCallId = toolCallId;
     row.dataset.toolName = toolName;
+    this.#toolStartedAt.set(row, this.#timestamp(createdAt));
     const summary = document.createElement("button");
     summary.type = "button";
     summary.className = "agent-activity-summary";
@@ -161,7 +163,10 @@ export class ActivityTimeline {
     const chevron = document.createElement("span");
     chevron.className = "agent-activity-chevron";
     chevron.append(svgIcon('<path d="m8 5.5 4.5 4.5L8 14.5"></path>'));
-    summary.append(icon, label, chevron);
+    const duration = document.createElement("span");
+    duration.className = "agent-activity-duration";
+    duration.hidden = true;
+    summary.append(icon, label, duration, chevron);
     const details = document.createElement("div");
     details.className = "agent-activity-details";
     if (toolName === "bash") this.#renderShell(details, input, running);
@@ -205,6 +210,13 @@ export class ActivityTimeline {
     if (shellOutput) shellOutput.textContent = this.#shellOutput(result);
     const shellStatus = row.querySelector<HTMLElement>(".shell-status");
     if (shellStatus) { shellStatus.textContent = isError ? "× Failed" : "✓ Success"; shellStatus.classList.toggle("failed", isError); }
+    const startedAt = this.#toolStartedAt.get(row);
+    const endedAt = this.#timestamp(completedAt);
+    const duration = row.querySelector<HTMLElement>(".agent-activity-duration");
+    if (duration && startedAt !== undefined) {
+      duration.textContent = this.#formatToolDuration(Math.max(0, endedAt - startedAt));
+      duration.hidden = false;
+    }
     const burst = this.#burstsByTool.get(row);
     if (burst && wasRunning) { burst.running = Math.max(0, burst.running - 1); this.#updateBurst(burst); }
     this.#touchWork(completedAt);
@@ -504,6 +516,11 @@ export class ActivityTimeline {
     const minutes = Math.floor(seconds / 60);
     if (minutes >= 60) return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
     return minutes > 0 ? `${minutes}m ${String(seconds % 60).padStart(2, "0")}s` : `${seconds}s`;
+  }
+  #formatToolDuration(value: number): string {
+    if (value < 1_000) return `${Math.max(1, Math.round(value))}ms`;
+    if (value < 10_000) return `${(value / 1_000).toFixed(1).replace(/\.0$/, "")}s`;
+    return this.#formatElapsed(value);
   }
   #removeLanding(): void { if (this.#options.messages.querySelector(".landing, .new-chat-landing")) this.#options.messages.replaceChildren(); }
   #scroll(): void { scrollToLatestIfFollowing(this.#options.messages); }

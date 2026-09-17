@@ -96,8 +96,7 @@ export function registerModelManagementRoutes(options: ModelManagementRouteOptio
       try {
         const folderName = parseFolderName((request.params as { folderName: string }).folderName);
         const body = requireRecord(request.body);
-        const engineRoot = store.getSetting<string>("engineRoot") ?? configuredEngineRoot;
-        const rootPath = safeEnginePath(engineRoot, folderName);
+        const rootPath = safeEnginePath(configuredEngineRoot, folderName);
         if (!existsSync(rootPath) || !statSync(rootPath).isDirectory()) {
           throw new TypeError("Engine folder does not exist beneath the configured root");
         }

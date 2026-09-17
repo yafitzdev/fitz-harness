@@ -2,11 +2,11 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { NInferEngineAdapter } from "@fitz/engine-ninfer";
-import { FakeEngineAdapter } from "@fitz/engine-fake";
-import { FakeMediaEngineAdapter } from "@fitz/engine-media-fake";
-import { ManagedOpenAIEngineAdapter, OpenAICompatibleEngineAdapter } from "@fitz/engine-openai-compatible";
-import { ComfyUIEngineAdapter } from "@fitz/engine-comfyui";
+import { NInferEngineAdapter } from "@fitz/adapter-ninfer";
+import { FakeEngineAdapter } from "@fitz/inference-core/testing";
+import { FakeMediaEngineAdapter } from "./testing/fake-media-adapter.js";
+import { ManagedOpenAIEngineAdapter, OpenAICompatibleEngineAdapter } from "@fitz/adapter-openai-compatible";
+import { ComfyUIEngineAdapter } from "@fitz/adapter-comfyui";
 import { applyPendingStorageRestore, ArtifactRepository, LocalBlobStore, SqliteSessionQueryService, SqliteStore, StorageDurabilityService } from "@fitz/storage";
 import { SecurityService } from "@fitz/security";
 import { createHost } from "./create-app.js";
@@ -22,7 +22,7 @@ import { contextTokensForAgentRequest, contextTokensForRoute, thinkingFormatForA
 import { WindowsStartupManager } from "@fitz/connectivity";
 import { SharedHostGateway, TailscaleFunnelManager } from "@fitz/connectivity";
 import { FitzConfigService } from "@fitz/config";
-import { resolveRuntimePaths } from "./runtime-paths.js";
+import { assertExternalInferenceRegistry, migrateLegacyDataRoot, resolveRuntimePaths } from "./runtime-paths.js";
 import { NInferRuntimeManager } from "./ninfer-runtime.js";
 import { managedLinuxRuntimeLayout, managedLinuxRuntimeMap, terminateManagedLinuxRuntime } from "./managed-linux-runtime.js";
 import { AgentSafetyService } from "./agent-safety/index.js";
@@ -40,10 +40,13 @@ import { HostingService } from "./hosting-service.js";
 import { createAgentRunPlanPolicy } from "./agent-plan-tools.js";
 import { buildCustomToolDefinitions, listCustomToolSummaries } from "./custom-tools.js";
 import { rootAgentToolCallBudget } from "./agent-effort-policy.js";
+import { ToolResultSpillStore } from "./tool-result-spill-store.js";
 import type { Recipe, ResolvedAgentTopology } from "@fitz/protocol";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+migrateLegacyDataRoot();
 const runtimePaths = resolveRuntimePaths();
+assertExternalInferenceRegistry(runtimePaths.llmRoot, resolve(moduleDirectory, "../../.."));
 const bundledNpmCli = resolve(moduleDirectory, "../node_modules/npm/bin/npm-cli.js");
 const npmCliPath = process.env.FITZ_NPM_CLI_PATH ?? (existsSync(bundledNpmCli) ? bundledNpmCli : undefined);
 const databasePath = runtimePaths.databasePath;
@@ -75,6 +78,7 @@ const ninferRuntime = engineMode === "ninfer" && process.platform === "win32"
   : undefined;
 const engineOptions = engineModeOptions(engineMode);
 const store = new SqliteStore(databasePath);
+const toolResultSpills = new ToolResultSpillStore((sessionId) => store.getSession(sessionId)?.workspaceRoot ?? sessionWorkspaceRoot(sessionId));
 // Project chats historically relied entirely on their project root. Attach a
 // chat-owned output directory during migration; old standalone chats retain
 // their original host CWD so existing relative file links keep working.
@@ -87,7 +91,6 @@ const configuration = new FitzConfigService({
   path: join(runtimePaths.dataRoot, "fitz.config.json"),
   defaults: {
     inference: {
-      engineRoot: runtimePaths.engineRoot,
       reserveVramMiB: parseNonNegativeInteger(process.env.FITZ_RESERVE_VRAM_MIB ?? "800", "FITZ_RESERVE_VRAM_MIB"),
       agentConcurrency: parsePositiveInteger(process.env.FITZ_AGENT_CONCURRENCY ?? "4", "FITZ_AGENT_CONCURRENCY"),
       agentConcurrencyPerUser: parsePositiveInteger(process.env.FITZ_AGENT_CONCURRENCY_PER_USER ?? "1", "FITZ_AGENT_CONCURRENCY_PER_USER"),
@@ -102,7 +105,6 @@ configuration.delete("consumerConnections");
 configuration.delete("consumerCloudRoutes");
 store.useSettingsBackend(configuration);
 const desiredConfiguration = configuration.read();
-runtimePaths.engineRoot = desiredConfiguration.inference.engineRoot ?? runtimePaths.engineRoot;
 const reserveVramMiB = desiredConfiguration.inference.reserveVramMiB;
 const agentConcurrency = desiredConfiguration.inference.agentConcurrency;
 const agentConcurrencyPerOwner = desiredConfiguration.inference.agentConcurrencyPerUser;
@@ -212,6 +214,7 @@ const runtime = createHost({
       toolPolicy: safety.createToolEvaluator(),
       toolLease: workspaceMutationLeases.acquire,
       redactToolResult: safety.createResultRedactor(),
+      spillToolResult: (request) => toolResultSpills.write(request),
       subagentBudget: (request, context) => subagentRouteBudget(store, context?.ownerUserId ?? LOCAL_OWNER_ID, request.model, request.effort ?? "normal", loadedLocalTopology),
       runPlan: (_request, context) => context?.runId ? createAgentRunPlanPolicy(store, context.runId) : undefined,
       customTools: (context) => buildCustomToolDefinitions({

@@ -1,4 +1,4 @@
-import type { AgentEventEnvelope, AgentEventType, AgentQueueItem, AgentRunRecord, AgentRunRequest, ArtifactRecord, SubagentRoleDefinition } from "@fitz/protocol";
+import type { AgentEventEnvelope, AgentEventType, AgentQueueItem, AgentRunRecord, AgentRunRequest, ArtifactRecord, QueueUpdatedEvent, SubagentRoleDefinition } from "@fitz/protocol";
 import { AGENT_PROTOCOL_VERSION } from "@fitz/protocol";
 import { OwnerFairQueue, type InferenceScheduler, type ScheduledStream } from "@fitz/inference-core";
 import type { AgentRuntime, AgentRuntimeEvent, AgentRuntimeRun } from "@fitz/agent-core";
@@ -50,6 +50,7 @@ export class AgentRunCoordinator {
   readonly #tasks = new Set<Promise<void>>();
   readonly #completionTasks = new Set<Promise<void>>();
   readonly #activeSubagents = new Map<string, AgentQueueJob>();
+  readonly #latestModelRequest = new Map<string, string>();
   #accepting = true;
   /** Fired once per run after it reaches a terminal state, so the safety layer can sweep retention. */
   constructor(private readonly store: SqliteStore, private readonly scheduler: InferenceScheduler, private readonly runtime?: AgentRuntime, private readonly onRunCompleted?: (runId: string) => void | Promise<void>, private readonly maxDepth = 256, private readonly maxConcurrent = 4, private readonly maxConcurrentPerOwner = 1) {
@@ -71,6 +72,7 @@ export class AgentRunCoordinator {
       const attachmentMessageIndex = canonicalMessages.findLastIndex((message) => message.role === "user");
       if (request.sessionId) for (const [index, message] of canonicalMessages.entries()) this.store.appendTranscriptEntry({ id: randomUUID(), sessionId: request.sessionId, kind: "message", role: message.role, content: { text: message.content, ...(message.name ? { name: message.name } : {}), ...(index === attachmentMessageIndex && transcriptAttachments.length ? { attachments: transcriptAttachments.map(transcriptAttachment) } : {}) }, createdAt: now });
       this.#emit(id, "run.created", { routeId: request.model, ...(resumeOfRunId ? { resumeOfRunId } : {}) });
+      if (request.clientRetryCount) this.#emit(id, "run.retry", { attempt: request.clientRetryCount + 1, reason: "The desktop lost contact while submitting this message." });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       try { this.#emit(id, "run.failed", { error: message }); }
@@ -93,6 +95,7 @@ export class AgentRunCoordinator {
     const { enabled: _enabled, ...roleSnapshot } = input.role;
     const request: AgentRunRequest = {
       ...input.request,
+      ...(parentRun?.sessionId ? { sessionId: parentRun.sessionId } : {}),
       delegation: { role: roleSnapshot, parentRunId: input.parentRunId, ...(input.planItemId ? { planItemId: input.planItemId } : {}) },
     };
     const id = randomUUID();
@@ -138,6 +141,33 @@ export class AgentRunCoordinator {
   }
 
   get(id: string): AgentRunRecord | undefined { return this.store.getAgentRun(id); }
+  /** Mirror model-request boundaries into the run ledger. Assistant deltas are
+   * stamped from this identity so telemetry never has to guess from wall-clock
+   * proximity which request produced a message. */
+  recordModelRequest(event: QueueUpdatedEvent): void {
+    if (event.data.kind !== "chat" || !event.data.runId) return;
+    // Queue placement already has a durable lifecycle stream. The agent ledger
+    // needs only execution boundaries, avoiding repeated position updates when
+    // unrelated work enters or leaves the lane.
+    if (event.data.status === "queued") return;
+    const run = this.store.getAgentRun(event.data.runId);
+    if (!run || run.status === "completed" || run.status === "failed" || run.status === "cancelled" || run.status === "interrupted") return;
+    if (event.data.status === "started") this.#latestModelRequest.set(event.data.runId, event.data.requestId);
+    this.#emit(event.data.runId, "model.request.updated", {
+      requestId: event.data.requestId,
+      routeId: event.data.routeId,
+      lane: event.data.lane,
+      status: event.data.status,
+      position: event.data.position,
+      depth: event.data.depth,
+      lifecycleSequence: event.sequence,
+    });
+  }
+  recordClientRetry(runId: string, retryCount: number): void {
+    const attempt = retryCount + 1;
+    const exists = this.store.agentEventsAfter(runId, 0).some((event) => event.type === "run.retry" && event.data.attempt === attempt);
+    if (!exists) this.#emit(runId, "run.retry", { attempt, reason: "The desktop lost contact while submitting this message." });
+  }
   getSessionRecovery(sessionId: string): AgentRunRecord | undefined { return this.store.latestSessionAgentRun(sessionId); }
   list(ownerUserId?: string, limit = 100): AgentRunRecord[] { return this.store.listAgentRuns(ownerUserId, limit); }
   queue(ownerUserId?: string): AgentQueueItem[] {
@@ -226,6 +256,7 @@ export class AgentRunCoordinator {
   async #runJob(job: AgentQueueJob): Promise<void> {
     try {
       job.stream = this.#createStream(job.request, job.ownerUserId, job.ownerDeviceId, job.id);
+      if ("requestId" in job.stream && typeof job.stream.requestId === "string") this.#latestModelRequest.set(job.id, job.stream.requestId);
       if (job.cancelRequested || job.shutdownRequested) job.stream.cancel();
       await this.#consume(job, job.stream);
       this.#notifyCompletion(job.id);
@@ -233,6 +264,8 @@ export class AgentRunCoordinator {
       const message = error instanceof Error ? error.message : String(error);
       this.#emit(job.id, job.shutdownRequested ? "run.interrupted" : "run.failed", { error: job.shutdownRequested ? "host_shutdown" : message, ...(job.shutdownRequested ? { resumable: true } : {}) });
       this.#notifyCompletion(job.id);
+    } finally {
+      this.#latestModelRequest.delete(job.id);
     }
   }
 
@@ -246,21 +279,25 @@ export class AgentRunCoordinator {
   async #consume(job: AgentQueueJob, stream: AgentRuntimeRun | ScheduledStream): Promise<void> {
     const id = job.id;
     this.#emit(id, "run.started", {});
-    let assistantText = ""; let reasoningText = "";
+    let assistantText = ""; let reasoningText = ""; let assistantRequestId: string | undefined; let reasoningRequestId: string | undefined;
     let assistantFrom = 0; let assistantThrough = 0; let reasoningFrom = 0; let reasoningThrough = 0;
-    const flushAssistant = (phase: "commentary" | "final") => { const emitted = Boolean(assistantText); if (assistantText) this.#appendAssistantTranscript(id, assistantText, phase, assistantFrom, assistantThrough); assistantText = ""; assistantFrom = 0; assistantThrough = 0; return emitted; };
-    const flushReasoning = () => { if (reasoningText) this.#appendReasoningTranscript(id, reasoningText, reasoningFrom, reasoningThrough); reasoningText = ""; reasoningFrom = 0; reasoningThrough = 0; };
+    const flushAssistant = (phase: "commentary" | "final") => { const emitted = Boolean(assistantText); if (assistantText) this.#appendAssistantTranscript(id, assistantText, phase, assistantFrom, assistantThrough, assistantRequestId); assistantText = ""; assistantFrom = 0; assistantThrough = 0; assistantRequestId = undefined; return emitted; };
+    const flushReasoning = () => { if (reasoningText) this.#appendReasoningTranscript(id, reasoningText, reasoningFrom, reasoningThrough, reasoningRequestId); reasoningText = ""; reasoningFrom = 0; reasoningThrough = 0; reasoningRequestId = undefined; };
     try {
       for await (const delta of stream) {
         const normalized = normalizeRuntimeEvent(delta);
+        const requestId = this.#latestModelRequest.get(id);
+        if (requestId && (normalized.type === "assistant.delta" || normalized.type === "reasoning.delta" || normalized.type === "reasoning.completed" || normalized.type === "tool.started" || normalized.type === "tool.completed")) normalized.data.requestId = requestId;
         const event = this.#emit(id, normalized.type, normalized.data);
-        if (event.type === "assistant.delta") { if (!assistantFrom) assistantFrom = event.sequence; assistantThrough = event.sequence; assistantText += String(event.data.text ?? ""); }
-        if (event.type === "reasoning.delta") { if (!reasoningFrom) reasoningFrom = event.sequence; reasoningThrough = event.sequence; reasoningText += String(event.data.text ?? ""); }
+        if (event.type === "assistant.delta") { if (!assistantFrom) { assistantFrom = event.sequence; assistantRequestId = stringValue(event.data.requestId); } assistantThrough = event.sequence; assistantText += String(event.data.text ?? ""); }
+        if (event.type === "reasoning.delta") { if (!reasoningFrom) { reasoningFrom = event.sequence; reasoningRequestId = stringValue(event.data.requestId); } reasoningThrough = event.sequence; reasoningText += String(event.data.text ?? ""); }
         if (event.type === "tool.started" || event.type === "tool.approval.requested" || event.type === "user.steer") { flushAssistant("commentary"); flushReasoning(); }
         if (event.type === "reasoning.completed") flushReasoning();
         if (event.type === "user.steer") { const text = String(event.data.text ?? ""); const sessionId = this.store.getAgentRun(id)?.sessionId; if (sessionId && text) this.store.appendTranscriptEntry({ id: `agent-event:${id}:user-steer:${event.sequence}`, sessionId, kind: "message", role: "user", content: { text, runId: id, eventSequence: event.sequence }, createdAt: event.timestamp }); }
         this.#appendToolTranscript(id, event);
       }
+      const completedNormally = !job.shutdownRequested && !job.cancelRequested;
+      if (completedNormally) this.#emit(id, "assistant.completed", { ...(assistantRequestId ? { requestId: assistantRequestId } : {}) });
       const emittedFinal = flushAssistant("final"); flushReasoning();
       if (job.shutdownRequested) this.#emit(id, "run.interrupted", { error: "host_shutdown", resumable: true });
       else if (job.cancelRequested) this.#emit(id, "run.cancelled", {});
@@ -271,7 +308,9 @@ export class AgentRunCoordinator {
     } catch (error) {
       flushAssistant("final"); flushReasoning(); const cancelled = error instanceof Error && error.name === "AbortError"; const message = error instanceof Error ? error.message : String(error);
       if (job.shutdownRequested) this.#emit(id, "run.interrupted", { error: "host_shutdown", resumable: true });
-      else this.#emit(id, cancelled || job.cancelRequested ? "run.cancelled" : "run.failed", { error: message });
+      else if (job.cancelRequested) this.#emit(id, "run.cancelled", { error: message });
+      else if (cancelled) this.#emit(id, "run.interrupted", { error: "runtime_interrupted", detail: message, resumable: true });
+      else this.#emit(id, "run.failed", { error: message });
     }
   }
   #activeForOwner(ownerUserId: string | undefined): number { const owner = ownerUserId ?? "local"; return [...this.#active.values()].filter((job) => (job.ownerUserId ?? "local") === owner).length; }
@@ -292,11 +331,12 @@ export class AgentRunCoordinator {
     void guarded.then(() => this.#completionTasks.delete(guarded));
   }
   #publishQueue(): void { const depth = this.#queue.length + this.#active.size; for (const job of this.#active.values()) this.#emit(job.id, "run.queue.updated", { status: "running", position: 0, depth }); this.#queue.values().forEach((job, index) => this.#emit(job.id, "run.queue.updated", { status: "queued", position: index + 1, depth })); }
-  #emit(runId: string, type: AgentEventType, data: Record<string, unknown>): AgentEventEnvelope { const run = this.store.getAgentRun(runId); if (!run) throw new Error(`Agent run ${runId} disappeared`); const event: AgentEventEnvelope = { protocolVersion: AGENT_PROTOCOL_VERSION, runId, sequence: run.lastSequence + 1, timestamp: new Date().toISOString(), type, data }; this.store.appendAgentEvent(event); for (const listener of this.#listeners.get(runId) ?? []) listener(event); return event; }
-  #appendAssistantTranscript(runId: string, text: string, phase: "commentary" | "final", fromSequence: number, eventSequence: number): void { const sessionId = this.store.getAgentRun(runId)?.sessionId; if (sessionId && text) this.store.appendTranscriptEntry({ id: `agent-event:${runId}:message:${fromSequence}-${eventSequence}`, sessionId, kind: "message", role: "assistant", content: { text, runId, phase, eventSequence }, createdAt: new Date().toISOString() }); }
+  #emit(runId: string, type: AgentEventType, data: Record<string, unknown>): AgentEventEnvelope { const run = this.store.getAgentRun(runId); if (!run) throw new Error(`Agent run ${runId} disappeared`); const event: AgentEventEnvelope = { protocolVersion: AGENT_PROTOCOL_VERSION, runId, sequence: run.lastSequence + 1, timestamp: new Date().toISOString(), type, data }; this.store.appendAgentEvent(event); if (type === "run.retry" || type === "run.failed") this.#appendRunNotice(runId, event); for (const listener of this.#listeners.get(runId) ?? []) listener(event); return event; }
+  #appendAssistantTranscript(runId: string, text: string, phase: "commentary" | "final", fromSequence: number, eventSequence: number, requestId?: string): void { const sessionId = this.store.getAgentRun(runId)?.sessionId; if (sessionId && text) this.store.appendTranscriptEntry({ id: `agent-event:${runId}:message:${fromSequence}-${eventSequence}`, sessionId, kind: "message", role: "assistant", content: { text, runId, phase, eventSequence, ...(requestId ? { requestId } : {}) }, createdAt: new Date().toISOString() }); }
   /** Reasoning is stored under its own transcript kind so it never round-trips into model context or renders as a chat message. */
-  #appendReasoningTranscript(runId: string, text: string, fromSequence: number, eventSequence: number): void { const sessionId = this.store.getAgentRun(runId)?.sessionId; if (sessionId && text) this.store.appendTranscriptEntry({ id: `agent-event:${runId}:reasoning:${fromSequence}-${eventSequence}`, sessionId, kind: "reasoning", role: "assistant", content: { text, runId, eventSequence }, createdAt: new Date().toISOString() }); }
+  #appendReasoningTranscript(runId: string, text: string, fromSequence: number, eventSequence: number, requestId?: string): void { const sessionId = this.store.getAgentRun(runId)?.sessionId; if (sessionId && text) this.store.appendTranscriptEntry({ id: `agent-event:${runId}:reasoning:${fromSequence}-${eventSequence}`, sessionId, kind: "reasoning", role: "assistant", content: { text, runId, eventSequence, ...(requestId ? { requestId } : {}) }, createdAt: new Date().toISOString() }); }
   #appendToolTranscript(runId: string, event: AgentEventEnvelope): void { const sessionId = this.store.getAgentRun(runId)?.sessionId; if (!sessionId || (event.type !== "tool.started" && event.type !== "tool.completed")) return; this.store.appendTranscriptEntry({ id: `agent-event:${runId}:${event.type}:${event.sequence}`, sessionId, kind: event.type === "tool.started" ? "tool-call" : "tool-result", role: "tool", content: { ...event.data, runId, eventSequence: event.sequence }, createdAt: event.timestamp }); }
+  #appendRunNotice(runId: string, event: AgentEventEnvelope): void { const sessionId = this.store.getAgentRun(runId)?.sessionId; if (!sessionId) return; this.store.appendTranscriptEntry({ id: `agent-event:${runId}:${event.type}:${event.sequence}`, sessionId, kind: "run-notice", role: "system", content: { type: event.type === "run.retry" ? "retry" : "failure", ...event.data, runId, eventSequence: event.sequence }, createdAt: event.timestamp }); }
 }
 
 function transcriptAttachment(artifact: ArtifactRecord) {
@@ -316,4 +356,8 @@ function abortError(): Error {
 function normalizeRuntimeEvent(event: AgentRuntimeEvent | { text: string; finishReason?: string; promptTokens?: number; completionTokens?: number }): { type: AgentEventType; data: Record<string, unknown> } {
   if ("type" in event) { if (event.type === "prompt.provenance") return { type: event.type, data: { promptId: event.id, promptVersion: event.version, sha256: event.sha256, sections: event.sections } }; if (event.type === "assistant.delta") return { type: event.type, data: { text: event.text } }; if (event.type === "reasoning.delta") return { type: event.type, data: { text: event.text } }; if (event.type === "reasoning.completed") return { type: event.type, data: {} }; if (event.type === "user.steer") return { type: event.type, data: { text: event.text } }; return { type: event.type, data: { toolCallId: event.toolCallId, toolName: event.toolName, ...((event.type === "tool.started" || event.type === "tool.approval.requested") && event.input !== undefined ? { input: event.input } : {}), ...((event.type === "tool.approval.requested" || event.type === "tool.approval.resolved") ? { approvalId: event.approvalId } : {}), ...(event.type === "tool.approval.resolved" ? { decision: event.decision } : {}), ...(event.type === "tool.completed" ? { result: event.result, ...(event.isError !== undefined ? { isError: event.isError } : {}) } : {}) } }; }
   return { type: "assistant.delta", data: { text: event.text, ...(event.finishReason ? { finishReason: event.finishReason } : {}), ...(event.promptTokens !== undefined ? { promptTokens: event.promptTokens } : {}), ...(event.completionTokens !== undefined ? { completionTokens: event.completionTokens } : {}) } };
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
 }

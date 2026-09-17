@@ -80,7 +80,7 @@ interface ActiveDownload {
 }
 
 const DEFAULT_ENDPOINT = "https://huggingface.co";
-const USER_AGENT = "Fitz-Codex";
+const USER_AGENT = "Fitz-Harness";
 
 /**
  * HF's `/api/models` ignores the `offset` param and caps `limit` at 1000, so a

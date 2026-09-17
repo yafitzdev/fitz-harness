@@ -8,7 +8,7 @@ import {
   OpenAICompatibleClient,
   supportsChatCompletions,
   type OpenAICompatibleModel,
-} from "@fitz/engine-openai-compatible";
+} from "@fitz/adapter-openai-compatible";
 import {
   FAL_DEFAULT_BASE_URL,
   REPLICATE_DEFAULT_BASE_URL,

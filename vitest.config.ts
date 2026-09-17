@@ -12,26 +12,23 @@ export default defineConfig({
       "@fitz/connectivity": fileURLToPath(new URL("./packages/connectivity/src/index.ts", import.meta.url)),
       "@fitz/media": fileURLToPath(new URL("./packages/media/src/index.ts", import.meta.url)),
       "@fitz/protocol": fileURLToPath(new URL("./packages/protocol/src/index.ts", import.meta.url)),
+      "@fitz/inference-core/testing": fileURLToPath(
+        new URL("./packages/inference-core/src/testing.ts", import.meta.url),
+      ),
       "@fitz/inference-core": fileURLToPath(
         new URL("./packages/inference-core/src/index.ts", import.meta.url),
       ),
-      "@fitz/engine-fake": fileURLToPath(
-        new URL("./packages/engine-fake/src/index.ts", import.meta.url),
+      "@fitz/adapter-ninfer": fileURLToPath(
+        new URL("./packages/adapter-ninfer/src/index.ts", import.meta.url),
       ),
-      "@fitz/engine-media-fake": fileURLToPath(
-        new URL("./packages/engine-media-fake/src/index.ts", import.meta.url),
+      "@fitz/adapter-openai-compatible": fileURLToPath(
+        new URL("./packages/adapter-openai-compatible/src/index.ts", import.meta.url),
       ),
-      "@fitz/engine-ninfer": fileURLToPath(
-        new URL("./packages/engine-ninfer/src/index.ts", import.meta.url),
+      "@fitz/adapter-llama-cpp": fileURLToPath(
+        new URL("./packages/adapter-llama-cpp/src/index.ts", import.meta.url),
       ),
-      "@fitz/engine-openai-compatible": fileURLToPath(
-        new URL("./packages/engine-openai-compatible/src/index.ts", import.meta.url),
-      ),
-      "@fitz/engine-llama-cpp": fileURLToPath(
-        new URL("./packages/engine-llama-cpp/src/index.ts", import.meta.url),
-      ),
-      "@fitz/engine-comfyui": fileURLToPath(
-        new URL("./packages/engine-comfyui/src/index.ts", import.meta.url),
+      "@fitz/adapter-comfyui": fileURLToPath(
+        new URL("./packages/adapter-comfyui/src/index.ts", import.meta.url),
       ),
       "@fitz/media-providers": fileURLToPath(
         new URL("./packages/media-providers/src/index.ts", import.meta.url),

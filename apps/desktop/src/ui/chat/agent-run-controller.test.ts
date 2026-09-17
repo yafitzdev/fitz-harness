@@ -344,8 +344,8 @@ describe("AgentRunController", () => {
 
     await controller.start(request());
 
-    expect(activity.timeline.appendTool).toHaveBeenCalledWith("bash", { command: "pwd" }, "tool-1", true);
-    expect(activity.timeline.completeTool).toHaveBeenCalledWith(activity.tool, "bash", { command: "pwd" }, "C:/code", false);
+    expect(activity.timeline.appendTool).toHaveBeenCalledWith("bash", { command: "pwd" }, "tool-1", true, undefined);
+    expect(activity.timeline.completeTool).toHaveBeenCalledWith(activity.tool, "bash", { command: "pwd" }, "C:/code", false, undefined);
     expect(activity.timeline.appendApproval).toHaveBeenCalledWith(expect.objectContaining({ id: "approval-1", status: "pending" }));
     expect(activity.timeline.resolveApproval).toHaveBeenCalledWith(activity.approval, "approved");
     expect(calls.setStatus).toHaveBeenCalledWith("Waiting for approval", "active");
@@ -589,7 +589,7 @@ describe("AgentRunController", () => {
 
     await controller.start(request());
 
-    expect(activity.timeline.appendReasoning).toHaveBeenCalledWith(true);
+    expect(activity.timeline.appendReasoning).toHaveBeenCalledWith(true, undefined);
     expect(activity.timeline.appendReasoningDelta).toHaveBeenNthCalledWith(1, activity.reasoning, "Let me ");
     expect(activity.timeline.appendReasoningDelta).toHaveBeenNthCalledWith(2, activity.reasoning, "think.");
     expect(activity.timeline.completeReasoning).toHaveBeenCalledWith(activity.reasoning);
@@ -660,7 +660,7 @@ describe("AgentRunController", () => {
     await controller.start(request());
 
     expect(loadFinalAssistant).toHaveBeenCalledWith("run-recover");
-    expect(calls.appendAssistant).toHaveBeenCalledWith("run-recover", "now");
+    expect(calls.appendAssistant).toHaveBeenCalledWith("run-recover", "now", undefined);
     expect(calls.appendAssistantDelta).toHaveBeenCalledWith(assistant, "Recovered answer");
     expect(calls.appendSystem).not.toHaveBeenCalledWith("The model completed without returning a response.");
   });

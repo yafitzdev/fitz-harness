@@ -49,7 +49,6 @@ export interface FitzConfigDocument {
   };
   interface: Record<string, unknown>;
   inference: {
-    engineRoot: string | null;
     reserveVramMiB: number;
     agentConcurrency: number;
     agentConcurrencyPerUser: number;
@@ -130,7 +129,7 @@ export class FitzConfigService {
     if (SENSITIVE_KEY.test(key)) return undefined;
     if (key === "artifactStorageQuotaBytes") return (this.#document.storage.artifactQuotaBytes ?? undefined) as T | undefined;
     if (key === "mediaArtifactLimits") return this.#document.storage.mediaArtifactLimits as T;
-    if (key === "engineRoot") return (this.#document.inference.engineRoot ?? undefined) as T | undefined;
+    if (key === "engineRoot") return undefined;
     return this.#document.settings[key] as T | undefined;
   }
 
@@ -138,7 +137,7 @@ export class FitzConfigService {
     if (SENSITIVE_KEY.test(key)) throw new Error(`Sensitive setting ${key} cannot be written to fitz.config.json`);
     if (key === "artifactStorageQuotaBytes") { this.update({ storage: { artifactQuotaBytes: requireNullablePositiveInteger(value, key) } }); return; }
     if (key === "mediaArtifactLimits") { this.update({ storage: { mediaArtifactLimits: requireMediaLimits(value) } }); return; }
-    if (key === "engineRoot") { this.update({ inference: { engineRoot: requireNullableString(value, key) } }); return; }
+    if (key === "engineRoot") throw new Error("engineRoot is derived from FITZ_LLM_ROOT and cannot be changed at runtime");
     this.update({ settings: { ...this.#document.settings, [key]: value } });
   }
 
@@ -146,7 +145,7 @@ export class FitzConfigService {
     if (SENSITIVE_KEY.test(key)) return false;
     if (key === "artifactStorageQuotaBytes") { const present = this.#document.storage.artifactQuotaBytes !== null; this.update({ storage: { artifactQuotaBytes: null } }); return present; }
     if (key === "mediaArtifactLimits") { const present = Object.keys(this.#document.storage.mediaArtifactLimits).length > 0; this.update({ storage: { mediaArtifactLimits: {} } }); return present; }
-    if (key === "engineRoot") { const present = this.#document.inference.engineRoot !== null; this.update({ inference: { engineRoot: null } }); return present; }
+    if (key === "engineRoot") return false;
     if (!(key in this.#document.settings)) return false;
     const settings = { ...this.#document.settings };
     delete settings[key];
@@ -160,7 +159,6 @@ export class FitzConfigService {
     const patch: FitzConfigPatch = { settings: safe };
     if ("artifactStorageQuotaBytes" in safe) patch.storage = { ...(patch.storage ?? {}), artifactQuotaBytes: requireNullablePositiveInteger(safe.artifactStorageQuotaBytes, "artifactStorageQuotaBytes") };
     if ("mediaArtifactLimits" in safe) patch.storage = { ...(patch.storage ?? {}), mediaArtifactLimits: requireMediaLimits(safe.mediaArtifactLimits) };
-    if ("engineRoot" in safe) patch.inference = { engineRoot: requireNullableString(safe.engineRoot, "engineRoot") };
     for (const key of ["artifactStorageQuotaBytes", "mediaArtifactLimits", "engineRoot"]) delete safe[key];
     return this.update(patch);
   }
@@ -204,7 +202,7 @@ export function defaultFitzConfig(): FitzConfigDocument {
     users: { defaultRole: "consumer", defaultQuota: { requestsPerMinute: 360, promptCharacters: 200_000, outputTokens: 131_072, queueDepth: 16 } },
     storage: { artifactQuotaBytes: null, mediaArtifactLimits: {} },
     interface: {},
-    inference: { engineRoot: null, reserveVramMiB: 800, agentConcurrency: 4, agentConcurrencyPerUser: 1 },
+    inference: { reserveVramMiB: 800, agentConcurrency: 4, agentConcurrencyPerUser: 1 },
     lsp: { providers: [] },
     settings: {},
   };
@@ -213,8 +211,8 @@ export function defaultFitzConfig(): FitzConfigDocument {
 export function defaultFitzConfigPath(environment: NodeJS.ProcessEnv = process.env): string {
   const dataRoot = environment.FITZ_DATA_ROOT
     ?? (process.platform === "win32"
-      ? join(environment.LOCALAPPDATA ?? join(environment.USERPROFILE ?? process.cwd(), "AppData", "Local"), "Fitz Codex")
-      : join(environment.XDG_DATA_HOME ?? join(environment.HOME ?? process.cwd(), ".local", "share"), "fitz-codex"));
+      ? join(environment.LOCALAPPDATA ?? join(environment.USERPROFILE ?? process.cwd(), "AppData", "Local"), "Fitz Harness")
+      : join(environment.XDG_DATA_HOME ?? join(environment.HOME ?? process.cwd(), ".local", "share"), "fitz-harness"));
   return resolve(dataRoot, "fitz.config.json");
 }
 
@@ -244,12 +242,14 @@ export function validateFitzConfig(value: unknown): FitzConfigDocument {
   assertKnownKeys(document.storage, ["artifactQuotaBytes", "mediaArtifactLimits"], "storage");
   requireMediaLimits(document.storage.mediaArtifactLimits);
   if (!isRecord(document.interface) || !isRecord(document.inference) || !isRecord(document.settings)) throw new Error("Invalid interface, inference, or settings configuration");
+  const legacyEngineRoot = (document.inference as Record<string, unknown>).engineRoot;
   assertKnownKeys(document.inference, ["engineRoot", "reserveVramMiB", "agentConcurrency", "agentConcurrencyPerUser"], "inference");
-  if (!(document.inference.engineRoot === null || typeof document.inference.engineRoot === "string") || !nonNegativeInteger(document.inference.reserveVramMiB) || !positiveInteger(document.inference.agentConcurrency) || !positiveInteger(document.inference.agentConcurrencyPerUser)) throw new Error("Invalid inference configuration");
+  if (!(legacyEngineRoot === undefined || legacyEngineRoot === null || typeof legacyEngineRoot === "string") || !nonNegativeInteger(document.inference.reserveVramMiB) || !positiveInteger(document.inference.agentConcurrency) || !positiveInteger(document.inference.agentConcurrencyPerUser)) throw new Error("Invalid inference configuration");
   const lsp = parseLspConfig(value.lsp);
   assertJsonValue(document.interface, "interface");
   assertJsonValue(document.settings, "settings");
-  return structuredClone({ ...document, lsp });
+  const { engineRoot: _retiredEngineRoot, ...inference } = document.inference as FitzConfigDocument["inference"] & { engineRoot?: unknown };
+  return structuredClone({ ...document, inference, lsp });
 }
 
 function mergeDocument(base: FitzConfigDocument, patch: FitzConfigPatch): FitzConfigDocument {
@@ -336,7 +336,6 @@ function validateLspExtension(extension: string, path: string): string {
 function assertKnownKeys(value: Record<string, unknown>, allowed: readonly string[], path: string): void { const known = new Set(allowed); for (const key of Object.keys(value)) if (!known.has(key)) throw new Error(`Unknown ${path} setting: ${key}`); }
 function assertJsonValue(value: unknown, path: string): void { if (value === null || typeof value === "string" || typeof value === "boolean") return; if (typeof value === "number") { if (!Number.isFinite(value)) throw new Error(`${path} must contain only finite JSON numbers`); return; } if (Array.isArray(value)) { value.forEach((item, index) => assertJsonValue(item, `${path}[${index}]`)); return; } if (isRecord(value)) { for (const [key, nested] of Object.entries(value)) assertJsonValue(nested, `${path}.${key}`); return; } throw new Error(`${path} must contain only JSON values`); }
 function requireNullablePositiveInteger(value: unknown, name: string): number | null { if (value === undefined || value === null) return null; if (!positiveInteger(value)) throw new Error(`${name} must be a positive integer or null`); return value; }
-function requireNullableString(value: unknown, name: string): string | null { if (value === undefined || value === null) return null; if (typeof value !== "string" || !value.trim()) throw new Error(`${name} must be a non-empty string or null`); return value; }
 function positiveInteger(value: unknown): value is number { return Number.isSafeInteger(value) && Number(value) > 0; }
 function nonNegativeInteger(value: unknown): value is number { return Number.isSafeInteger(value) && Number(value) >= 0; }
 function validPort(value: unknown): value is number { return Number.isInteger(value) && Number(value) > 0 && Number(value) <= 65_535; }
